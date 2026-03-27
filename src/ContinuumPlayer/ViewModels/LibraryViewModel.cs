@@ -78,6 +78,27 @@ public partial class LibraryViewModel : ObservableObject
         await LoadPageAsync();
     }
 
+    [RelayCommand]
+    private async Task JumpToLetterAsync(string letter)
+    {
+        if (Library == null) return;
+
+        // Ensure sorted by title ascending for letter jump to make sense
+        SelectedSort = "title";
+        SelectedOrder = "asc";
+
+        // Estimate offset based on letter position
+        int letterIndex = letter == "#" ? 0 : (letter[0] - 'A' + 1);
+        int estimatedOffset = (int)((letterIndex / 27.0) * TotalCount);
+
+        // Round down to nearest page boundary
+        estimatedOffset = (estimatedOffset / PageSize) * PageSize;
+
+        _offset = estimatedOffset;
+        Items.Clear();
+        await LoadPageAsync();
+    }
+
     private async Task LoadPageAsync()
     {
         if (Library == null) return;
@@ -88,9 +109,7 @@ public partial class LibraryViewModel : ObservableObject
         try
         {
             var response = await _catalogApi.GetCatalogAsync(
-                source: "library",
-                sourceId: Library.Id.ToString(),
-                type: SelectedType,
+                libraryId: Library.Id,
                 sort: SelectedSort,
                 order: SelectedOrder,
                 genre: SelectedGenre,
@@ -102,9 +121,9 @@ public partial class LibraryViewModel : ObservableObject
                 Items.Add(item);
             }
 
-            TotalCount = response.TotalCount;
+            TotalCount = response.Total;
             _offset += response.Items.Count;
-            HasMore = _offset < TotalCount;
+            HasMore = response.HasMore;
         }
         catch (Exception ex)
         {
@@ -122,7 +141,7 @@ public partial class LibraryViewModel : ObservableObject
 
         try
         {
-            var filters = await _catalogApi.GetFiltersAsync("library", Library.Id.ToString());
+            var filters = await _catalogApi.GetFiltersAsync(Library.Id);
             Genres.Clear();
             Genres.Add(""); // All genres
             foreach (var genre in filters.Genres)

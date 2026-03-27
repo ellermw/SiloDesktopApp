@@ -50,9 +50,8 @@
             Grid.Row="1"
             HorizontalScrollBarVisibility="Hidden"
             VerticalScrollBarVisibility="Disabled"
-            HorizontalScrollMode="Auto"
-            VerticalScrollMode="Disabled"
-            PointerWheelChanged="PosterScrollViewer_PointerWheelChanged">
+            HorizontalScrollMode="Disabled"
+            VerticalScrollMode="Disabled">
 
             <ItemsRepeater x:Name="ItemsRepeater">
                 <ItemsRepeater.Layout>

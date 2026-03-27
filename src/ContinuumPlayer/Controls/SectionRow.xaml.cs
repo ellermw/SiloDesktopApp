@@ -1,4 +1,3 @@
-using Microsoft.UI.Xaml.Input;
 using ContinuumPlayer.Core.Models.Home;
 
 namespace ContinuumPlayer.Controls;
@@ -49,9 +48,4 @@ public sealed partial class SectionRow : UserControl
             PosterScrollViewer.HorizontalOffset + 500, null, null);
     }
 
-    private void PosterScrollViewer_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
-    {
-        // Don't handle mouse wheel events so they bubble up to the parent vertical ScrollViewer
-        e.Handled = false;
-    }
 }

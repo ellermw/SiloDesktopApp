@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
 using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.ViewModels;
@@ -16,6 +17,8 @@ public sealed partial class LibraryPage : Page
         this.InitializeComponent();
 
         PosterRepeater.ItemsSource = ViewModel.Items;
+
+        BuildAlphabetStrip();
 
         // Set default combo selections
         _suppressFilterEvents = true;
@@ -126,31 +129,73 @@ public sealed partial class LibraryPage : Page
         }
     }
 
+    private void BuildAlphabetStrip()
+    {
+        AlphabetStripPanel.Children.Clear();
+        var letters = new[] { "#" }.Concat(Enumerable.Range('A', 26).Select(c => ((char)c).ToString()));
+        foreach (var letter in letters)
+        {
+            var tb = new TextBlock
+            {
+                Text = letter,
+                FontSize = 11,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Padding = new Thickness(8, 2, 8, 2),
+                TextAlignment = TextAlignment.Center
+            };
+            tb.Tapped += AlphabetLetter_Tapped;
+            tb.PointerEntered += AlphabetLetter_PointerEntered;
+            tb.PointerExited += AlphabetLetter_PointerExited;
+            AlphabetStripPanel.Children.Add(tb);
+        }
+    }
+
+    private async void AlphabetLetter_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (sender is TextBlock tb)
+        {
+            await ViewModel.JumpToLetterCommand.ExecuteAsync(tb.Text);
+            ContentScrollViewer.ChangeView(null, 0, null);
+        }
+    }
+
+    private void AlphabetLetter_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is TextBlock tb)
+            tb.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
+    }
+
+    private void AlphabetLetter_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is TextBlock tb)
+            tb.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
+    }
+
     private void Tab_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
-        // Reset all tabs to default style
+        // Reset all tabs
         var tabs = new[] { RecommendedTab, LibraryTab, CollectionsTab };
         foreach (var tab in tabs)
         {
             tab.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
-            tab.ClearValue(ForegroundProperty);
+            tab.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
             tab.BorderThickness = new Thickness(0);
         }
 
-        // Highlight the selected tab
+        // Highlight selected tab
         clickedButton.FontWeight = Microsoft.UI.Text.FontWeights.Bold;
-        clickedButton.Foreground = (Microsoft.UI.Xaml.Media.Brush)Resources["PrimaryTextBrush"]
-            ?? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
-        clickedButton.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Resources["AccentBrush"]
-            ?? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
+        clickedButton.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
+        clickedButton.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
         clickedButton.BorderThickness = new Thickness(0, 0, 0, 2);
 
         // Show/hide content panels
         FilterBar.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
         ContentScrollViewer.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
+        AlphabetStrip.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
         RecommendedPanel.Visibility = tag == "Recommended" ? Visibility.Visible : Visibility.Collapsed;
         CollectionsPanel.Visibility = tag == "Collections" ? Visibility.Visible : Visibility.Collapsed;
     }
