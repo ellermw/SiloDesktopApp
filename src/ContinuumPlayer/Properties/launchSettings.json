@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "ContinuumPlayer (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "ContinuumPlayer (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
