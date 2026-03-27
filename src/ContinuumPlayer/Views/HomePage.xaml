@@ -5,19 +5,62 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:ContinuumPlayer.Controls"
+    xmlns:converters="using:ContinuumPlayer.Converters"
     mc:Ignorable="d"
-    Background="{StaticResource AppBackgroundBrush}">
+    Background="{StaticResource AppBackgroundBrush}"
+    Loaded="Page_Loaded">
 
-    <Grid Padding="{StaticResource PagePadding}">
-        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12">
+    <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
+        <converters:NullToVisibilityConverter x:Key="NullToVis" />
+    </Page.Resources>
+
+    <Grid>
+        <!-- Loading indicator -->
+        <ProgressRing
+            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Width="48" Height="48" />
+
+        <!-- Error message -->
+        <StackPanel
+            VerticalAlignment="Center"
+            HorizontalAlignment="Center"
+            Spacing="12"
+            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
             <TextBlock
-                Text="Home"
-                Style="{StaticResource HeaderTextStyle}"
-                HorizontalAlignment="Center" />
-            <TextBlock
-                Text="Home page content will be implemented in a later task."
-                Style="{StaticResource SecondaryTextStyle}"
-                HorizontalAlignment="Center" />
+                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                Foreground="{StaticResource ErrorBrush}"
+                Style="{StaticResource BodyTextStyle}"
+                HorizontalAlignment="Center"
+                TextWrapping="Wrap"
+                MaxWidth="400" />
+            <Button
+                Content="Retry"
+                Style="{StaticResource AccentButtonStyle}"
+                HorizontalAlignment="Center"
+                Command="{x:Bind ViewModel.LoadCommand}" />
         </StackPanel>
+
+        <!-- Main content -->
+        <ScrollViewer
+            x:Name="ContentScrollViewer"
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
+
+            <StackPanel x:Name="ContentPanel">
+                <!-- Hero Carousel for featured items -->
+                <controls:HeroCarousel
+                    x:Name="HeroCarouselControl" />
+
+                <!-- Section rows -->
+                <StackPanel
+                    x:Name="SectionsPanel"
+                    Padding="24,24,24,24" />
+            </StackPanel>
+        </ScrollViewer>
     </Grid>
 </Page>

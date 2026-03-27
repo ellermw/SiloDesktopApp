@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="ContinuumPlayer.Controls.PosterCard"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Width="{StaticResource PosterCardWidth}"
+    PointerEntered="OnPointerEntered"
+    PointerExited="OnPointerExited">
+
+    <Grid
+        x:Name="RootGrid"
+        Width="{StaticResource PosterCardWidth}"
+        CornerRadius="{StaticResource PosterCornerRadius}">
+
+        <Grid.RowDefinitions>
+            <RowDefinition Height="{StaticResource PosterCardHeight}" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Poster image area -->
+        <Grid
+            Grid.Row="0"
+            CornerRadius="{StaticResource PosterCornerRadius}">
+
+            <!-- Card background for hover -->
+            <Border
+                x:Name="PosterBackground"
+                Background="{StaticResource CardBackgroundBrush}"
+                CornerRadius="{StaticResource PosterCornerRadius}" />
+
+            <!-- Thumbhash placeholder -->
+            <Image
+                x:Name="ThumbhashImage"
+                Stretch="UniformToFill"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center" />
+
+            <!-- Actual poster image -->
+            <Image
+                x:Name="PosterImage"
+                Stretch="UniformToFill"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Opacity="0" />
+
+            <!-- Badges overlay at bottom -->
+            <StackPanel
+                x:Name="BadgesPanel"
+                Orientation="Horizontal"
+                Spacing="4"
+                VerticalAlignment="Bottom"
+                HorizontalAlignment="Left"
+                Margin="6,0,6,6"
+                Visibility="Collapsed">
+
+                <Border
+                    x:Name="ResolutionBadge"
+                    Background="{StaticResource BadgeResolutionBrush}"
+                    CornerRadius="{StaticResource BadgeCornerRadius}"
+                    Padding="6,2"
+                    Visibility="Collapsed">
+                    <TextBlock
+                        x:Name="ResolutionText"
+                        FontSize="10"
+                        FontWeight="SemiBold"
+                        Foreground="White" />
+                </Border>
+
+                <Border
+                    x:Name="AudioBadge"
+                    Background="{StaticResource BadgeBackgroundBrush}"
+                    CornerRadius="{StaticResource BadgeCornerRadius}"
+                    Padding="6,2"
+                    Visibility="Collapsed">
+                    <TextBlock
+                        x:Name="AudioText"
+                        FontSize="10"
+                        FontWeight="SemiBold"
+                        Foreground="{StaticResource BadgeTextBrush}" />
+                </Border>
+            </StackPanel>
+        </Grid>
+
+        <!-- Title below poster -->
+        <TextBlock
+            x:Name="TitleText"
+            Grid.Row="1"
+            Style="{StaticResource CaptionTextStyle}"
+            Foreground="{StaticResource PrimaryTextBrush}"
+            TextTrimming="CharacterEllipsis"
+            MaxLines="2"
+            TextWrapping="Wrap"
+            Margin="2,6,2,0" />
+    </Grid>
+</UserControl>

@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="ContinuumPlayer.Controls.HeroCarousel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Height="450"
+    Loaded="OnLoaded"
+    Unloaded="OnUnloaded">
+
+    <Grid>
+        <!-- Backdrop image -->
+        <Image
+            x:Name="BackdropImage"
+            Stretch="UniformToFill"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center" />
+
+        <!-- Gradient overlay: transparent to background -->
+        <Border>
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="Transparent" Offset="0.0" />
+                    <GradientStop Color="#80000000" Offset="0.5" />
+                    <GradientStop Color="{StaticResource AppBackgroundColor}" Offset="1.0" />
+                </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+
+        <!-- Left gradient for text readability -->
+        <Border>
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                    <GradientStop Color="#A0000000" Offset="0.0" />
+                    <GradientStop Color="Transparent" Offset="0.6" />
+                </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+
+        <!-- Content overlay at bottom-left -->
+        <StackPanel
+            VerticalAlignment="Bottom"
+            HorizontalAlignment="Left"
+            Margin="48,0,0,60"
+            MaxWidth="600"
+            Spacing="8">
+
+            <TextBlock
+                x:Name="HeroTitle"
+                Style="{StaticResource DisplayTextStyle}"
+                FontSize="36"
+                TextWrapping="Wrap"
+                MaxLines="2" />
+
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <TextBlock
+                    x:Name="HeroYear"
+                    Style="{StaticResource SecondaryTextStyle}"
+                    FontSize="{StaticResource FontSizeSubtitle}" />
+                <TextBlock
+                    x:Name="HeroGenres"
+                    Style="{StaticResource SecondaryTextStyle}"
+                    FontSize="{StaticResource FontSizeSubtitle}"
+                    TextTrimming="CharacterEllipsis"
+                    MaxWidth="400" />
+            </StackPanel>
+
+            <TextBlock
+                x:Name="HeroOverview"
+                Style="{StaticResource SecondaryTextStyle}"
+                TextWrapping="Wrap"
+                MaxLines="3"
+                TextTrimming="CharacterEllipsis" />
+
+            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,8,0,0">
+                <Button
+                    Content="&#xE768;  Play"
+                    Style="{StaticResource AccentButtonStyle}"
+                    FontFamily="Segoe MDL2 Assets"
+                    Padding="20,10" />
+            </StackPanel>
+        </StackPanel>
+
+        <!-- Navigation arrows -->
+        <Button
+            x:Name="PrevButton"
+            Style="{StaticResource GhostButtonStyle}"
+            VerticalAlignment="Center"
+            HorizontalAlignment="Left"
+            Margin="8,0,0,0"
+            Width="40" Height="40"
+            Click="PrevButton_Click"
+            Opacity="0.7">
+            <FontIcon Glyph="&#xE76B;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
+        </Button>
+
+        <Button
+            x:Name="NextButton"
+            Style="{StaticResource GhostButtonStyle}"
+            VerticalAlignment="Center"
+            HorizontalAlignment="Right"
+            Margin="0,0,8,0"
+            Width="40" Height="40"
+            Click="NextButton_Click"
+            Opacity="0.7">
+            <FontIcon Glyph="&#xE76C;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
+        </Button>
+
+        <!-- Navigation dots at bottom center -->
+        <StackPanel
+            x:Name="DotsPanel"
+            Orientation="Horizontal"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Bottom"
+            Margin="0,0,0,12"
+            Spacing="8" />
+    </Grid>
+</UserControl>

@@ -5,20 +5,135 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:ContinuumPlayer.Controls"
+    xmlns:converters="using:ContinuumPlayer.Converters"
+    xmlns:models="using:ContinuumPlayer.Core.Models.Home"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}">
 
-    <Grid Padding="{StaticResource PagePadding}">
-        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12">
+    <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:NullToVisibilityConverter x:Key="NullToVis" />
+    </Page.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <TextBlock
+            x:Name="LibraryTitle"
+            Grid.Row="0"
+            Style="{StaticResource HeaderTextStyle}"
+            Margin="24,24,24,16" />
+
+        <!-- Filter bar -->
+        <StackPanel
+            Grid.Row="1"
+            Orientation="Horizontal"
+            Spacing="12"
+            Margin="24,0,24,16">
+
+            <!-- Sort by -->
+            <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock
+                    Text="Sort:"
+                    Style="{StaticResource CaptionTextStyle}"
+                    VerticalAlignment="Center" />
+                <ComboBox
+                    x:Name="SortComboBox"
+                    Width="140"
+                    SelectionChanged="SortComboBox_SelectionChanged">
+                    <ComboBoxItem Content="Title" Tag="title" />
+                    <ComboBoxItem Content="Year" Tag="year" />
+                    <ComboBoxItem Content="IMDB Rating" Tag="rating_imdb" />
+                    <ComboBoxItem Content="Date Added" Tag="added_at" />
+                </ComboBox>
+            </StackPanel>
+
+            <!-- Order -->
+            <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock
+                    Text="Order:"
+                    Style="{StaticResource CaptionTextStyle}"
+                    VerticalAlignment="Center" />
+                <ComboBox
+                    x:Name="OrderComboBox"
+                    Width="100"
+                    SelectionChanged="OrderComboBox_SelectionChanged">
+                    <ComboBoxItem Content="Asc" Tag="asc" />
+                    <ComboBoxItem Content="Desc" Tag="desc" />
+                </ComboBox>
+            </StackPanel>
+
+            <!-- Genre filter -->
+            <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock
+                    Text="Genre:"
+                    Style="{StaticResource CaptionTextStyle}"
+                    VerticalAlignment="Center" />
+                <ComboBox
+                    x:Name="GenreComboBox"
+                    Width="160"
+                    SelectionChanged="GenreComboBox_SelectionChanged"
+                    PlaceholderText="All Genres" />
+            </StackPanel>
+
+            <!-- Item count -->
             <TextBlock
-                x:Name="LibraryTitle"
-                Text="Library"
-                Style="{StaticResource HeaderTextStyle}"
-                HorizontalAlignment="Center" />
-            <TextBlock
-                Text="Library page content will be implemented in a later task."
+                x:Name="CountText"
                 Style="{StaticResource SecondaryTextStyle}"
-                HorizontalAlignment="Center" />
+                VerticalAlignment="Center"
+                Margin="12,0,0,0" />
         </StackPanel>
+
+        <!-- Content area with scrollviewer for infinite scroll -->
+        <ScrollViewer
+            x:Name="ContentScrollViewer"
+            Grid.Row="2"
+            ViewChanged="ScrollViewer_ViewChanged"
+            Padding="24,0,24,24">
+
+            <StackPanel>
+                <!-- Poster grid -->
+                <ItemsRepeater
+                    x:Name="PosterRepeater">
+                    <ItemsRepeater.Layout>
+                        <UniformGridLayout
+                            MinItemWidth="{StaticResource PosterCardWidth}"
+                            MinItemHeight="{StaticResource PosterCardTotalHeight}"
+                            MinColumnSpacing="12"
+                            MinRowSpacing="16"
+                            ItemsStretch="None" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="models:MediaItem">
+                            <controls:PosterCard MediaItem="{x:Bind}" />
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+
+                <!-- Loading indicator at bottom -->
+                <ProgressRing
+                    x:Name="LoadingRing"
+                    IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                    HorizontalAlignment="Center"
+                    Margin="0,16,0,16"
+                    Width="32" Height="32" />
+
+                <!-- Error message -->
+                <TextBlock
+                    Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
+                    Foreground="{StaticResource ErrorBrush}"
+                    Style="{StaticResource BodyTextStyle}"
+                    HorizontalAlignment="Center"
+                    Margin="0,8,0,8" />
+            </StackPanel>
+        </ScrollViewer>
     </Grid>
 </Page>
