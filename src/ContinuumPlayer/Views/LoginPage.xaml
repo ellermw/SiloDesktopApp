@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="ContinuumPlayer.Views.LoginPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:converters="using:ContinuumPlayer.Converters"
+    mc:Ignorable="d"
+    Background="{StaticResource AppBackgroundBrush}">
+
+    <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:NullToVisibilityConverter x:Key="NullToVis" />
+        <converters:InverseBoolConverter x:Key="InverseBool" />
+    </Page.Resources>
+
+    <Grid HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="400">
+        <StackPanel Spacing="20">
+            <!-- Branding -->
+            <TextBlock
+                Text="Continuum"
+                FontSize="{StaticResource FontSizeDisplay}"
+                FontWeight="Bold"
+                Foreground="{StaticResource AccentBrush}"
+                HorizontalAlignment="Center" />
+
+            <!-- Server info -->
+            <TextBlock
+                x:Name="ServerNameText"
+                Text="{x:Bind ViewModel.ServerName, Mode=OneWay}"
+                Style="{StaticResource SecondaryTextStyle}"
+                HorizontalAlignment="Center" />
+
+            <!-- Login card -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="16">
+                    <TextBlock Text="Sign In" Style="{StaticResource TitleTextStyle}" />
+
+                    <!-- Error message -->
+                    <Border
+                        x:Name="ErrorBorder"
+                        Background="#2DF85149"
+                        CornerRadius="4"
+                        Padding="12,8"
+                        Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                        <TextBlock
+                            Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                            Foreground="{StaticResource ErrorBrush}"
+                            TextWrapping="Wrap" />
+                    </Border>
+
+                    <!-- Username -->
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Username" Style="{StaticResource CaptionTextStyle}" />
+                        <TextBox
+                            x:Name="UsernameBox"
+                            Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                            Style="{StaticResource DarkTextBoxStyle}"
+                            PlaceholderText="Enter your username"
+                            KeyDown="InputBox_KeyDown" />
+                    </StackPanel>
+
+                    <!-- Password -->
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Password" Style="{StaticResource CaptionTextStyle}" />
+                        <PasswordBox
+                            x:Name="PasswordBox"
+                            Style="{StaticResource DarkPasswordBoxStyle}"
+                            PlaceholderText="Enter your password"
+                            KeyDown="InputBox_KeyDown" />
+                    </StackPanel>
+
+                    <!-- Login button -->
+                    <Button
+                        Content="Sign In"
+                        Style="{StaticResource AccentButtonStyle}"
+                        HorizontalAlignment="Stretch"
+                        Command="{x:Bind ViewModel.LoginCommand}"
+                        IsEnabled="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBool}}" />
+
+                    <!-- Loading indicator -->
+                    <ProgressRing
+                        IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                        Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                        HorizontalAlignment="Center"
+                        Width="32" Height="32" />
+                </StackPanel>
+            </Border>
+
+            <!-- Back to server select -->
+            <Button
+                Content="Back to Servers"
+                Style="{StaticResource GhostButtonStyle}"
+                HorizontalAlignment="Center"
+                Click="BackButton_Click" />
+        </StackPanel>
+    </Grid>
+</Page>

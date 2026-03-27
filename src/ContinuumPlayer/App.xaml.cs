@@ -1,51 +1,90 @@
-using Microsoft.UI.Xaml.Navigation;
+using Microsoft.Extensions.DependencyInjection;
+using ContinuumPlayer.Core.Api;
+using ContinuumPlayer.Core.Services;
+using ContinuumPlayer.Helpers;
+using ContinuumPlayer.ViewModels;
 
-namespace ContinuumPlayer
+namespace ContinuumPlayer;
+
+public partial class App : Application
 {
-    /// <summary>
-    /// Provides application-specific behavior to supplement the default Application class.
-    /// </summary>
-    public partial class App : Application
+    private static IServiceProvider? _services;
+    private Window? _window;
+
+    public static IServiceProvider Services =>
+        _services ?? throw new InvalidOperationException("Service provider not initialized.");
+
+    public static MainWindow? MainWindowInstance { get; private set; }
+
+    public App()
     {
-        private Window window = Window.Current;
+        this.InitializeComponent();
+        _services = ConfigureServices();
+    }
 
-        /// <summary>
-        /// Initializes the singleton application object.  This is the first line of authored code
-        /// executed, and as such is the logical equivalent of main() or WinMain().
-        /// </summary>
-        public App()
+    protected override void OnLaunched(LaunchActivatedEventArgs e)
+    {
+        _window = new MainWindow();
+        MainWindowInstance = (MainWindow)_window;
+        _window.Activate();
+    }
+
+    private static IServiceProvider ConfigureServices()
+    {
+        var services = new ServiceCollection();
+
+        // App data directory
+        var appDataDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ContinuumPlayer");
+
+        var imageCacheDir = Path.Combine(appDataDir, "ImageCache");
+
+        // Core services
+        services.AddSingleton(new SettingsService(appDataDir));
+        services.AddSingleton<CredentialStore>();
+
+        // HTTP client and API
+        services.AddSingleton<HttpClient>(sp =>
         {
-            this.InitializeComponent();
-        }
+            var settingsService = sp.GetRequiredService<SettingsService>();
+            var settings = settingsService.Load();
+            var baseUrl = settings.Servers.Count > 0
+                ? settings.Servers.OrderByDescending(s => s.LastUsed).First().Url
+                : "https://localhost";
+            return new HttpClient { BaseAddress = new Uri(baseUrl) };
+        });
 
-        /// <summary>
-        /// Invoked when the application is launched normally by the end user.  Other entry points
-        /// will be used such as when the application is launched to open a specific file.
-        /// </summary>
-        /// <param name="e">Details about the launch request and process.</param>
-        protected override void OnLaunched(LaunchActivatedEventArgs e)
+        services.AddSingleton<ContinuumApiClient>(sp =>
         {
-            window ??= new Window();
+            var http = sp.GetRequiredService<HttpClient>();
+            return new ContinuumApiClient(http);
+        });
 
-            if (window.Content is not Frame rootFrame)
-            {
-                rootFrame = new Frame();
-                rootFrame.NavigationFailed += OnNavigationFailed;
-                window.Content = rootFrame;
-            }
+        // API wrappers
+        services.AddSingleton<AuthApi>(sp => new AuthApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<HomeApi>(sp => new HomeApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<CatalogApi>(sp => new CatalogApi(sp.GetRequiredService<ContinuumApiClient>()));
 
-            _ = rootFrame.Navigate(typeof(MainPage), e.Arguments);
-            window.Activate();
-        }
+        // Auth service
+        services.AddSingleton<AuthService>(sp => new AuthService(
+            sp.GetRequiredService<ContinuumApiClient>(),
+            sp.GetRequiredService<AuthApi>()));
 
-        /// <summary>
-        /// Invoked when Navigation to a certain page fails
-        /// </summary>
-        /// <param name="sender">The Frame which failed navigation</param>
-        /// <param name="e">Details about the navigation failure</param>
-        void OnNavigationFailed(object sender, NavigationFailedEventArgs e)
-        {
-            throw new Exception("Failed to load Page " + e.SourcePageType.FullName);
-        }
+        // Image service
+        services.AddSingleton(new ImageService(imageCacheDir));
+
+        // Navigation
+        services.AddSingleton<NavigationService>();
+
+        // ViewModels
+        services.AddTransient<ServerSelectViewModel>();
+        services.AddTransient<LoginViewModel>();
+        services.AddTransient<ProfileSelectViewModel>();
+        services.AddTransient<MainViewModel>();
+        services.AddTransient<HomeViewModel>();
+        services.AddTransient<LibraryViewModel>();
+
+        return services.BuildServiceProvider();
     }
 }
