@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="ContinuumPlayer.Views.ItemDetailPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:converters="using:ContinuumPlayer.Converters"
+    mc:Ignorable="d"
+    Background="{StaticResource AppBackgroundBrush}">
+
+    <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
+        <converters:NullToVisibilityConverter x:Key="NullToVis" />
+    </Page.Resources>
+
+    <Grid>
+        <!-- Loading -->
+        <ProgressRing
+            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Width="48" Height="48" />
+
+        <!-- Error -->
+        <TextBlock
+            Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
+            Foreground="{StaticResource ErrorBrush}"
+            Style="{StaticResource BodyTextStyle}"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center" />
+
+        <!-- Content -->
+        <ScrollViewer
+            x:Name="ContentScroll"
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
+
+            <StackPanel>
+                <!-- Backdrop hero area -->
+                <Grid MinHeight="350" MaxHeight="500">
+                    <Image
+                        x:Name="BackdropImage"
+                        Stretch="UniformToFill"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center" />
+
+                    <!-- Bottom gradient -->
+                    <Border>
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Color="Transparent" Offset="0.0" />
+                                <GradientStop Color="#60000000" Offset="0.4" />
+                                <GradientStop Color="#0D1117" Offset="0.9" />
+                                <GradientStop Color="#0D1117" Offset="1.0" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <!-- Left gradient for readability -->
+                    <Border>
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                <GradientStop Color="#A0000000" Offset="0.0" />
+                                <GradientStop Color="Transparent" Offset="0.6" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <!-- Back button -->
+                    <Button
+                        x:Name="BackButton"
+                        Style="{StaticResource GhostButtonStyle}"
+                        VerticalAlignment="Top"
+                        HorizontalAlignment="Left"
+                        Margin="16,16,0,0"
+                        Click="BackButton_Click"
+                        Padding="8,6">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE72B;" FontSize="16" Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock Text="Back" Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Title overlay at bottom-left -->
+                    <StackPanel
+                        VerticalAlignment="Bottom"
+                        HorizontalAlignment="Left"
+                        Margin="48,0,0,24"
+                        MaxWidth="600"
+                        Spacing="6">
+                        <TextBlock
+                            x:Name="TitleText"
+                            Style="{StaticResource DisplayTextStyle}"
+                            FontSize="36"
+                            TextWrapping="Wrap"
+                            MaxLines="2" />
+
+                        <TextBlock
+                            x:Name="TaglineText"
+                            Style="{StaticResource SecondaryTextStyle}"
+                            FontStyle="Italic"
+                            TextWrapping="Wrap"
+                            MaxLines="2" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- Detail content below backdrop -->
+                <StackPanel Padding="48,0,48,48" Spacing="20">
+
+                    <!-- Metadata row: year, genres, rating, runtime, content rating -->
+                    <StackPanel x:Name="MetaPanel" Orientation="Horizontal" Spacing="16">
+                        <TextBlock x:Name="YearText" Style="{StaticResource SecondaryTextStyle}" FontSize="16" />
+                        <TextBlock x:Name="ContentRatingText" Style="{StaticResource SecondaryTextStyle}" FontSize="16" />
+                        <TextBlock x:Name="RuntimeText" Style="{StaticResource SecondaryTextStyle}" FontSize="16" />
+                        <TextBlock x:Name="RatingText" Style="{StaticResource SecondaryTextStyle}" FontSize="16" />
+                        <TextBlock x:Name="GenresText" Style="{StaticResource SecondaryTextStyle}" FontSize="16"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="400" />
+                    </StackPanel>
+
+                    <!-- Action buttons -->
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <Button Style="{StaticResource AccentButtonStyle}" Padding="20,10">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE768;" FontSize="16" FontFamily="{ThemeResource SymbolThemeFontFamily}" />
+                                <TextBlock Text="Play" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <Button
+                            x:Name="FavoriteButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Click="FavoriteButton_Click"
+                            Padding="16,10">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon x:Name="FavoriteIcon" Glyph="&#xE734;" FontSize="16"
+                                          Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock x:Name="FavoriteText" Text="Favorite" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <Button
+                            x:Name="WatchlistButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Click="WatchlistButton_Click"
+                            Padding="16,10">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon x:Name="WatchlistIcon" Glyph="&#xE8B7;" FontSize="16"
+                                          Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock x:Name="WatchlistText" Text="Watchlist" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Overview -->
+                    <TextBlock
+                        x:Name="OverviewText"
+                        Style="{StaticResource BodyTextStyle}"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        TextWrapping="Wrap"
+                        MaxWidth="800"
+                        HorizontalAlignment="Left"
+                        LineHeight="22" />
+
+                    <!-- Cast section -->
+                    <TextBlock
+                        x:Name="CastHeader"
+                        Text="Cast"
+                        Style="{StaticResource TitleTextStyle}"
+                        Visibility="Collapsed"
+                        Margin="0,8,0,0" />
+
+                    <ScrollViewer
+                        x:Name="CastScrollViewer"
+                        HorizontalScrollBarVisibility="Hidden"
+                        VerticalScrollBarVisibility="Disabled"
+                        HorizontalScrollMode="Disabled"
+                        VerticalScrollMode="Disabled"
+                        Visibility="Collapsed">
+                        <StackPanel x:Name="CastPanel" Orientation="Horizontal" Spacing="16" />
+                    </ScrollViewer>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

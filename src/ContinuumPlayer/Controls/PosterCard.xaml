@@ -8,15 +8,17 @@
     mc:Ignorable="d"
     Width="{StaticResource PosterCardWidth}"
     PointerEntered="OnPointerEntered"
-    PointerExited="OnPointerExited">
+    PointerExited="OnPointerExited"
+    Tapped="OnCardTapped">
 
     <Grid
         x:Name="RootGrid"
         Width="{StaticResource PosterCardWidth}"
-        CornerRadius="{StaticResource PosterCornerRadius}">
+        CornerRadius="{StaticResource PosterCornerRadius}"
+        Background="Transparent">
 
         <Grid.RowDefinitions>
-            <RowDefinition Height="{StaticResource PosterCardHeight}" />
+            <RowDefinition Height="225" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 

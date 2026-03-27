@@ -6,9 +6,11 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Height="450"
+    MinHeight="350"
+    MaxHeight="700"
     Loaded="OnLoaded"
-    Unloaded="OnUnloaded">
+    Unloaded="OnUnloaded"
+    SizeChanged="OnSizeChanged">
 
     <Grid>
         <!-- Backdrop image -->
@@ -17,16 +19,6 @@
             Stretch="UniformToFill"
             HorizontalAlignment="Center"
             VerticalAlignment="Center" />
-
-        <!-- Top gradient for smooth edge -->
-        <Border VerticalAlignment="Top" Height="120">
-            <Border.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                    <GradientStop Color="#80000000" Offset="0.0" />
-                    <GradientStop Color="Transparent" Offset="1.0" />
-                </LinearGradientBrush>
-            </Border.Background>
-        </Border>
 
         <!-- Gradient overlay: transparent to background -->
         <Border>

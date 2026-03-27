@@ -45,20 +45,22 @@ public partial class App : Application
         services.AddSingleton<CredentialStore>();
 
         // HTTP client and API
-        services.AddSingleton<HttpClient>(sp =>
-        {
-            var settingsService = sp.GetRequiredService<SettingsService>();
-            var settings = settingsService.Load();
-            var baseUrl = settings.Servers.Count > 0
-                ? settings.Servers.OrderByDescending(s => s.LastUsed).First().Url
-                : "https://localhost";
-            return new HttpClient { BaseAddress = new Uri(baseUrl) };
-        });
-
+        services.AddSingleton<HttpClient>(_ => new HttpClient());
         services.AddSingleton<ContinuumApiClient>(sp =>
         {
             var http = sp.GetRequiredService<HttpClient>();
-            return new ContinuumApiClient(http);
+            var client = new ContinuumApiClient(http);
+
+            // Pre-set base URL from saved server if available
+            var settingsService = sp.GetRequiredService<SettingsService>();
+            var settings = settingsService.Load();
+            if (settings.Servers.Count > 0)
+            {
+                var serverUrl = settings.Servers.OrderByDescending(s => s.LastUsed).First().Url;
+                client.SetBaseUrl(serverUrl);
+            }
+
+            return client;
         });
 
         // API wrappers
@@ -84,6 +86,12 @@ public partial class App : Application
         services.AddTransient<MainViewModel>();
         services.AddTransient<HomeViewModel>();
         services.AddTransient<LibraryViewModel>();
+        services.AddTransient<ItemDetailViewModel>();
+        services.AddTransient<SearchViewModel>();
+        services.AddTransient<FavoritesViewModel>();
+        services.AddTransient<WatchlistViewModel>();
+        services.AddTransient<HistoryViewModel>();
+        services.AddTransient<RecommendationsViewModel>();
 
         return services.BuildServiceProvider();
     }

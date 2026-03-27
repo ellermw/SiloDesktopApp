@@ -9,14 +9,13 @@ public class CatalogApi(ContinuumApiClient client)
         => client.GetAsync<List<Library>>("/api/v1/user/libraries", ct);
 
     public Task<CatalogResponse> GetCatalogAsync(
-        string source, string sourceId,
-        string? type = null, string? sort = null, string? order = null,
+        int libraryId,
+        string? sort = null, string? order = null,
         string? genre = null, string? studio = null, string? contentRating = null,
-        string? q = null, int limit = 20, int offset = 0,
+        string? q = null, int limit = 40, int offset = 0,
         CancellationToken ct = default)
     {
-        var query = $"/api/v1/catalog?source={Uri.EscapeDataString(source)}&source_id={Uri.EscapeDataString(sourceId)}&limit={limit}&offset={offset}";
-        if (type != null) query += $"&type={Uri.EscapeDataString(type)}";
+        var query = $"/api/v1/catalog?library_id={libraryId}&limit={limit}&offset={offset}";
         if (sort != null) query += $"&sort={Uri.EscapeDataString(sort)}";
         if (order != null) query += $"&order={Uri.EscapeDataString(order)}";
         if (genre != null) query += $"&genre={Uri.EscapeDataString(genre)}";
@@ -26,12 +25,39 @@ public class CatalogApi(ContinuumApiClient client)
         return client.GetAsync<CatalogResponse>(query, ct);
     }
 
-    public Task<CatalogFiltersResponse> GetFiltersAsync(string source, string sourceId, CancellationToken ct = default)
-        => client.GetAsync<CatalogFiltersResponse>($"/api/v1/catalog/filters?source={Uri.EscapeDataString(source)}&source_id={Uri.EscapeDataString(sourceId)}", ct);
+    public Task<CatalogFiltersResponse> GetFiltersAsync(int libraryId, CancellationToken ct = default)
+        => client.GetAsync<CatalogFiltersResponse>($"/api/v1/catalog/filters?library_id={libraryId}", ct);
 
-    public Task<CatalogResponse> SearchAsync(string query, int limit = 20, CancellationToken ct = default)
-        => GetCatalogAsync("search", "", q: query, limit: limit, ct: ct);
+    public Task<CatalogResponse> SearchAsync(string query, int limit = 40, CancellationToken ct = default)
+    {
+        var q = $"/api/v1/catalog?q={Uri.EscapeDataString(query)}&limit={limit}";
+        return client.GetAsync<CatalogResponse>(q, ct);
+    }
 
-    public Task<MediaItem> GetItemDetailAsync(string contentId, CancellationToken ct = default)
-        => client.GetAsync<MediaItem>($"/api/v1/catalog/items/{contentId}", ct);
+    public Task<MediaItemDetail> GetItemDetailAsync(string contentId, CancellationToken ct = default)
+        => client.GetAsync<MediaItemDetail>($"/api/v1/catalog/items/{contentId}", ct);
+
+    public Task<ItemListResponse> GetFavoritesAsync(CancellationToken ct = default)
+        => client.GetAsync<ItemListResponse>("/api/v1/favorites", ct);
+
+    public Task<ItemListResponse> GetWatchlistAsync(CancellationToken ct = default)
+        => client.GetAsync<ItemListResponse>("/api/v1/watchlist", ct);
+
+    public Task<ProgressResponse> GetProgressAsync(CancellationToken ct = default)
+        => client.GetAsync<ProgressResponse>("/api/v1/progress?status=in_progress&limit=50", ct);
+
+    public Task<RecommendationsResponse> GetRecommendationsAsync(CancellationToken ct = default)
+        => client.GetAsync<RecommendationsResponse>("/api/v1/recommendations/for-you/rows", ct);
+
+    public Task AddFavoriteAsync(string contentId, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/favorites/{contentId}", null, ct);
+
+    public Task RemoveFavoriteAsync(string contentId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/favorites/{contentId}", ct);
+
+    public Task AddToWatchlistAsync(string contentId, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/watchlist/{contentId}", null, ct);
+
+    public Task RemoveFromWatchlistAsync(string contentId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/watchlist/{contentId}", ct);
 }

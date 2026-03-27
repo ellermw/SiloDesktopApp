@@ -172,11 +172,21 @@ public sealed partial class MainWindow : Window
                     _navigationService.Navigate<HomePage>();
                     break;
                 case "Search":
+                    _navigationService.Navigate<SearchPage>();
+                    break;
                 case "Recommendations":
+                    _navigationService.Navigate<RecommendationsPage>();
+                    break;
                 case "Favorites":
+                    _navigationService.Navigate<FavoritesPage>();
+                    break;
                 case "Watchlist":
-                case "Collections":
+                    _navigationService.Navigate<WatchlistPage>();
+                    break;
                 case "History":
+                    _navigationService.Navigate<HistoryPage>();
+                    break;
+                case "Collections":
                     _navigationService.Navigate<PlaceholderPage>(tag);
                     break;
             }

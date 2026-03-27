@@ -4,6 +4,8 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
 using ContinuumPlayer.Core.Models.Home;
 using ContinuumPlayer.Core.Services;
+using ContinuumPlayer.Helpers;
+using ContinuumPlayer.Views;
 
 namespace ContinuumPlayer.Controls;
 
@@ -148,6 +150,14 @@ public sealed partial class PosterCard : UserControl
         {
             // Image load failed, thumbhash placeholder remains
         }
+    }
+
+    private void OnCardTapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (MediaItem == null) return;
+
+        var nav = App.Services.GetRequiredService<NavigationService>();
+        nav.Navigate<ItemDetailPage>(MediaItem.ContentId);
     }
 
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
