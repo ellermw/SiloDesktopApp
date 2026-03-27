@@ -59,7 +59,8 @@ public sealed partial class MainWindow : Window
 
             if (!string.IsNullOrEmpty(refreshToken))
             {
-                // Configure API client base address
+                // Configure API client base URL
+                _apiClient.SetBaseUrl(server.Url);
                 _apiClient.SetAccessToken(""); // temporary, will be replaced by refresh
                 _authService.SetTokens("", refreshToken, 0);
 
@@ -99,8 +100,11 @@ public sealed partial class MainWindow : Window
         NavView.IsPaneVisible = true;
         _ = _viewModel.LoadLibrariesCommand.ExecuteAsync(null);
 
-        // Watch for library changes to update nav
-        _viewModel.Libraries.CollectionChanged += (_, _) => UpdateLibraryNavItems();
+        // Watch for library changes to update nav (marshal to UI thread)
+        _viewModel.Libraries.CollectionChanged += (_, _) =>
+        {
+            DispatcherQueue.TryEnqueue(() => UpdateLibraryNavItems());
+        };
     }
 
     public void HideMainNavigation()
@@ -116,26 +120,35 @@ public sealed partial class MainWindow : Window
 
     private void UpdateLibraryNavItems()
     {
-        // Remove old library items (keep Home)
-        while (NavView.MenuItems.Count > 1)
+        // Find the LibrariesHeader index
+        int headerIndex = -1;
+        for (int i = 0; i < NavView.MenuItems.Count; i++)
         {
-            NavView.MenuItems.RemoveAt(NavView.MenuItems.Count - 1);
+            if (NavView.MenuItems[i] is NavigationViewItemHeader header && header == LibrariesHeader)
+            {
+                headerIndex = i;
+                break;
+            }
         }
 
-        // Add separator if we have libraries
-        if (_viewModel.Libraries.Count > 0)
+        if (headerIndex < 0) return;
+
+        // Remove old library items (between LibrariesHeader and the next header)
+        int removeStart = headerIndex + 1;
+        while (removeStart < NavView.MenuItems.Count &&
+               NavView.MenuItems[removeStart] is not NavigationViewItemHeader)
         {
-            NavView.MenuItems.Add(new NavigationViewItemSeparator());
+            NavView.MenuItems.RemoveAt(removeStart);
         }
 
-        // Add library items
+        // Insert library items after the header
+        int insertIndex = headerIndex + 1;
         foreach (var lib in _viewModel.Libraries)
         {
             var icon = lib.Type switch
             {
-                "movie" => "\uE8B2",   // Video
-                "tv" => "\uE7F4",       // TV
-                "music" => "\uE8D6",    // Music
+                "movies" => "\uE8B2",   // Video
+                "series" => "\uE7F4",   // TV
                 _ => "\uE8F1"           // Library
             };
 
@@ -145,22 +158,32 @@ public sealed partial class MainWindow : Window
                 Tag = lib,
                 Icon = new FontIcon { Glyph = icon }
             };
-            NavView.MenuItems.Add(navItem);
+            NavView.MenuItems.Insert(insertIndex++, navItem);
         }
     }
 
     private void NavView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
     {
-        if (args.InvokedItemContainer is NavigationViewItem item)
+        if (args.InvokedItemContainer is NavigationViewItem item && item.Tag is string tag)
         {
-            if (item.Tag is string tag && tag == "Home")
+            switch (tag)
             {
-                _navigationService.Navigate<HomePage>();
+                case "Home":
+                    _navigationService.Navigate<HomePage>();
+                    break;
+                case "Search":
+                case "Recommendations":
+                case "Favorites":
+                case "Watchlist":
+                case "Collections":
+                case "History":
+                    _navigationService.Navigate<PlaceholderPage>(tag);
+                    break;
             }
-            else if (item.Tag is Library library)
-            {
-                _navigationService.Navigate<LibraryPage>(library);
-            }
+        }
+        else if (args.InvokedItemContainer is NavigationViewItem libItem && libItem.Tag is Library library)
+        {
+            _navigationService.Navigate<LibraryPage>(library);
         }
     }
 

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="ContinuumPlayer.Views.PlaceholderPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Background="{StaticResource AppBackgroundBrush}">
+
+    <StackPanel
+        VerticalAlignment="Center"
+        HorizontalAlignment="Center"
+        Spacing="16">
+
+        <FontIcon
+            x:Name="PageIcon"
+            Glyph="&#xE946;"
+            FontSize="64"
+            Foreground="{StaticResource SecondaryTextBrush}"
+            HorizontalAlignment="Center" />
+
+        <TextBlock
+            x:Name="PageTitle"
+            Text="Coming Soon"
+            Style="{StaticResource TitleTextStyle}"
+            HorizontalAlignment="Center" />
+
+        <TextBlock
+            x:Name="PageSubtitle"
+            Text="This feature is not yet available."
+            Style="{StaticResource SecondaryTextStyle}"
+            FontSize="14"
+            HorizontalAlignment="Center" />
+    </StackPanel>
+</Page>

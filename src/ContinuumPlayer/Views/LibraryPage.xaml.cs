@@ -112,19 +112,46 @@ public sealed partial class LibraryPage : Page
 
     private async void ScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
-        if (e.IsIntermediate) return;
-
         var scrollViewer = (ScrollViewer)sender;
         var verticalOffset = scrollViewer.VerticalOffset;
         var maxOffset = scrollViewer.ScrollableHeight;
 
-        // Load more when within 200px of bottom
-        if (maxOffset > 0 && verticalOffset >= maxOffset - 200)
+        // Load more when within 500px of bottom
+        if (maxOffset > 0 && verticalOffset >= maxOffset - 500)
         {
             if (ViewModel.HasMore && !ViewModel.IsLoading)
             {
                 await ViewModel.LoadMoreCommand.ExecuteAsync(null);
             }
         }
+    }
+
+    private void Tab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
+            return;
+
+        // Reset all tabs to default style
+        var tabs = new[] { RecommendedTab, LibraryTab, CollectionsTab };
+        foreach (var tab in tabs)
+        {
+            tab.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
+            tab.ClearValue(ForegroundProperty);
+            tab.BorderThickness = new Thickness(0);
+        }
+
+        // Highlight the selected tab
+        clickedButton.FontWeight = Microsoft.UI.Text.FontWeights.Bold;
+        clickedButton.Foreground = (Microsoft.UI.Xaml.Media.Brush)Resources["PrimaryTextBrush"]
+            ?? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
+        clickedButton.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Resources["AccentBrush"]
+            ?? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
+        clickedButton.BorderThickness = new Thickness(0, 0, 0, 2);
+
+        // Show/hide content panels
+        FilterBar.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
+        ContentScrollViewer.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
+        RecommendedPanel.Visibility = tag == "Recommended" ? Visibility.Visible : Visibility.Collapsed;
+        CollectionsPanel.Visibility = tag == "Collections" ? Visibility.Visible : Visibility.Collapsed;
     }
 }

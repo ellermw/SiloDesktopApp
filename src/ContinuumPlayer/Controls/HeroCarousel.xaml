@@ -6,7 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Height="450"
+    Height="500"
     Loaded="OnLoaded"
     Unloaded="OnUnloaded">
 
@@ -18,13 +18,25 @@
             HorizontalAlignment="Center"
             VerticalAlignment="Center" />
 
+        <!-- Top gradient for smooth edge -->
+        <Border VerticalAlignment="Top" Height="120">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#80000000" Offset="0.0" />
+                    <GradientStop Color="Transparent" Offset="1.0" />
+                </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+
         <!-- Gradient overlay: transparent to background -->
         <Border>
             <Border.Background>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                     <GradientStop Color="Transparent" Offset="0.0" />
-                    <GradientStop Color="#80000000" Offset="0.5" />
-                    <GradientStop Color="{StaticResource AppBackgroundColor}" Offset="1.0" />
+                    <GradientStop Color="#40000000" Offset="0.3" />
+                    <GradientStop Color="#B0000000" Offset="0.6" />
+                    <GradientStop Color="#0D1117" Offset="0.85" />
+                    <GradientStop Color="#0D1117" Offset="1.0" />
                 </LinearGradientBrush>
             </Border.Background>
         </Border>
@@ -76,10 +88,13 @@
 
             <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,8,0,0">
                 <Button
-                    Content="&#xE768;  Play"
                     Style="{StaticResource AccentButtonStyle}"
-                    FontFamily="Segoe MDL2 Assets"
-                    Padding="20,10" />
+                    Padding="20,10">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE768;" FontSize="16" FontFamily="{ThemeResource SymbolThemeFontFamily}" />
+                        <TextBlock Text="Play" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
             </StackPanel>
         </StackPanel>
 

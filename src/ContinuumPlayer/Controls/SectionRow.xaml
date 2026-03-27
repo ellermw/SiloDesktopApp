@@ -15,20 +15,44 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Section title -->
-        <TextBlock
-            x:Name="SectionTitle"
-            Grid.Row="0"
-            Style="{StaticResource TitleTextStyle}"
-            Margin="0,0,0,12" />
+        <!-- Section title with navigation arrows -->
+        <Grid Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock
+                x:Name="SectionTitle"
+                Style="{StaticResource TitleTextStyle}"
+                VerticalAlignment="Center" />
+            <StackPanel
+                Orientation="Horizontal"
+                HorizontalAlignment="Right"
+                Spacing="4">
+                <Button
+                    x:Name="ScrollLeftBtn"
+                    Style="{StaticResource GhostButtonStyle}"
+                    Width="32" Height="32"
+                    Padding="0"
+                    Click="ScrollLeft_Click">
+                    <FontIcon Glyph="&#xE76B;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                </Button>
+                <Button
+                    x:Name="ScrollRightBtn"
+                    Style="{StaticResource GhostButtonStyle}"
+                    Width="32" Height="32"
+                    Padding="0"
+                    Click="ScrollRight_Click">
+                    <FontIcon Glyph="&#xE76C;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                </Button>
+            </StackPanel>
+        </Grid>
 
         <!-- Horizontal scrolling row of posters -->
         <ScrollViewer
+            x:Name="PosterScrollViewer"
             Grid.Row="1"
-            HorizontalScrollBarVisibility="Auto"
+            HorizontalScrollBarVisibility="Hidden"
             VerticalScrollBarVisibility="Disabled"
-            HorizontalScrollMode="Enabled"
-            VerticalScrollMode="Disabled">
+            HorizontalScrollMode="Auto"
+            VerticalScrollMode="Disabled"
+            PointerWheelChanged="PosterScrollViewer_PointerWheelChanged">
 
             <ItemsRepeater x:Name="ItemsRepeater">
                 <ItemsRepeater.Layout>

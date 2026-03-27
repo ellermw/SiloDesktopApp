@@ -1,3 +1,4 @@
+using Microsoft.UI.Xaml.Input;
 using ContinuumPlayer.Core.Models.Home;
 
 namespace ContinuumPlayer.Controls;
@@ -34,5 +35,23 @@ public sealed partial class SectionRow : UserControl
     {
         SectionTitle.Text = section.Title;
         ItemsRepeater.ItemsSource = section.Items;
+    }
+
+    private void ScrollLeft_Click(object sender, RoutedEventArgs e)
+    {
+        PosterScrollViewer.ChangeView(
+            Math.Max(0, PosterScrollViewer.HorizontalOffset - 500), null, null);
+    }
+
+    private void ScrollRight_Click(object sender, RoutedEventArgs e)
+    {
+        PosterScrollViewer.ChangeView(
+            PosterScrollViewer.HorizontalOffset + 500, null, null);
+    }
+
+    private void PosterScrollViewer_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        // Don't handle mouse wheel events so they bubble up to the parent vertical ScrollViewer
+        e.Handled = false;
     }
 }
