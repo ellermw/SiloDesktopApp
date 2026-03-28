@@ -23,11 +23,15 @@
         </Grid.RowDefinitions>
 
         <!-- Header -->
-        <TextBlock
-            Grid.Row="0"
-            Text="Settings"
-            Style="{StaticResource HeaderTextStyle}"
-            Margin="24,24,24,16" />
+        <StackPanel Grid.Row="0" Margin="24,24,24,8">
+            <TextBlock
+                Text="Settings"
+                Style="{StaticResource HeaderTextStyle}" />
+            <TextBlock
+                Text="Manage your playback preferences, libraries, and display options."
+                Style="{StaticResource SecondaryTextStyle}"
+                Margin="0,4,0,0" />
+        </StackPanel>
 
         <!-- Tab bar -->
         <StackPanel
@@ -106,13 +110,17 @@
             Grid.Row="3"
             Padding="24,0,24,24">
             <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
-                <TextBlock Text="Theme" Style="{StaticResource TitleTextStyle}" />
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="12">
-                        <TextBlock Text="UI Theme" Style="{StaticResource BodyTextStyle}" />
+                <Border Style="{StaticResource CardStyle}" Padding="20">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="UI Theme" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
+                        <TextBlock
+                            Text="Choose a color theme for the application interface."
+                            Style="{StaticResource CaptionTextStyle}"
+                            TextWrapping="Wrap"
+                            Margin="0,0,0,8" />
                         <ComboBox
                             x:Name="ThemeComboBox"
-                            Width="220"
+                            Width="300"
                             SelectionChanged="ThemeComboBox_SelectionChanged" />
                     </StackPanel>
                 </Border>
@@ -126,28 +134,39 @@
             Padding="24,0,24,24"
             Visibility="Collapsed">
             <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
-                <TextBlock Text="Playback" Style="{StaticResource TitleTextStyle}" />
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="16">
+
+                <!-- Quality and Language card -->
+                <Border Style="{StaticResource CardStyle}" Padding="20">
+                    <StackPanel Spacing="20">
                         <StackPanel Spacing="4">
-                            <TextBlock Text="Quality Preference" Style="{StaticResource BodyTextStyle}" />
+                            <TextBlock Text="Video quality" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
+                            <TextBlock
+                                Text="Preferred video quality for playback. Use auto to let the app select the best quality based on your connection."
+                                Style="{StaticResource CaptionTextStyle}"
+                                TextWrapping="Wrap" />
                             <ComboBox
                                 x:Name="QualityComboBox"
-                                Width="220"
+                                Width="300"
+                                Margin="0,8,0,0"
                                 SelectionChanged="QualityComboBox_SelectionChanged">
                                 <ComboBoxItem Content="Auto" Tag="auto" />
-                                <ComboBoxItem Content="1080p" Tag="1080p" />
                                 <ComboBoxItem Content="4K" Tag="4k" />
+                                <ComboBoxItem Content="1080p" Tag="1080p" />
                                 <ComboBoxItem Content="720p" Tag="720p" />
                                 <ComboBoxItem Content="480p" Tag="480p" />
                             </ComboBox>
                         </StackPanel>
 
                         <StackPanel Spacing="4">
-                            <TextBlock Text="Max Playback Quality" Style="{StaticResource BodyTextStyle}" />
+                            <TextBlock Text="Max playback quality" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
+                            <TextBlock
+                                Text="Maximum allowed video quality. Streams above this resolution will be transcoded down."
+                                Style="{StaticResource CaptionTextStyle}"
+                                TextWrapping="Wrap" />
                             <ComboBox
                                 x:Name="MaxQualityComboBox"
-                                Width="220"
+                                Width="300"
+                                Margin="0,8,0,0"
                                 SelectionChanged="MaxQualityComboBox_SelectionChanged">
                                 <ComboBoxItem Content="Auto" Tag="auto" />
                                 <ComboBoxItem Content="4K" Tag="4k" />
@@ -156,20 +175,71 @@
                                 <ComboBoxItem Content="480p" Tag="480p" />
                             </ComboBox>
                         </StackPanel>
+                    </StackPanel>
+                </Border>
 
-                        <ToggleSwitch
-                            x:Name="AutoSkipIntroToggle"
-                            Header="Auto-skip Intro"
-                            IsOn="{x:Bind ViewModel.AutoSkipIntro, Mode=TwoWay}"
-                            OnContent="On"
-                            OffContent="Off" />
+                <!-- Skipping and Next Up card -->
+                <Border Style="{StaticResource CardStyle}" Padding="20">
+                    <StackPanel Spacing="20">
+                        <!-- Skip intro toggle (right-aligned) -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Skip the intro automatically" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
+                                <TextBlock
+                                    Text="Automatically skip opening intros when the app detects them."
+                                    Style="{StaticResource CaptionTextStyle}"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="AutoSkipIntroToggle"
+                                Grid.Column="1"
+                                IsOn="{x:Bind ViewModel.AutoSkipIntro, Mode=TwoWay}"
+                                VerticalAlignment="Center"
+                                OnContent="" OffContent="" />
+                        </Grid>
 
-                        <ToggleSwitch
-                            x:Name="AutoSkipCreditsToggle"
-                            Header="Auto-skip Credits"
-                            IsOn="{x:Bind ViewModel.AutoSkipCredits, Mode=TwoWay}"
-                            OnContent="On"
-                            OffContent="Off" />
+                        <!-- Skip credits toggle (right-aligned) -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Skip end credits automatically" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
+                                <TextBlock
+                                    Text="Automatically skip end credits and proceed to the next episode."
+                                    Style="{StaticResource CaptionTextStyle}"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="AutoSkipCreditsToggle"
+                                Grid.Column="1"
+                                IsOn="{x:Bind ViewModel.AutoSkipCredits, Mode=TwoWay}"
+                                VerticalAlignment="Center"
+                                OnContent="" OffContent="" />
+                        </Grid>
+
+                        <!-- Next up mode dropdown -->
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Next up episodes mode" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
+                            <TextBlock
+                                Text="How next-up episode suggestions are displayed. Combined shows them in a single list, Separate groups by series."
+                                Style="{StaticResource CaptionTextStyle}"
+                                TextWrapping="Wrap" />
+                            <ComboBox
+                                x:Name="NextUpModeComboBox"
+                                Width="300"
+                                Margin="0,8,0,0"
+                                SelectionChanged="NextUpModeComboBox_SelectionChanged">
+                                <ComboBoxItem Content="With Continue Watching" Tag="combined" />
+                                <ComboBoxItem Content="Separate" Tag="separate" />
+                                <ComboBoxItem Content="None" Tag="none" />
+                            </ComboBox>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
             </StackPanel>
@@ -182,27 +252,43 @@
             Padding="24,0,24,24"
             Visibility="Collapsed">
             <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
-                <TextBlock Text="Library Restrictions" Style="{StaticResource TitleTextStyle}" />
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="16">
-                        <ToggleSwitch
-                            x:Name="LibraryRestrictionsToggle"
-                            Header="Library Restrictions Enabled"
-                            IsOn="{x:Bind ViewModel.LibraryRestrictionsEnabled, Mode=TwoWay}"
-                            OnContent="On"
-                            OffContent="Off" />
+                <Border Style="{StaticResource CardStyle}" Padding="20">
+                    <StackPanel Spacing="20">
+                        <!-- Library restrictions toggle (right-aligned) -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Enable library restrictions" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
+                                <TextBlock
+                                    Text="When enabled, only the specified libraries will be visible to this profile."
+                                    Style="{StaticResource CaptionTextStyle}"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="LibraryRestrictionsToggle"
+                                Grid.Column="1"
+                                IsOn="{x:Bind ViewModel.LibraryRestrictionsEnabled, Mode=TwoWay}"
+                                VerticalAlignment="Center"
+                                OnContent="" OffContent="" />
+                        </Grid>
 
+                        <!-- Allowed library IDs -->
                         <StackPanel Spacing="4">
-                            <TextBlock Text="Allowed Library IDs (comma-separated)" Style="{StaticResource BodyTextStyle}" />
+                            <TextBlock Text="Allowed library IDs" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
+                            <TextBlock
+                                Text="Comma-separated list of library IDs this profile can access. Leave blank to allow all libraries."
+                                Style="{StaticResource CaptionTextStyle}"
+                                TextWrapping="Wrap" />
                             <TextBox
                                 x:Name="AllowedLibraryIdsBox"
                                 Style="{StaticResource DarkTextBoxStyle}"
                                 Text="{x:Bind ViewModel.AllowedLibraryIdsText, Mode=TwoWay}"
                                 PlaceholderText="e.g. 1, 2, 3"
-                                Width="300" />
-                            <TextBlock
-                                Text="Leave blank to allow all libraries"
-                                Style="{StaticResource CaptionTextStyle}" />
+                                Width="300"
+                                Margin="0,8,0,0" />
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -216,33 +302,47 @@
             Padding="24,0,24,24"
             Visibility="Collapsed">
             <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
-                <TextBlock Text="Subtitles" Style="{StaticResource TitleTextStyle}" />
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="16">
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="Subtitle Language" Style="{StaticResource BodyTextStyle}" />
-                            <ComboBox
-                                x:Name="SubtitleLanguageComboBox"
-                                Width="220"
-                                SelectionChanged="SubtitleLanguageComboBox_SelectionChanged">
-                                <ComboBoxItem Content="English" Tag="en" />
-                                <ComboBoxItem Content="Spanish" Tag="es" />
-                                <ComboBoxItem Content="French" Tag="fr" />
-                                <ComboBoxItem Content="German" Tag="de" />
-                                <ComboBoxItem Content="Japanese" Tag="ja" />
-                                <ComboBoxItem Content="Korean" Tag="ko" />
-                                <ComboBoxItem Content="Chinese" Tag="zh" />
-                                <ComboBoxItem Content="Portuguese" Tag="pt" />
-                                <ComboBoxItem Content="Italian" Tag="it" />
-                                <ComboBoxItem Content="None" Tag="" />
-                            </ComboBox>
-                        </StackPanel>
 
+                <!-- Subtitle language card -->
+                <Border Style="{StaticResource CardStyle}" Padding="20">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Subtitle language" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
+                        <TextBlock
+                            Text="Select the preferred language for subtitles. Subtitles will be automatically selected in this language when available."
+                            Style="{StaticResource CaptionTextStyle}"
+                            TextWrapping="Wrap" />
+                        <ComboBox
+                            x:Name="SubtitleLanguageComboBox"
+                            Width="300"
+                            Margin="0,8,0,0"
+                            SelectionChanged="SubtitleLanguageComboBox_SelectionChanged">
+                            <ComboBoxItem Content="English" Tag="en" />
+                            <ComboBoxItem Content="Spanish" Tag="es" />
+                            <ComboBoxItem Content="French" Tag="fr" />
+                            <ComboBoxItem Content="German" Tag="de" />
+                            <ComboBoxItem Content="Japanese" Tag="ja" />
+                            <ComboBoxItem Content="Korean" Tag="ko" />
+                            <ComboBoxItem Content="Chinese" Tag="zh" />
+                            <ComboBoxItem Content="Portuguese" Tag="pt" />
+                            <ComboBoxItem Content="Italian" Tag="it" />
+                            <ComboBoxItem Content="None" Tag="" />
+                        </ComboBox>
+                    </StackPanel>
+                </Border>
+
+                <!-- Subtitle behavior card -->
+                <Border Style="{StaticResource CardStyle}" Padding="20">
+                    <StackPanel Spacing="20">
                         <StackPanel Spacing="4">
-                            <TextBlock Text="Subtitle Mode" Style="{StaticResource BodyTextStyle}" />
+                            <TextBlock Text="Subtitle behavior" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
+                            <TextBlock
+                                Text="Control when subtitles are shown. 'Always' shows subtitles on every video, 'Auto' shows them only when the audio language differs from your preferred language."
+                                Style="{StaticResource CaptionTextStyle}"
+                                TextWrapping="Wrap" />
                             <ComboBox
                                 x:Name="SubtitleModeComboBox"
-                                Width="220"
+                                Width="300"
+                                Margin="0,8,0,0"
                                 SelectionChanged="SubtitleModeComboBox_SelectionChanged">
                                 <ComboBoxItem Content="Always" Tag="always" />
                                 <ComboBoxItem Content="Auto" Tag="auto" />
@@ -250,12 +350,26 @@
                             </ComboBox>
                         </StackPanel>
 
-                        <ToggleSwitch
-                            x:Name="ForcedSubtitlesToggle"
-                            Header="Show Forced Subtitles"
-                            IsOn="{x:Bind ViewModel.ShowForcedSubtitles, Mode=TwoWay}"
-                            OnContent="On"
-                            OffContent="Off" />
+                        <!-- Forced subtitles toggle (right-aligned) -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Show forced subtitles" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
+                                <TextBlock
+                                    Text="Display forced subtitles for foreign language dialogue even when subtitles are off."
+                                    Style="{StaticResource CaptionTextStyle}"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="ForcedSubtitlesToggle"
+                                Grid.Column="1"
+                                IsOn="{x:Bind ViewModel.ShowForcedSubtitles, Mode=TwoWay}"
+                                VerticalAlignment="Center"
+                                OnContent="" OffContent="" />
+                        </Grid>
                     </StackPanel>
                 </Border>
             </StackPanel>
@@ -268,32 +382,22 @@
             Padding="24,0,24,24"
             Visibility="Collapsed">
             <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
-                <TextBlock Text="Home Screen" Style="{StaticResource TitleTextStyle}" />
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="16">
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="Next Up Mode" Style="{StaticResource BodyTextStyle}" />
-                            <ComboBox
-                                x:Name="NextUpModeComboBox"
-                                Width="220"
-                                SelectionChanged="NextUpModeComboBox_SelectionChanged">
-                                <ComboBoxItem Content="Combined" Tag="combined" />
-                                <ComboBoxItem Content="Separate" Tag="separate" />
-                                <ComboBoxItem Content="None" Tag="none" />
-                            </ComboBox>
-                        </StackPanel>
-
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="Section Overrides (read-only)" Style="{StaticResource BodyTextStyle}" />
-                            <TextBox
-                                Style="{StaticResource DarkTextBoxStyle}"
-                                Text="{x:Bind ViewModel.SectionOverrides, Mode=OneWay}"
-                                IsReadOnly="True"
-                                TextWrapping="Wrap"
-                                AcceptsReturn="True"
-                                MinHeight="100"
-                                MaxHeight="300" />
-                        </StackPanel>
+                <Border Style="{StaticResource CardStyle}" Padding="20">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Section overrides" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
+                        <TextBlock
+                            Text="Advanced section ordering configuration. This is managed by the server and shown here for reference."
+                            Style="{StaticResource CaptionTextStyle}"
+                            TextWrapping="Wrap"
+                            Margin="0,0,0,8" />
+                        <TextBox
+                            Style="{StaticResource DarkTextBoxStyle}"
+                            Text="{x:Bind ViewModel.SectionOverrides, Mode=OneWay}"
+                            IsReadOnly="True"
+                            TextWrapping="Wrap"
+                            AcceptsReturn="True"
+                            MinHeight="100"
+                            MaxHeight="300" />
                     </StackPanel>
                 </Border>
             </StackPanel>

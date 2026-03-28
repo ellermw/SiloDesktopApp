@@ -136,6 +136,31 @@ public partial class ProfileSelectViewModel : ObservableObject
         SelectedProfile = null;
     }
 
+    [RelayCommand]
+    private async Task CreateProfileAsync(string name)
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+
+        try
+        {
+            var profile = await _authApi.CreateProfileAsync(name);
+            Profiles.Add(profile);
+        }
+        catch (ApiException ex)
+        {
+            ErrorMessage = $"Failed to create profile: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to create profile: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
     private async Task ActivateProfileAsync(Profile profile, string? profileToken)
     {
         _authService.SelectProfile(profile.Id, profileToken);

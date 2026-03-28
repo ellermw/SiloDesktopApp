@@ -13,21 +13,22 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
+        <converters:StringToInitialConverter x:Key="StringToInitial" />
     </Page.Resources>
 
-    <Grid HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="600">
-        <StackPanel Spacing="24">
-            <!-- Branding -->
-            <TextBlock
-                Text="Continuum"
-                FontSize="{StaticResource FontSizeDisplay}"
-                FontWeight="Bold"
-                Foreground="{StaticResource AccentBrush}"
-                HorizontalAlignment="Center" />
+    <Grid>
+        <StackPanel
+            Spacing="32"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            MaxWidth="700">
 
+            <!-- Title -->
             <TextBlock
                 Text="Who's watching?"
-                Style="{StaticResource TitleTextStyle}"
+                FontSize="{StaticResource FontSizeDisplay}"
+                FontWeight="Bold"
+                Foreground="{StaticResource PrimaryTextBrush}"
                 HorizontalAlignment="Center" />
 
             <!-- Error message -->
@@ -45,14 +46,18 @@
                 HorizontalAlignment="Center"
                 Width="40" Height="40" />
 
-            <!-- Profile grid (hidden when PIN entry is shown) -->
-            <GridView
+            <!-- Profile cards (hidden when PIN entry is shown) -->
+            <ItemsControl
                 x:Name="ProfileGrid"
                 ItemsSource="{x:Bind ViewModel.Profiles, Mode=OneWay}"
-                SelectionMode="None"
-                HorizontalAlignment="Center"
-                Visibility="{x:Bind ViewModel.IsPinRequired, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
-                <GridView.ItemTemplate>
+                Visibility="{x:Bind ViewModel.IsPinRequired, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
+                HorizontalAlignment="Center">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="20" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
                     <DataTemplate>
                         <Button
                             Click="ProfileButton_Click"
@@ -60,20 +65,19 @@
                             Background="Transparent"
                             BorderThickness="0"
                             Padding="0"
-                            Margin="8">
+                            Margin="0">
                             <StackPanel
                                 Spacing="8"
-                                Width="120"
                                 HorizontalAlignment="Center">
                                 <Border
-                                    Width="80" Height="80"
-                                    CornerRadius="40"
-                                    Background="{StaticResource SurfaceBrush}"
-                                    HorizontalAlignment="Center">
-                                    <FontIcon
-                                        Glyph="&#xE77B;"
-                                        FontSize="32"
-                                        Foreground="{StaticResource SecondaryTextBrush}"
+                                    Width="120" Height="120"
+                                    CornerRadius="12"
+                                    Background="{StaticResource CardBackgroundBrush}">
+                                    <TextBlock
+                                        Text="{Binding Name, Converter={StaticResource StringToInitial}}"
+                                        FontSize="36"
+                                        FontWeight="Bold"
+                                        Foreground="{StaticResource AccentBrush}"
                                         HorizontalAlignment="Center"
                                         VerticalAlignment="Center" />
                                 </Border>
@@ -81,12 +85,53 @@
                                     Text="{Binding Name}"
                                     Style="{StaticResource BodyTextStyle}"
                                     HorizontalAlignment="Center"
-                                    TextTrimming="CharacterEllipsis" />
+                                    TextTrimming="CharacterEllipsis"
+                                    MaxWidth="120" />
                             </StackPanel>
                         </Button>
                     </DataTemplate>
-                </GridView.ItemTemplate>
-            </GridView>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Add Profile card (below profiles, hidden when PIN shown) -->
+            <Button
+                x:Name="AddProfileButton"
+                Click="AddProfileButton_Click"
+                Background="Transparent"
+                BorderThickness="0"
+                Padding="0"
+                HorizontalAlignment="Center"
+                Visibility="{x:Bind ViewModel.IsPinRequired, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
+                <StackPanel Spacing="8" HorizontalAlignment="Center">
+                    <Border
+                        Width="120" Height="120"
+                        CornerRadius="12"
+                        Background="{StaticResource SurfaceBrush}"
+                        BorderBrush="{StaticResource BorderBrush}"
+                        BorderThickness="1">
+                        <FontIcon
+                            Glyph="&#xE710;"
+                            FontSize="32"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock
+                        Text="Add Profile"
+                        Style="{StaticResource BodyTextStyle}"
+                        HorizontalAlignment="Center"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+            </Button>
+
+            <!-- Sign out link -->
+            <HyperlinkButton
+                x:Name="SignOutButton"
+                Content="Sign out"
+                Click="SignOutButton_Click"
+                HorizontalAlignment="Center"
+                Foreground="{StaticResource SecondaryTextBrush}"
+                Visibility="{x:Bind ViewModel.IsPinRequired, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}" />
 
             <!-- PIN entry -->
             <Border

@@ -18,6 +18,7 @@ public sealed partial class LibraryPage : Page
     {
         ViewModel = App.Services.GetRequiredService<LibraryViewModel>();
         this.InitializeComponent();
+        Helpers.SmoothScrollHelper.Attach(ContentScrollViewer);
 
         PosterRepeater.ItemsSource = ViewModel.Items;
 
@@ -58,10 +59,18 @@ public sealed partial class LibraryPage : Page
             _suppressFilterEvents = false;
             _recommendedLoaded = false;
 
-            await ViewModel.LoadCommand.ExecuteAsync(null);
+            // Ensure Recommended panel is visible before loading data (default tab)
+            RecommendedPanel.Visibility = Visibility.Visible;
+            FilterBar.Visibility = Visibility.Collapsed;
+            ContentScrollViewer.Visibility = Visibility.Collapsed;
+            CollectionsPanel.Visibility = Visibility.Collapsed;
 
-            // After first load, keep filling until viewport is full
-            await FillViewportAsync();
+            // Load recommendations first since Recommended is the default tab
+            if (!_recommendedLoaded)
+                await LoadRecommendationsAsync();
+
+            // Load library items in background for when user switches tabs
+            await ViewModel.LoadCommand.ExecuteAsync(null);
         }
     }
 

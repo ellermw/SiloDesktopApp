@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.UI.Xaml.Input;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models;
 using ContinuumPlayer.Core.Models.Catalog;
@@ -100,11 +99,49 @@ public sealed partial class MainWindow : Window
         NavView.IsPaneVisible = true;
         _ = _viewModel.LoadLibrariesCommand.ExecuteAsync(null);
 
+        // Update profile display in the sidebar footer
+        UpdateProfileDisplay();
+
         // Watch for library changes to update nav (marshal to UI thread)
         _viewModel.Libraries.CollectionChanged += (_, _) =>
         {
             DispatcherQueue.TryEnqueue(() => UpdateLibraryNavItems());
         };
+    }
+
+    private void UpdateProfileDisplay()
+    {
+        var profileId = _authService.SelectedProfileId;
+        if (!string.IsNullOrEmpty(profileId))
+        {
+            // Try to load the profile name from the API asynchronously
+            _ = LoadProfileNameAsync(profileId);
+        }
+    }
+
+    private async Task LoadProfileNameAsync(string profileId)
+    {
+        try
+        {
+            var authApi = App.Services.GetRequiredService<Core.Api.AuthApi>();
+            var response = await authApi.GetProfilesAsync();
+            var profile = response.Profiles.FirstOrDefault(p => p.Id == profileId);
+            if (profile != null)
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    ProfileNameText.Text = profile.Name;
+                    ProfileInitialText.Text = !string.IsNullOrEmpty(profile.Name)
+                        ? profile.Name[0].ToString().ToUpperInvariant()
+                        : "?";
+                    LogoutMenuItem.Text = $"Logout ({profile.Name})";
+                });
+            }
+        }
+        catch
+        {
+            // Non-critical, leave default text
+        }
     }
 
     public void HideMainNavigation()
@@ -203,10 +240,17 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ProfileNavItem_Tapped(object sender, TappedRoutedEventArgs e)
+    private void SwitchProfile_Click(object sender, RoutedEventArgs e)
     {
         // Navigate to profile select, keeping existing auth
         HideMainNavigation();
         _navigationService.Navigate<ProfileSelectPage>("switch");
+    }
+
+    private void Logout_Click(object sender, RoutedEventArgs e)
+    {
+        _authService.Logout();
+        HideMainNavigation();
+        _navigationService.Navigate<ServerSelectPage>();
     }
 }

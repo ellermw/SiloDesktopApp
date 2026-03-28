@@ -15,4 +15,7 @@ public class AuthApi(ContinuumApiClient client)
 
     public Task<VerifyPinResponse> VerifyPinAsync(string profileId, string pin, CancellationToken ct = default)
         => client.PostAsync<VerifyPinResponse>($"/api/v1/profiles/{profileId}/verify-pin", new VerifyPinRequest { Pin = pin }, ct);
+
+    public Task<Profile> CreateProfileAsync(string name, CancellationToken ct = default)
+        => client.PostAsync<Profile>("/api/v1/profiles", new CreateProfileRequest { Name = name }, ct);
 }

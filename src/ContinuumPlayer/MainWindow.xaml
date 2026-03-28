@@ -81,15 +81,57 @@
 
             <NavigationView.PaneFooter>
                 <StackPanel Margin="0,0,0,8">
-                    <NavigationViewItem
-                        x:Name="ProfileNavItem"
-                        Content="Switch Profile"
-                        Tag="SwitchProfile"
-                        Tapped="ProfileNavItem_Tapped">
-                        <NavigationViewItem.Icon>
-                            <FontIcon Glyph="&#xE77B;" />
-                        </NavigationViewItem.Icon>
-                    </NavigationViewItem>
+                    <Button
+                        x:Name="ProfileFooterButton"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Left"
+                        Padding="16,10"
+                        Margin="4,0">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <Border
+                                Width="32" Height="32"
+                                CornerRadius="6"
+                                Background="{StaticResource CardBackgroundBrush}">
+                                <TextBlock
+                                    x:Name="ProfileInitialText"
+                                    Text="?"
+                                    FontSize="14"
+                                    FontWeight="Bold"
+                                    Foreground="{StaticResource AccentBrush}"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center" />
+                            </Border>
+                            <TextBlock
+                                x:Name="ProfileNameText"
+                                Text="Profile"
+                                Foreground="{StaticResource PrimaryTextBrush}"
+                                VerticalAlignment="Center"
+                                FontSize="14" />
+                        </StackPanel>
+                        <Button.Flyout>
+                            <MenuFlyout Placement="Top">
+                                <MenuFlyoutItem
+                                    x:Name="SwitchProfileMenuItem"
+                                    Text="Switch Profile"
+                                    Click="SwitchProfile_Click">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE748;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutSeparator />
+                                <MenuFlyoutItem
+                                    x:Name="LogoutMenuItem"
+                                    Text="Logout"
+                                    Click="Logout_Click">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE711;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
                 </StackPanel>
             </NavigationView.PaneFooter>
 
