@@ -72,6 +72,16 @@ public sealed partial class MainWindow : Window
                         if (_authService.RefreshToken != null)
                             _credentialStore.SaveCredential(server.Url, "refresh_token", _authService.RefreshToken);
 
+                        // Restore user info from saved settings (refresh doesn't return user)
+                        if (!string.IsNullOrEmpty(settings.LastUsername))
+                        {
+                            _authService.SetCurrentUser(new Core.Models.Auth.UserInfo
+                            {
+                                Username = settings.LastUsername,
+                                Role = settings.LastUserRole ?? "user"
+                            });
+                        }
+
                         // Auto-select last profile if available
                         if (!string.IsNullOrEmpty(settings.LastProfileId))
                         {
@@ -101,6 +111,10 @@ public sealed partial class MainWindow : Window
 
         // Update profile display in the sidebar footer
         UpdateProfileDisplay();
+
+        // Show Admin button if user is admin
+        AdminButton.Visibility = _authService.CurrentUser?.Role == "admin"
+            ? Visibility.Visible : Visibility.Collapsed;
 
         // Watch for library changes to update nav (marshal to UI thread)
         _viewModel.Libraries.CollectionChanged += (_, _) =>
@@ -155,7 +169,7 @@ public sealed partial class MainWindow : Window
         NavView.SelectedItem = HomeNavItem;
     }
 
-    private void UpdateLibraryNavItems()
+    public void UpdateLibraryNavItems()
     {
         // Find the LibrariesHeader index
         int headerIndex = -1;
@@ -178,10 +192,16 @@ public sealed partial class MainWindow : Window
             NavView.MenuItems.RemoveAt(removeStart);
         }
 
+        // Filter out hidden libraries
+        var appSettings = _settingsService.Load();
+        var hiddenIds = new HashSet<int>(appSettings.HiddenLibraryIds);
+
         // Insert library items after the header
         int insertIndex = headerIndex + 1;
         foreach (var lib in _viewModel.Libraries)
         {
+            if (hiddenIds.Contains(lib.Id)) continue;
+
             var icon = lib.Type switch
             {
                 "movies" => "\uE8B2",   // Video
@@ -202,6 +222,11 @@ public sealed partial class MainWindow : Window
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         _navigationService.Navigate<SettingsPage>();
+    }
+
+    private void Admin_Click(object sender, RoutedEventArgs e)
+    {
+        _navigationService.Navigate<Views.Admin.AdminShellPage>();
     }
 
     private void NavView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
