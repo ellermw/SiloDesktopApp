@@ -117,7 +117,7 @@ public sealed partial class AdminShellPage : Page
     private void NavScheduledTasks_Click(object sender, RoutedEventArgs e)
     {
         SetActiveNavItem(NavScheduledTasks);
-        AdminContentFrame.Navigate(typeof(PlaceholderPage), "Scheduled Tasks");
+        AdminContentFrame.Navigate(typeof(AdminTasksPage));
     }
 
     private void NavNodes_Click(object sender, RoutedEventArgs e)
