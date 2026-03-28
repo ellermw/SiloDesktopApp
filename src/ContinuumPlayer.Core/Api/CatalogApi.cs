@@ -8,6 +8,9 @@ public class CatalogApi(ContinuumApiClient client)
     public Task<List<Library>> GetLibrariesAsync(CancellationToken ct = default)
         => client.GetAsync<List<Library>>("/api/v1/user/libraries", ct);
 
+    public Task<HomeSectionsResponse> GetLibrarySectionsAsync(int libraryId, CancellationToken ct = default)
+        => client.GetAsync<HomeSectionsResponse>($"/api/v1/library/{libraryId}/sections", ct);
+
     public Task<CatalogResponse> GetCatalogAsync(
         int libraryId,
         string? sort = null, string? order = null,
@@ -30,8 +33,7 @@ public class CatalogApi(ContinuumApiClient client)
 
     public Task<CatalogResponse> SearchAsync(string query, int limit = 40, CancellationToken ct = default)
     {
-        var q = $"/api/v1/catalog?q={Uri.EscapeDataString(query)}&limit={limit}";
-        return client.GetAsync<CatalogResponse>(q, ct);
+        return client.PostAsync<CatalogResponse>("/api/v1/catalog/query", new { q = query, limit }, ct);
     }
 
     public Task<MediaItemDetail> GetItemDetailAsync(string contentId, CancellationToken ct = default)

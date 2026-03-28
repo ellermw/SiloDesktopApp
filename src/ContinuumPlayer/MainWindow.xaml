@@ -13,7 +13,7 @@
             x:Name="NavView"
             IsBackButtonVisible="Collapsed"
             IsPaneToggleButtonVisible="False"
-            IsSettingsVisible="False"
+            IsSettingsVisible="True"
             OpenPaneLength="{StaticResource SidebarWidth}"
             PaneDisplayMode="Left"
             Background="{StaticResource AppBackgroundBrush}"
@@ -36,6 +36,45 @@
                     Tag="Home">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE80F;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+
+                <!-- Libraries inserted dynamically after this point -->
+                <NavigationViewItemHeader x:Name="LibrariesHeader" Content="Libraries" />
+
+                <!-- Discover section -->
+                <NavigationViewItemHeader Content="Discover" />
+                <NavigationViewItem Content="Search" Tag="Search">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE721;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Recommendations" Tag="Recommendations">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE735;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+
+                <!-- Your Stuff section -->
+                <NavigationViewItemHeader Content="Your Stuff" />
+                <NavigationViewItem Content="Favorites" Tag="Favorites">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE734;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Watchlist" Tag="Watchlist">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE8B7;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Collections" Tag="Collections">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE8FD;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="History" Tag="History">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE81C;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>

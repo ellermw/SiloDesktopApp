@@ -67,6 +67,7 @@ public partial class App : Application
         services.AddSingleton<AuthApi>(sp => new AuthApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddSingleton<HomeApi>(sp => new HomeApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddSingleton<CatalogApi>(sp => new CatalogApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<SettingsApi>(sp => new SettingsApi(sp.GetRequiredService<ContinuumApiClient>()));
 
         // Auth service
         services.AddSingleton<AuthService>(sp => new AuthService(
@@ -92,6 +93,7 @@ public partial class App : Application
         services.AddTransient<WatchlistViewModel>();
         services.AddTransient<HistoryViewModel>();
         services.AddTransient<RecommendationsViewModel>();
+        services.AddTransient<SettingsViewModel>();
 
         return services.BuildServiceProvider();
     }

@@ -1,0 +1,307 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="ContinuumPlayer.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:converters="using:ContinuumPlayer.Converters"
+    mc:Ignorable="d"
+    Background="{StaticResource AppBackgroundBrush}">
+
+    <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:NullToVisibilityConverter x:Key="NullToVis" />
+    </Page.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <TextBlock
+            Grid.Row="0"
+            Text="Settings"
+            Style="{StaticResource HeaderTextStyle}"
+            Margin="24,24,24,16" />
+
+        <!-- Tab bar -->
+        <StackPanel
+            Grid.Row="1"
+            Orientation="Horizontal"
+            Spacing="4"
+            Margin="24,0,24,16">
+            <Button
+                x:Name="AppearanceTab"
+                Content="Appearance"
+                Style="{StaticResource GhostButtonStyle}"
+                Click="Tab_Click"
+                Tag="Appearance"
+                Padding="16,8"
+                FontSize="14"
+                FontWeight="Bold"
+                Foreground="{StaticResource PrimaryTextBrush}"
+                BorderBrush="{StaticResource AccentBrush}"
+                BorderThickness="0,0,0,2" />
+            <Button
+                x:Name="PlaybackTab"
+                Content="Playback"
+                Style="{StaticResource GhostButtonStyle}"
+                Click="Tab_Click"
+                Tag="Playback"
+                Padding="16,8"
+                FontSize="14" />
+            <Button
+                x:Name="LibrariesTab"
+                Content="Libraries"
+                Style="{StaticResource GhostButtonStyle}"
+                Click="Tab_Click"
+                Tag="Libraries"
+                Padding="16,8"
+                FontSize="14" />
+            <Button
+                x:Name="SubtitlesTab"
+                Content="Subtitles"
+                Style="{StaticResource GhostButtonStyle}"
+                Click="Tab_Click"
+                Tag="Subtitles"
+                Padding="16,8"
+                FontSize="14" />
+            <Button
+                x:Name="HomeScreenTab"
+                Content="Home Screen"
+                Style="{StaticResource GhostButtonStyle}"
+                Click="Tab_Click"
+                Tag="HomeScreen"
+                Padding="16,8"
+                FontSize="14" />
+        </StackPanel>
+
+        <!-- Status / Error bar -->
+        <StackPanel Grid.Row="2" Margin="24,0,24,8">
+            <ProgressRing
+                IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                HorizontalAlignment="Left"
+                Width="24" Height="24" />
+            <TextBlock
+                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
+                Foreground="{StaticResource ErrorBrush}"
+                Style="{StaticResource CaptionTextStyle}" />
+            <TextBlock
+                Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
+                Visibility="{x:Bind ViewModel.StatusMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
+                Foreground="{StaticResource AccentBrush}"
+                Style="{StaticResource CaptionTextStyle}" />
+        </StackPanel>
+
+        <!-- ===== Appearance Panel ===== -->
+        <ScrollViewer
+            x:Name="AppearancePanel"
+            Grid.Row="3"
+            Padding="24,0,24,24">
+            <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
+                <TextBlock Text="Theme" Style="{StaticResource TitleTextStyle}" />
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="UI Theme" Style="{StaticResource BodyTextStyle}" />
+                        <ComboBox
+                            x:Name="ThemeComboBox"
+                            Width="220"
+                            SelectionChanged="ThemeComboBox_SelectionChanged">
+                            <ComboBoxItem Content="Cobalt Studio" Tag="cobalt-studio" />
+                            <ComboBoxItem Content="Dark" Tag="dark" />
+                            <ComboBoxItem Content="Light" Tag="light" />
+                            <ComboBoxItem Content="OLED" Tag="oled" />
+                        </ComboBox>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ===== Playback Panel ===== -->
+        <ScrollViewer
+            x:Name="PlaybackPanel"
+            Grid.Row="3"
+            Padding="24,0,24,24"
+            Visibility="Collapsed">
+            <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
+                <TextBlock Text="Playback" Style="{StaticResource TitleTextStyle}" />
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="16">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Quality Preference" Style="{StaticResource BodyTextStyle}" />
+                            <ComboBox
+                                x:Name="QualityComboBox"
+                                Width="220"
+                                SelectionChanged="QualityComboBox_SelectionChanged">
+                                <ComboBoxItem Content="Auto" Tag="auto" />
+                                <ComboBoxItem Content="1080p" Tag="1080p" />
+                                <ComboBoxItem Content="4K" Tag="4k" />
+                                <ComboBoxItem Content="720p" Tag="720p" />
+                                <ComboBoxItem Content="480p" Tag="480p" />
+                            </ComboBox>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Max Playback Quality" Style="{StaticResource BodyTextStyle}" />
+                            <ComboBox
+                                x:Name="MaxQualityComboBox"
+                                Width="220"
+                                SelectionChanged="MaxQualityComboBox_SelectionChanged">
+                                <ComboBoxItem Content="Auto" Tag="auto" />
+                                <ComboBoxItem Content="4K" Tag="4k" />
+                                <ComboBoxItem Content="1080p" Tag="1080p" />
+                                <ComboBoxItem Content="720p" Tag="720p" />
+                                <ComboBoxItem Content="480p" Tag="480p" />
+                            </ComboBox>
+                        </StackPanel>
+
+                        <ToggleSwitch
+                            x:Name="AutoSkipIntroToggle"
+                            Header="Auto-skip Intro"
+                            IsOn="{x:Bind ViewModel.AutoSkipIntro, Mode=TwoWay}"
+                            OnContent="On"
+                            OffContent="Off" />
+
+                        <ToggleSwitch
+                            x:Name="AutoSkipCreditsToggle"
+                            Header="Auto-skip Credits"
+                            IsOn="{x:Bind ViewModel.AutoSkipCredits, Mode=TwoWay}"
+                            OnContent="On"
+                            OffContent="Off" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ===== Libraries Panel ===== -->
+        <ScrollViewer
+            x:Name="LibrariesPanel"
+            Grid.Row="3"
+            Padding="24,0,24,24"
+            Visibility="Collapsed">
+            <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
+                <TextBlock Text="Library Restrictions" Style="{StaticResource TitleTextStyle}" />
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="16">
+                        <ToggleSwitch
+                            x:Name="LibraryRestrictionsToggle"
+                            Header="Library Restrictions Enabled"
+                            IsOn="{x:Bind ViewModel.LibraryRestrictionsEnabled, Mode=TwoWay}"
+                            OnContent="On"
+                            OffContent="Off" />
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Allowed Library IDs (comma-separated)" Style="{StaticResource BodyTextStyle}" />
+                            <TextBox
+                                x:Name="AllowedLibraryIdsBox"
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                Text="{x:Bind ViewModel.AllowedLibraryIdsText, Mode=TwoWay}"
+                                PlaceholderText="e.g. 1, 2, 3"
+                                Width="300" />
+                            <TextBlock
+                                Text="Leave blank to allow all libraries"
+                                Style="{StaticResource CaptionTextStyle}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ===== Subtitles Panel ===== -->
+        <ScrollViewer
+            x:Name="SubtitlesPanel"
+            Grid.Row="3"
+            Padding="24,0,24,24"
+            Visibility="Collapsed">
+            <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
+                <TextBlock Text="Subtitles" Style="{StaticResource TitleTextStyle}" />
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="16">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Subtitle Language" Style="{StaticResource BodyTextStyle}" />
+                            <ComboBox
+                                x:Name="SubtitleLanguageComboBox"
+                                Width="220"
+                                SelectionChanged="SubtitleLanguageComboBox_SelectionChanged">
+                                <ComboBoxItem Content="English" Tag="en" />
+                                <ComboBoxItem Content="Spanish" Tag="es" />
+                                <ComboBoxItem Content="French" Tag="fr" />
+                                <ComboBoxItem Content="German" Tag="de" />
+                                <ComboBoxItem Content="Japanese" Tag="ja" />
+                                <ComboBoxItem Content="Korean" Tag="ko" />
+                                <ComboBoxItem Content="Chinese" Tag="zh" />
+                                <ComboBoxItem Content="Portuguese" Tag="pt" />
+                                <ComboBoxItem Content="Italian" Tag="it" />
+                                <ComboBoxItem Content="None" Tag="" />
+                            </ComboBox>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Subtitle Mode" Style="{StaticResource BodyTextStyle}" />
+                            <ComboBox
+                                x:Name="SubtitleModeComboBox"
+                                Width="220"
+                                SelectionChanged="SubtitleModeComboBox_SelectionChanged">
+                                <ComboBoxItem Content="Always" Tag="always" />
+                                <ComboBoxItem Content="Auto" Tag="auto" />
+                                <ComboBoxItem Content="None" Tag="none" />
+                            </ComboBox>
+                        </StackPanel>
+
+                        <ToggleSwitch
+                            x:Name="ForcedSubtitlesToggle"
+                            Header="Show Forced Subtitles"
+                            IsOn="{x:Bind ViewModel.ShowForcedSubtitles, Mode=TwoWay}"
+                            OnContent="On"
+                            OffContent="Off" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ===== Home Screen Panel ===== -->
+        <ScrollViewer
+            x:Name="HomeScreenPanel"
+            Grid.Row="3"
+            Padding="24,0,24,24"
+            Visibility="Collapsed">
+            <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
+                <TextBlock Text="Home Screen" Style="{StaticResource TitleTextStyle}" />
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="16">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Next Up Mode" Style="{StaticResource BodyTextStyle}" />
+                            <ComboBox
+                                x:Name="NextUpModeComboBox"
+                                Width="220"
+                                SelectionChanged="NextUpModeComboBox_SelectionChanged">
+                                <ComboBoxItem Content="Combined" Tag="combined" />
+                                <ComboBoxItem Content="Separate" Tag="separate" />
+                                <ComboBoxItem Content="None" Tag="none" />
+                            </ComboBox>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Section Overrides (read-only)" Style="{StaticResource BodyTextStyle}" />
+                            <TextBox
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                Text="{x:Bind ViewModel.SectionOverrides, Mode=OneWay}"
+                                IsReadOnly="True"
+                                TextWrapping="Wrap"
+                                AcceptsReturn="True"
+                                MinHeight="100"
+                                MaxHeight="300" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>
