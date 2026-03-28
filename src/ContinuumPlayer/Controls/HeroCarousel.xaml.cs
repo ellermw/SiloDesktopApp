@@ -46,7 +46,20 @@ public sealed partial class HeroCarousel : UserControl
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         StartAutoAdvance();
+        UpdateHeightFromWindow();
+
+        if (XamlRoot?.Content is FrameworkElement root)
+            root.SizeChanged += (_, _) => UpdateHeightFromWindow();
     }
+
+    private void UpdateHeightFromWindow()
+    {
+        // Match web UI: min-h-[72dvh] — 72% of viewport height
+        if (XamlRoot?.Content is FrameworkElement root && root.ActualHeight > 0)
+            Height = Math.Max(350, root.ActualHeight * 0.72);
+    }
+
+    // Height is managed by UpdateHeightFromWindow, no SizeChanged needed
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {

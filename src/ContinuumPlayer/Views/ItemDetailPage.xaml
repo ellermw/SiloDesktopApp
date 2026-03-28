@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:ContinuumPlayer.Controls"
     xmlns:converters="using:ContinuumPlayer.Converters"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}">
@@ -39,31 +40,46 @@
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
 
             <StackPanel>
-                <!-- Backdrop hero area -->
-                <Grid MinHeight="350" MaxHeight="500">
-                    <Image
+                <!-- Backdrop hero area: 60% of viewport height -->
+                <Grid x:Name="BackdropContainer" MinHeight="300">
+                    <controls:BackdropImage
                         x:Name="BackdropImage"
-                        Stretch="UniformToFill"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center" />
+                        AnchorY="0.2" />
 
-                    <!-- Bottom gradient -->
+                    <!-- Brightness overlay: web uses brightness(0.4), so ~60% darkening -->
+                    <Border Background="#101722" Opacity="0.6" />
+
+                    <!-- Bottom-to-top gradient (hero-gradient) -->
                     <Border>
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                                 <GradientStop Color="Transparent" Offset="0.0" />
-                                <GradientStop Color="#60000000" Offset="0.4" />
-                                <GradientStop Color="#0D1117" Offset="0.9" />
-                                <GradientStop Color="#0D1117" Offset="1.0" />
+                                <GradientStop Color="#33101722" Offset="0.25" />
+                                <GradientStop Color="#8C101722" Offset="0.5" />
+                                <GradientStop Color="#EB101722" Offset="0.8" />
+                                <GradientStop Color="#101722" Offset="1.0" />
                             </LinearGradientBrush>
                         </Border.Background>
                     </Border>
 
-                    <!-- Left gradient for readability -->
+                    <!-- Left-to-right gradient (hero-gradient-left) -->
                     <Border>
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                <GradientStop Color="#A0000000" Offset="0.0" />
+                                <GradientStop Color="#101722" Offset="0.0" />
+                                <GradientStop Color="#CC101722" Offset="0.2" />
+                                <GradientStop Color="#66101722" Offset="0.4" />
+                                <GradientStop Color="Transparent" Offset="0.6" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <!-- Vignette: combined left + bottom gradient -->
+                    <Border>
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,1" EndPoint="1,0">
+                                <GradientStop Color="#66101722" Offset="0.0" />
+                                <GradientStop Color="#33101722" Offset="0.3" />
                                 <GradientStop Color="Transparent" Offset="0.6" />
                             </LinearGradientBrush>
                         </Border.Background>

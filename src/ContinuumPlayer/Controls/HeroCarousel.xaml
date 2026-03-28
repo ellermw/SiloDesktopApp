@@ -5,45 +5,58 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:ContinuumPlayer.Controls"
     mc:Ignorable="d"
-    MinHeight="350"
-    MaxHeight="700"
     Loaded="OnLoaded"
-    Unloaded="OnUnloaded"
-    SizeChanged="OnSizeChanged">
+    Unloaded="OnUnloaded">
 
-    <Grid>
-        <!-- Backdrop image -->
-        <Image
+    <!-- Height set in code-behind to 72% of window (matching web UI min-h-[72dvh]) -->
+    <Grid x:Name="RootGrid">
+        <!-- Backdrop image with object-position: center 20% -->
+        <controls:BackdropImage
             x:Name="BackdropImage"
-            Stretch="UniformToFill"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center" />
+            AnchorY="0.2" />
 
-        <!-- Gradient overlay: transparent to background -->
+        <!-- Brightness overlay: web uses brightness(0.78), so ~22% darkening -->
+        <Border Background="#101722" Opacity="0.22" />
+
+        <!-- Bottom-to-top gradient (hero-gradient) -->
         <Border>
             <Border.Background>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                     <GradientStop Color="Transparent" Offset="0.0" />
-                    <GradientStop Color="#40000000" Offset="0.3" />
-                    <GradientStop Color="#B0000000" Offset="0.6" />
-                    <GradientStop Color="#0D1117" Offset="0.85" />
-                    <GradientStop Color="#0D1117" Offset="1.0" />
+                    <GradientStop Color="#33101722" Offset="0.25" />
+                    <GradientStop Color="#8C101722" Offset="0.5" />
+                    <GradientStop Color="#EB101722" Offset="0.8" />
+                    <GradientStop Color="#101722" Offset="1.0" />
                 </LinearGradientBrush>
             </Border.Background>
         </Border>
 
-        <!-- Left gradient for text readability -->
+        <!-- Left-to-right gradient (hero-gradient-left) -->
         <Border>
             <Border.Background>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                    <GradientStop Color="#A0000000" Offset="0.0" />
+                    <GradientStop Color="#101722" Offset="0.0" />
+                    <GradientStop Color="#CC101722" Offset="0.2" />
+                    <GradientStop Color="#66101722" Offset="0.4" />
                     <GradientStop Color="Transparent" Offset="0.6" />
                 </LinearGradientBrush>
             </Border.Background>
         </Border>
 
-        <!-- Content overlay at bottom-left -->
+        <!-- Vignette: combined left + bottom gradient -->
+        <Border>
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,1" EndPoint="1,0">
+                    <GradientStop Color="#66101722" Offset="0.0" />
+                    <GradientStop Color="#33101722" Offset="0.3" />
+                    <GradientStop Color="Transparent" Offset="0.6" />
+                </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+
+        <!-- Content overlay -->
         <StackPanel
             VerticalAlignment="Bottom"
             HorizontalAlignment="Left"
@@ -59,29 +72,22 @@
                 MaxLines="2" />
 
             <StackPanel Orientation="Horizontal" Spacing="12">
-                <TextBlock
-                    x:Name="HeroYear"
+                <TextBlock x:Name="HeroYear"
                     Style="{StaticResource SecondaryTextStyle}"
                     FontSize="{StaticResource FontSizeSubtitle}" />
-                <TextBlock
-                    x:Name="HeroGenres"
+                <TextBlock x:Name="HeroGenres"
                     Style="{StaticResource SecondaryTextStyle}"
                     FontSize="{StaticResource FontSizeSubtitle}"
-                    TextTrimming="CharacterEllipsis"
-                    MaxWidth="400" />
+                    TextTrimming="CharacterEllipsis" MaxWidth="400" />
             </StackPanel>
 
-            <TextBlock
-                x:Name="HeroOverview"
+            <TextBlock x:Name="HeroOverview"
                 Style="{StaticResource SecondaryTextStyle}"
-                TextWrapping="Wrap"
-                MaxLines="3"
+                TextWrapping="Wrap" MaxLines="3"
                 TextTrimming="CharacterEllipsis" />
 
             <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,8,0,0">
-                <Button
-                    Style="{StaticResource AccentButtonStyle}"
-                    Padding="20,10">
+                <Button Style="{StaticResource AccentButtonStyle}" Padding="20,10">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE768;" FontSize="16" FontFamily="{ThemeResource SymbolThemeFontFamily}" />
                         <TextBlock Text="Play" VerticalAlignment="Center" />
@@ -90,38 +96,23 @@
             </StackPanel>
         </StackPanel>
 
-        <!-- Navigation arrows -->
-        <Button
-            x:Name="PrevButton"
-            Style="{StaticResource GhostButtonStyle}"
-            VerticalAlignment="Center"
-            HorizontalAlignment="Left"
-            Margin="8,0,0,0"
-            Width="40" Height="40"
-            Click="PrevButton_Click"
-            Opacity="0.7">
+        <!-- Nav arrows -->
+        <Button x:Name="PrevButton" Style="{StaticResource GhostButtonStyle}"
+            VerticalAlignment="Center" HorizontalAlignment="Left"
+            Margin="8,0,0,0" Width="40" Height="40"
+            Click="PrevButton_Click" Opacity="0.7">
             <FontIcon Glyph="&#xE76B;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
         </Button>
-
-        <Button
-            x:Name="NextButton"
-            Style="{StaticResource GhostButtonStyle}"
-            VerticalAlignment="Center"
-            HorizontalAlignment="Right"
-            Margin="0,0,8,0"
-            Width="40" Height="40"
-            Click="NextButton_Click"
-            Opacity="0.7">
+        <Button x:Name="NextButton" Style="{StaticResource GhostButtonStyle}"
+            VerticalAlignment="Center" HorizontalAlignment="Right"
+            Margin="0,0,8,0" Width="40" Height="40"
+            Click="NextButton_Click" Opacity="0.7">
             <FontIcon Glyph="&#xE76C;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
         </Button>
 
-        <!-- Navigation dots at bottom center -->
-        <StackPanel
-            x:Name="DotsPanel"
-            Orientation="Horizontal"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Bottom"
-            Margin="0,0,0,12"
-            Spacing="8" />
+        <!-- Dots -->
+        <StackPanel x:Name="DotsPanel" Orientation="Horizontal"
+            HorizontalAlignment="Center" VerticalAlignment="Bottom"
+            Margin="0,0,0,12" Spacing="8" />
     </Grid>
 </UserControl>
