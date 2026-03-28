@@ -71,6 +71,14 @@ public class ContinuumApiClient
         if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct);
     }
 
+    public async Task<T> PutAsync<T>(string path, object body, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, BuildUrl(path));
+        AddHeaders(request);
+        request.Content = JsonContent.Create(body, options: JsonOptions);
+        return await SendAsync<T>(request, ct);
+    }
+
     public async Task PutNoContentAsync(string path, object? body = null, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Put, BuildUrl(path));
