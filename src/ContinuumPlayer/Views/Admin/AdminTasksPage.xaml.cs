@@ -142,7 +142,7 @@ public sealed partial class AdminTasksPage : Page
 
         var capturedTask = task;
         rowButton.Click += (_, _) =>
-            Frame.Navigate(typeof(PlaceholderPage), $"Task: {capturedTask.Key}");
+            Frame.Navigate(typeof(AdminTaskDetailPage), capturedTask.Key);
 
         // Root layout: left info | center progress (if running) | right badges + action
         var rootGrid = new Grid { ColumnSpacing = 12 };
