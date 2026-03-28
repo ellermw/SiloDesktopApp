@@ -21,13 +21,13 @@
             Spacing="32"
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
-            MaxWidth="700">
+            MaxWidth="900">
 
-            <!-- Title -->
+            <!-- Title: "Who's watching?" in huge display font -->
             <TextBlock
                 Text="Who's watching?"
-                FontSize="{StaticResource FontSizeDisplay}"
-                FontWeight="Bold"
+                FontSize="{StaticResource FontSizeDisplayLarge}"
+                FontWeight="ExtraBold"
                 Foreground="{StaticResource PrimaryTextBrush}"
                 HorizontalAlignment="Center" />
 
@@ -46,7 +46,7 @@
                 HorizontalAlignment="Center"
                 Width="40" Height="40" />
 
-            <!-- Profile cards (hidden when PIN entry is shown) -->
+            <!-- Profile cards grid (hidden when PIN entry is shown) -->
             <ItemsControl
                 x:Name="ProfileGrid"
                 ItemsSource="{x:Bind ViewModel.Profiles, Mode=OneWay}"
@@ -59,41 +59,100 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Button
-                            Click="ProfileButton_Click"
-                            Tag="{Binding}"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Padding="0"
-                            Margin="0">
-                            <StackPanel
-                                Spacing="8"
-                                HorizontalAlignment="Center">
+                        <!-- Wrapper for hover effects: relative positioning for edit/delete -->
+                        <Grid Width="148">
+                            <Button
+                                Click="ProfileButton_Click"
+                                Tag="{Binding}"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Padding="0"
+                                Margin="0"
+                                HorizontalAlignment="Stretch"
+                                PointerEntered="ProfileCard_PointerEntered"
+                                PointerExited="ProfileCard_PointerExited">
                                 <Border
-                                    Width="120" Height="120"
-                                    CornerRadius="12"
-                                    Background="{StaticResource CardBackgroundBrush}">
-                                    <TextBlock
-                                        Text="{Binding Name, Converter={StaticResource StringToInitial}}"
-                                        FontSize="36"
-                                        FontWeight="Bold"
-                                        Foreground="{StaticResource AccentBrush}"
-                                        HorizontalAlignment="Center"
-                                        VerticalAlignment="Center" />
+                                    x:Name="ProfileCardBorder"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    CornerRadius="28"
+                                    Padding="20"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1">
+                                    <StackPanel
+                                        Spacing="12"
+                                        HorizontalAlignment="Center">
+                                        <!-- Avatar circle with ring border -->
+                                        <Border
+                                            Width="80" Height="80"
+                                            CornerRadius="40"
+                                            BorderBrush="{StaticResource BorderBrush}"
+                                            BorderThickness="2"
+                                            Background="{StaticResource CardBackgroundBrush}"
+                                            HorizontalAlignment="Center">
+                                            <TextBlock
+                                                Text="{Binding Name, Converter={StaticResource StringToInitial}}"
+                                                FontSize="24"
+                                                FontWeight="Bold"
+                                                Foreground="{StaticResource AccentBrush}"
+                                                HorizontalAlignment="Center"
+                                                VerticalAlignment="Center" />
+                                        </Border>
+                                        <!-- Name -->
+                                        <TextBlock
+                                            Text="{Binding Name}"
+                                            FontSize="14"
+                                            FontWeight="Medium"
+                                            Foreground="{StaticResource PrimaryTextBrush}"
+                                            HorizontalAlignment="Center"
+                                            TextTrimming="CharacterEllipsis"
+                                            MaxWidth="108" />
+                                        <!-- Lock icon if PIN -->
+                                        <FontIcon
+                                            Glyph="&#xE72E;"
+                                            FontSize="12"
+                                            Foreground="{StaticResource SecondaryTextBrush}"
+                                            HorizontalAlignment="Center"
+                                            Visibility="{Binding HasPin, Converter={StaticResource BoolToVis}}" />
+                                    </StackPanel>
                                 </Border>
-                                <TextBlock
-                                    Text="{Binding Name}"
-                                    Style="{StaticResource BodyTextStyle}"
-                                    HorizontalAlignment="Center"
-                                    TextTrimming="CharacterEllipsis"
-                                    MaxWidth="120" />
+                            </Button>
+
+                            <!-- Edit/Delete buttons overlay (top-right, hidden by default) -->
+                            <StackPanel
+                                x:Name="EditDeletePanel"
+                                Orientation="Horizontal"
+                                Spacing="2"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Top"
+                                Margin="0,4,4,0"
+                                Opacity="0">
+                                <Button
+                                    Click="EditProfileButton_Click"
+                                    Tag="{Binding}"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Padding="4"
+                                    Width="24" Height="24"
+                                    CornerRadius="4">
+                                    <FontIcon Glyph="&#xE70F;" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                </Button>
+                                <Button
+                                    Click="DeleteProfileButton_Click"
+                                    Tag="{Binding}"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Padding="4"
+                                    Width="24" Height="24"
+                                    CornerRadius="4">
+                                    <FontIcon Glyph="&#xE74D;" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                </Button>
                             </StackPanel>
-                        </Button>
+                        </Grid>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
 
-            <!-- Add Profile card (below profiles, hidden when PIN shown) -->
+            <!-- Add Profile card (hidden when PIN shown) -->
             <Button
                 x:Name="AddProfileButton"
                 Click="AddProfileButton_Click"
@@ -101,41 +160,55 @@
                 BorderThickness="0"
                 Padding="0"
                 HorizontalAlignment="Center"
-                Visibility="{x:Bind ViewModel.IsPinRequired, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
-                <StackPanel Spacing="8" HorizontalAlignment="Center">
-                    <Border
-                        Width="120" Height="120"
-                        CornerRadius="12"
-                        Background="{StaticResource SurfaceBrush}"
-                        BorderBrush="{StaticResource BorderBrush}"
-                        BorderThickness="1">
-                        <FontIcon
-                            Glyph="&#xE710;"
-                            FontSize="32"
+                Visibility="{x:Bind ViewModel.IsPinRequired, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
+                PointerEntered="AddProfileCard_PointerEntered"
+                PointerExited="AddProfileCard_PointerExited">
+                <Border
+                    x:Name="AddProfileCardBorder"
+                    Background="{StaticResource SurfaceBrush}"
+                    CornerRadius="28"
+                    Padding="20"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    Width="148">
+                    <StackPanel Spacing="12" HorizontalAlignment="Center">
+                        <!-- Dashed circle with Plus icon -->
+                        <Border
+                            Width="80" Height="80"
+                            CornerRadius="40"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="2"
+                            Background="Transparent"
+                            HorizontalAlignment="Center">
+                            <FontIcon
+                                Glyph="&#xE710;"
+                                FontSize="28"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock
+                            Text="Add Profile"
+                            FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}"
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Center" />
-                    </Border>
-                    <TextBlock
-                        Text="Add Profile"
-                        Style="{StaticResource BodyTextStyle}"
-                        HorizontalAlignment="Center"
-                        Foreground="{StaticResource SecondaryTextBrush}" />
-                </StackPanel>
+                            HorizontalAlignment="Center" />
+                    </StackPanel>
+                </Border>
             </Button>
 
-            <!-- Sign out link -->
-            <HyperlinkButton
+            <!-- Sign out button (outline style) -->
+            <Button
                 x:Name="SignOutButton"
                 Content="Sign out"
-                Click="SignOutButton_Click"
+                Style="{StaticResource OutlineButtonStyle}"
                 HorizontalAlignment="Center"
-                Foreground="{StaticResource SecondaryTextBrush}"
+                Click="SignOutButton_Click"
+                Margin="0,8,0,0"
                 Visibility="{x:Bind ViewModel.IsPinRequired, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}" />
 
-            <!-- PIN entry -->
+            <!-- PIN entry card -->
             <Border
-                Style="{StaticResource CardStyle}"
+                Style="{StaticResource GlassCardStyle}"
                 MaxWidth="320"
                 HorizontalAlignment="Center"
                 Visibility="{x:Bind ViewModel.IsPinRequired, Mode=OneWay, Converter={StaticResource BoolToVis}}">
@@ -161,19 +234,21 @@
                     <PasswordBox
                         x:Name="PinBox"
                         Style="{StaticResource DarkPasswordBoxStyle}"
-                        PlaceholderText="PIN"
-                        MaxLength="10"
+                        PlaceholderText="Enter 4-digit PIN"
+                        MaxLength="4"
                         HorizontalAlignment="Stretch"
                         KeyDown="PinBox_KeyDown" />
 
-                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Stretch">
                         <Button
                             Content="Cancel"
-                            Style="{StaticResource SecondaryButtonStyle}"
+                            Style="{StaticResource OutlineButtonStyle}"
+                            HorizontalAlignment="Stretch"
                             Command="{x:Bind ViewModel.CancelPinCommand}" />
                         <Button
-                            Content="Submit"
+                            Content="Confirm"
                             Style="{StaticResource AccentButtonStyle}"
+                            HorizontalAlignment="Stretch"
                             Command="{x:Bind ViewModel.VerifyPinCommand}" />
                     </StackPanel>
                 </StackPanel>

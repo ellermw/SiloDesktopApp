@@ -199,14 +199,13 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        _navigationService.Navigate<SettingsPage>();
+    }
+
     private void NavView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
     {
-        if (args.IsSettingsInvoked)
-        {
-            _navigationService.Navigate<SettingsPage>();
-            return;
-        }
-
         if (args.InvokedItemContainer is NavigationViewItem item && item.Tag is string tag)
         {
             switch (tag)

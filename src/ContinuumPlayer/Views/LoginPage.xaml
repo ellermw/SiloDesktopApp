@@ -15,77 +15,94 @@
         <converters:InverseBoolConverter x:Key="InverseBool" />
     </Page.Resources>
 
-    <Grid HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="400">
-        <StackPanel Spacing="20">
-            <!-- Branding -->
-            <TextBlock
-                Text="Continuum"
-                FontSize="{StaticResource FontSizeDisplay}"
-                FontWeight="Bold"
-                Foreground="{StaticResource AccentBrush}"
-                HorizontalAlignment="Center" />
+    <!-- Full-page centered auth shell -->
+    <Grid HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+        <StackPanel
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            MaxWidth="400"
+            Spacing="16">
 
-            <!-- Server info -->
-            <TextBlock
-                x:Name="ServerNameText"
-                Text="{x:Bind ViewModel.ServerName, Mode=OneWay}"
-                Style="{StaticResource SecondaryTextStyle}"
-                HorizontalAlignment="Center" />
+            <!-- Glass card -->
+            <Border Style="{StaticResource GlassCardStyle}">
+                <StackPanel Spacing="24">
+                    <!-- Header: Branding + subtitle -->
+                    <StackPanel Spacing="8">
+                        <TextBlock
+                            Text="Continuum"
+                            FontSize="30"
+                            FontWeight="ExtraBold"
+                            Foreground="{StaticResource PrimaryTextBrush}"
+                            CharacterSpacing="-40" />
 
-            <!-- Login card -->
-            <Border Style="{StaticResource CardStyle}">
-                <StackPanel Spacing="16">
-                    <TextBlock Text="Sign In" Style="{StaticResource TitleTextStyle}" />
+                        <TextBlock
+                            Text="Sign in with an existing account."
+                            Style="{StaticResource SecondaryTextStyle}"
+                            FontSize="14" />
+                    </StackPanel>
 
                     <!-- Error message -->
                     <Border
                         x:Name="ErrorBorder"
-                        Background="#2DF85149"
-                        CornerRadius="4"
-                        Padding="12,8"
+                        Background="#2DEF6B73"
+                        CornerRadius="8"
+                        Padding="12,10"
                         Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
                         <TextBlock
                             Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
                             Foreground="{StaticResource ErrorBrush}"
-                            TextWrapping="Wrap" />
+                            TextWrapping="Wrap"
+                            FontSize="13" />
                     </Border>
 
-                    <!-- Username -->
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="Username" Style="{StaticResource CaptionTextStyle}" />
-                        <TextBox
-                            x:Name="UsernameBox"
-                            Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                            Style="{StaticResource DarkTextBoxStyle}"
-                            PlaceholderText="Enter your username"
-                            KeyDown="InputBox_KeyDown" />
-                    </StackPanel>
+                    <!-- Form fields -->
+                    <StackPanel Spacing="16">
+                        <!-- Username -->
+                        <StackPanel Spacing="6">
+                            <TextBlock
+                                Text="Username"
+                                FontSize="14"
+                                FontWeight="Medium"
+                                Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBox
+                                x:Name="UsernameBox"
+                                Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                PlaceholderText="Enter your username"
+                                KeyDown="InputBox_KeyDown" />
+                        </StackPanel>
 
-                    <!-- Password -->
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="Password" Style="{StaticResource CaptionTextStyle}" />
-                        <PasswordBox
-                            x:Name="PasswordBox"
-                            Style="{StaticResource DarkPasswordBoxStyle}"
-                            PlaceholderText="Enter your password"
-                            PasswordChanged="PasswordBox_PasswordChanged"
-                            KeyDown="InputBox_KeyDown" />
-                    </StackPanel>
+                        <!-- Password -->
+                        <StackPanel Spacing="6">
+                            <TextBlock
+                                Text="Password"
+                                FontSize="14"
+                                FontWeight="Medium"
+                                Foreground="{StaticResource PrimaryTextBrush}" />
+                            <PasswordBox
+                                x:Name="PasswordBox"
+                                Style="{StaticResource DarkPasswordBoxStyle}"
+                                PlaceholderText="Enter your password"
+                                PasswordChanged="PasswordBox_PasswordChanged"
+                                KeyDown="InputBox_KeyDown" />
+                        </StackPanel>
 
-                    <!-- Login button -->
-                    <Button
-                        Content="Sign In"
-                        Style="{StaticResource AccentButtonStyle}"
-                        HorizontalAlignment="Stretch"
-                        Command="{x:Bind ViewModel.LoginCommand}"
-                        IsEnabled="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBool}}" />
+                        <!-- Sign in button -->
+                        <Button
+                            Content="Sign in"
+                            Style="{StaticResource AccentButtonStyle}"
+                            HorizontalAlignment="Stretch"
+                            Padding="16,12"
+                            Command="{x:Bind ViewModel.LoginCommand}"
+                            IsEnabled="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBool}}" />
+                    </StackPanel>
 
                     <!-- Loading indicator -->
                     <ProgressRing
                         IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
                         Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                         HorizontalAlignment="Center"
-                        Width="32" Height="32" />
+                        Width="28" Height="28" />
                 </StackPanel>
             </Border>
 

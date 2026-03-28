@@ -13,7 +13,7 @@
             x:Name="NavView"
             IsBackButtonVisible="Collapsed"
             IsPaneToggleButtonVisible="False"
-            IsSettingsVisible="True"
+            IsSettingsVisible="False"
             OpenPaneLength="{StaticResource SidebarWidth}"
             PaneDisplayMode="Left"
             Background="{StaticResource AppBackgroundBrush}"
@@ -21,15 +21,44 @@
             Loaded="NavView_Loaded">
 
             <NavigationView.PaneHeader>
-                <TextBlock
-                    Text="Continuum"
-                    FontSize="{StaticResource FontSizeBranding}"
-                    FontWeight="Bold"
-                    Foreground="{StaticResource AccentBrush}"
-                    Margin="16,12,0,12" />
+                <StackPanel Margin="16,20,16,16">
+                    <!-- Logo row: play triangle icon + text -->
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <!-- Play triangle icon in rounded box -->
+                        <Border
+                            Width="40" Height="40"
+                            CornerRadius="12"
+                            Background="{StaticResource SidebarAccentBrush}"
+                            BorderBrush="{StaticResource SidebarBorderBrush}"
+                            BorderThickness="1">
+                            <TextBlock
+                                Text="&#x25B6;"
+                                FontSize="14"
+                                FontWeight="Bold"
+                                Foreground="{StaticResource AccentBrush}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center" />
+                        </Border>
+                        <!-- Branding text -->
+                        <StackPanel VerticalAlignment="Center" Spacing="0">
+                            <TextBlock
+                                Text="Continuum"
+                                FontSize="{StaticResource FontSizeBrandingTitle}"
+                                FontWeight="ExtraBold"
+                                Foreground="{StaticResource PrimaryTextBrush}"
+                                CharacterSpacing="10" />
+                            <TextBlock
+                                Text="Media server"
+                                FontSize="{StaticResource FontSizeBrandingSubtitle}"
+                                FontWeight="Medium"
+                                Foreground="{StaticResource SecondaryTextBrush}" />
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
             </NavigationView.PaneHeader>
 
             <NavigationView.MenuItems>
+                <!-- Home -->
                 <NavigationViewItem
                     x:Name="HomeNavItem"
                     Content="Home"
@@ -39,11 +68,13 @@
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
 
-                <!-- Libraries inserted dynamically after this point -->
-                <NavigationViewItemHeader x:Name="LibrariesHeader" Content="Libraries" />
+                <!-- LIBRARIES section header -->
+                <NavigationViewItemHeader x:Name="LibrariesHeader" Content="LIBRARIES" />
 
-                <!-- Discover section -->
-                <NavigationViewItemHeader Content="Discover" />
+                <!-- Libraries inserted dynamically after this point -->
+
+                <!-- DISCOVER section header -->
+                <NavigationViewItemHeader Content="DISCOVER" />
                 <NavigationViewItem Content="Search" Tag="Search">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE721;" />
@@ -55,8 +86,8 @@
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
 
-                <!-- Your Stuff section -->
-                <NavigationViewItemHeader Content="Your Stuff" />
+                <!-- YOUR STUFF section header -->
+                <NavigationViewItemHeader Content="YOUR STUFF" />
                 <NavigationViewItem Content="Favorites" Tag="Favorites">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE734;" />
@@ -80,7 +111,37 @@
             </NavigationView.MenuItems>
 
             <NavigationView.PaneFooter>
-                <StackPanel Margin="0,0,0,8">
+                <StackPanel Margin="0,0,0,8" Spacing="2">
+                    <!-- Top border separator -->
+                    <Border
+                        Height="1"
+                        Background="{StaticResource SidebarBorderBrush}"
+                        Margin="12,0,12,8"
+                        Opacity="0.7" />
+
+                    <!-- Settings nav item -->
+                    <Button
+                        x:Name="SettingsButton"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Left"
+                        Padding="16,10"
+                        Margin="4,0"
+                        CornerRadius="12"
+                        Click="Settings_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <FontIcon Glyph="&#xE713;" FontSize="18" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock
+                                Text="Settings"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                VerticalAlignment="Center"
+                                FontSize="13"
+                                FontWeight="Medium" />
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Profile button -->
                     <Button
                         x:Name="ProfileFooterButton"
                         Background="Transparent"
@@ -88,18 +149,20 @@
                         HorizontalAlignment="Stretch"
                         HorizontalContentAlignment="Left"
                         Padding="16,10"
-                        Margin="4,0">
-                        <StackPanel Orientation="Horizontal" Spacing="12">
+                        Margin="4,0"
+                        CornerRadius="12">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <!-- Avatar -->
                             <Border
-                                Width="32" Height="32"
-                                CornerRadius="6"
-                                Background="{StaticResource CardBackgroundBrush}">
+                                Width="28" Height="28"
+                                CornerRadius="14"
+                                Background="{StaticResource AccentBrush}">
                                 <TextBlock
                                     x:Name="ProfileInitialText"
                                     Text="?"
-                                    FontSize="14"
+                                    FontSize="12"
                                     FontWeight="Bold"
-                                    Foreground="{StaticResource AccentBrush}"
+                                    Foreground="{StaticResource AccentForegroundBrush}"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Center" />
                             </Border>
@@ -108,7 +171,8 @@
                                 Text="Profile"
                                 Foreground="{StaticResource PrimaryTextBrush}"
                                 VerticalAlignment="Center"
-                                FontSize="14" />
+                                FontSize="13"
+                                FontWeight="Medium" />
                         </StackPanel>
                         <Button.Flyout>
                             <MenuFlyout Placement="Top">
