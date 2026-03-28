@@ -99,7 +99,7 @@ public sealed partial class AdminShellPage : Page
     private void NavSections_Click(object sender, RoutedEventArgs e)
     {
         SetActiveNavItem(NavSections);
-        AdminContentFrame.Navigate(typeof(PlaceholderPage), "Sections");
+        AdminContentFrame.Navigate(typeof(AdminSectionsPage));
     }
 
     private void NavUsers_Click(object sender, RoutedEventArgs e)
