@@ -117,6 +117,68 @@ internal static class MpvInterop
     [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
     public static extern IntPtr mpv_error_string(int error);
 
+    // ── Render API ──────────────────────────────────────────────────────
+
+    /// <summary>mpv_render_param types (MPV_RENDER_PARAM_*).</summary>
+    public const int MPV_RENDER_PARAM_INVALID    = 0;
+    public const int MPV_RENDER_PARAM_API_TYPE   = 1;
+    public const int MPV_RENDER_PARAM_SW_SIZE    = 17;
+    public const int MPV_RENDER_PARAM_SW_FORMAT  = 18;
+    public const int MPV_RENDER_PARAM_SW_STRIDE  = 19;
+    public const int MPV_RENDER_PARAM_SW_POINTER = 20;
+
+    /// <summary>Flags returned by mpv_render_context_update.</summary>
+    public const ulong MPV_RENDER_UPDATE_FRAME = 1;
+
+    /// <summary>
+    /// Mirrors the native mpv_render_param struct: { int type; void *data; }.
+    /// On 64-bit, the int is padded to 8 bytes before the pointer.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MpvRenderParam
+    {
+        public IntPtr Type;  // stored as IntPtr-sized for alignment (matches C enum on 64-bit)
+        public IntPtr Data;
+    }
+
+    /// <summary>
+    /// Creates a render context for the given mpv handle.
+    /// params must point to a null-terminated array of MpvRenderParam structs.
+    /// </summary>
+    [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int mpv_render_context_create(out IntPtr ctx, IntPtr mpv, IntPtr @params);
+
+    /// <summary>
+    /// Renders the current video frame into the target described by params.
+    /// params must point to a null-terminated array of MpvRenderParam structs.
+    /// </summary>
+    [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int mpv_render_context_render(IntPtr ctx, IntPtr @params);
+
+    /// <summary>
+    /// Frees the render context. Must be called before mpv_terminate_destroy.
+    /// </summary>
+    [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void mpv_render_context_free(IntPtr ctx);
+
+    /// <summary>
+    /// Sets a callback that is invoked when a new video frame should be rendered.
+    /// The callback is invoked from any mpv thread and must not call mpv APIs directly.
+    /// </summary>
+    [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void mpv_render_context_set_update_callback(IntPtr ctx, IntPtr callback, IntPtr callback_ctx);
+
+    /// <summary>
+    /// Returns a set of flags indicating what should be re-rendered.
+    /// Must be called from the render thread after the update callback fires.
+    /// </summary>
+    [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
+    public static extern ulong mpv_render_context_update(IntPtr ctx);
+
+    /// <summary>Delegate matching mpv_render_update_fn (void (*)(void *ctx)).</summary>
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate void MpvRenderUpdateFn(IntPtr ctx);
+
     // ── Win32 window management ──────────────────────────────────────────
 
     public const uint WS_CHILD   = 0x40000000;

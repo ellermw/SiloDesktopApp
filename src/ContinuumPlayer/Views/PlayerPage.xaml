@@ -6,7 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Background="Transparent"
+    Background="Black"
     Loaded="Page_Loaded"
     Unloaded="Page_Unloaded"
     KeyDown="Page_KeyDown"
@@ -14,8 +14,10 @@
     Tapped="Page_Tapped">
 
     <Grid>
-        <!-- Video host: transparent so mpv child window shows through from behind XAML -->
-        <Border x:Name="VideoHost" Background="Transparent" SizeChanged="VideoHost_SizeChanged" />
+        <!-- Video display: software-rendered frames are written to a WriteableBitmap -->
+        <Image x:Name="VideoImage" Stretch="Uniform"
+               HorizontalAlignment="Center" VerticalAlignment="Center"
+               SizeChanged="VideoImage_SizeChanged" />
 
         <!-- Loading overlay (opaque, covers video during loading) -->
         <Grid x:Name="LoadingOverlay" Background="#101722">

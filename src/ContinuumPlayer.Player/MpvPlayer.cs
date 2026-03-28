@@ -5,17 +5,39 @@ using static ContinuumPlayer.Player.MpvInterop;
 namespace ContinuumPlayer.Player;
 
 /// <summary>
-/// High-level wrapper around libmpv that manages an embedded child window for video playback.
-/// In WinUI 3, the XAML composition layer renders on top of Win32 child windows, so the video
-/// renders behind XAML. Transparent XAML elements let video show through, while opaque overlays
-/// (controls, loading screen) display correctly on top.
+/// High-level wrapper around libmpv that uses the software render API (MPV_RENDER_API_TYPE_SW).
+/// mpv decodes video (optionally using d3d11va-copy for hardware decode) and renders each frame
+/// into a caller-provided byte buffer. The caller (PlayerPage) copies that buffer into a
+/// WriteableBitmap displayed in a XAML Image element.
+///
+/// This completely decouples mpv from WinUI 3's D3D11 compositor, eliminating the thread
+/// contention that blocked the UI when using wid/vo=gpu.
 /// </summary>
 public sealed class MpvPlayer : IDisposable
 {
     private IntPtr _mpvHandle;
-    private IntPtr _childHwnd;
+    private IntPtr _renderCtx;
     private Thread? _eventThread;
+    private Thread? _renderThread;
     private volatile bool _disposed;
+
+    // Render context creation artifacts (must be kept alive while render context exists)
+    private GCHandle _apiTypePin;
+    private IntPtr _createParamsPtr;
+
+    // Update callback delegate (prevent GC collection)
+    private MpvRenderUpdateFn? _updateCallbackDelegate;
+
+    // Frame buffer
+    private byte[]? _frameBuffer;
+    private GCHandle _frameBufferPin;
+    private int _renderWidth;
+    private int _renderHeight;
+    private int _stride;
+    private readonly object _renderSizeLock = new();
+
+    // Signals from the update callback that a new frame is available
+    private readonly ManualResetEventSlim _frameUpdateEvent = new(false);
 
     // ── Public properties ────────────────────────────────────────────────
 
@@ -51,6 +73,14 @@ public sealed class MpvPlayer : IDisposable
     /// <summary>Fired when an error occurs.</summary>
     public event Action<string>? Error;
 
+    /// <summary>
+    /// Fired from the render thread when a new frame has been rendered into the buffer.
+    /// Args: (byte[] buffer, int width, int height, int stride).
+    /// The buffer is valid only until the next frame render -- the subscriber must copy
+    /// the data synchronously or dispatch a copy immediately.
+    /// </summary>
+    public event Action<byte[], int, int, int>? FrameReady;
+
     // ── Reply userdata IDs for observed properties ───────────────────────
 
     private const ulong UD_TIME_POS    = 1;
@@ -61,48 +91,21 @@ public sealed class MpvPlayer : IDisposable
     // ── Initialization ───────────────────────────────────────────────────
 
     /// <summary>
-    /// Creates the mpv instance as an embedded child window of the given parent HWND.
-    /// The child window renders video behind WinUI 3's XAML compositor layer.
+    /// Creates the mpv instance with a software render context.
+    /// No child window or video output driver is used -- frames are rendered to a memory buffer.
     /// </summary>
-    /// <param name="parentHwnd">The HWND of the app's main window.</param>
-    /// <param name="width">Initial width of the video child window.</param>
-    /// <param name="height">Initial height of the video child window.</param>
-    public void Initialize(IntPtr parentHwnd, int width, int height)
+    /// <param name="renderWidth">Initial render width in physical pixels.</param>
+    /// <param name="renderHeight">Initial render height in physical pixels.</param>
+    public void Initialize(int renderWidth, int renderHeight)
     {
         if (_mpvHandle != IntPtr.Zero)
             throw new InvalidOperationException("MpvPlayer is already initialized.");
 
-        // Create a Win32 child window to host the mpv video output
-        _childHwnd = CreateWindowExW(
-            0,
-            "Static",
-            "",
-            WS_CHILD | WS_VISIBLE,
-            0, 0, width, height,
-            parentHwnd,
-            IntPtr.Zero,
-            IntPtr.Zero,
-            IntPtr.Zero);
-
-        if (_childHwnd == IntPtr.Zero)
-            throw new InvalidOperationException($"CreateWindowExW failed: {Marshal.GetLastWin32Error()}");
-
         _mpvHandle = mpv_create();
         if (_mpvHandle == IntPtr.Zero)
-        {
-            DestroyWindow(_childHwnd);
-            _childHwnd = IntPtr.Zero;
             throw new InvalidOperationException("mpv_create() returned null.");
-        }
 
-        // Embed mpv into our child window via the wid option
-        SetOption("wid", _childHwnd.ToInt64().ToString());
-
-        // Video output with hardware acceleration
-        // Use d3d11va-copy to copy frames to system memory, avoiding GPU context conflicts
-        // between mpv's D3D11 context and WinUI 3's compositor
-        SetOption("vo", "gpu");
-        SetOption("gpu-api", "d3d11");
+        // Hardware decode to system memory (GPU decodes, copies frame to RAM for SW render)
         SetOption("hwdec", "d3d11va-copy");
 
         // Disable mpv's on-screen controller -- we handle controls in XAML
@@ -123,6 +126,9 @@ public sealed class MpvPlayer : IDisposable
         SetOption("demuxer-max-bytes", "150MiB");
         SetOption("demuxer-max-back-bytes", "50MiB");
 
+        // vo=libmpv is required when using the render API
+        SetOption("vo", "libmpv");
+
         // Enable logging to file for debugging
         var logPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -138,9 +144,25 @@ public sealed class MpvPlayer : IDisposable
             string errMsg = GetErrorString(err);
             mpv_destroy(_mpvHandle);
             _mpvHandle = IntPtr.Zero;
-            DestroyWindow(_childHwnd);
-            _childHwnd = IntPtr.Zero;
             throw new InvalidOperationException($"mpv_initialize failed: {errMsg}");
+        }
+
+        // Create software render context
+        CreateRenderContext();
+
+        // Set update callback (fires from mpv's internal thread when a new frame is ready)
+        _updateCallbackDelegate = OnRenderUpdate;
+        var callbackPtr = Marshal.GetFunctionPointerForDelegate(_updateCallbackDelegate);
+        mpv_render_context_set_update_callback(_renderCtx, callbackPtr, IntPtr.Zero);
+
+        // Allocate frame buffer
+        lock (_renderSizeLock)
+        {
+            _renderWidth = Math.Max(renderWidth, 1);
+            _renderHeight = Math.Max(renderHeight, 1);
+            _stride = _renderWidth * 4; // bgr0 = 4 bytes per pixel
+            _frameBuffer = new byte[_stride * _renderHeight];
+            _frameBufferPin = GCHandle.Alloc(_frameBuffer, GCHandleType.Pinned);
         }
 
         // Observe properties (after initialize)
@@ -156,19 +178,172 @@ public sealed class MpvPlayer : IDisposable
             Name = "MpvEventLoop"
         };
         _eventThread.Start();
+
+        // Start render thread
+        _renderThread = new Thread(RenderLoop)
+        {
+            IsBackground = true,
+            Name = "MpvRenderLoop"
+        };
+        _renderThread.Start();
     }
 
-    // ── Video window management ──────────────────────────────────────────
+    private void CreateRenderContext()
+    {
+        // Pin the API type string "sw\0"
+        byte[] apiType = "sw\0"u8.ToArray();
+        _apiTypePin = GCHandle.Alloc(apiType, GCHandleType.Pinned);
+
+        // Build param array: [API_TYPE, terminator]
+        int paramSize = Marshal.SizeOf<MpvRenderParam>();
+        _createParamsPtr = Marshal.AllocHGlobal(paramSize * 2);
+
+        var param0 = new MpvRenderParam
+        {
+            Type = (IntPtr)MPV_RENDER_PARAM_API_TYPE,
+            Data = _apiTypePin.AddrOfPinnedObject()
+        };
+        var paramEnd = new MpvRenderParam
+        {
+            Type = IntPtr.Zero,
+            Data = IntPtr.Zero
+        };
+
+        Marshal.StructureToPtr(param0, _createParamsPtr, false);
+        Marshal.StructureToPtr(paramEnd, _createParamsPtr + paramSize, false);
+
+        int err = mpv_render_context_create(out _renderCtx, _mpvHandle, _createParamsPtr);
+        if (err < 0)
+        {
+            string errMsg = GetErrorString(err);
+            // Clean up
+            Marshal.FreeHGlobal(_createParamsPtr);
+            _createParamsPtr = IntPtr.Zero;
+            if (_apiTypePin.IsAllocated) _apiTypePin.Free();
+            throw new InvalidOperationException($"mpv_render_context_create failed: {errMsg}");
+        }
+    }
+
+    // ── Render size management ───────────────────────────────────────────
 
     /// <summary>
-    /// Repositions and resizes the mpv child window within the parent.
-    /// Call this when the VideoHost element changes size or the window is resized.
+    /// Updates the render target size. Call when the display area resizes.
+    /// The new size takes effect on the next frame render.
     /// </summary>
-    public void ResizeVideoWindow(int x, int y, int width, int height)
+    /// <param name="width">New width in physical pixels.</param>
+    /// <param name="height">New height in physical pixels.</param>
+    public void UpdateRenderSize(int width, int height)
     {
-        if (_childHwnd != IntPtr.Zero)
+        if (width <= 0 || height <= 0) return;
+
+        lock (_renderSizeLock)
         {
-            MoveWindow(_childHwnd, x, y, Math.Max(1, width), Math.Max(1, height), true);
+            if (width == _renderWidth && height == _renderHeight)
+                return;
+
+            // Free old pinned buffer
+            if (_frameBufferPin.IsAllocated)
+                _frameBufferPin.Free();
+
+            _renderWidth = width;
+            _renderHeight = height;
+            _stride = _renderWidth * 4;
+            _frameBuffer = new byte[_stride * _renderHeight];
+            _frameBufferPin = GCHandle.Alloc(_frameBuffer, GCHandleType.Pinned);
+        }
+
+        // Signal a re-render at the new size
+        _frameUpdateEvent.Set();
+    }
+
+    // ── Render loop ─────────────────────────────────────────────────────
+
+    private void OnRenderUpdate(IntPtr ctx)
+    {
+        // Called from mpv's internal thread -- just signal our render thread
+        _frameUpdateEvent.Set();
+    }
+
+    private void RenderLoop()
+    {
+        // Pre-allocate pinned memory for render params that don't change type
+        // We'll reallocate the actual param structs each frame since size may change
+        byte[] formatBytes = "bgr0\0"u8.ToArray();
+        var formatPin = GCHandle.Alloc(formatBytes, GCHandleType.Pinned);
+
+        int paramSize = Marshal.SizeOf<MpvRenderParam>();
+        IntPtr paramsPtr = Marshal.AllocHGlobal(paramSize * 5);
+
+        try
+        {
+            while (!_disposed)
+            {
+                _frameUpdateEvent.Wait(100); // timeout so we can check _disposed
+                _frameUpdateEvent.Reset();
+
+                if (_disposed || _renderCtx == IntPtr.Zero) return;
+
+                var flags = mpv_render_context_update(_renderCtx);
+                if ((flags & MPV_RENDER_UPDATE_FRAME) == 0) continue;
+
+                int w, h, stride;
+                byte[] buffer;
+                IntPtr bufferPtr;
+
+                lock (_renderSizeLock)
+                {
+                    if (_frameBuffer == null || !_frameBufferPin.IsAllocated) continue;
+                    w = _renderWidth;
+                    h = _renderHeight;
+                    stride = _stride;
+                    buffer = _frameBuffer;
+                    bufferPtr = _frameBufferPin.AddrOfPinnedObject();
+                }
+
+                // Build size array [w, h] and pin it
+                int[] sizeArr = { w, h };
+                var sizePin = GCHandle.Alloc(sizeArr, GCHandleType.Pinned);
+
+                // Stride needs to be a pointer to a size_t value (8 bytes on 64-bit)
+                long strideValue = stride;
+                var stridePin = GCHandle.Alloc(strideValue, GCHandleType.Pinned);
+
+                try
+                {
+                    // Build render params: SW_SIZE, SW_FORMAT, SW_STRIDE, SW_POINTER, terminator
+                    var p0 = new MpvRenderParam { Type = (IntPtr)MPV_RENDER_PARAM_SW_SIZE, Data = sizePin.AddrOfPinnedObject() };
+                    var p1 = new MpvRenderParam { Type = (IntPtr)MPV_RENDER_PARAM_SW_FORMAT, Data = formatPin.AddrOfPinnedObject() };
+                    var p2 = new MpvRenderParam { Type = (IntPtr)MPV_RENDER_PARAM_SW_STRIDE, Data = stridePin.AddrOfPinnedObject() };
+                    var p3 = new MpvRenderParam { Type = (IntPtr)MPV_RENDER_PARAM_SW_POINTER, Data = bufferPtr };
+                    var pEnd = new MpvRenderParam { Type = IntPtr.Zero, Data = IntPtr.Zero };
+
+                    Marshal.StructureToPtr(p0, paramsPtr, false);
+                    Marshal.StructureToPtr(p1, paramsPtr + paramSize, false);
+                    Marshal.StructureToPtr(p2, paramsPtr + paramSize * 2, false);
+                    Marshal.StructureToPtr(p3, paramsPtr + paramSize * 3, false);
+                    Marshal.StructureToPtr(pEnd, paramsPtr + paramSize * 4, false);
+
+                    int err = mpv_render_context_render(_renderCtx, paramsPtr);
+                    if (err < 0)
+                    {
+                        // Non-fatal, skip this frame
+                        continue;
+                    }
+
+                    // Signal frame ready to the UI layer
+                    FrameReady?.Invoke(buffer, w, h, stride);
+                }
+                finally
+                {
+                    sizePin.Free();
+                    stridePin.Free();
+                }
+            }
+        }
+        finally
+        {
+            if (formatPin.IsAllocated) formatPin.Free();
+            Marshal.FreeHGlobal(paramsPtr);
         }
     }
 
@@ -461,6 +636,20 @@ public sealed class MpvPlayer : IDisposable
             return;
         _disposed = true;
 
+        // Signal render thread to exit
+        _frameUpdateEvent.Set();
+
+        // Wait for the render thread to finish
+        if (_renderThread is not null && _renderThread.IsAlive)
+            _renderThread.Join(TimeSpan.FromSeconds(2));
+
+        // Free the render context before terminating mpv
+        if (_renderCtx != IntPtr.Zero)
+        {
+            mpv_render_context_free(_renderCtx);
+            _renderCtx = IntPtr.Zero;
+        }
+
         // Wake up the event loop so it can exit
         if (_mpvHandle != IntPtr.Zero)
             mpv_wakeup(_mpvHandle);
@@ -476,11 +665,19 @@ public sealed class MpvPlayer : IDisposable
             _mpvHandle = IntPtr.Zero;
         }
 
-        // Destroy the child window
-        if (_childHwnd != IntPtr.Zero)
+        // Free pinned buffers
+        if (_frameBufferPin.IsAllocated)
+            _frameBufferPin.Free();
+
+        // Free render context creation artifacts
+        if (_createParamsPtr != IntPtr.Zero)
         {
-            DestroyWindow(_childHwnd);
-            _childHwnd = IntPtr.Zero;
+            Marshal.FreeHGlobal(_createParamsPtr);
+            _createParamsPtr = IntPtr.Zero;
         }
+        if (_apiTypePin.IsAllocated)
+            _apiTypePin.Free();
+
+        _frameUpdateEvent.Dispose();
     }
 }

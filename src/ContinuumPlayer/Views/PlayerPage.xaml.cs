@@ -1,6 +1,9 @@
+using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media.Imaging;
 using ContinuumPlayer.Core.Models.Playback;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Helpers;
@@ -18,6 +21,11 @@ public sealed partial class PlayerPage : Page
     private bool _isFullscreen;
     private bool _isMuted;
 
+    // WriteableBitmap for software-rendered frames
+    private WriteableBitmap? _bitmap;
+    private int _bitmapWidth;
+    private int _bitmapHeight;
+
     // Timers
     private DispatcherTimer? _uiUpdateTimer;
     private DispatcherTimer? _controlsHideTimer;
@@ -27,6 +35,9 @@ public sealed partial class PlayerPage : Page
 
     // Track whether subtitles have been loaded (only after FileLoaded)
     private bool _subtitlesLoaded;
+
+    // Resume position from server
+    private double _resumePosition;
 
     public PlayerPage()
     {
@@ -105,6 +116,7 @@ public sealed partial class PlayerPage : Page
             _player.FileLoaded -= OnMpvFileLoaded;
             _player.PlaybackEnded -= OnMpvPlaybackEnded;
             _player.Error -= OnMpvError;
+            _player.FrameReady -= OnFrameReady;
             _player.Dispose();
             _player = null;
         }
@@ -147,14 +159,20 @@ public sealed partial class PlayerPage : Page
 
             _vm.Resolution = bestVersion.Resolution;
 
-            // Determine start position from user data
+            // Determine start position from user data (resume support)
             double startPosition = 0;
             if (watchDetail.UserData?.PositionSeconds > 0 && watchDetail.UserData.Played != true)
                 startPosition = watchDetail.UserData.PositionSeconds!.Value;
 
+            _resumePosition = startPosition;
+
             // 3. Start session on the server
             var session = await _vm.Manager.StartSessionAsync(bestVersion.FileId, startPosition);
             _vm.PlayMethod = session.PlayMethod;
+
+            // If the server returned a position (from saved progress), use that
+            if (session.Position > 0 && _resumePosition == 0)
+                _resumePosition = session.Position;
 
             // 4. Get the stream URL
             var streamUrl = _vm.Manager.StreamUrl;
@@ -166,16 +184,9 @@ public sealed partial class PlayerPage : Page
 
             // Log init info for debugging
             LogToFile("player_init.txt",
-                $"StreamURL: {streamUrl}\nPlayMethod: {_vm.PlayMethod}\nResolution: {_vm.Resolution}\nSession: {_vm.Manager.SessionId}");
+                $"StreamURL: {streamUrl}\nPlayMethod: {_vm.PlayMethod}\nResolution: {_vm.Resolution}\nSession: {_vm.Manager.SessionId}\nResumePos: {_resumePosition}");
 
-            // 5. Initialize mpv player as embedded child window
-            var appHwnd = GetAppHwnd();
-            if (appHwnd == IntPtr.Zero)
-            {
-                ShowError("Failed to get application window handle.");
-                return;
-            }
-
+            // 5. Initialize mpv player with software render API
             _player = new MpvPlayer();
 
             // Subscribe to mpv events before initialization
@@ -185,14 +196,19 @@ public sealed partial class PlayerPage : Page
             _player.FileLoaded += OnMpvFileLoaded;
             _player.PlaybackEnded += OnMpvPlaybackEnded;
             _player.Error += OnMpvError;
+            _player.FrameReady += OnFrameReady;
 
-            // Get initial size from VideoHost (or use defaults)
-            int width = (int)VideoHost.ActualWidth;
-            int height = (int)VideoHost.ActualHeight;
+            // Get initial render size from VideoImage (in physical pixels)
+            var scale = GetDpiScale();
+            int width = (int)(VideoImage.ActualWidth * scale);
+            int height = (int)(VideoImage.ActualHeight * scale);
             if (width <= 0) width = 1280;
             if (height <= 0) height = 720;
 
-            _player.Initialize(appHwnd, width, height);
+            _player.Initialize(width, height);
+
+            // Create the WriteableBitmap at the render size
+            CreateBitmap(width, height);
 
             // 6. Set title and playback info
             TitleText.Text = _vm.Title;
@@ -215,16 +231,47 @@ public sealed partial class PlayerPage : Page
         }
     }
 
-    // -- Get app HWND ---------------------------------------------------------
+    // -- WriteableBitmap management -------------------------------------------
 
-    private static IntPtr GetAppHwnd()
+    private void CreateBitmap(int width, int height)
     {
-        var mainWindow = App.MainWindowInstance;
-        if (mainWindow == null) return IntPtr.Zero;
+        if (width <= 0 || height <= 0) return;
+        _bitmapWidth = width;
+        _bitmapHeight = height;
+        _bitmap = new WriteableBitmap(width, height);
+        VideoImage.Source = _bitmap;
+    }
 
-        // WinUI 3 way to get HWND
-        var windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(mainWindow);
-        return windowHandle;
+    private void OnFrameReady(byte[] buffer, int width, int height, int stride)
+    {
+        // Called from the render thread -- dispatch bitmap update to UI thread
+        DispatcherQueue?.TryEnqueue(DispatcherQueuePriority.High, () =>
+        {
+            if (_isDisposed || _bitmap == null) return;
+
+            // If render size changed, recreate the bitmap
+            if (width != _bitmapWidth || height != _bitmapHeight)
+            {
+                CreateBitmap(width, height);
+                if (_bitmap == null) return;
+            }
+
+            try
+            {
+                // Copy the frame buffer into the WriteableBitmap's pixel buffer
+                using (var stream = _bitmap.PixelBuffer.AsStream())
+                {
+                    stream.Position = 0;
+                    int bytesToWrite = Math.Min(buffer.Length, stride * height);
+                    stream.Write(buffer, 0, bytesToWrite);
+                }
+                _bitmap.Invalidate();
+            }
+            catch
+            {
+                // Non-fatal -- skip this frame
+            }
+        });
     }
 
     // -- Mpv event handlers (called from background thread) -------------------
@@ -267,15 +314,19 @@ public sealed partial class PlayerPage : Page
             _vm.IsLoading = false;
             LoadingOverlay.Visibility = Visibility.Collapsed;
 
+            // Resume to saved position if needed
+            if (_resumePosition > 0 && _player != null)
+            {
+                _player.Seek(_resumePosition);
+                _resumePosition = 0; // Only seek once
+            }
+
             // Load subtitles after file is loaded (avoids sub-add errors during init)
             if (!_subtitlesLoaded)
             {
                 _subtitlesLoaded = true;
                 LoadSubtitles();
             }
-
-            // Reposition the video window now that content is loaded
-            RepositionVideoWindow();
         });
     }
 
@@ -327,32 +378,24 @@ public sealed partial class PlayerPage : Page
         }
     }
 
-    // -- Video window positioning ---------------------------------------------
+    // -- Video display sizing -------------------------------------------------
 
-    private void VideoHost_SizeChanged(object sender, SizeChangedEventArgs e)
+    private void VideoImage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        RepositionVideoWindow();
+        UpdateRenderSize();
     }
 
-    private void RepositionVideoWindow()
+    private void UpdateRenderSize()
     {
         if (_player == null || _isDisposed) return;
 
         try
         {
-            // Get the position of VideoHost relative to the window
-            var transform = VideoHost.TransformToVisual(null);
-            var point = transform.TransformPoint(new Windows.Foundation.Point(0, 0));
-
-            // Account for DPI scaling
             var scale = GetDpiScale();
-
-            int x = (int)(point.X * scale);
-            int y = (int)(point.Y * scale);
-            int w = (int)(VideoHost.ActualWidth * scale);
-            int h = (int)(VideoHost.ActualHeight * scale);
-
-            _player.ResizeVideoWindow(x, y, w, h);
+            int w = (int)(VideoImage.ActualWidth * scale);
+            int h = (int)(VideoImage.ActualHeight * scale);
+            if (w > 0 && h > 0)
+                _player.UpdateRenderSize(w, h);
         }
         catch (Exception ex)
         {
@@ -568,8 +611,8 @@ public sealed partial class PlayerPage : Page
         _isFullscreen = fs;
         FullscreenIcon.Glyph = fs ? "\uE73F" : "\uE740";
 
-        // Resize video window to fill new area after layout updates
-        DispatcherQueue.TryEnqueue(() => RepositionVideoWindow());
+        // Update render size after fullscreen layout change
+        DispatcherQueue.TryEnqueue(() => UpdateRenderSize());
     }
 
     private void ToggleStats()
@@ -713,6 +756,7 @@ public sealed partial class PlayerPage : Page
             if (!string.IsNullOrEmpty(streamUrl))
             {
                 _subtitlesLoaded = false;
+                _resumePosition = currentPosition;
                 _player.LoadFile(streamUrl);
             }
         }
