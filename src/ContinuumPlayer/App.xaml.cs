@@ -33,6 +33,17 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs e)
     {
+        // Global unhandled exception handler -- write to crash log instead of silently dying
+        this.UnhandledException += (sender, args) =>
+        {
+            args.Handled = true;
+            var crashLog = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ContinuumPlayer", "crash.txt");
+            Directory.CreateDirectory(Path.GetDirectoryName(crashLog)!);
+            File.WriteAllText(crashLog, $"{DateTime.Now}\nUnhandled: {args.Exception}\n");
+        };
+
         _window = new MainWindow();
         MainWindowInstance = (MainWindow)_window;
         _window.Activate();

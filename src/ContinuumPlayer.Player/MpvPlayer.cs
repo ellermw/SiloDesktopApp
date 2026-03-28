@@ -5,12 +5,13 @@ using static ContinuumPlayer.Player.MpvInterop;
 namespace ContinuumPlayer.Player;
 
 /// <summary>
-/// High-level wrapper around libmpv that manages an embedded video player instance.
+/// High-level wrapper around libmpv that manages a standalone fullscreen video player window.
+/// Instead of embedding as a child window (which is invisible under WinUI 3's compositor),
+/// mpv creates its own borderless top-level window positioned fullscreen on the correct monitor.
 /// </summary>
 public sealed class MpvPlayer : IDisposable
 {
     private IntPtr _mpvHandle;
-    private IntPtr _childHwnd;
     private Thread? _eventThread;
     private volatile bool _disposed;
 
@@ -58,68 +59,79 @@ public sealed class MpvPlayer : IDisposable
     // ── Initialization ───────────────────────────────────────────────────
 
     /// <summary>
-    /// Creates the mpv instance, a child window for video output, and starts the event loop.
-    /// Must be called from the UI thread (needs a valid parent HWND).
+    /// Creates the mpv instance as a standalone fullscreen window on the monitor
+    /// containing the given app window. mpv renders its own OSC controls.
     /// </summary>
-    /// <param name="parentHwnd">The HWND of the parent window to host the video surface.</param>
-    /// <param name="width">Initial width of the video surface.</param>
-    /// <param name="height">Initial height of the video surface.</param>
-    public void Initialize(IntPtr parentHwnd, int width, int height)
+    /// <param name="appHwnd">The HWND of the app's main window (used for monitor detection).</param>
+    public void Initialize(IntPtr appHwnd)
     {
         if (_mpvHandle != IntPtr.Zero)
             throw new InvalidOperationException("MpvPlayer is already initialized.");
 
-        // 1. Create mpv instance
         _mpvHandle = mpv_create();
         if (_mpvHandle == IntPtr.Zero)
             throw new InvalidOperationException("mpv_create() returned null.");
 
-        // 2. Create a child window for video rendering
-        _childHwnd = CreateWindowExW(
-            0,                              // dwExStyle
-            "Static",                       // window class
-            "",                             // window name
-            WS_CHILD | WS_VISIBLE,          // style
-            0, 0, width, height,            // position and size
-            parentHwnd,                     // parent
-            IntPtr.Zero,                    // menu
-            IntPtr.Zero,                    // hInstance
-            IntPtr.Zero);                   // lpParam
+        // Detect which monitor the app is on and configure mpv to fullscreen there
+        int monitorIndex = GetMonitorIndex(appHwnd);
 
-        if (_childHwnd == IntPtr.Zero)
-            throw new InvalidOperationException(
-                $"CreateWindowExW failed (error {Marshal.GetLastWin32Error()}).");
+        // Standalone window options -- mpv creates its own top-level window
+        SetOption("force-window", "yes");
+        SetOption("border", "no");
+        SetOption("ontop", "yes");
+        SetOption("fullscreen", "yes");
+        SetOption("screen", monitorIndex.ToString());
+        SetOption("fs-screen", monitorIndex.ToString());
 
-        // 3. Set mpv options BEFORE mpv_initialize
-        // The wid option takes the window handle as a decimal string
-        SetOption("wid", _childHwnd.ToInt64().ToString());
+        // Video output with full hardware acceleration (no copy needed for standalone window)
         SetOption("vo", "gpu");
         SetOption("gpu-api", "d3d11");
-        SetOption("hwdec", "d3d11va-copy");
+        SetOption("hwdec", "d3d11va");
+
+        // Player behavior
         SetOption("keep-open", "yes");
         SetOption("idle", "yes");
-        SetOption("osc", "no");
-        SetOption("cache", "yes");
 
-        // 4. Initialize mpv
+        // Enable mpv's on-screen controller (play/pause, seek bar, volume)
+        SetOption("osc", "yes");
+        SetOption("osd-level", "1");
+
+        // Enable keyboard shortcuts (space=pause, q/ESC=quit, arrows=seek, etc.)
+        SetOption("input-default-bindings", "yes");
+        SetOption("input-vo-keyboard", "yes");
+
+        // Buffering for high-bitrate content
+        SetOption("cache", "yes");
+        SetOption("ytdl", "no");
+        SetOption("demuxer-max-bytes", "150MiB");
+        SetOption("demuxer-max-back-bytes", "50MiB");
+        SetOption("title", "Continuum Player");
+
+        // Enable logging to file for debugging
+        var logPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ContinuumPlayer", "mpv_log.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+        SetOption("log-file", logPath);
+        SetOption("msg-level", "all=v");
+
+        // Initialize mpv
         int err = mpv_initialize(_mpvHandle);
         if (err < 0)
         {
             string errMsg = GetErrorString(err);
             mpv_destroy(_mpvHandle);
             _mpvHandle = IntPtr.Zero;
-            DestroyWindow(_childHwnd);
-            _childHwnd = IntPtr.Zero;
             throw new InvalidOperationException($"mpv_initialize failed: {errMsg}");
         }
 
-        // 5. Observe properties (after initialize)
+        // Observe properties (after initialize)
         mpv_observe_property(_mpvHandle, UD_TIME_POS, "time-pos", MPV_FORMAT_DOUBLE);
         mpv_observe_property(_mpvHandle, UD_DURATION, "duration", MPV_FORMAT_DOUBLE);
         mpv_observe_property(_mpvHandle, UD_PAUSE, "pause", MPV_FORMAT_FLAG);
         mpv_observe_property(_mpvHandle, UD_EOF_REACHED, "eof-reached", MPV_FORMAT_FLAG);
 
-        // 6. Start background event loop thread
+        // Start background event loop thread
         _eventThread = new Thread(EventLoop)
         {
             IsBackground = true,
@@ -237,15 +249,6 @@ public sealed class MpvPlayer : IDisposable
         mpv_set_property_string(_mpvHandle, "aid", index.ToString());
     }
 
-    /// <summary>
-    /// Repositions and resizes the child video window within the parent.
-    /// </summary>
-    public void ResizeVideoWindow(int x, int y, int width, int height)
-    {
-        if (_childHwnd != IntPtr.Zero)
-            MoveWindow(_childHwnd, x, y, width, height, true);
-    }
-
     // ── Command helper ───────────────────────────────────────────────────
 
     /// <summary>
@@ -327,6 +330,8 @@ public sealed class MpvPlayer : IDisposable
                     break;
 
                 case MPV_EVENT_SHUTDOWN:
+                    // mpv window was closed (user pressed Q or ESC)
+                    PlaybackEnded?.Invoke();
                     return; // Exit the event loop
             }
         }
@@ -423,18 +428,11 @@ public sealed class MpvPlayer : IDisposable
         if (_eventThread is not null && _eventThread.IsAlive)
             _eventThread.Join(TimeSpan.FromSeconds(2));
 
-        // Terminate and destroy the mpv instance
+        // Terminate and destroy the mpv instance (closes the mpv window)
         if (_mpvHandle != IntPtr.Zero)
         {
             mpv_terminate_destroy(_mpvHandle);
             _mpvHandle = IntPtr.Zero;
-        }
-
-        // Destroy the child window
-        if (_childHwnd != IntPtr.Zero)
-        {
-            DestroyWindow(_childHwnd);
-            _childHwnd = IntPtr.Zero;
         }
     }
 }

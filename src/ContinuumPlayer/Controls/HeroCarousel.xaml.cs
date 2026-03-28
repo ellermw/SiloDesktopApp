@@ -4,6 +4,8 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
 using ContinuumPlayer.Core.Models.Home;
 using ContinuumPlayer.Core.Services;
+using ContinuumPlayer.Helpers;
+using ContinuumPlayer.Views;
 
 namespace ContinuumPlayer.Controls;
 
@@ -182,6 +184,24 @@ public sealed partial class HeroCarousel : UserControl
         _imageCts?.Cancel();
         _imageCts = new CancellationTokenSource();
         _ = LoadBackdropAsync(item, _imageCts.Token);
+    }
+
+    private void PlayButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_items == null || _items.Count == 0 || _currentIndex >= _items.Count) return;
+        var item = _items[_currentIndex];
+        // Navigate to ItemDetailPage first (for series, user needs to pick an episode)
+        // For movies, the detail page has the Play button ready
+        var nav = App.Services.GetRequiredService<NavigationService>();
+        nav.Navigate<ItemDetailPage>(item.ContentId);
+    }
+
+    private void DetailsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_items == null || _items.Count == 0 || _currentIndex >= _items.Count) return;
+        var item = _items[_currentIndex];
+        var nav = App.Services.GetRequiredService<NavigationService>();
+        nav.Navigate<ItemDetailPage>(item.ContentId);
     }
 
     private async Task LoadBackdropAsync(MediaItem item, CancellationToken ct)

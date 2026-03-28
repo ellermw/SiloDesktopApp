@@ -66,6 +66,9 @@ public class PlaybackManager : IDisposable
         var streamPath = response.StreamUrl;
         var token = _apiClient.AccessToken;
 
+        // The API returns paths like "/stream/{session}" -- prefix with /api/v1 if not already there
+        if (!streamPath.StartsWith("http") && !streamPath.StartsWith("/api/v1"))
+            streamPath = "/api/v1" + streamPath;
         var url = streamPath.StartsWith("http") ? streamPath : $"{baseUrl}{streamPath}";
         if (token != null)
             url += (url.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
@@ -103,7 +106,10 @@ public class PlaybackManager : IDisposable
         var token = _apiClient.AccessToken;
         return CurrentSession.SubtitleUrls.Select(s =>
         {
-            var url = s.Url.StartsWith("http") ? s.Url : $"{baseUrl}{s.Url}";
+            var subPath = s.Url;
+            if (!subPath.StartsWith("http") && !subPath.StartsWith("/api/v1"))
+                subPath = "/api/v1" + subPath;
+            var url = subPath.StartsWith("http") ? subPath : $"{baseUrl}{subPath}";
             if (token != null)
                 url += (url.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
             return (s, url);

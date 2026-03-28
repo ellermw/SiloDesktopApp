@@ -138,16 +138,39 @@
 
                     <!-- Action buttons -->
                     <StackPanel Orientation="Horizontal" Spacing="12">
-                        <Button
-                            x:Name="PlayButton"
-                            Style="{StaticResource AccentButtonStyle}"
-                            Padding="20,10"
-                            Click="PlayButton_Click">
+                        <StackPanel Spacing="4">
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE768;" FontSize="16" FontFamily="{ThemeResource SymbolThemeFontFamily}" />
-                                <TextBlock Text="Play" VerticalAlignment="Center" />
+                                <Button
+                                    x:Name="PlayButton"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Padding="20,10"
+                                    Click="PlayButton_Click">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon x:Name="PlayButtonIcon" Glyph="&#xE768;" FontSize="16" FontFamily="{ThemeResource SymbolThemeFontFamily}" />
+                                        <TextBlock x:Name="PlayButtonText" Text="Play" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+
+                                <!-- Version selector dropdown -->
+                                <Button
+                                    x:Name="VersionButton"
+                                    Style="{StaticResource SecondaryButtonStyle}"
+                                    Padding="10,10"
+                                    Visibility="Collapsed">
+                                    <FontIcon Glyph="&#xE70D;" FontSize="12" Foreground="{StaticResource PrimaryTextBrush}" />
+                                    <Button.Flyout>
+                                        <MenuFlyout x:Name="VersionFlyout" />
+                                    </Button.Flyout>
+                                </Button>
                             </StackPanel>
-                        </Button>
+
+                            <!-- Version info badge -->
+                            <TextBlock
+                                x:Name="VersionInfoText"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                FontSize="12"
+                                Visibility="Collapsed" />
+                        </StackPanel>
 
                         <Button
                             x:Name="FavoriteButton"

@@ -6,24 +6,15 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Background="Black"
+    Background="#101722"
     Loaded="Page_Loaded"
-    Unloaded="Page_Unloaded"
-    KeyDown="Page_KeyDown">
+    Unloaded="Page_Unloaded">
 
     <Grid x:Name="RootGrid">
-        <!-- Layer 1: Video host surface (mpv renders here) -->
-        <Border
-            x:Name="VideoHost"
-            Background="Black"
-            HorizontalAlignment="Stretch"
-            VerticalAlignment="Stretch"
-            SizeChanged="VideoHost_SizeChanged" />
-
-        <!-- Layer 2: Loading overlay -->
+        <!-- Loading overlay (shown while preparing playback) -->
         <Grid
             x:Name="LoadingOverlay"
-            Background="#CC000000"
+            Background="#101722"
             Visibility="Visible">
             <StackPanel
                 HorizontalAlignment="Center"
@@ -38,10 +29,52 @@
             </StackPanel>
         </Grid>
 
-        <!-- Layer 3: Error overlay -->
+        <!-- Playing state: mpv has its own fullscreen window on top -->
+        <Grid
+            x:Name="PlayingOverlay"
+            Background="#101722"
+            Visibility="Collapsed">
+            <StackPanel
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Spacing="16">
+                <FontIcon Glyph="&#xE768;" FontSize="48" Foreground="#999999" />
+                <TextBlock
+                    x:Name="NowPlayingText"
+                    Text=""
+                    Foreground="White"
+                    FontSize="18"
+                    FontWeight="SemiBold"
+                    HorizontalAlignment="Center"
+                    TextAlignment="Center"
+                    TextWrapping="Wrap"
+                    MaxWidth="500" />
+                <TextBlock
+                    x:Name="PlaybackInfoText"
+                    Text=""
+                    Foreground="#999999"
+                    FontSize="14"
+                    HorizontalAlignment="Center" />
+                <TextBlock
+                    Text="mpv is playing in fullscreen. Press ESC or Q in the player to exit."
+                    Foreground="#666666"
+                    FontSize="13"
+                    HorizontalAlignment="Center"
+                    TextAlignment="Center"
+                    Margin="0,16,0,0" />
+                <Button
+                    Content="Stop Playback"
+                    HorizontalAlignment="Center"
+                    Click="StopButton_Click"
+                    Padding="20,10"
+                    Margin="0,8,0,0" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Error overlay -->
         <Grid
             x:Name="ErrorOverlay"
-            Background="#CC000000"
+            Background="#101722"
             Visibility="Collapsed">
             <StackPanel
                 HorizontalAlignment="Center"
@@ -64,200 +97,5 @@
                     Padding="20,10" />
             </StackPanel>
         </Grid>
-
-        <!-- Layer 4: Skip Intro / Skip Credits buttons -->
-        <Button
-            x:Name="SkipIntroButton"
-            Content="Skip Intro"
-            Visibility="Collapsed"
-            HorizontalAlignment="Right"
-            VerticalAlignment="Bottom"
-            Margin="0,0,24,100"
-            Padding="20,10"
-            Click="SkipIntro_Click"
-            Style="{StaticResource AccentButtonStyle}" />
-
-        <Button
-            x:Name="SkipCreditsButton"
-            Content="Skip Credits"
-            Visibility="Collapsed"
-            HorizontalAlignment="Right"
-            VerticalAlignment="Bottom"
-            Margin="0,0,24,100"
-            Padding="20,10"
-            Click="SkipCredits_Click"
-            Style="{StaticResource AccentButtonStyle}" />
-
-        <!-- Layer 5: Controls overlay (bottom) -->
-        <Grid
-            x:Name="ControlsOverlay"
-            VerticalAlignment="Bottom"
-            Opacity="0"
-            PointerEntered="Controls_PointerEntered"
-            PointerExited="Controls_PointerExited">
-
-            <!-- Gradient background -->
-            <Grid.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                    <GradientStop Color="Transparent" Offset="0.0" />
-                    <GradientStop Color="#AA000000" Offset="0.3" />
-                    <GradientStop Color="#EE000000" Offset="1.0" />
-                </LinearGradientBrush>
-            </Grid.Background>
-
-            <StackPanel Padding="24,32,24,20" Spacing="8">
-                <!-- Title -->
-                <TextBlock
-                    x:Name="TitleText"
-                    Text=""
-                    Foreground="White"
-                    FontSize="18"
-                    FontWeight="SemiBold"
-                    TextTrimming="CharacterEllipsis"
-                    MaxLines="1" />
-
-                <!-- Seek bar row -->
-                <Grid ColumnSpacing="12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-
-                    <TextBlock
-                        x:Name="PositionText"
-                        Grid.Column="0"
-                        Text="0:00"
-                        Foreground="#CCCCCC"
-                        FontSize="13"
-                        VerticalAlignment="Center" />
-
-                    <Slider
-                        x:Name="SeekSlider"
-                        Grid.Column="1"
-                        Minimum="0"
-                        Maximum="1"
-                        Value="0"
-                        VerticalAlignment="Center"
-                        ValueChanged="SeekSlider_ValueChanged"
-                        PointerPressed="SeekSlider_PointerPressed"
-                        PointerReleased="SeekSlider_PointerReleased"
-                        PointerCaptureLost="SeekSlider_PointerCaptureLost" />
-
-                    <TextBlock
-                        x:Name="DurationText"
-                        Grid.Column="2"
-                        Text="0:00"
-                        Foreground="#CCCCCC"
-                        FontSize="13"
-                        VerticalAlignment="Center" />
-                </Grid>
-
-                <!-- Bottom control row -->
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-
-                    <!-- Left: Play/Pause + Volume -->
-                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4">
-                        <Button
-                            x:Name="PlayPauseButton"
-                            Click="PlayPause_Click"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Padding="8">
-                            <FontIcon
-                                x:Name="PlayPauseIcon"
-                                Glyph="&#xE768;"
-                                FontSize="20"
-                                Foreground="White" />
-                        </Button>
-
-                        <Button
-                            x:Name="MuteButton"
-                            Click="Mute_Click"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Padding="8">
-                            <FontIcon
-                                x:Name="VolumeIcon"
-                                Glyph="&#xE767;"
-                                FontSize="16"
-                                Foreground="White" />
-                        </Button>
-
-                        <Slider
-                            x:Name="VolumeSlider"
-                            Minimum="0"
-                            Maximum="100"
-                            Value="100"
-                            Width="100"
-                            VerticalAlignment="Center"
-                            ValueChanged="VolumeSlider_ValueChanged" />
-                    </StackPanel>
-
-                    <!-- Center: Playback info -->
-                    <TextBlock
-                        x:Name="PlaybackInfoText"
-                        Grid.Column="1"
-                        Text=""
-                        Foreground="#999999"
-                        FontSize="12"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center" />
-
-                    <!-- Right: Subtitle + Fullscreen + Close -->
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
-                        <Button
-                            x:Name="SubtitleButton"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Padding="8">
-                            <FontIcon
-                                Glyph="&#xED1E;"
-                                FontSize="16"
-                                Foreground="White" />
-                            <Button.Flyout>
-                                <MenuFlyout x:Name="SubtitleFlyout" />
-                            </Button.Flyout>
-                        </Button>
-
-                        <Button
-                            x:Name="FullscreenButton"
-                            Click="Fullscreen_Click"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Padding="8">
-                            <FontIcon
-                                x:Name="FullscreenIcon"
-                                Glyph="&#xE740;"
-                                FontSize="16"
-                                Foreground="White" />
-                        </Button>
-
-                        <Button
-                            Click="Close_Click"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Padding="8">
-                            <FontIcon
-                                Glyph="&#xE711;"
-                                FontSize="16"
-                                Foreground="White" />
-                        </Button>
-                    </StackPanel>
-                </Grid>
-            </StackPanel>
-        </Grid>
-
-        <!-- Invisible overlay to capture pointer moves everywhere -->
-        <Grid
-            x:Name="PointerCaptureLayer"
-            Background="Transparent"
-            PointerMoved="RootGrid_PointerMoved"
-            Tapped="RootGrid_Tapped" />
     </Grid>
 </Page>

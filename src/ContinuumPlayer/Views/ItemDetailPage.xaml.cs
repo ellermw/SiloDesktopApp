@@ -1,7 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
+using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Catalog;
+using ContinuumPlayer.Core.Models.Playback;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Helpers;
 using ContinuumPlayer.ViewModels;
@@ -13,6 +15,7 @@ public sealed partial class ItemDetailPage : Page
     public ItemDetailViewModel ViewModel { get; }
     private CancellationTokenSource? _imageCts;
     private int _highlightedSeasonNumber;
+    private WatchDetailResponse? _watchDetail;
 
     public ItemDetailPage()
     {
@@ -43,6 +46,12 @@ public sealed partial class ItemDetailPage : Page
         {
             await ViewModel.LoadCommand.ExecuteAsync(contentId);
             UpdateUI();
+
+            // Load watch detail for version info and resume position (non-blocking for movies)
+            if (!ViewModel.IsSeries)
+            {
+                _ = LoadWatchDetailAsync(contentId);
+            }
 
             if (ViewModel.IsSeries)
             {
@@ -153,6 +162,99 @@ public sealed partial class ItemDetailPage : Page
     {
         var nav = App.Services.GetRequiredService<NavigationService>();
         nav.Navigate<PlayerPage>(contentId);
+    }
+
+    private async Task LoadWatchDetailAsync(string contentId)
+    {
+        try
+        {
+            var playbackApi = App.Services.GetRequiredService<PlaybackApi>();
+            _watchDetail = await playbackApi.GetWatchDetailAsync(contentId);
+            UpdatePlayButton();
+        }
+        catch
+        {
+            // Non-critical: play button will just say "Play" without version info
+        }
+    }
+
+    private void UpdatePlayButton()
+    {
+        if (_watchDetail == null) return;
+
+        // Show resume button text if there's saved progress
+        var userData = _watchDetail.UserData;
+        if (userData?.PositionSeconds > 0 && userData.Played != true)
+        {
+            var ts = TimeSpan.FromSeconds(userData.PositionSeconds.Value);
+            var timeStr = ts.TotalHours >= 1
+                ? $"{(int)ts.TotalHours}:{ts.Minutes:D2}:{ts.Seconds:D2}"
+                : $"{ts.Minutes}:{ts.Seconds:D2}";
+            PlayButtonText.Text = $"Resume from {timeStr}";
+        }
+        else
+        {
+            PlayButtonText.Text = "Play";
+        }
+
+        // Show version info for the best version
+        var versions = _watchDetail.Versions;
+        if (versions.Count > 0)
+        {
+            var manager = App.Services.GetRequiredService<PlaybackManager>();
+            var best = manager.SelectBestVersion(versions);
+            if (best != null)
+            {
+                var parts = new List<string>();
+                if (!string.IsNullOrEmpty(best.Resolution))
+                    parts.Add(best.Resolution);
+                if (!string.IsNullOrEmpty(best.CodecVideo))
+                    parts.Add(best.CodecVideo.ToUpperInvariant());
+                if (best.Hdr)
+                    parts.Add("HDR");
+
+                VersionInfoText.Text = string.Join(" \u2022 ", parts);
+                VersionInfoText.Visibility = Visibility.Visible;
+            }
+
+            // Show version selector if multiple versions exist
+            if (versions.Count > 1)
+            {
+                VersionButton.Visibility = Visibility.Visible;
+                BuildVersionFlyout(versions);
+            }
+        }
+    }
+
+    private void BuildVersionFlyout(List<FileVersion> versions)
+    {
+        VersionFlyout.Items.Clear();
+        foreach (var version in versions)
+        {
+            var label = version.Resolution;
+            if (!string.IsNullOrEmpty(version.CodecVideo))
+                label += $" {version.CodecVideo.ToUpperInvariant()}";
+            if (version.Hdr)
+                label += " HDR";
+            if (version.Bitrate > 0)
+                label += $" ({version.Bitrate / 1000}Mbps)";
+
+            var item = new MenuFlyoutItem { Text = label };
+            var fileVersion = version;
+            item.Click += (_, _) =>
+            {
+                // Update the version info text to show selected version
+                var parts = new List<string>();
+                if (!string.IsNullOrEmpty(fileVersion.Resolution))
+                    parts.Add(fileVersion.Resolution);
+                if (!string.IsNullOrEmpty(fileVersion.CodecVideo))
+                    parts.Add(fileVersion.CodecVideo.ToUpperInvariant());
+                if (fileVersion.Hdr)
+                    parts.Add("HDR");
+                VersionInfoText.Text = string.Join(" \u2022 ", parts);
+            };
+            VersionFlyout.Items.Add(item);
+        }
     }
 
     private async Task LoadBackdropAsync(MediaItemDetail item, CancellationToken ct)

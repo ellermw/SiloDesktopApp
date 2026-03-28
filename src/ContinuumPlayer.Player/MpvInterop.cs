@@ -146,4 +146,42 @@ internal static class MpvInterop
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    // ── Monitor detection (for fullscreen on correct monitor) ────────────
+
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+    public delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    /// <summary>
+    /// Determines the zero-based monitor index for the monitor containing the given window.
+    /// Returns 0 if detection fails.
+    /// </summary>
+    public static int GetMonitorIndex(IntPtr hwnd)
+    {
+        var targetMonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        int index = 0;
+        int result = 0; // default to monitor 0
+        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr hMonitor, IntPtr hdc, ref RECT rect, IntPtr data) =>
+        {
+            if (hMonitor == targetMonitor)
+                result = index;
+            index++;
+            return true;
+        }, IntPtr.Zero);
+        return result;
+    }
 }

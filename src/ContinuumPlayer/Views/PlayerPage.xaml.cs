@@ -1,8 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
-using Microsoft.UI.Windowing;
-using Microsoft.UI.Xaml.Input;
-using ContinuumPlayer.Core.Models.Playback;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Helpers;
 using ContinuumPlayer.Player;
@@ -14,10 +11,6 @@ public sealed partial class PlayerPage : Page
 {
     private PlayerViewModel? _vm;
     private MpvPlayer? _player;
-    private DispatcherTimer? _hideTimer;
-    private bool _isSeeking;
-    private bool _isFullscreen;
-    private bool _controlsVisible;
     private bool _isDisposed;
     private string? _contentId;
 
@@ -30,31 +23,26 @@ public sealed partial class PlayerPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        // Focus the page so keyboard events work
-        this.Focus(FocusState.Programmatic);
-
-        // Set up hide timer for controls
-        _hideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-        _hideTimer.Tick += (_, _) =>
-        {
-            _hideTimer.Stop();
-            HideControls();
-        };
-
-        // Get content ID from navigation parameter
-        var frame = this.Frame;
-        if (frame?.BackStack.Count > 0 || _contentId != null)
-        {
-            // contentId was set via OnNavigatedTo
-        }
-
         if (string.IsNullOrEmpty(_contentId))
         {
             ShowError("No content specified for playback.");
             return;
         }
 
-        await InitializePlaybackAsync(_contentId);
+        try
+        {
+            await InitializePlaybackAsync(_contentId);
+        }
+        catch (Exception ex)
+        {
+            var crashLog = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ContinuumPlayer", "player_crash.txt");
+            Directory.CreateDirectory(Path.GetDirectoryName(crashLog)!);
+            File.WriteAllText(crashLog, $"{DateTime.Now}\n{ex}\n");
+
+            ShowError($"Player error: {ex.Message}");
+        }
     }
 
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
@@ -74,24 +62,18 @@ public sealed partial class PlayerPage : Page
         if (_isDisposed) return;
         _isDisposed = true;
 
-        _hideTimer?.Stop();
-
-        // Restore from fullscreen
-        if (_isFullscreen)
-            ToggleFullscreen();
-
         // Show nav again
         if (App.MainWindowInstance is MainWindow mw)
             mw.ShowMainNavigation();
 
-        // Stop playback session
+        // Stop playback session on the server
         if (_vm?.Manager != null)
         {
             try { await _vm.Manager.StopSessionAsync(); }
             catch { }
         }
 
-        // Dispose mpv
+        // Dispose mpv (closes the mpv window)
         _player?.Dispose();
         _player = null;
     }
@@ -119,8 +101,6 @@ public sealed partial class PlayerPage : Page
             else
                 _vm.Title = watchDetail.Title;
 
-            TitleText.Text = _vm.Title;
-
             // Populate versions
             foreach (var v in watchDetail.Versions)
                 _vm.Versions.Add(v);
@@ -140,28 +120,15 @@ public sealed partial class PlayerPage : Page
             if (watchDetail.UserData?.PositionSeconds > 0 && watchDetail.UserData.Played != true)
                 startPosition = watchDetail.UserData.PositionSeconds!.Value;
 
-            // 3. Start session
+            // 3. Start session on the server
             var session = await _vm.Manager.StartSessionAsync(bestVersion.FileId, startPosition);
             _vm.PlayMethod = session.PlayMethod;
 
-            // Update playback info display
-            UpdatePlaybackInfo();
-
-            // Populate subtitle tracks
-            foreach (var sub in session.SubtitleUrls)
-                _vm.SubtitleTracks.Add(sub);
-
-            BuildSubtitleFlyout();
-
-            // 4. Initialize mpv
+            // 4. Initialize mpv as a standalone fullscreen window
             var windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance);
 
             _player = new MpvPlayer();
-            var (px, py, pw, ph) = GetVideoHostBounds();
-            _player.Initialize(windowHandle, pw, ph);
-
-            // Position the video window correctly
-            _player.ResizeVideoWindow(px, py, pw, ph);
+            _player.Initialize(windowHandle);
 
             // 5. Subscribe to mpv events (must marshal to UI thread)
             var dq = DispatcherQueue;
@@ -172,13 +139,6 @@ public sealed partial class PlayerPage : Page
                 {
                     if (_isDisposed || _vm == null) return;
                     _vm.UpdatePosition(pos);
-                    if (!_isSeeking)
-                    {
-                        SeekSlider.Maximum = _vm.SeekMax;
-                        SeekSlider.Value = pos;
-                    }
-                    PositionText.Text = _vm.PositionDisplay;
-                    UpdateSkipButtons();
                 });
             };
 
@@ -188,8 +148,6 @@ public sealed partial class PlayerPage : Page
                 {
                     if (_isDisposed || _vm == null) return;
                     _vm.UpdateDuration(dur);
-                    SeekSlider.Maximum = _vm.SeekMax;
-                    DurationText.Text = _vm.DurationDisplay;
                 });
             };
 
@@ -199,7 +157,6 @@ public sealed partial class PlayerPage : Page
                 {
                     if (_isDisposed || _vm == null) return;
                     _vm.IsPlaying = !paused;
-                    PlayPauseIcon.Glyph = paused ? "\uE768" : "\uE769";
                 });
             };
 
@@ -218,7 +175,16 @@ public sealed partial class PlayerPage : Page
                 {
                     if (_isDisposed || _vm == null) return;
                     _vm.IsLoading = false;
+
+                    // Switch to "now playing" view
                     LoadingOverlay.Visibility = Visibility.Collapsed;
+                    PlayingOverlay.Visibility = Visibility.Visible;
+                    NowPlayingText.Text = _vm.Title;
+                    UpdatePlaybackInfo();
+
+                    // Load subtitles AFTER file is loaded (sub-add fails before file load)
+                    LoadSubtitlesAfterFileLoaded();
+
                     // Auto-play
                     _player?.Play();
                 });
@@ -226,10 +192,25 @@ public sealed partial class PlayerPage : Page
 
             _player.Error += msg =>
             {
+                // Log all errors to file for debugging
+                try
+                {
+                    var logPath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "ContinuumPlayer", "mpv_error.txt");
+                    Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+                    File.AppendAllText(logPath, $"{DateTime.Now}: {msg}\n");
+                }
+                catch { }
+
+                // Only show fatal errors to the user (not subtitle loading failures)
+                if (msg.Contains("sub-add") || msg.Contains("sub_add"))
+                    return;
+
                 dq.TryEnqueue(() =>
                 {
                     if (_isDisposed) return;
-                    ShowError(msg);
+                    ShowError($"Player error: {msg}");
                 });
             };
 
@@ -241,318 +222,44 @@ public sealed partial class PlayerPage : Page
                 return;
             }
 
-            _player.LoadFile(streamUrl);
-
-            // 7. Load external subtitles
-            var subtitleUrls = _vm.Manager.GetSubtitleUrls();
-            foreach (var (track, fullUrl) in subtitleUrls)
+            // Log init info for debugging
+            try
             {
-                _player.AddSubtitle(fullUrl, track.Label, track.Language);
+                var logPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "ContinuumPlayer", "player_init.txt");
+                Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+                File.WriteAllText(logPath, $"{DateTime.Now}\nStreamURL: {streamUrl}\nPlayMethod: {_vm.PlayMethod}\nResolution: {_vm.Resolution}\nSession: {_vm.Manager.SessionId}\n");
             }
+            catch { }
+
+            _player.LoadFile(streamUrl);
         }
         catch (Exception ex)
         {
-            ShowError($"Failed to start playback: {ex.Message}");
+            var crashLog = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ContinuumPlayer", "player_crash.txt");
+            Directory.CreateDirectory(Path.GetDirectoryName(crashLog)!);
+            File.WriteAllText(crashLog, $"{DateTime.Now}\n{ex}\n");
+
+            ShowError($"Failed to start playback: {ex.Message}\n\nDetails logged to:\n{crashLog}");
         }
-    }
-
-    // ── Video host positioning ───────────────────────────────────────────
-
-    private (int x, int y, int width, int height) GetVideoHostBounds()
-    {
-        try
-        {
-            var transform = VideoHost.TransformToVisual(null);
-            var point = transform.TransformPoint(new Windows.Foundation.Point(0, 0));
-            var scale = XamlRoot?.RasterizationScale ?? 1.0;
-            return (
-                (int)(point.X * scale),
-                (int)(point.Y * scale),
-                (int)(VideoHost.ActualWidth * scale),
-                (int)(VideoHost.ActualHeight * scale)
-            );
-        }
-        catch
-        {
-            return (0, 0, (int)VideoHost.ActualWidth, (int)VideoHost.ActualHeight);
-        }
-    }
-
-    private void VideoHost_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        if (_player == null) return;
-        var (px, py, pw, ph) = GetVideoHostBounds();
-        if (pw > 0 && ph > 0)
-            _player.ResizeVideoWindow(px, py, pw, ph);
-    }
-
-    // ── Controls visibility ──────────────────────────────────────────────
-
-    private void ShowControls()
-    {
-        _controlsVisible = true;
-        ControlsOverlay.Opacity = 1;
-        // Move the capture layer behind controls when visible
-        _hideTimer?.Stop();
-        _hideTimer?.Start();
-    }
-
-    private void HideControls()
-    {
-        _controlsVisible = false;
-        ControlsOverlay.Opacity = 0;
-    }
-
-    private void RootGrid_PointerMoved(object sender, PointerRoutedEventArgs e)
-    {
-        ShowControls();
-    }
-
-    private void RootGrid_Tapped(object sender, TappedRoutedEventArgs e)
-    {
-        if (_controlsVisible)
-            HideControls();
-        else
-            ShowControls();
-    }
-
-    private void Controls_PointerEntered(object sender, PointerRoutedEventArgs e)
-    {
-        _hideTimer?.Stop();
-    }
-
-    private void Controls_PointerExited(object sender, PointerRoutedEventArgs e)
-    {
-        _hideTimer?.Stop();
-        _hideTimer?.Start();
-    }
-
-    // ── Keyboard shortcuts ───────────────────────────────────────────────
-
-    private void Page_KeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (_player == null || _isDisposed) return;
-
-        switch (e.Key)
-        {
-            case Windows.System.VirtualKey.Space:
-                _player.TogglePause();
-                e.Handled = true;
-                break;
-
-            case Windows.System.VirtualKey.Left:
-                _player.Seek(Math.Max(0, (_vm?.Position ?? 0) - 10));
-                e.Handled = true;
-                break;
-
-            case Windows.System.VirtualKey.Right:
-                _player.Seek((_vm?.Position ?? 0) + 10);
-                e.Handled = true;
-                break;
-
-            case Windows.System.VirtualKey.Up:
-                if (_vm != null)
-                {
-                    _vm.Volume = Math.Min(100, _vm.Volume + 5);
-                    VolumeSlider.Value = _vm.Volume;
-                    _player.SetVolume(_vm.Volume);
-                }
-                e.Handled = true;
-                break;
-
-            case Windows.System.VirtualKey.Down:
-                if (_vm != null)
-                {
-                    _vm.Volume = Math.Max(0, _vm.Volume - 5);
-                    VolumeSlider.Value = _vm.Volume;
-                    _player.SetVolume(_vm.Volume);
-                }
-                e.Handled = true;
-                break;
-
-            case Windows.System.VirtualKey.F:
-                ToggleFullscreen();
-                e.Handled = true;
-                break;
-
-            case Windows.System.VirtualKey.Escape:
-                if (_isFullscreen)
-                    ToggleFullscreen();
-                else
-                    NavigateBack();
-                e.Handled = true;
-                break;
-
-            case Windows.System.VirtualKey.M:
-                ToggleMute();
-                e.Handled = true;
-                break;
-        }
-
-        ShowControls();
     }
 
     // ── Button click handlers ────────────────────────────────────────────
 
-    private void PlayPause_Click(object sender, RoutedEventArgs e)
+    private void StopButton_Click(object sender, RoutedEventArgs e)
     {
-        _player?.TogglePause();
-    }
-
-    private void Mute_Click(object sender, RoutedEventArgs e)
-    {
-        ToggleMute();
-    }
-
-    private void Fullscreen_Click(object sender, RoutedEventArgs e)
-    {
-        ToggleFullscreen();
-    }
-
-    private void Close_Click(object sender, RoutedEventArgs e)
-    {
+        // Dispose mpv first (closes mpv window), then navigate back
+        _player?.Dispose();
+        _player = null;
         NavigateBack();
     }
 
     private void GoBackButton_Click(object sender, RoutedEventArgs e)
     {
         NavigateBack();
-    }
-
-    private void SkipIntro_Click(object sender, RoutedEventArgs e)
-    {
-        if (_vm?.IntroEnd != null && _player != null)
-        {
-            _player.Seek(_vm.IntroEnd.Value);
-        }
-    }
-
-    private void SkipCredits_Click(object sender, RoutedEventArgs e)
-    {
-        if (_vm?.CreditsEnd != null && _player != null)
-        {
-            _player.Seek(_vm.CreditsEnd.Value);
-        }
-    }
-
-    // ── Seek slider ──────────────────────────────────────────────────────
-
-    private void SeekSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        if (_isSeeking && _player != null)
-        {
-            _player.Seek(e.NewValue);
-        }
-    }
-
-    private void SeekSlider_PointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        _isSeeking = true;
-    }
-
-    private void SeekSlider_PointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        if (_isSeeking && _player != null)
-        {
-            _player.Seek(SeekSlider.Value);
-        }
-        _isSeeking = false;
-    }
-
-    private void SeekSlider_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
-    {
-        if (_isSeeking && _player != null)
-        {
-            _player.Seek(SeekSlider.Value);
-        }
-        _isSeeking = false;
-    }
-
-    // ── Volume slider ────────────────────────────────────────────────────
-
-    private void VolumeSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        if (_vm != null)
-        {
-            _vm.Volume = e.NewValue;
-            _player?.SetVolume(e.NewValue);
-            UpdateVolumeIcon();
-        }
-    }
-
-    // ── Subtitle flyout ──────────────────────────────────────────────────
-
-    private void BuildSubtitleFlyout()
-    {
-        SubtitleFlyout.Items.Clear();
-
-        // "Off" option
-        var offItem = new MenuFlyoutItem { Text = "Off" };
-        offItem.Click += (_, _) => _player?.SetSubtitleTrack(0);
-        SubtitleFlyout.Items.Add(offItem);
-
-        if (_vm == null) return;
-
-        foreach (var track in _vm.SubtitleTracks)
-        {
-            var item = new MenuFlyoutItem { Text = track.Label ?? $"{track.Language} ({track.Index})" };
-            var trackIndex = track.Index;
-            item.Click += (_, _) => _player?.SetSubtitleTrack(trackIndex);
-            SubtitleFlyout.Items.Add(item);
-        }
-    }
-
-    // ── Skip markers ─────────────────────────────────────────────────────
-
-    private void UpdateSkipButtons()
-    {
-        if (_vm == null) return;
-        SkipIntroButton.Visibility = _vm.ShowSkipIntro ? Visibility.Visible : Visibility.Collapsed;
-        SkipCreditsButton.Visibility = _vm.ShowSkipCredits ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    // ── Fullscreen ───────────────────────────────────────────────────────
-
-    private void ToggleFullscreen()
-    {
-        if (App.MainWindowInstance == null) return;
-
-        var appWindow = App.MainWindowInstance.AppWindow;
-        if (appWindow == null) return;
-
-        if (_isFullscreen)
-        {
-            appWindow.SetPresenter(AppWindowPresenterKind.Default);
-            _isFullscreen = false;
-            FullscreenIcon.Glyph = "\uE740"; // Maximize
-        }
-        else
-        {
-            appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
-            _isFullscreen = true;
-            FullscreenIcon.Glyph = "\uE73F"; // Restore
-        }
-    }
-
-    // ── Mute ─────────────────────────────────────────────────────────────
-
-    private void ToggleMute()
-    {
-        if (_vm == null || _player == null) return;
-        _vm.IsMuted = !_vm.IsMuted;
-        _player.SetMute(_vm.IsMuted);
-        UpdateVolumeIcon();
-    }
-
-    private void UpdateVolumeIcon()
-    {
-        if (_vm == null) return;
-        if (_vm.IsMuted || _vm.Volume <= 0)
-            VolumeIcon.Glyph = "\uE74F"; // Mute
-        else if (_vm.Volume < 50)
-            VolumeIcon.Glyph = "\uE993"; // Low volume
-        else
-            VolumeIcon.Glyph = "\uE767"; // Full volume
     }
 
     // ── Playback info ────────────────────────────────────────────────────
@@ -579,6 +286,26 @@ public sealed partial class PlayerPage : Page
             nav.GoBack();
     }
 
+    // ── Subtitle loading (after file is loaded) ────────────────────────
+
+    private void LoadSubtitlesAfterFileLoaded()
+    {
+        if (_player == null || _vm == null) return;
+
+        var subtitleUrls = _vm.Manager.GetSubtitleUrls();
+        foreach (var (track, fullUrl) in subtitleUrls)
+        {
+            try
+            {
+                var codec = track.Codec?.ToLowerInvariant() ?? "";
+                if (codec == "pgs" || codec == "pgssub" || codec == "dvdsub" || codec == "vobsub")
+                    continue;
+                _player.AddSubtitle(fullUrl, track.Label, track.Language);
+            }
+            catch { }
+        }
+    }
+
     // ── Error display ────────────────────────────────────────────────────
 
     private void ShowError(string message)
@@ -589,6 +316,7 @@ public sealed partial class PlayerPage : Page
             _vm.ErrorMessage = message;
         }
         LoadingOverlay.Visibility = Visibility.Collapsed;
+        PlayingOverlay.Visibility = Visibility.Collapsed;
         ErrorOverlay.Visibility = Visibility.Visible;
         ErrorText.Text = message;
     }
