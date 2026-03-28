@@ -141,7 +141,7 @@ public sealed partial class AdminShellPage : Page
     private void NavRecommendations_Click(object sender, RoutedEventArgs e)
     {
         SetActiveNavItem(NavRecommendations);
-        AdminContentFrame.Navigate(typeof(PlaceholderPage), "Recommendations");
+        AdminContentFrame.Navigate(typeof(AdminRecommendationsPage));
     }
 
     private void NavApiKeys_Click(object sender, RoutedEventArgs e)
