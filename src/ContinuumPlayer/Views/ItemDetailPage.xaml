@@ -197,6 +197,36 @@
                         Visibility="Collapsed">
                         <StackPanel x:Name="CastPanel" Orientation="Horizontal" Spacing="16" />
                     </ScrollViewer>
+
+                    <!-- Seasons (for series only) -->
+                    <StackPanel x:Name="SeasonsSection" Visibility="Collapsed" Spacing="12" Margin="0,8,0,0">
+                        <TextBlock Text="Seasons" Style="{StaticResource TitleTextStyle}" />
+                        <ProgressRing
+                            x:Name="SeasonsLoadingRing"
+                            IsActive="False"
+                            Visibility="Collapsed"
+                            Width="32" Height="32"
+                            HorizontalAlignment="Left" />
+                        <ScrollViewer
+                            HorizontalScrollBarVisibility="Hidden"
+                            VerticalScrollBarVisibility="Disabled"
+                            HorizontalScrollMode="Enabled"
+                            VerticalScrollMode="Disabled">
+                            <StackPanel x:Name="SeasonsPanel" Orientation="Horizontal" Spacing="12" />
+                        </ScrollViewer>
+                    </StackPanel>
+
+                    <!-- Episodes (shown when a season is selected) -->
+                    <StackPanel x:Name="EpisodesSection" Visibility="Collapsed" Spacing="8" Margin="0,8,0,0">
+                        <TextBlock x:Name="EpisodesHeader" Style="{StaticResource TitleTextStyle}" />
+                        <ProgressRing
+                            x:Name="EpisodesLoadingRing"
+                            IsActive="False"
+                            Visibility="Collapsed"
+                            Width="32" Height="32"
+                            HorizontalAlignment="Left" />
+                        <StackPanel x:Name="EpisodesPanel" Spacing="8" />
+                    </StackPanel>
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>

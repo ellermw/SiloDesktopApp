@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ContinuumPlayer.Core.Api;
@@ -29,6 +30,22 @@ public partial class ItemDetailViewModel : ObservableObject
     [ObservableProperty]
     private bool _inWatchlist;
 
+    // Series support
+    [ObservableProperty]
+    private bool _isSeries;
+
+    [ObservableProperty]
+    private bool _isSeasonsLoading;
+
+    [ObservableProperty]
+    private bool _isEpisodesLoading;
+
+    [ObservableProperty]
+    private int _selectedSeasonNumber;
+
+    public ObservableCollection<Season> Seasons { get; } = [];
+    public ObservableCollection<Episode> Episodes { get; } = [];
+
     public string RuntimeDisplay =>
         Item?.Runtime > 0 ? $"{Item.Runtime / 60}h {Item.Runtime % 60}m" : "";
 
@@ -45,12 +62,17 @@ public partial class ItemDetailViewModel : ObservableObject
 
         IsLoading = true;
         ErrorMessage = null;
+        IsSeries = false;
+        Seasons.Clear();
+        Episodes.Clear();
+        SelectedSeasonNumber = 0;
 
         try
         {
             Item = await _catalogApi.GetItemDetailAsync(contentId);
             IsFavorite = Item?.UserState?.IsFavorite ?? false;
             InWatchlist = Item?.UserState?.InWatchlist ?? false;
+            IsSeries = Item?.Type == "series";
             OnPropertyChanged(nameof(RuntimeDisplay));
             OnPropertyChanged(nameof(GenresDisplay));
             OnPropertyChanged(nameof(RatingDisplay));
@@ -62,6 +84,58 @@ public partial class ItemDetailViewModel : ObservableObject
         finally
         {
             IsLoading = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task LoadSeasonsAsync()
+    {
+        if (Item == null || !IsSeries || IsSeasonsLoading) return;
+
+        IsSeasonsLoading = true;
+        try
+        {
+            var response = await _catalogApi.GetSeasonsAsync(Item.ContentId);
+            Seasons.Clear();
+            foreach (var season in response.Seasons)
+                Seasons.Add(season);
+
+            // Auto-select the first season
+            if (Seasons.Count > 0)
+                await SelectSeasonAsync(Seasons[0].SeasonNumber);
+        }
+        catch
+        {
+            // Seasons load failure is non-fatal
+        }
+        finally
+        {
+            IsSeasonsLoading = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SelectSeasonAsync(int seasonNumber)
+    {
+        if (Item == null || seasonNumber == 0) return;
+
+        SelectedSeasonNumber = seasonNumber;
+        IsEpisodesLoading = true;
+        Episodes.Clear();
+
+        try
+        {
+            var response = await _catalogApi.GetEpisodesAsync(Item.ContentId, seasonNumber);
+            foreach (var episode in response.Episodes)
+                Episodes.Add(episode);
+        }
+        catch
+        {
+            // Episode load failure is non-fatal
+        }
+        finally
+        {
+            IsEpisodesLoading = false;
         }
     }
 

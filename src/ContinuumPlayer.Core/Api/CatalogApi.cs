@@ -62,4 +62,10 @@ public class CatalogApi(ContinuumApiClient client)
 
     public Task RemoveFromWatchlistAsync(string contentId, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/watchlist/{contentId}", ct);
+
+    public Task<SeasonsResponse> GetSeasonsAsync(string seriesId, CancellationToken ct = default)
+        => client.GetAsync<SeasonsResponse>($"/api/v1/catalog/series/{seriesId}/seasons", ct);
+
+    public Task<EpisodesResponse> GetEpisodesAsync(string seriesId, int seasonNumber, CancellationToken ct = default)
+        => client.GetAsync<EpisodesResponse>($"/api/v1/catalog/series/{seriesId}/seasons/{seasonNumber}/episodes", ct);
 }
