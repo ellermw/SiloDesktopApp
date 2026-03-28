@@ -44,7 +44,8 @@
       "Read(//c/Program Files \\(x86\\)/7-Zip/**)",
       "Bash(cmd.exe /c \"where 7z\")",
       "Bash(cmd.exe /c \"where 7z.exe\")",
-      "Bash(\"/c/Program Files/7-Zip/7z.exe\" x mpv-dev.7z -y)"
+      "Bash(\"/c/Program Files/7-Zip/7z.exe\" x mpv-dev.7z -y)",
+      "Bash(dotnet remove:*)"
     ]
   }
 }

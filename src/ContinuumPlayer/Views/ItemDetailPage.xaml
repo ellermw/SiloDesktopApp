@@ -151,6 +151,16 @@
                                     </StackPanel>
                                 </Button>
 
+                                <!-- Play from start (shown when resuming) -->
+                                <Button
+                                    x:Name="PlayFromStartButton"
+                                    Style="{StaticResource SecondaryButtonStyle}"
+                                    Padding="16,10"
+                                    Visibility="Collapsed"
+                                    Click="PlayFromStartButton_Click">
+                                    <TextBlock Text="Play from Start" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                                </Button>
+
                                 <!-- Version selector dropdown -->
                                 <Button
                                     x:Name="VersionButton"

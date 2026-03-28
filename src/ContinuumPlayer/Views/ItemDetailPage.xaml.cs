@@ -158,10 +158,16 @@ public sealed partial class ItemDetailPage : Page
         }
     }
 
-    private void NavigateToPlayer(string contentId)
+    private void PlayFromStartButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Item == null) return;
+        NavigateToPlayer(ViewModel.Item.ContentId, fromStart: true);
+    }
+
+    private void NavigateToPlayer(string contentId, bool fromStart = false)
     {
         var nav = App.Services.GetRequiredService<NavigationService>();
-        nav.Navigate<PlayerPage>(contentId);
+        nav.Navigate<PlayerPage>(fromStart ? $"{contentId}|fromstart" : contentId);
     }
 
     private async Task LoadWatchDetailAsync(string contentId)
@@ -191,9 +197,11 @@ public sealed partial class ItemDetailPage : Page
                 ? $"{(int)ts.TotalHours}:{ts.Minutes:D2}:{ts.Seconds:D2}"
                 : $"{ts.Minutes}:{ts.Seconds:D2}";
             PlayButtonText.Text = $"Resume from {timeStr}";
+            PlayFromStartButton.Visibility = Visibility.Visible;
         }
         else
         {
+            PlayFromStartButton.Visibility = Visibility.Collapsed;
             PlayButtonText.Text = "Play";
         }
 
