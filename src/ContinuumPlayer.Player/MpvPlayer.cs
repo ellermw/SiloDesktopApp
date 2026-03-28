@@ -238,12 +238,12 @@ public sealed class MpvPlayer : IDisposable
     }
 
     /// <summary>
-    /// Resizes the child video window.
+    /// Repositions and resizes the child video window within the parent.
     /// </summary>
-    public void ResizeVideoWindow(int width, int height)
+    public void ResizeVideoWindow(int x, int y, int width, int height)
     {
         if (_childHwnd != IntPtr.Zero)
-            MoveWindow(_childHwnd, 0, 0, width, height, true);
+            MoveWindow(_childHwnd, x, y, width, height, true);
     }
 
     // ── Command helper ───────────────────────────────────────────────────

@@ -123,6 +123,38 @@ public sealed partial class ItemDetailPage : Page
             nav.GoBack();
     }
 
+    private void PlayButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Item == null) return;
+
+        // For series, play the first unwatched or in-progress episode if available
+        if (ViewModel.IsSeries && ViewModel.Episodes.Count > 0)
+        {
+            var episode = ViewModel.Episodes.FirstOrDefault(ep => ep.UserData?.Played != true)
+                          ?? ViewModel.Episodes[0];
+            NavigateToPlayer(episode.ContentId);
+        }
+        else
+        {
+            // For movies, play the item directly
+            NavigateToPlayer(ViewModel.Item.ContentId);
+        }
+    }
+
+    private void EpisodeRow_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.Tag is string contentId)
+        {
+            NavigateToPlayer(contentId);
+        }
+    }
+
+    private void NavigateToPlayer(string contentId)
+    {
+        var nav = App.Services.GetRequiredService<NavigationService>();
+        nav.Navigate<PlayerPage>(contentId);
+    }
+
     private async Task LoadBackdropAsync(MediaItemDetail item, CancellationToken ct)
     {
         // Show thumbhash placeholder first
@@ -664,7 +696,8 @@ public sealed partial class ItemDetailPage : Page
         {
             Style = (Style)Application.Current.Resources["CardStyle"],
             Padding = new Thickness(12),
-            Child = rowGrid
+            Child = rowGrid,
+            Tag = episode.ContentId
         };
 
         rowBorder.PointerEntered += (s, _) =>
@@ -678,6 +711,8 @@ public sealed partial class ItemDetailPage : Page
             if (s is Border b)
                 b.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"];
         };
+
+        rowBorder.Tapped += EpisodeRow_Tapped;
 
         return rowBorder;
     }

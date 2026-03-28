@@ -108,6 +108,7 @@ public partial class App : Application
         services.AddTransient<HistoryViewModel>();
         services.AddTransient<RecommendationsViewModel>();
         services.AddTransient<SettingsViewModel>();
+        services.AddTransient<PlayerViewModel>();
 
         return services.BuildServiceProvider();
     }
