@@ -1,0 +1,34 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+import ImpersonationBanner from "./ImpersonationBanner";
+
+describe("ImpersonationBanner", () => {
+  it("renders the active impersonation message and end action", () => {
+    const onEnd = vi.fn();
+
+    const markup = renderToStaticMarkup(
+      <ImpersonationBanner
+        userName="target-user"
+        impersonatorName="admin-user"
+        onEnd={onEnd}
+      />,
+    );
+
+    expect(markup).toContain("Impersonating");
+    expect(markup).toContain("target-user");
+    expect(markup).toContain("admin-user");
+    expect(markup).toContain("End impersonation");
+  });
+
+  it("offsets banner content on desktop so the app sidebar does not cover it", () => {
+    const markup = renderToStaticMarkup(
+      <ImpersonationBanner
+        userName="target-user"
+        impersonatorName="admin-user"
+        onEnd={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("lg:pl-[292px]");
+  });
+});

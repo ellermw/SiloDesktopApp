@@ -41,7 +41,6 @@ public sealed partial class PosterCard : UserControl
 
     private void UpdateContent(MediaItem item)
     {
-        // Cancel any previous load
         _loadCts?.Cancel();
         _loadCts = new CancellationTokenSource();
         var ct = _loadCts.Token;
@@ -49,41 +48,13 @@ public sealed partial class PosterCard : UserControl
         TitleText.Text = item.Title;
         PosterImage.Opacity = 0;
 
-        // Decode thumbhash placeholder
-        if (!string.IsNullOrEmpty(item.PosterThumbhash))
-        {
-            try
-            {
-                var decoded = ThumbhashDecoder.Decode(item.PosterThumbhash);
-                var bitmap = new WriteableBitmap(decoded.Width, decoded.Height);
+        // Skip thumbhash -- go straight to loading the real image.
+        // Thumbhash decoding on UI thread for hundreds of cards causes jank.
+        ThumbhashImage.Source = null;
 
-                var bgra = new byte[decoded.Rgba.Length];
-                for (int i = 0; i < decoded.Rgba.Length; i += 4)
-                {
-                    bgra[i] = decoded.Rgba[i + 2];     // B
-                    bgra[i + 1] = decoded.Rgba[i + 1]; // G
-                    bgra[i + 2] = decoded.Rgba[i];     // R
-                    bgra[i + 3] = decoded.Rgba[i + 3]; // A
-                }
-
-                bgra.CopyTo(bitmap.PixelBuffer);
-                bitmap.Invalidate();
-                ThumbhashImage.Source = bitmap;
-            }
-            catch
-            {
-                ThumbhashImage.Source = null;
-            }
-        }
-        else
-        {
-            ThumbhashImage.Source = null;
-        }
-
-        // Show overlay badges
         UpdateBadges(item.OverlaySummary);
 
-        // Start async image load
+        // Delay image load slightly so scrolling isn't blocked by hundreds of simultaneous loads
         _ = LoadPosterAsync(item, ct);
     }
 
@@ -125,6 +96,11 @@ public sealed partial class PosterCard : UserControl
 
         try
         {
+            // Small delay: if user is scrolling fast, this card will be cancelled
+            // before we start the network request
+            await Task.Delay(50, ct);
+            if (ct.IsCancellationRequested) return;
+
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
@@ -133,7 +109,12 @@ public sealed partial class PosterCard : UserControl
 
             if (ct.IsCancellationRequested || bytes == null) return;
 
-            var bitmapImage = new BitmapImage();
+            var bitmapImage = new BitmapImage
+            {
+                // Decode at display size, not full resolution -- huge perf win
+                DecodePixelWidth = 180,
+                DecodePixelType = DecodePixelType.Logical
+            };
             using var stream = new MemoryStream(bytes);
             await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
 
@@ -142,14 +123,8 @@ public sealed partial class PosterCard : UserControl
             PosterImage.Source = bitmapImage;
             PosterImage.Opacity = 1;
         }
-        catch (OperationCanceledException)
-        {
-            // Expected on cancellation
-        }
-        catch
-        {
-            // Image load failed, thumbhash placeholder remains
-        }
+        catch (OperationCanceledException) { }
+        catch { }
     }
 
     private void OnCardTapped(object sender, TappedRoutedEventArgs e)

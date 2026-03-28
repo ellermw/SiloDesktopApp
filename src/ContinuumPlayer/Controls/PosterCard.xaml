@@ -15,7 +15,8 @@
         x:Name="RootGrid"
         Width="{StaticResource PosterCardWidth}"
         CornerRadius="{StaticResource PosterCornerRadius}"
-        Background="Transparent">
+        Background="Transparent"
+        CacheMode="BitmapCache">
 
         <Grid.RowDefinitions>
             <RowDefinition Height="225" />

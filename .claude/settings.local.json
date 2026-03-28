@@ -17,7 +17,25 @@
       "Bash(dotnet add:*)",
       "Bash(dotnet build:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git config:*)",
+      "Bash(dotnet test:*)",
+      "Bash(dotnet clean:*)",
+      "Bash(rm -rf src/ContinuumPlayer/obj src/ContinuumPlayer/bin)",
+      "Bash(python3 -m json.tool)",
+      "Bash(python3 -c \":*)",
+      "Bash(\"C:\\\\Users\\\\Mike\\\\.nuget\\\\packages\\\\microsoft.windowsappsdk.winui\\\\1.8.260224000\\\\tools\\\\net472\\\\XamlCompiler.exe\" \"F:\\\\ContinuumPlayer\\\\src\\\\ContinuumPlayer\\\\obj\\\\Debug\\\\net8.0-windows10.0.22621.0\\\\input.json\" \"F:\\\\ContinuumPlayer\\\\src\\\\ContinuumPlayer\\\\obj\\\\Debug\\\\net8.0-windows10.0.22621.0\\\\output.json\")",
+      "Bash(echo \"EXIT CODE: $?\")",
+      "Bash(grep -o \"\"FullPath\"\":\"\"[^\"\"]*.xaml\"\" src/ContinuumPlayer/obj/Debug/net8.0-windows10.0.22621.0/input.json)",
+      "Bash(grep -o \"\"SourceXaml[^}]* src/ContinuumPlayer/obj/Debug/net8.0-windows10.0.22621.0/input.json)",
+      "Bash(cd:*)",
+      "Bash(grep -o \"\"LineNumber\"\":[0-9]* src/ContinuumPlayer/obj/Debug/net8.0-windows10.0.22621.0/output.json)",
+      "Bash(grep -v ':0$')",
+      "Bash(ls:*)",
+      "Bash(tasklist)",
+      "Bash(find F:/ContinuumPlayer/continuum-webui-ref/src -name *play* -o -name *Play* -o -name *player* -o -name *Player* -o -name *watch* -o -name *Watch*)",
+      "Bash(find F:/ContinuumPlayer/continuum-webui-ref/src -name *Episode* -o -name *Season* -o -name *series* -o -name *Series*)"
     ]
   }
 }

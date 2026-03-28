@@ -49,17 +49,16 @@
         <!-- Main content -->
         <ScrollViewer
             x:Name="ContentScrollViewer"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
+            IsScrollInertiaEnabled="True"
+            CanContentRenderOutsideBounds="True">
 
             <StackPanel x:Name="ContentPanel">
-                <!-- Hero Carousel for featured items -->
-                <controls:HeroCarousel
-                    x:Name="HeroCarouselControl" />
+                <!-- Hero carousel for featured sections -->
+                <controls:HeroCarousel x:Name="HeroCarouselControl" />
 
                 <!-- Section rows -->
-                <StackPanel
-                    x:Name="SectionsPanel"
-                    Padding="24,24,24,24" />
+                <StackPanel x:Name="SectionsPanel" Padding="24,24,24,24" />
             </StackPanel>
         </ScrollViewer>
     </Grid>

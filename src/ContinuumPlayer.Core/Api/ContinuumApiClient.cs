@@ -22,8 +22,12 @@ public class ContinuumApiClient
     private string? _accessToken;
     private string? _profileId;
     private string? _profileToken;
+    private string _baseUrl = "";
 
     public ContinuumApiClient(HttpClient http) { _http = http; }
+
+    public void SetBaseUrl(string baseUrl) => _baseUrl = baseUrl.TrimEnd('/');
+    public string BaseUrl => _baseUrl;
 
     public void SetAccessToken(string token) => _accessToken = token;
     public void SetProfile(string profileId, string? profileToken = null)
@@ -41,16 +45,18 @@ public class ContinuumApiClient
     public string? AccessToken => _accessToken;
     public string? ProfileId => _profileId;
 
+    private string BuildUrl(string path) => _baseUrl + path;
+
     public async Task<T> GetAsync<T>(string path, CancellationToken ct = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        using var request = new HttpRequestMessage(HttpMethod.Get, BuildUrl(path));
         AddHeaders(request);
         return await SendAsync<T>(request, ct);
     }
 
     public async Task<T> PostAsync<T>(string path, object body, CancellationToken ct = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, path);
+        using var request = new HttpRequestMessage(HttpMethod.Post, BuildUrl(path));
         AddHeaders(request);
         request.Content = JsonContent.Create(body, options: JsonOptions);
         return await SendAsync<T>(request, ct);
@@ -58,7 +64,7 @@ public class ContinuumApiClient
 
     public async Task PostNoContentAsync(string path, object body, CancellationToken ct = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, path);
+        using var request = new HttpRequestMessage(HttpMethod.Post, BuildUrl(path));
         AddHeaders(request);
         request.Content = JsonContent.Create(body, options: JsonOptions);
         var response = await _http.SendAsync(request, ct);
@@ -67,7 +73,7 @@ public class ContinuumApiClient
 
     public async Task PutNoContentAsync(string path, object? body = null, CancellationToken ct = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Put, path);
+        using var request = new HttpRequestMessage(HttpMethod.Put, BuildUrl(path));
         AddHeaders(request);
         if (body != null) request.Content = JsonContent.Create(body, options: JsonOptions);
         var response = await _http.SendAsync(request, ct);
@@ -76,7 +82,7 @@ public class ContinuumApiClient
 
     public async Task DeleteAsync(string path, CancellationToken ct = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Delete, path);
+        using var request = new HttpRequestMessage(HttpMethod.Delete, BuildUrl(path));
         AddHeaders(request);
         var response = await _http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct);
@@ -84,7 +90,7 @@ public class ContinuumApiClient
 
     public async Task<T> PatchAsync<T>(string path, object body, CancellationToken ct = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Patch, path);
+        using var request = new HttpRequestMessage(HttpMethod.Patch, BuildUrl(path));
         AddHeaders(request);
         request.Content = JsonContent.Create(body, options: JsonOptions);
         return await SendAsync<T>(request, ct);

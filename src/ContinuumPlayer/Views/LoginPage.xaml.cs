@@ -42,6 +42,11 @@ public sealed partial class LoginPage : Page
         nav.Navigate<ServerSelectPage>();
     }
 
+    private void PasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
+    {
+        ViewModel.Password = PasswordBox.Password;
+    }
+
     private void InputBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == Windows.System.VirtualKey.Enter && ViewModel.LoginCommand.CanExecute(null))

@@ -31,6 +31,11 @@ public sealed partial class ServerSelectPage : Page
         if (sender is Button button && button.Tag is ServerEntry server)
         {
             ViewModel.SelectServerCommand.Execute(server);
+
+            // Set the API client base URL to the selected server
+            var apiClient = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.ContinuumApiClient>();
+            apiClient.SetBaseUrl(server.Url);
+
             // Navigate to login page with server info
             var nav = App.Services.GetRequiredService<NavigationService>();
             nav.Navigate<LoginPage>(server);

@@ -44,7 +44,11 @@
                 Click="Tab_Click"
                 Tag="Recommended"
                 Padding="16,8"
-                FontSize="14" />
+                FontSize="14"
+                FontWeight="Bold"
+                Foreground="{StaticResource PrimaryTextBrush}"
+                BorderBrush="{StaticResource AccentBrush}"
+                BorderThickness="0,0,0,2" />
             <Button
                 x:Name="LibraryTab"
                 Content="Library"
@@ -52,11 +56,7 @@
                 Click="Tab_Click"
                 Tag="Library"
                 Padding="16,8"
-                FontSize="14"
-                FontWeight="Bold"
-                Foreground="{StaticResource PrimaryTextBrush}"
-                BorderBrush="{StaticResource AccentBrush}"
-                BorderThickness="0,0,0,2" />
+                FontSize="14" />
             <Button
                 x:Name="CollectionsTab"
                 Content="Collections"
@@ -73,7 +73,8 @@
             Grid.Row="2"
             Orientation="Horizontal"
             Spacing="12"
-            Margin="24,0,24,16">
+            Margin="24,0,24,16"
+            Visibility="Collapsed">
 
             <!-- Sort by -->
             <StackPanel Orientation="Horizontal" Spacing="6">
@@ -132,8 +133,11 @@
         <ScrollViewer
             x:Name="ContentScrollViewer"
             Grid.Row="3"
-            ViewChanged="ScrollViewer_ViewChanged"
-            Padding="24,0,24,24">
+            ViewChanged="ContentScrollViewer_ViewChanged"
+            IsScrollInertiaEnabled="True"
+            CanContentRenderOutsideBounds="True"
+            Padding="24,0,24,24"
+            Visibility="Collapsed">
 
             <StackPanel>
                 <!-- Poster grid -->
@@ -174,38 +178,26 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Alphabet quick-jump strip (Library tab) -->
+        <!-- Recommended tab content -->
         <ScrollViewer
-            x:Name="AlphabetStrip"
-            Grid.Row="3"
-            HorizontalAlignment="Right"
-            VerticalAlignment="Stretch"
-            VerticalScrollBarVisibility="Hidden"
-            HorizontalScrollBarVisibility="Disabled"
-            Margin="0,4,4,4"
-            Width="28"
-            Canvas.ZIndex="10">
-            <StackPanel x:Name="AlphabetStripPanel" Spacing="0" />
-        </ScrollViewer>
-
-        <!-- Placeholder for Recommended tab -->
-        <StackPanel
             x:Name="RecommendedPanel"
             Grid.Row="3"
-            Visibility="Collapsed"
-            VerticalAlignment="Center"
-            HorizontalAlignment="Center"
-            Spacing="8">
-            <FontIcon
-                Glyph="&#xE735;"
-                FontSize="48"
-                Foreground="{StaticResource SecondaryTextBrush}" />
-            <TextBlock
-                Text="Recommended content coming soon"
-                Style="{StaticResource SecondaryTextStyle}"
-                FontSize="16"
-                HorizontalAlignment="Center" />
-        </StackPanel>
+            Padding="24,0,24,24">
+            <StackPanel x:Name="RecommendedSectionsPanel" Spacing="8">
+                <ProgressRing
+                    x:Name="RecommendedLoading"
+                    IsActive="False"
+                    HorizontalAlignment="Center"
+                    Width="32" Height="32"
+                    Margin="0,24,0,0" />
+                <TextBlock
+                    x:Name="RecommendedError"
+                    Foreground="{StaticResource ErrorBrush}"
+                    Style="{StaticResource BodyTextStyle}"
+                    HorizontalAlignment="Center"
+                    Visibility="Collapsed" />
+            </StackPanel>
+        </ScrollViewer>
 
         <!-- Placeholder for Collections tab -->
         <StackPanel

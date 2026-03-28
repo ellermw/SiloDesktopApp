@@ -65,8 +65,10 @@ public class ContinuumApiClientTests
 
     private static ContinuumApiClient CreateClient(HttpMessageHandler handler)
     {
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://test.example.com") };
-        return new ContinuumApiClient(httpClient);
+        var httpClient = new HttpClient(handler);
+        var client = new ContinuumApiClient(httpClient);
+        client.SetBaseUrl("https://test.example.com");
+        return client;
     }
 
     private class MockHttpHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler

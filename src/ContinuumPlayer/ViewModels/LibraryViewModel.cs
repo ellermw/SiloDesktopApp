@@ -18,6 +18,9 @@ public partial class LibraryViewModel : ObservableObject
 
     public ObservableCollection<MediaItem> Items { get; } = [];
 
+    /// <summary>Fired after each page is loaded so the UI can check if more content is needed to fill the viewport.</summary>
+    public event Action? PageLoaded;
+
     [ObservableProperty]
     private Library? _library;
 
@@ -46,7 +49,7 @@ public partial class LibraryViewModel : ObservableObject
     private bool _hasMore;
 
     private int _offset;
-    private const int PageSize = 40;
+    private const int PageSize = 100;
 
     // Filter options loaded from server
     public ObservableCollection<string> Genres { get; } = [];
@@ -78,25 +81,121 @@ public partial class LibraryViewModel : ObservableObject
         await LoadPageAsync();
     }
 
+    // Cached letter->offset mapping per library, built on first use
+    private Dictionary<char, int>? _letterOffsets;
+    private int _letterOffsetLibraryId;
+
     [RelayCommand]
     private async Task JumpToLetterAsync(string letter)
     {
-        if (Library == null) return;
+        if (Library == null || TotalCount == 0) return;
 
-        // Ensure sorted by title ascending for letter jump to make sense
         SelectedSort = "title";
         SelectedOrder = "asc";
 
-        // Estimate offset based on letter position
-        int letterIndex = letter == "#" ? 0 : (letter[0] - 'A' + 1);
-        int estimatedOffset = (int)((letterIndex / 27.0) * TotalCount);
+        if (letter == "#")
+        {
+            _offset = 0;
+            Items.Clear();
+            await LoadPageAsync();
+            return;
+        }
 
-        // Round down to nearest page boundary
-        estimatedOffset = (estimatedOffset / PageSize) * PageSize;
+        IsLoading = true;
 
-        _offset = estimatedOffset;
-        Items.Clear();
-        await LoadPageAsync();
+        try
+        {
+            // Build letter offset cache on first use (or if library changed)
+            if (_letterOffsets == null || _letterOffsetLibraryId != Library.Id)
+            {
+                await BuildLetterOffsetsAsync();
+            }
+
+            char target = char.ToUpper(letter[0]);
+            if (_letterOffsets != null && _letterOffsets.TryGetValue(target, out int cachedOffset))
+            {
+                _offset = (cachedOffset / PageSize) * PageSize;
+            }
+            else
+            {
+                // Fallback: rough estimate
+                int letterIndex = target - 'A' + 1;
+                _offset = (int)((letterIndex / 27.0) * TotalCount);
+                _offset = (_offset / PageSize) * PageSize;
+            }
+
+            Items.Clear();
+            await LoadPageAsync();
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task BuildLetterOffsetsAsync()
+    {
+        if (Library == null) return;
+
+        _letterOffsets = new Dictionary<char, int>();
+        _letterOffsetLibraryId = Library.Id;
+
+        // Sample ~20 evenly spaced points across the catalog to map letter positions
+        int sampleCount = 20;
+        int step = Math.Max(1, TotalCount / sampleCount);
+        var samples = new List<(int offset, char letter)>();
+
+        var tasks = new List<Task<(int offset, char letter)>>();
+        for (int i = 0; i < sampleCount && i * step < TotalCount; i++)
+        {
+            int offset = i * step;
+            tasks.Add(ProbeSingleAsync(offset));
+        }
+
+        var results = await Task.WhenAll(tasks);
+        samples.AddRange(results.Where(r => r.letter != '\0'));
+        samples.Sort((a, b) => a.offset.CompareTo(b.offset));
+
+        // For each letter A-Z, find the lowest offset where that letter first appears
+        for (char c = 'A'; c <= 'Z'; c++)
+        {
+            // Find the sample just before this letter starts
+            int bestOffset = 0;
+            for (int i = 0; i < samples.Count; i++)
+            {
+                if (samples[i].letter < c)
+                    bestOffset = samples[i].offset;
+                else if (samples[i].letter == c)
+                {
+                    bestOffset = samples[i].offset;
+                    break;
+                }
+                else
+                    break;
+            }
+            _letterOffsets[c] = bestOffset;
+        }
+    }
+
+    private async Task<(int offset, char letter)> ProbeSingleAsync(int offset)
+    {
+        try
+        {
+            var probe = await _catalogApi.GetCatalogAsync(
+                libraryId: Library!.Id, sort: "title", order: "asc", limit: 1, offset: offset);
+            if (probe.Items.Count > 0)
+            {
+                var title = probe.Items[0].Title.TrimStart();
+                if (title.Length > 0)
+                {
+                    char c = char.ToUpper(title[0]);
+                    if (c >= 'A' && c <= 'Z')
+                        return (offset, c);
+                }
+            }
+        }
+        catch { }
+        return (offset, '\0');
     }
 
     private async Task LoadPageAsync()
@@ -124,6 +223,9 @@ public partial class LibraryViewModel : ObservableObject
             TotalCount = response.Total;
             _offset += response.Items.Count;
             HasMore = response.HasMore;
+
+            // Signal that a page was loaded (UI can check if more is needed)
+            PageLoaded?.Invoke();
         }
         catch (Exception ex)
         {
