@@ -77,6 +77,8 @@ public partial class App : Application
         services.AddSingleton<HomeApi>(sp => new HomeApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddSingleton<CatalogApi>(sp => new CatalogApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddSingleton<SettingsApi>(sp => new SettingsApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<PlaybackApi>(sp => new PlaybackApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddTransient<PlaybackManager>();
 
         // Auth service
         services.AddSingleton<AuthService>(sp => new AuthService(
