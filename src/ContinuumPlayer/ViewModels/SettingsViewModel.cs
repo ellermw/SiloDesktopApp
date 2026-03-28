@@ -1,23 +1,205 @@
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Auth;
+using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Services;
 
 namespace ContinuumPlayer.ViewModels;
 
+/// <summary>Represents a library with its playback preference overrides for display in the Libraries settings tab.</summary>
+public partial class LibraryCardViewModel : ObservableObject
+{
+    private readonly SettingsApi _settingsApi;
+    private readonly Action<string> _showStatus;
+    private readonly Action<string> _showError;
+    private bool _suppressSave;
+
+    public LibraryCardViewModel(Library library, LibraryPlaybackPreference? pref, SettingsApi settingsApi,
+        Action<string> showStatus, Action<string> showError)
+    {
+        _settingsApi = settingsApi;
+        _showStatus = showStatus;
+        _showError = showError;
+
+        LibraryId = library.Id;
+        LibraryName = library.Name;
+        LibraryType = library.Type;
+
+        _suppressSave = true;
+        if (pref != null)
+        {
+            AudioLanguage = pref.AudioLanguage ?? "";
+            SubtitleLanguage = pref.SubtitleLanguage ?? "";
+            SubtitleMode = pref.SubtitleMode ?? "";
+            ForcedSubtitles = pref.ShowForcedSubtitles == true ? "on" : pref.ShowForcedSubtitles == false ? "off" : "";
+        }
+        else
+        {
+            AudioLanguage = "";
+            SubtitleLanguage = "";
+            SubtitleMode = "";
+            ForcedSubtitles = "";
+        }
+        _suppressSave = false;
+        UpdateSummary();
+    }
+
+    public int LibraryId { get; }
+    public string LibraryName { get; }
+    public string LibraryType { get; }
+
+    [ObservableProperty]
+    private string _audioLanguage = "";
+
+    [ObservableProperty]
+    private string _subtitleLanguage = "";
+
+    [ObservableProperty]
+    private string _subtitleMode = "";
+
+    [ObservableProperty]
+    private string _forcedSubtitles = "";
+
+    [ObservableProperty]
+    private bool _isExpanded;
+
+    [ObservableProperty]
+    private string _summaryText = "Uses profile defaults";
+
+    [ObservableProperty]
+    private bool _hasCustomOverrides;
+
+    public bool IsAllDefaults =>
+        string.IsNullOrEmpty(AudioLanguage) &&
+        string.IsNullOrEmpty(SubtitleLanguage) &&
+        string.IsNullOrEmpty(SubtitleMode) &&
+        string.IsNullOrEmpty(ForcedSubtitles);
+
+    private static readonly Dictionary<string, string> LanguageNames = new()
+    {
+        [""] = "Profile default",
+        ["original"] = "Original Language",
+        ["en"] = "English",
+        ["es"] = "Spanish",
+        ["fr"] = "French",
+        ["de"] = "German",
+        ["it"] = "Italian",
+        ["pt"] = "Portuguese",
+        ["ja"] = "Japanese",
+        ["ko"] = "Korean",
+        ["zh"] = "Chinese",
+        ["ru"] = "Russian",
+        ["ar"] = "Arabic",
+        ["hi"] = "Hindi",
+        ["none"] = "None",
+    };
+
+    private void UpdateSummary()
+    {
+        HasCustomOverrides = !IsAllDefaults;
+
+        if (IsAllDefaults)
+        {
+            SummaryText = "Uses profile defaults";
+            return;
+        }
+
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(AudioLanguage))
+            parts.Add($"Audio: {GetLanguageName(AudioLanguage)}");
+        if (!string.IsNullOrEmpty(SubtitleLanguage))
+            parts.Add($"Subtitles: {GetLanguageName(SubtitleLanguage)}");
+        if (!string.IsNullOrEmpty(SubtitleMode))
+            parts.Add($"Behavior: {char.ToUpper(SubtitleMode[0]) + SubtitleMode[1..]}");
+        if (!string.IsNullOrEmpty(ForcedSubtitles))
+            parts.Add($"Forced: {char.ToUpper(ForcedSubtitles[0]) + ForcedSubtitles[1..]}");
+
+        SummaryText = parts.Count > 0 ? string.Join(" \u2022 ", parts) : "Uses profile defaults";
+    }
+
+    private static string GetLanguageName(string code)
+    {
+        return LanguageNames.TryGetValue(code, out var name) ? name : code;
+    }
+
+    partial void OnAudioLanguageChanged(string value) => OnPrefChanged();
+    partial void OnSubtitleLanguageChanged(string value) => OnPrefChanged();
+    partial void OnSubtitleModeChanged(string value) => OnPrefChanged();
+    partial void OnForcedSubtitlesChanged(string value) => OnPrefChanged();
+
+    private void OnPrefChanged()
+    {
+        UpdateSummary();
+        if (!_suppressSave)
+            _ = SaveAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            if (IsAllDefaults)
+            {
+                await _settingsApi.DeleteLibraryPlaybackPrefsAsync(LibraryId);
+                _showStatus("Reset to profile defaults");
+            }
+            else
+            {
+                var prefs = new Dictionary<string, object?>();
+                prefs["audio_language"] = string.IsNullOrEmpty(AudioLanguage) ? null : AudioLanguage;
+                prefs["subtitle_language"] = string.IsNullOrEmpty(SubtitleLanguage) ? null : SubtitleLanguage;
+                prefs["subtitle_mode"] = string.IsNullOrEmpty(SubtitleMode) ? null : SubtitleMode;
+                if (!string.IsNullOrEmpty(ForcedSubtitles))
+                    prefs["show_forced_subtitles"] = ForcedSubtitles == "on";
+                else
+                    prefs["show_forced_subtitles"] = null;
+
+                await _settingsApi.SetLibraryPlaybackPrefsAsync(LibraryId, prefs);
+                _showStatus("Saved");
+            }
+        }
+        catch (Exception ex)
+        {
+            _showError($"Failed to save library prefs: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private void ResetToDefaults()
+    {
+        _suppressSave = true;
+        AudioLanguage = "";
+        SubtitleLanguage = "";
+        SubtitleMode = "";
+        ForcedSubtitles = "";
+        _suppressSave = false;
+        UpdateSummary();
+        _ = SaveAsync();
+    }
+
+    [RelayCommand]
+    private void ToggleExpanded()
+    {
+        IsExpanded = !IsExpanded;
+    }
+}
+
 public partial class SettingsViewModel : ObservableObject
 {
     private readonly SettingsApi _settingsApi;
+    private readonly CatalogApi _catalogApi;
     private readonly AuthService _authService;
     private readonly ThemeService _themeService;
     private Profile? _profile;
     private bool _suppressSave;
 
-    public SettingsViewModel(SettingsApi settingsApi, AuthService authService, ThemeService themeService)
+    public SettingsViewModel(SettingsApi settingsApi, CatalogApi catalogApi, AuthService authService, ThemeService themeService)
     {
         _settingsApi = settingsApi;
+        _catalogApi = catalogApi;
         _authService = authService;
         _themeService = themeService;
     }
@@ -58,6 +240,8 @@ public partial class SettingsViewModel : ObservableObject
 
     [ObservableProperty]
     private string _allowedLibraryIdsText = "";
+
+    public ObservableCollection<LibraryCardViewModel> LibraryCards { get; } = [];
 
     // ===== Subtitles =====
     [ObservableProperty]
@@ -111,6 +295,9 @@ public partial class SettingsViewModel : ObservableObject
                 }
             }
 
+            // Load libraries and playback prefs for the Libraries tab
+            await LoadLibraryCardsAsync();
+
             // Load key-value settings
             try
             {
@@ -147,6 +334,45 @@ public partial class SettingsViewModel : ObservableObject
         {
             IsLoading = false;
         }
+    }
+
+    private async Task LoadLibraryCardsAsync()
+    {
+        try
+        {
+            var libraries = await _catalogApi.GetLibrariesAsync();
+
+            LibraryPlaybackPrefsResponse? prefsResponse = null;
+            try
+            {
+                prefsResponse = await _settingsApi.GetLibraryPlaybackPrefsAsync();
+            }
+            catch { /* Server may not support this endpoint yet */ }
+
+            var prefsMap = new Dictionary<int, LibraryPlaybackPreference>();
+            if (prefsResponse?.Preferences != null)
+            {
+                foreach (var p in prefsResponse.Preferences)
+                    prefsMap[p.LibraryId] = p;
+            }
+
+            LibraryCards.Clear();
+            foreach (var lib in libraries)
+            {
+                prefsMap.TryGetValue(lib.Id, out var pref);
+                LibraryCards.Add(new LibraryCardViewModel(lib, pref, _settingsApi, ShowStatus, ShowError));
+            }
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal: the rest of settings still work
+            ErrorMessage = $"Failed to load libraries: {ex.Message}";
+        }
+    }
+
+    private void ShowError(string message)
+    {
+        ErrorMessage = message;
     }
 
     // ===== Profile field save helpers =====

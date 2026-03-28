@@ -251,47 +251,8 @@
             Grid.Row="3"
             Padding="24,0,24,24"
             Visibility="Collapsed">
-            <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
-                <Border Style="{StaticResource CardStyle}" Padding="20">
-                    <StackPanel Spacing="20">
-                        <!-- Library restrictions toggle (right-aligned) -->
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Enable library restrictions" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
-                                <TextBlock
-                                    Text="When enabled, only the specified libraries will be visible to this profile."
-                                    Style="{StaticResource CaptionTextStyle}"
-                                    TextWrapping="Wrap" />
-                            </StackPanel>
-                            <ToggleSwitch
-                                x:Name="LibraryRestrictionsToggle"
-                                Grid.Column="1"
-                                IsOn="{x:Bind ViewModel.LibraryRestrictionsEnabled, Mode=TwoWay}"
-                                VerticalAlignment="Center"
-                                OnContent="" OffContent="" />
-                        </Grid>
-
-                        <!-- Allowed library IDs -->
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="Allowed library IDs" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
-                            <TextBlock
-                                Text="Comma-separated list of library IDs this profile can access. Leave blank to allow all libraries."
-                                Style="{StaticResource CaptionTextStyle}"
-                                TextWrapping="Wrap" />
-                            <TextBox
-                                x:Name="AllowedLibraryIdsBox"
-                                Style="{StaticResource DarkTextBoxStyle}"
-                                Text="{x:Bind ViewModel.AllowedLibraryIdsText, Mode=TwoWay}"
-                                PlaceholderText="e.g. 1, 2, 3"
-                                Width="300"
-                                Margin="0,8,0,0" />
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
+            <StackPanel x:Name="LibraryCardsContainer" Spacing="16" MaxWidth="700" HorizontalAlignment="Left">
+                <!-- Library cards are built dynamically in code-behind -->
             </StackPanel>
         </ScrollViewer>
 

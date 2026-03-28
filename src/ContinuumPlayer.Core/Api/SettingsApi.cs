@@ -1,4 +1,5 @@
 using ContinuumPlayer.Core.Models.Auth;
+using ContinuumPlayer.Core.Models.Catalog;
 
 namespace ContinuumPlayer.Core.Api;
 
@@ -26,4 +27,15 @@ public class SettingsApi(ContinuumApiClient client)
 
     public Task<ProfilesResponse> GetProfilesAsync(CancellationToken ct = default)
         => client.GetAsync<ProfilesResponse>("/api/v1/profiles", ct);
+
+    // ===== Library Playback Preferences =====
+
+    public Task<LibraryPlaybackPrefsResponse> GetLibraryPlaybackPrefsAsync(CancellationToken ct = default)
+        => client.GetAsync<LibraryPlaybackPrefsResponse>("/api/v1/library-playback-prefs", ct);
+
+    public Task SetLibraryPlaybackPrefsAsync(int libraryId, object prefs, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/library-playback-prefs/{libraryId}", prefs, ct);
+
+    public Task DeleteLibraryPlaybackPrefsAsync(int libraryId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/library-playback-prefs/{libraryId}", ct);
 }
