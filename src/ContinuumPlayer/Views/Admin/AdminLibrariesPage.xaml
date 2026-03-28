@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="ContinuumPlayer.Views.Admin.AdminLibrariesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:converters="using:ContinuumPlayer.Converters"
+    mc:Ignorable="d"
+    Background="{StaticResource AppBackgroundBrush}"
+    Loaded="Page_Loaded">
+
+    <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
+        <converters:NullToVisibilityConverter x:Key="NullToVis" />
+
+        <Style x:Key="SectionCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
+            <Setter Property="CornerRadius" Value="24" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+    </Page.Resources>
+
+    <Grid>
+        <!-- Loading indicator -->
+        <ProgressRing
+            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Width="48" Height="48" />
+
+        <!-- Error state -->
+        <StackPanel
+            VerticalAlignment="Center"
+            HorizontalAlignment="Center"
+            Spacing="12"
+            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+            <TextBlock
+                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                Foreground="{StaticResource ErrorBrush}"
+                Style="{StaticResource BodyTextStyle}"
+                HorizontalAlignment="Center"
+                TextWrapping="Wrap"
+                MaxWidth="400" />
+            <Button
+                Content="Retry"
+                Style="{StaticResource AccentButtonStyle}"
+                HorizontalAlignment="Center"
+                Command="{x:Bind ViewModel.LoadCommand}" />
+        </StackPanel>
+
+        <!-- Main content -->
+        <ScrollViewer
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
+            IsScrollInertiaEnabled="True">
+
+            <StackPanel Padding="40,28,40,40" Spacing="24">
+
+                <!-- ===== Header ===== -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                        <TextBlock
+                            Text="Libraries"
+                            FontSize="42"
+                            FontWeight="Bold"
+                            Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock
+                            Text="Manage media libraries, scan content, and configure metadata sources."
+                            FontSize="14"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Button
+                            x:Name="ScanAllButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Click="ScanAllButton_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                                <TextBlock Text="Scan All" />
+                            </StackPanel>
+                        </Button>
+                        <Button
+                            x:Name="AddLibraryButton"
+                            Style="{StaticResource AccentButtonStyle}"
+                            Click="AddLibraryButton_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE710;" FontSize="14" />
+                                <TextBlock Text="Add Library" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===== Status message ===== -->
+                <Border
+                    x:Name="StatusBanner"
+                    Background="{StaticResource AccentBackgroundBrush}"
+                    CornerRadius="8"
+                    Padding="14,10"
+                    Visibility="Collapsed">
+                    <TextBlock
+                        x:Name="StatusBannerText"
+                        FontSize="13"
+                        Foreground="{StaticResource AccentBrush}" />
+                </Border>
+
+                <!-- ===== Libraries Table ===== -->
+                <Border Style="{StaticResource SectionCardStyle}" Padding="0">
+                    <StackPanel>
+                        <!-- Table header -->
+                        <Grid Padding="20,14,20,14" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*" />
+                                <ColumnDefinition Width="100" />
+                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="150" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="NAME" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="TYPE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="2" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="3" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                        </Grid>
+
+                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
+
+                        <!-- Library rows — populated in code-behind -->
+                        <StackPanel x:Name="LibrariesPanel" Spacing="0" />
+
+                        <!-- Empty state -->
+                        <Border x:Name="EmptyState" Padding="20,40" Visibility="Collapsed">
+                            <StackPanel HorizontalAlignment="Center" Spacing="8">
+                                <FontIcon
+                                    Glyph="&#xE8B7;"
+                                    FontSize="32"
+                                    Foreground="{StaticResource TertiaryTextBrush}"
+                                    HorizontalAlignment="Center" />
+                                <TextBlock
+                                    Text="No libraries found"
+                                    FontSize="16"
+                                    FontWeight="SemiBold"
+                                    Foreground="{StaticResource SecondaryTextBrush}"
+                                    HorizontalAlignment="Center" />
+                                <TextBlock
+                                    Text="Add a library to get started."
+                                    FontSize="13"
+                                    Foreground="{StaticResource TertiaryTextBrush}"
+                                    HorizontalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>
