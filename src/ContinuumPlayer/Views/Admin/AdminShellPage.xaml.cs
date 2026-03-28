@@ -75,7 +75,7 @@ public sealed partial class AdminShellPage : Page
     private void NavActivity_Click(object sender, RoutedEventArgs e)
     {
         SetActiveNavItem(NavActivity);
-        AdminContentFrame.Navigate(typeof(PlaceholderPage), "Activity");
+        AdminContentFrame.Navigate(typeof(AdminActivityPage));
     }
 
     private void NavLogs_Click(object sender, RoutedEventArgs e)
