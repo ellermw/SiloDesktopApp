@@ -759,7 +759,20 @@ public sealed partial class PlayerPage : Page
                 continue; // skip bitmap subs (they were not loaded)
             }
 
-            var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language;
+            // Build a readable label: "English", "Spanish - Latin American", etc.
+            var langName = LanguageCodeToName(track.Language);
+            var trackTitle = track.Label;
+
+            // If the title is just the codec name (e.g., "SUBRIP"), ignore it
+            if (string.Equals(trackTitle, track.Codec, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(trackTitle, "subrip", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(trackTitle, "ass", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(trackTitle, "srt", StringComparison.OrdinalIgnoreCase))
+                trackTitle = null;
+
+            var label = langName;
+            if (!string.IsNullOrEmpty(trackTitle) && !string.Equals(trackTitle, langName, StringComparison.OrdinalIgnoreCase))
+                label += $" - {trackTitle}";
             if (string.IsNullOrEmpty(label)) label = $"Track {idx + 1}";
             if (track.Forced) label += " [Forced]";
 
@@ -781,10 +794,10 @@ public sealed partial class PlayerPage : Page
                 _mediaPlaybackItem.TimedMetadataTracks.SetPresentationMode(
                     i, TimedMetadataTrackPresentationMode.Disabled);
 
-            // Then enable the selected one
+            // Then enable the selected one (PlatformPresented = Windows renders the subs on the video)
             if (index >= 0 && (uint)index < _mediaPlaybackItem.TimedMetadataTracks.Count)
                 _mediaPlaybackItem.TimedMetadataTracks.SetPresentationMode(
-                    (uint)index, TimedMetadataTrackPresentationMode.ApplicationPresented);
+                    (uint)index, TimedMetadataTrackPresentationMode.PlatformPresented);
         }
         catch { }
     }
@@ -951,6 +964,50 @@ public sealed partial class PlayerPage : Page
         LoadingOverlay.Visibility = Visibility.Collapsed;
         ErrorOverlay.Visibility = Visibility.Visible;
         ErrorText.Text = message;
+    }
+
+    private static string LanguageCodeToName(string? code)
+    {
+        if (string.IsNullOrEmpty(code)) return "Unknown";
+        return code.ToLowerInvariant() switch
+        {
+            "eng" or "en" => "English",
+            "spa" or "es" => "Spanish",
+            "fre" or "fra" or "fr" => "French",
+            "ger" or "deu" or "de" => "German",
+            "ita" or "it" => "Italian",
+            "por" or "pt" => "Portuguese",
+            "rus" or "ru" => "Russian",
+            "jpn" or "ja" => "Japanese",
+            "kor" or "ko" => "Korean",
+            "chi" or "zho" or "zh" => "Chinese",
+            "ara" or "ar" => "Arabic",
+            "hin" or "hi" => "Hindi",
+            "tur" or "tr" => "Turkish",
+            "pol" or "pl" => "Polish",
+            "dut" or "nld" or "nl" => "Dutch",
+            "swe" or "sv" => "Swedish",
+            "dan" or "da" => "Danish",
+            "fin" or "fi" => "Finnish",
+            "nob" or "nor" or "no" => "Norwegian",
+            "cze" or "ces" or "cs" => "Czech",
+            "hun" or "hu" => "Hungarian",
+            "rum" or "ron" or "ro" => "Romanian",
+            "bul" or "bg" => "Bulgarian",
+            "hrv" or "hr" => "Croatian",
+            "gre" or "ell" or "el" => "Greek",
+            "heb" or "he" => "Hebrew",
+            "tha" or "th" => "Thai",
+            "vie" or "vi" => "Vietnamese",
+            "ind" or "id" => "Indonesian",
+            "may" or "msa" or "ms" => "Malay",
+            "fil" or "tl" => "Filipino",
+            "ukr" or "uk" => "Ukrainian",
+            "cat" or "ca" => "Catalan",
+            "baq" or "eus" or "eu" => "Basque",
+            "glg" or "gl" => "Galician",
+            _ => code.ToUpperInvariant()
+        };
     }
 
     private static void LogToFile(string fileName, string content)
