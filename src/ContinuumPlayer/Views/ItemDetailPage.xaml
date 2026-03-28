@@ -126,14 +126,18 @@
                 <!-- Detail content below backdrop -->
                 <StackPanel Padding="48,0,48,48" Spacing="20">
 
-                    <!-- Metadata row: year, genres, rating, runtime, content rating -->
-                    <StackPanel x:Name="MetaPanel" Orientation="Horizontal" Spacing="16">
-                        <TextBlock x:Name="YearText" Style="{StaticResource SecondaryTextStyle}" FontSize="16" />
-                        <TextBlock x:Name="ContentRatingText" Style="{StaticResource SecondaryTextStyle}" FontSize="16" />
-                        <TextBlock x:Name="RuntimeText" Style="{StaticResource SecondaryTextStyle}" FontSize="16" />
-                        <TextBlock x:Name="RatingText" Style="{StaticResource SecondaryTextStyle}" FontSize="16" />
-                        <TextBlock x:Name="GenresText" Style="{StaticResource SecondaryTextStyle}" FontSize="16"
-                                   TextTrimming="CharacterEllipsis" MaxWidth="400" />
+                    <!-- Metadata row: year, rating, runtime, content rating + quality badges -->
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <StackPanel x:Name="MetaPanel" Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
+                            <TextBlock x:Name="YearText" Style="{StaticResource SecondaryTextStyle}" FontSize="16" />
+                            <TextBlock x:Name="ContentRatingText" Style="{StaticResource SecondaryTextStyle}" FontSize="16" />
+                            <TextBlock x:Name="RuntimeText" Style="{StaticResource SecondaryTextStyle}" FontSize="16" />
+                            <TextBlock x:Name="RatingText" Style="{StaticResource SecondaryTextStyle}" FontSize="16" />
+                        </StackPanel>
+
+                        <!-- Quality badges (populated in code-behind from version info) -->
+                        <StackPanel x:Name="QualityBadgesPanel" Orientation="Horizontal" Spacing="6"
+                                    VerticalAlignment="Center" Visibility="Collapsed" />
                     </StackPanel>
 
                     <!-- Scores row: RT Critic, RT Audience, IMDb -->
@@ -146,14 +150,14 @@
                         </StackPanel>
 
                         <!-- RT Critic score -->
-                        <StackPanel x:Name="RtCriticPanel" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
-                            <TextBlock Text="RT" FontSize="13" FontWeight="Bold" Foreground="#FF6347" />
+                        <StackPanel x:Name="RtCriticPanel" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
+                            <TextBlock Text="&#x1F345;" FontSize="14" />
                             <TextBlock x:Name="RtCriticText" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
 
                         <!-- RT Audience score -->
-                        <StackPanel x:Name="RtAudiencePanel" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
-                            <TextBlock Text="Aud" FontSize="13" FontWeight="Bold" Foreground="#DAA520" />
+                        <StackPanel x:Name="RtAudiencePanel" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
+                            <TextBlock Text="&#x1F37F;" FontSize="14" />
                             <TextBlock x:Name="RtAudienceText" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
                     </StackPanel>
@@ -276,6 +280,17 @@
                         MaxWidth="800"
                         HorizontalAlignment="Left"
                         LineHeight="22" />
+
+                    <!-- Genres line: "Crime · Drama · History" -->
+                    <TextBlock
+                        x:Name="GenresText"
+                        Style="{StaticResource SecondaryTextStyle}"
+                        FontSize="14"
+                        Foreground="{StaticResource TertiaryTextBrush}"
+                        TextWrapping="Wrap"
+                        MaxWidth="800"
+                        HorizontalAlignment="Left"
+                        Visibility="Collapsed" />
 
                     <!-- Cast section -->
                     <TextBlock

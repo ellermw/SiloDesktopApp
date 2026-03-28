@@ -101,9 +101,19 @@ public sealed partial class ItemDetailPage : Page
         RuntimeText.Text = ViewModel.RuntimeDisplay;
         RatingText.Text = ViewModel.RatingDisplay != ""
             ? $"TMDB: {ViewModel.RatingDisplay}" : "";
-        GenresText.Text = ViewModel.GenresDisplay;
 
         OverviewText.Text = item.Overview;
+
+        // Genres line below overview: "Crime · Drama · History"
+        if (item.Genres.Count > 0)
+        {
+            GenresText.Text = string.Join(" \u00B7 ", item.Genres);
+            GenresText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            GenresText.Visibility = Visibility.Collapsed;
+        }
 
         UpdateScoresRow(item);
         UpdateWatchedButton();
@@ -163,6 +173,76 @@ public sealed partial class ItemDetailPage : Page
         }
 
         ScoresPanel.Visibility = hasAnyScore ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // ===== Quality Badges =====
+
+    private void UpdateQualityBadges()
+    {
+        QualityBadgesPanel.Children.Clear();
+
+        if (_watchDetail == null || _watchDetail.Versions.Count == 0)
+        {
+            QualityBadgesPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var manager = App.Services.GetRequiredService<PlaybackManager>();
+        var best = manager.SelectBestVersion(_watchDetail.Versions);
+        if (best == null)
+        {
+            QualityBadgesPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        // Resolution badge (e.g., "2160p", "1080p")
+        if (!string.IsNullOrEmpty(best.Resolution))
+        {
+            QualityBadgesPanel.Children.Add(CreateQualityBadge(
+                best.Resolution,
+                (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeResolutionBrush"]));
+        }
+
+        // HDR badge
+        if (best.Hdr)
+        {
+            QualityBadgesPanel.Children.Add(CreateQualityBadge(
+                "HDR",
+                (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeHdrBrush"]));
+        }
+
+        // Audio codec badge (e.g., "EAC3", "TRUEHD", "DTS")
+        if (!string.IsNullOrEmpty(best.CodecAudio))
+        {
+            var audioLabel = best.CodecAudio.ToUpperInvariant();
+            QualityBadgesPanel.Children.Add(CreateQualityBadge(
+                audioLabel,
+                (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeBackgroundBrush"],
+                (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeTextBrush"]));
+        }
+
+        QualityBadgesPanel.Visibility = QualityBadgesPanel.Children.Count > 0
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static Border CreateQualityBadge(
+        string text,
+        Microsoft.UI.Xaml.Media.Brush background,
+        Microsoft.UI.Xaml.Media.Brush? foreground = null)
+    {
+        return new Border
+        {
+            Background = background,
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(8, 2, 8, 2),
+            Child = new TextBlock
+            {
+                Text = text,
+                FontSize = 11,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = foreground ?? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White)
+            }
+        };
     }
 
     // ===== Watched Toggle =====
@@ -300,6 +380,7 @@ public sealed partial class ItemDetailPage : Page
             var playbackApi = App.Services.GetRequiredService<PlaybackApi>();
             _watchDetail = await playbackApi.GetWatchDetailAsync(contentId);
             UpdatePlayButton();
+            UpdateQualityBadges();
         }
         catch
         {

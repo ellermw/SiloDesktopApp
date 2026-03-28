@@ -167,8 +167,41 @@ public partial class ItemDetailViewModel : ObservableObject
         {
             var response = await _catalogApi.GetSimilarAsync(Item.ContentId);
             SimilarItems.Clear();
-            foreach (var item in response.Items)
-                SimilarItems.Add(item);
+
+            // The API returns only IDs + scores, not full MediaItem objects.
+            // Fetch each item's detail in parallel (limit to first 15).
+            var tasks = response.Items.Take(15).Select(async s =>
+            {
+                try
+                {
+                    return await _catalogApi.GetItemDetailAsync(s.MediaItemId);
+                }
+                catch { return null; }
+            });
+
+            var details = await Task.WhenAll(tasks);
+
+            foreach (var detail in details)
+            {
+                if (detail == null) continue;
+
+                // Convert MediaItemDetail to MediaItem for PosterCard display
+                var mediaItem = new MediaItem
+                {
+                    ContentId = detail.ContentId,
+                    Type = detail.Type,
+                    Title = detail.Title,
+                    Year = detail.Year,
+                    Genres = detail.Genres,
+                    Overview = detail.Overview,
+                    PosterUrl = detail.PosterUrl,
+                    PosterThumbhash = detail.PosterThumbhash,
+                    BackdropUrl = detail.BackdropUrl,
+                    BackdropThumbhash = detail.BackdropThumbhash,
+                    LogoUrl = detail.LogoUrl,
+                };
+                SimilarItems.Add(mediaItem);
+            }
         }
         catch
         {
