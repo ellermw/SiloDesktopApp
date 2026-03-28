@@ -123,7 +123,7 @@ public sealed partial class AdminShellPage : Page
     private void NavNodes_Click(object sender, RoutedEventArgs e)
     {
         SetActiveNavItem(NavNodes);
-        AdminContentFrame.Navigate(typeof(PlaceholderPage), "Nodes");
+        AdminContentFrame.Navigate(typeof(AdminNodesPage));
     }
 
     private void NavMaintenance_Click(object sender, RoutedEventArgs e)
