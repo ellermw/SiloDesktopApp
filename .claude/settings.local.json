@@ -35,7 +35,16 @@
       "Bash(ls:*)",
       "Bash(tasklist)",
       "Bash(find F:/ContinuumPlayer/continuum-webui-ref/src -name *play* -o -name *Play* -o -name *player* -o -name *Player* -o -name *watch* -o -name *Watch*)",
-      "Bash(find F:/ContinuumPlayer/continuum-webui-ref/src -name *Episode* -o -name *Season* -o -name *series* -o -name *Series*)"
+      "Bash(find F:/ContinuumPlayer/continuum-webui-ref/src -name *Episode* -o -name *Season* -o -name *series* -o -name *Series*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:sourceforge.net)",
+      "WebFetch(domain:www.nuget.org)",
+      "Read(//c/Program Files/7-Zip/**)",
+      "Read(//c/Program Files \\(x86\\)/7-Zip/**)",
+      "Bash(cmd.exe /c \"where 7z\")",
+      "Bash(cmd.exe /c \"where 7z.exe\")",
+      "Bash(\"/c/Program Files/7-Zip/7z.exe\" x mpv-dev.7z -y)"
     ]
   }
 }
