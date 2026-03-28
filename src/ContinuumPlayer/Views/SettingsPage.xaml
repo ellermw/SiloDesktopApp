@@ -113,12 +113,7 @@
                         <ComboBox
                             x:Name="ThemeComboBox"
                             Width="220"
-                            SelectionChanged="ThemeComboBox_SelectionChanged">
-                            <ComboBoxItem Content="Cobalt Studio" Tag="cobalt-studio" />
-                            <ComboBoxItem Content="Dark" Tag="dark" />
-                            <ComboBoxItem Content="Light" Tag="light" />
-                            <ComboBoxItem Content="OLED" Tag="oled" />
-                        </ComboBox>
+                            SelectionChanged="ThemeComboBox_SelectionChanged" />
                     </StackPanel>
                 </Border>
             </StackPanel>

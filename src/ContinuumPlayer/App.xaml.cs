@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Helpers;
+using ContinuumPlayer.Services;
 using ContinuumPlayer.ViewModels;
 
 namespace ContinuumPlayer;
@@ -20,6 +21,14 @@ public partial class App : Application
     {
         this.InitializeComponent();
         _services = ConfigureServices();
+
+        // Apply saved theme before the first window renders
+        try
+        {
+            var themeService = _services.GetRequiredService<ThemeService>();
+            themeService.ApplySavedTheme();
+        }
+        catch { /* first launch, no saved theme */ }
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs e)
@@ -76,6 +85,9 @@ public partial class App : Application
 
         // Image service
         services.AddSingleton(new ImageService(imageCacheDir));
+
+        // Theme service
+        services.AddSingleton<ThemeService>();
 
         // Navigation
         services.AddSingleton<NavigationService>();

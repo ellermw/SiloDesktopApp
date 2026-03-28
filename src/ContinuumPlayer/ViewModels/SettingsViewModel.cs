@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Auth;
 using ContinuumPlayer.Core.Services;
+using ContinuumPlayer.Services;
 
 namespace ContinuumPlayer.ViewModels;
 
@@ -10,14 +11,19 @@ public partial class SettingsViewModel : ObservableObject
 {
     private readonly SettingsApi _settingsApi;
     private readonly AuthService _authService;
+    private readonly ThemeService _themeService;
     private Profile? _profile;
     private bool _suppressSave;
 
-    public SettingsViewModel(SettingsApi settingsApi, AuthService authService)
+    public SettingsViewModel(SettingsApi settingsApi, AuthService authService, ThemeService themeService)
     {
         _settingsApi = settingsApi;
         _authService = authService;
+        _themeService = themeService;
     }
+
+    /// <summary>Theme service for populating theme list and applying themes.</summary>
+    public ThemeService ThemeService => _themeService;
 
     // ===== Loading state =====
     [ObservableProperty]
@@ -110,6 +116,9 @@ public partial class SettingsViewModel : ObservableObject
             {
                 var theme = await _settingsApi.GetSettingAsync("ui_theme");
                 UiTheme = theme.Value;
+                // Apply the server-side theme if it differs from the locally saved one
+                if (!string.IsNullOrEmpty(UiTheme))
+                    _themeService.ApplyTheme(UiTheme);
             }
             catch { UiTheme = ""; }
 
@@ -198,6 +207,10 @@ public partial class SettingsViewModel : ObservableObject
         if (_suppressSave) return;
         try
         {
+            // Apply theme colors immediately
+            _themeService.ApplyTheme(UiTheme);
+
+            // Persist to server
             await _settingsApi.PutSettingAsync("ui_theme", UiTheme);
             ShowStatus("Theme saved");
         }

@@ -706,11 +706,18 @@ public sealed partial class ItemDetailPage : Page
             {
                 Source = bitmapImage,
                 Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
+                Width = 160,
+                Height = 90,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
 
+            // Replace the placeholder. The stillBorder may be nested inside a
+            // progress-overlay Grid, but it is still the same object reference
+            // so setting its Child updates the visual tree correctly.
             stillBorder.Child = image;
+            // Clear the placeholder background so the image shows through
+            stillBorder.Background = null;
         }
         catch { }
     }

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Navigation;
+using ContinuumPlayer.Services;
 using ContinuumPlayer.ViewModels;
 
 namespace ContinuumPlayer.Views;
@@ -13,6 +14,20 @@ public sealed partial class SettingsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<SettingsViewModel>();
         this.InitializeComponent();
+        PopulateThemeComboBox();
+    }
+
+    private void PopulateThemeComboBox()
+    {
+        var themeService = App.Services.GetRequiredService<ThemeService>();
+        foreach (var themeId in themeService.AvailableThemeIds)
+        {
+            ThemeComboBox.Items.Add(new ComboBoxItem
+            {
+                Content = ThemeService.GetDisplayName(themeId),
+                Tag = themeId
+            });
+        }
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
