@@ -147,7 +147,7 @@ public sealed partial class AdminShellPage : Page
     private void NavApiKeys_Click(object sender, RoutedEventArgs e)
     {
         SetActiveNavItem(NavApiKeys);
-        AdminContentFrame.Navigate(typeof(PlaceholderPage), "API Keys");
+        AdminContentFrame.Navigate(typeof(AdminApiKeysPage));
     }
 
     private void BackToApp_Click(object sender, RoutedEventArgs e)
