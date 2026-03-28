@@ -105,7 +105,7 @@ public sealed partial class AdminShellPage : Page
     private void NavUsers_Click(object sender, RoutedEventArgs e)
     {
         SetActiveNavItem(NavUsers);
-        AdminContentFrame.Navigate(typeof(PlaceholderPage), "Users");
+        AdminContentFrame.Navigate(typeof(AdminUsersPage));
     }
 
     private void NavPlaybackHistory_Click(object sender, RoutedEventArgs e)
