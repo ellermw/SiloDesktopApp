@@ -56,6 +56,7 @@
     </ItemGroup>
     <ItemGroup>
       <ProjectReference Include="..\ContinuumPlayer.Core\ContinuumPlayer.Core.csproj" />
+      <ProjectReference Include="..\ContinuumPlayer.Player\ContinuumPlayer.Player.csproj" />
     </ItemGroup>
 
     <!-- 
