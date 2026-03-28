@@ -1,43 +1,29 @@
-using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media.Imaging;
 using ContinuumPlayer.Core.Models.Playback;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Helpers;
 using ContinuumPlayer.ViewModels;
-using ContinuumPlayer.Player;
+using Windows.Media.Core;
+using Windows.Media.Playback;
 
 namespace ContinuumPlayer.Views;
 
 public sealed partial class PlayerPage : Page
 {
     private PlayerViewModel? _vm;
-    private MpvPlayer? _player;
+    private MediaPlayer? _mediaPlayer;
     private bool _isDisposed;
     private string? _contentId;
     private bool _isFullscreen;
+    private bool _statsVisible;
+    private double _resumePosition;
+    private bool _suppressSeek; // prevents seek feedback loop from timer updates
     private bool _isMuted;
 
-    // WriteableBitmap for software-rendered frames
-    private WriteableBitmap? _bitmap;
-    private int _bitmapWidth;
-    private int _bitmapHeight;
-
-    // Timers
-    private DispatcherTimer? _uiUpdateTimer;
-    private DispatcherTimer? _controlsHideTimer;
-
-    // Seek slider suppression: when true, ValueChanged from the timer update is ignored
-    private bool _suppressSeek;
-
-    // Track whether subtitles have been loaded (only after FileLoaded)
-    private bool _subtitlesLoaded;
-
-    // Resume position from server
-    private double _resumePosition;
+    private DispatcherTimer? _uiTimer;
+    private DispatcherTimer? _hideTimer;
 
     public PlayerPage()
     {
@@ -45,6 +31,13 @@ public sealed partial class PlayerPage : Page
     }
 
     // -- Page lifecycle -------------------------------------------------------
+
+    protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        if (e.Parameter is string contentId && !string.IsNullOrEmpty(contentId))
+            _contentId = contentId;
+    }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
@@ -68,13 +61,6 @@ public sealed partial class PlayerPage : Page
         }
     }
 
-    protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
-    {
-        base.OnNavigatedTo(e);
-        if (e.Parameter is string contentId && !string.IsNullOrEmpty(contentId))
-            _contentId = contentId;
-    }
-
     private void Page_Unloaded(object sender, RoutedEventArgs e)
     {
         CleanupAsync();
@@ -85,7 +71,8 @@ public sealed partial class PlayerPage : Page
         if (_isDisposed) return;
         _isDisposed = true;
 
-        StopTimers();
+        _uiTimer?.Stop();
+        _hideTimer?.Stop();
 
         // Exit fullscreen if active
         if (_isFullscreen)
@@ -95,30 +82,20 @@ public sealed partial class PlayerPage : Page
         if (App.MainWindowInstance is MainWindow mw)
             mw.ShowMainNavigation();
 
+        // Dispose MediaPlayer
+        if (_mediaPlayer != null)
+        {
+            _mediaPlayer.Pause();
+            VideoPlayer.SetMediaPlayer(null);
+            _mediaPlayer.Dispose();
+            _mediaPlayer = null;
+        }
+
         // Stop playback session on the server
         if (_vm?.Manager != null)
         {
             try { await _vm.Manager.StopSessionAsync(); }
             catch { }
-        }
-
-        // Dispose mpv player
-        DisposeMpvPlayer();
-    }
-
-    private void DisposeMpvPlayer()
-    {
-        if (_player != null)
-        {
-            _player.PositionChanged -= OnMpvPositionChanged;
-            _player.DurationChanged -= OnMpvDurationChanged;
-            _player.PauseChanged -= OnMpvPauseChanged;
-            _player.FileLoaded -= OnMpvFileLoaded;
-            _player.PlaybackEnded -= OnMpvPlaybackEnded;
-            _player.Error -= OnMpvError;
-            _player.FrameReady -= OnFrameReady;
-            _player.Dispose();
-            _player = null;
         }
     }
 
@@ -128,7 +105,7 @@ public sealed partial class PlayerPage : Page
     {
         try
         {
-            // Hide nav for immersive experience
+            // 1. Hide nav for immersive experience
             if (App.MainWindowInstance is MainWindow mw)
                 mw.HideMainNavigation();
 
@@ -136,7 +113,7 @@ public sealed partial class PlayerPage : Page
             _vm = App.Services.GetRequiredService<PlayerViewModel>();
             _vm.IsLoading = true;
 
-            // 1. Get watch detail
+            // 2. Get watch detail
             var watchDetail = await _vm.Manager.GetWatchDetailAsync(contentId);
 
             // Build title
@@ -149,7 +126,7 @@ public sealed partial class PlayerPage : Page
             foreach (var v in watchDetail.Versions)
                 _vm.Versions.Add(v);
 
-            // 2. Select best version
+            // 3. Select best version
             var bestVersion = _vm.Manager.SelectBestVersion(watchDetail.Versions);
             if (bestVersion == null)
             {
@@ -166,7 +143,7 @@ public sealed partial class PlayerPage : Page
 
             _resumePosition = startPosition;
 
-            // 3. Start session on the server
+            // 4. Start session on the server
             var session = await _vm.Manager.StartSessionAsync(bestVersion.FileId, startPosition);
             _vm.PlayMethod = session.PlayMethod;
 
@@ -174,7 +151,7 @@ public sealed partial class PlayerPage : Page
             if (session.Position > 0 && _resumePosition == 0)
                 _resumePosition = session.Position;
 
-            // 4. Get the stream URL
+            // 5. Get the stream URL
             var streamUrl = _vm.Manager.StreamUrl;
             if (string.IsNullOrEmpty(streamUrl))
             {
@@ -186,43 +163,39 @@ public sealed partial class PlayerPage : Page
             LogToFile("player_init.txt",
                 $"StreamURL: {streamUrl}\nPlayMethod: {_vm.PlayMethod}\nResolution: {_vm.Resolution}\nSession: {_vm.Manager.SessionId}\nResumePos: {_resumePosition}");
 
-            // 5. Initialize mpv player with software render API
-            _player = new MpvPlayer();
+            // 6. Create MediaPlayer with proper audio category
+            _mediaPlayer = new MediaPlayer();
+            _mediaPlayer.AudioCategory = MediaPlayerAudioCategory.Movie;
 
-            // Subscribe to mpv events before initialization
-            _player.PositionChanged += OnMpvPositionChanged;
-            _player.DurationChanged += OnMpvDurationChanged;
-            _player.PauseChanged += OnMpvPauseChanged;
-            _player.FileLoaded += OnMpvFileLoaded;
-            _player.PlaybackEnded += OnMpvPlaybackEnded;
-            _player.Error += OnMpvError;
-            _player.FrameReady += OnFrameReady;
+            // 7. Create MediaSource from stream URL and set source
+            var mediaSource = MediaSource.CreateFromUri(new Uri(streamUrl));
+            _mediaPlayer.Source = mediaSource;
 
-            // Get initial render size from VideoImage (in physical pixels)
-            var scale = GetDpiScale();
-            int width = (int)(VideoImage.ActualWidth * scale);
-            int height = (int)(VideoImage.ActualHeight * scale);
-            if (width <= 0) width = 1280;
-            if (height <= 0) height = 720;
+            // 8. Attach to MediaPlayerElement
+            VideoPlayer.SetMediaPlayer(_mediaPlayer);
 
-            _player.Initialize(width, height);
+            // 9. Subscribe to media events
+            _mediaPlayer.MediaOpened += MediaPlayer_MediaOpened;
+            _mediaPlayer.MediaEnded += MediaPlayer_MediaEnded;
+            _mediaPlayer.MediaFailed += MediaPlayer_MediaFailed;
 
-            // Create the WriteableBitmap at the render size
-            CreateBitmap(width, height);
+            // 10. Start playback immediately
+            _mediaPlayer.Play();
 
-            // 6. Set title and playback info
+            // 11. Set title and playback info
             TitleText.Text = _vm.Title;
             UpdatePlaybackInfo();
             PopulateQualityFlyout();
 
-            // 7. Start UI update timer
-            StartUiUpdateTimer();
+            // 12. Start UI update timer (250ms)
+            _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+            _uiTimer.Tick += UiTimer_Tick;
+            _uiTimer.Start();
 
-            // 8. Start controls auto-hide timer
-            StartControlsHideTimer();
-
-            // 9. Load the stream
-            _player.LoadFile(streamUrl);
+            // 13. Start controls auto-hide timer (3s)
+            _hideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            _hideTimer.Tick += HideTimer_Tick;
+            _hideTimer.Start();
         }
         catch (Exception ex)
         {
@@ -231,81 +204,9 @@ public sealed partial class PlayerPage : Page
         }
     }
 
-    // -- WriteableBitmap management -------------------------------------------
+    // -- Media event handlers -------------------------------------------------
 
-    private void CreateBitmap(int width, int height)
-    {
-        if (width <= 0 || height <= 0) return;
-        _bitmapWidth = width;
-        _bitmapHeight = height;
-        _bitmap = new WriteableBitmap(width, height);
-        VideoImage.Source = _bitmap;
-    }
-
-    private void OnFrameReady(byte[] buffer, int width, int height, int stride)
-    {
-        // Called from the render thread -- dispatch bitmap update to UI thread
-        DispatcherQueue?.TryEnqueue(DispatcherQueuePriority.High, () =>
-        {
-            if (_isDisposed || _bitmap == null) return;
-
-            // If render size changed, recreate the bitmap
-            if (width != _bitmapWidth || height != _bitmapHeight)
-            {
-                CreateBitmap(width, height);
-                if (_bitmap == null) return;
-            }
-
-            try
-            {
-                // Copy the frame buffer into the WriteableBitmap's pixel buffer
-                using (var stream = _bitmap.PixelBuffer.AsStream())
-                {
-                    stream.Position = 0;
-                    int bytesToWrite = Math.Min(buffer.Length, stride * height);
-                    stream.Write(buffer, 0, bytesToWrite);
-                }
-                _bitmap.Invalidate();
-            }
-            catch
-            {
-                // Non-fatal -- skip this frame
-            }
-        });
-    }
-
-    // -- Mpv event handlers (called from background thread) -------------------
-
-    private void OnMpvPositionChanged(double position)
-    {
-        // Marshal to UI thread
-        DispatcherQueue?.TryEnqueue(() =>
-        {
-            if (_isDisposed || _vm == null) return;
-            _vm.UpdatePosition(position);
-        });
-    }
-
-    private void OnMpvDurationChanged(double duration)
-    {
-        DispatcherQueue?.TryEnqueue(() =>
-        {
-            if (_isDisposed || _vm == null) return;
-            _vm.UpdateDuration(duration);
-        });
-    }
-
-    private void OnMpvPauseChanged(bool paused)
-    {
-        DispatcherQueue?.TryEnqueue(() =>
-        {
-            if (_isDisposed || _vm == null) return;
-            _vm.IsPlaying = !paused;
-            PlayPauseIcon.Glyph = paused ? "\uE768" : "\uE769"; // Play : Pause
-        });
-    }
-
-    private void OnMpvFileLoaded()
+    private void MediaPlayer_MediaOpened(MediaPlayer sender, object args)
     {
         DispatcherQueue?.TryEnqueue(() =>
         {
@@ -315,22 +216,15 @@ public sealed partial class PlayerPage : Page
             LoadingOverlay.Visibility = Visibility.Collapsed;
 
             // Resume to saved position if needed
-            if (_resumePosition > 0 && _player != null)
+            if (_resumePosition > 0 && _mediaPlayer != null)
             {
-                _player.Seek(_resumePosition);
+                _mediaPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(_resumePosition);
                 _resumePosition = 0; // Only seek once
-            }
-
-            // Load subtitles after file is loaded (avoids sub-add errors during init)
-            if (!_subtitlesLoaded)
-            {
-                _subtitlesLoaded = true;
-                LoadSubtitles();
             }
         });
     }
 
-    private void OnMpvPlaybackEnded()
+    private void MediaPlayer_MediaEnded(MediaPlayer sender, object args)
     {
         DispatcherQueue?.TryEnqueue(() =>
         {
@@ -339,135 +233,73 @@ public sealed partial class PlayerPage : Page
         });
     }
 
-    private void OnMpvError(string errorMessage)
+    private void MediaPlayer_MediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
     {
-        // Filter out non-fatal subtitle errors
-        if (errorMessage.Contains("sub-add", StringComparison.OrdinalIgnoreCase) ||
-            errorMessage.Contains("subtitle", StringComparison.OrdinalIgnoreCase))
-        {
-            LogToFile("player_subtitle_error.txt", errorMessage);
-            return;
-        }
-
         DispatcherQueue?.TryEnqueue(() =>
         {
             if (_isDisposed) return;
-            LogToFile("player_error.txt", errorMessage);
+            var message = args.ErrorMessage ?? "Unknown playback error";
+            LogToFile("player_error.txt", $"MediaFailed: {message}\nExtendedCode: {args.ExtendedErrorCode}");
+            ShowError($"Playback failed: {message}");
         });
     }
 
-    // -- Subtitle loading -----------------------------------------------------
+    // -- UI update timer (position, seek bar, play/pause icon, skip markers) --
 
-    private void LoadSubtitles()
+    private void UiTimer_Tick(object? sender, object e)
     {
-        if (_player == null || _vm?.Manager.CurrentSession == null) return;
+        if (_isDisposed || _mediaPlayer == null || _vm == null) return;
 
-        var subtitleUrls = _vm.Manager.GetSubtitleUrls();
-        foreach (var (track, fullUrl) in subtitleUrls)
-        {
-            try
-            {
-                var codec = track.Codec?.ToLowerInvariant() ?? "";
-                // Skip bitmap-based subtitle formats (need burn-in via transcode)
-                if (codec is "pgs" or "pgssub" or "dvdsub" or "vobsub")
-                    continue;
+        var session = _mediaPlayer.PlaybackSession;
+        var pos = session.Position.TotalSeconds;
+        var dur = session.NaturalDuration.TotalSeconds;
 
-                _player.AddSubtitle(fullUrl, track.Label, track.Language);
-            }
-            catch { }
-        }
+        // Update seek slider without triggering seek
+        _suppressSeek = true;
+        if (dur > 0) SeekSlider.Maximum = dur;
+        SeekSlider.Value = pos;
+        _suppressSeek = false;
+
+        // Update time labels
+        PositionText.Text = PlayerViewModel.FormatTime(pos);
+        DurationText.Text = PlayerViewModel.FormatTime(dur);
+
+        // Update play/pause icon based on actual playback state
+        bool isPlaying = session.PlaybackState == MediaPlaybackState.Playing;
+        PlayPauseIcon.Glyph = isPlaying ? "\uE769" : "\uE768";
+
+        // Report progress to server
+        _vm.Manager.UpdatePosition(pos, !isPlaying);
+
+        // Check skip markers
+        UpdateSkipButtons(pos);
+
+        // Update stats if visible
+        if (_statsVisible) UpdateStats();
     }
 
-    // -- Video display sizing -------------------------------------------------
-
-    private void VideoImage_SizeChanged(object sender, SizeChangedEventArgs e)
+    private void UpdateSkipButtons(double pos)
     {
-        UpdateRenderSize();
-    }
+        if (_vm == null) return;
 
-    private void UpdateRenderSize()
-    {
-        if (_player == null || _isDisposed) return;
+        var intro = _vm.Manager.WatchDetail?.Intro;
+        bool showIntro = intro != null && pos >= intro.Start && pos < intro.End;
+        SkipIntroButton.Visibility = showIntro ? Visibility.Visible : Visibility.Collapsed;
 
-        try
-        {
-            var scale = GetDpiScale();
-            int w = (int)(VideoImage.ActualWidth * scale);
-            int h = (int)(VideoImage.ActualHeight * scale);
-            if (w > 0 && h > 0)
-                _player.UpdateRenderSize(w, h);
-        }
-        catch (Exception ex)
-        {
-            LogToFile("player_resize_error.txt", ex.ToString());
-        }
-    }
-
-    private double GetDpiScale()
-    {
-        try
-        {
-            return XamlRoot?.RasterizationScale ?? 1.0;
-        }
-        catch
-        {
-            return 1.0;
-        }
-    }
-
-    // -- UI update timer (position, seek bar, skip markers) -------------------
-
-    private void StartUiUpdateTimer()
-    {
-        _uiUpdateTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-        _uiUpdateTimer.Tick += UiUpdateTimer_Tick;
-        _uiUpdateTimer.Start();
-    }
-
-    private void UiUpdateTimer_Tick(object? sender, object e)
-    {
-        if (_isDisposed || _player == null || _vm == null) return;
-
-        var position = _player.Position;
-        var duration = _player.Duration;
-
-        // Update seek slider (suppress seek event while we update programmatically)
-        if (duration > 0)
-        {
-            _suppressSeek = true;
-            SeekSlider.Maximum = duration;
-            SeekSlider.Value = position;
-            _suppressSeek = false;
-        }
-
-        // Update time displays
-        PositionText.Text = PlayerViewModel.FormatTime(position);
-        DurationText.Text = PlayerViewModel.FormatTime(duration);
-
-        // Update skip button visibility
-        SkipIntroButton.Visibility = _vm.ShowSkipIntro ? Visibility.Visible : Visibility.Collapsed;
-        SkipCreditsButton.Visibility = _vm.ShowSkipCredits ? Visibility.Visible : Visibility.Collapsed;
-
-        // Update stats overlay if visible
-        if (StatsOverlay.Visibility == Visibility.Visible)
-            UpdateStatsOverlay();
+        var credits = _vm.Manager.WatchDetail?.Credits;
+        bool showCredits = credits != null && pos >= credits.Start && pos < credits.End;
+        SkipCreditsButton.Visibility = showCredits ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // -- Controls auto-hide ---------------------------------------------------
 
-    private void StartControlsHideTimer()
+    private void HideTimer_Tick(object? sender, object e)
     {
-        _controlsHideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-        _controlsHideTimer.Tick += ControlsHideTimer_Tick;
-        _controlsHideTimer.Start();
-    }
-
-    private void ControlsHideTimer_Tick(object? sender, object e)
-    {
-        _controlsHideTimer?.Stop();
+        _hideTimer?.Stop();
 
         // Only hide if playing (keep visible when paused)
-        if (_player != null && !_player.IsPaused)
+        if (_mediaPlayer != null &&
+            _mediaPlayer.PlaybackSession.PlaybackState == MediaPlaybackState.Playing)
         {
             ControlsOverlay.Opacity = 0;
             ControlsOverlay.IsHitTestVisible = false;
@@ -480,8 +312,8 @@ public sealed partial class PlayerPage : Page
         ControlsOverlay.IsHitTestVisible = true;
 
         // Restart the hide timer
-        _controlsHideTimer?.Stop();
-        _controlsHideTimer?.Start();
+        _hideTimer?.Stop();
+        _hideTimer?.Start();
     }
 
     private void Page_PointerMoved(object sender, PointerRoutedEventArgs e)
@@ -500,7 +332,7 @@ public sealed partial class PlayerPage : Page
 
     private void Page_KeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (_isDisposed || _player == null) return;
+        if (_isDisposed || _mediaPlayer == null) return;
 
         switch (e.Key)
         {
@@ -560,16 +392,22 @@ public sealed partial class PlayerPage : Page
 
     private void TogglePlayPause()
     {
-        _player?.TogglePause();
+        if (_mediaPlayer == null) return;
+
+        if (_mediaPlayer.PlaybackSession.PlaybackState == MediaPlaybackState.Playing)
+            _mediaPlayer.Pause();
+        else
+            _mediaPlayer.Play();
     }
 
     private void SeekRelative(double seconds)
     {
-        if (_player == null) return;
+        if (_mediaPlayer == null) return;
 
-        var newPosition = _player.Position + seconds;
-        newPosition = Math.Max(0, Math.Min(newPosition, _player.Duration));
-        _player.Seek(newPosition);
+        var session = _mediaPlayer.PlaybackSession;
+        var newPos = session.Position.TotalSeconds + seconds;
+        newPos = Math.Max(0, Math.Min(newPos, session.NaturalDuration.TotalSeconds));
+        session.Position = TimeSpan.FromSeconds(newPos);
     }
 
     private void AdjustVolume(double delta)
@@ -580,10 +418,10 @@ public sealed partial class PlayerPage : Page
 
     private void ToggleMute()
     {
-        if (_player == null) return;
+        if (_mediaPlayer == null) return;
 
         _isMuted = !_isMuted;
-        _player.SetMute(_isMuted);
+        _mediaPlayer.IsMuted = _isMuted;
         UpdateVolumeIcon();
     }
 
@@ -606,20 +444,21 @@ public sealed partial class PlayerPage : Page
         else
         {
             appWindow.SetPresenter(AppWindowPresenterKind.Default);
+            if (App.MainWindowInstance is MainWindow mw)
+                mw.ShowMainNavigation();
         }
 
         _isFullscreen = fs;
         FullscreenIcon.Glyph = fs ? "\uE73F" : "\uE740";
-
-        // Update render size after fullscreen layout change
-        DispatcherQueue.TryEnqueue(() => UpdateRenderSize());
     }
 
     private void ToggleStats()
     {
-        if (StatsOverlay.Visibility == Visibility.Collapsed)
+        _statsVisible = !_statsVisible;
+
+        if (_statsVisible)
         {
-            UpdateStatsOverlay();
+            UpdateStats();
             StatsOverlay.Visibility = Visibility.Visible;
         }
         else
@@ -642,13 +481,13 @@ public sealed partial class PlayerPage : Page
 
     private void VolumeSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        if (_player == null) return;
+        if (_mediaPlayer == null) return;
 
-        _player.SetVolume(e.NewValue);
+        _mediaPlayer.Volume = e.NewValue / 100.0;
         if (_isMuted && e.NewValue > 0)
         {
             _isMuted = false;
-            _player.SetMute(false);
+            _mediaPlayer.IsMuted = false;
         }
         UpdateVolumeIcon();
     }
@@ -675,28 +514,26 @@ public sealed partial class PlayerPage : Page
 
     private void SkipIntro_Click(object sender, RoutedEventArgs e)
     {
-        if (_player == null || _vm?.IntroEnd == null) return;
-        _player.Seek(_vm.IntroEnd.Value);
+        if (_mediaPlayer == null || _vm?.IntroEnd == null) return;
+        _mediaPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(_vm.IntroEnd.Value);
     }
 
     private void SkipCredits_Click(object sender, RoutedEventArgs e)
     {
-        if (_player == null || _vm?.CreditsEnd == null) return;
-        _player.Seek(_vm.CreditsEnd.Value);
+        if (_mediaPlayer == null || _vm?.CreditsEnd == null) return;
+        _mediaPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(_vm.CreditsEnd.Value);
     }
 
-    // -- Seek slider interaction ----------------------------------------------
+    // -- Seek slider interaction (suppressed feedback loop pattern) ------------
 
     private void SeekSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        // If the change came from our programmatic update, ignore it
-        if (_suppressSeek) return;
+        // If the change came from our programmatic update in the timer, ignore it
+        if (_suppressSeek || _mediaPlayer == null) return;
 
-        // User is dragging or clicked the slider -- seek to the new position
-        if (_player != null && _player.Duration > 0)
-        {
-            _player.Seek(e.NewValue);
-        }
+        // User clicked or dragged the slider -- seek to the new position
+        _mediaPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(e.NewValue);
+        ShowControls();
     }
 
     // -- Quality / version switching ------------------------------------------
@@ -737,28 +574,28 @@ public sealed partial class PlayerPage : Page
 
     private async Task SwitchVersionAsync(FileVersion version)
     {
-        if (_player == null || _vm == null) return;
+        if (_mediaPlayer == null || _vm == null) return;
 
-        var currentPosition = _player.Position;
+        var currentPos = _mediaPlayer.PlaybackSession.Position.TotalSeconds;
 
-        _player.Pause();
-        await _vm.Manager.StopSessionAsync();
+        _mediaPlayer.Pause();
+        LoadingOverlay.Visibility = Visibility.Visible;
 
         try
         {
-            var session = await _vm.Manager.StartSessionAsync(version.FileId, currentPosition);
+            await _vm.Manager.StopSessionAsync();
+            var session = await _vm.Manager.StartSessionAsync(version.FileId, currentPos);
             _vm.PlayMethod = session.PlayMethod;
             _vm.Resolution = version.Resolution;
             UpdatePlaybackInfo();
             PopulateQualityFlyout();
 
             var streamUrl = _vm.Manager.StreamUrl;
-            if (!string.IsNullOrEmpty(streamUrl))
-            {
-                _subtitlesLoaded = false;
-                _resumePosition = currentPosition;
-                _player.LoadFile(streamUrl);
-            }
+            if (string.IsNullOrEmpty(streamUrl)) return;
+
+            _resumePosition = currentPos;
+            _mediaPlayer.Source = MediaSource.CreateFromUri(new Uri(streamUrl));
+            _mediaPlayer.Play();
         }
         catch (Exception ex)
         {
@@ -769,18 +606,28 @@ public sealed partial class PlayerPage : Page
 
     // -- Stats overlay --------------------------------------------------------
 
-    private void UpdateStatsOverlay()
+    private void UpdateStats()
     {
         if (_vm == null) return;
 
-        var version = _vm.Versions.FirstOrDefault(v => v.Resolution == _vm.Resolution);
+        var currentSession = _vm.Manager.CurrentSession;
+        var version = _vm.Versions.FirstOrDefault(v => v.FileId == currentSession?.MediaFileId)
+                   ?? _vm.Versions.FirstOrDefault();
 
-        StatsResolution.Text = $"Resolution: {_vm.Resolution}";
-        StatsCodec.Text = $"Codec: {version?.CodecVideo ?? "?"} / {version?.CodecAudio ?? "?"}";
+        StatsResolution.Text = $"Resolution:  {_vm.Resolution}";
+        StatsCodec.Text = $"Video:       {currentSession?.PlaybackInfo?.VideoCodec ?? version?.CodecVideo ?? "?"}\nAudio:       {currentSession?.PlaybackInfo?.AudioCodec ?? version?.CodecAudio ?? "?"}";
         StatsPlayMethod.Text = $"Play Method: {_vm.PlayMethod}";
-        StatsBitrate.Text = $"Bitrate: {(version?.Bitrate > 0 ? $"{version.Bitrate / 1000.0:F1} Mbps" : "?")}";
-        StatsBuffer.Text = $"Position: {PlayerViewModel.FormatTime(_player?.Position ?? 0)} / {PlayerViewModel.FormatTime(_player?.Duration ?? 0)}";
-        StatsSession.Text = $"Session: {_vm.Manager.SessionId ?? "?"}";
+        StatsBitrate.Text = $"Bitrate:     {(version?.Bitrate > 0 ? $"{version.Bitrate / 1000.0:F1} Mbps" : "?")}";
+
+        var hdr = "SDR";
+        if (version is { Hdr: true })
+        {
+            var codec = (version.CodecVideo ?? "").ToLowerInvariant();
+            hdr = codec.Contains("dovi") || codec.Contains("dolby") ? "Dolby Vision" : "HDR10";
+        }
+        StatsHdr.Text = $"HDR:         {hdr}";
+        StatsPosition.Text = $"Position:    {PlayerViewModel.FormatTime(_mediaPlayer?.PlaybackSession.Position.TotalSeconds ?? 0)} / {PlayerViewModel.FormatTime(_mediaPlayer?.PlaybackSession.NaturalDuration.TotalSeconds ?? 0)}";
+        StatsSession.Text = $"Session:     {_vm.Manager.SessionId ?? "?"}";
     }
 
     // -- Helpers --------------------------------------------------------------
@@ -810,8 +657,17 @@ public sealed partial class PlayerPage : Page
 
     private void ExitPlayer()
     {
-        StopTimers();
-        DisposeMpvPlayer();
+        _uiTimer?.Stop();
+        _hideTimer?.Stop();
+
+        if (_mediaPlayer != null)
+        {
+            _mediaPlayer.Pause();
+            VideoPlayer.SetMediaPlayer(null);
+            _mediaPlayer.Dispose();
+            _mediaPlayer = null;
+        }
+
         NavigateBack();
     }
 
@@ -820,14 +676,6 @@ public sealed partial class PlayerPage : Page
         var nav = App.Services.GetRequiredService<NavigationService>();
         if (nav.CanGoBack)
             nav.GoBack();
-    }
-
-    private void StopTimers()
-    {
-        _uiUpdateTimer?.Stop();
-        _uiUpdateTimer = null;
-        _controlsHideTimer?.Stop();
-        _controlsHideTimer = null;
     }
 
     private void ShowError(string message)

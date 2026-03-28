@@ -14,10 +14,13 @@
     Tapped="Page_Tapped">
 
     <Grid>
-        <!-- Video display: software-rendered frames are written to a WriteableBitmap -->
-        <Image x:Name="VideoImage" Stretch="Uniform"
-               HorizontalAlignment="Center" VerticalAlignment="Center"
-               SizeChanged="VideoImage_SizeChanged" />
+        <!-- Video display: native MediaPlayerElement with transport controls disabled -->
+        <MediaPlayerElement x:Name="VideoPlayer"
+                            AreTransportControlsEnabled="False"
+                            AutoPlay="False"
+                            Stretch="Uniform"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center" />
 
         <!-- Loading overlay (opaque, covers video during loading) -->
         <Grid x:Name="LoadingOverlay" Background="#101722">
@@ -55,7 +58,8 @@
                 <TextBlock x:Name="StatsCodec" Foreground="White" FontSize="12" FontFamily="Consolas" />
                 <TextBlock x:Name="StatsPlayMethod" Foreground="White" FontSize="12" FontFamily="Consolas" />
                 <TextBlock x:Name="StatsBitrate" Foreground="White" FontSize="12" FontFamily="Consolas" />
-                <TextBlock x:Name="StatsBuffer" Foreground="White" FontSize="12" FontFamily="Consolas" />
+                <TextBlock x:Name="StatsHdr" Foreground="#78AEFC" FontSize="12" FontFamily="Consolas" />
+                <TextBlock x:Name="StatsPosition" Foreground="White" FontSize="12" FontFamily="Consolas" />
                 <TextBlock x:Name="StatsSession" Foreground="#666666" FontSize="11" FontFamily="Consolas" />
             </StackPanel>
         </Border>

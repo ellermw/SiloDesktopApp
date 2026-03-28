@@ -56,13 +56,6 @@
     </ItemGroup>
     <ItemGroup>
       <ProjectReference Include="..\ContinuumPlayer.Core\ContinuumPlayer.Core.csproj" />
-      <ProjectReference Include="..\ContinuumPlayer.Player\ContinuumPlayer.Player.csproj" />
-    </ItemGroup>
-    <ItemGroup>
-      <Content Include="..\..\libs\mpv\libmpv-2.dll">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        <Link>libmpv-2.dll</Link>
-      </Content>
     </ItemGroup>
 
     <!-- 
