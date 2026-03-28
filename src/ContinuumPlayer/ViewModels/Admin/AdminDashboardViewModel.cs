@@ -1,0 +1,124 @@
+using System.Collections.ObjectModel;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using ContinuumPlayer.Core.Api;
+using ContinuumPlayer.Core.Models.Admin;
+using ContinuumPlayer.Core.Models.Catalog;
+
+namespace ContinuumPlayer.ViewModels.Admin;
+
+public partial class AdminDashboardViewModel : ObservableObject
+{
+    private readonly AdminApi _adminApi;
+    private readonly CatalogApi _catalogApi;
+
+    public AdminDashboardViewModel(AdminApi adminApi, CatalogApi catalogApi)
+    {
+        _adminApi = adminApi;
+        _catalogApi = catalogApi;
+    }
+
+    [ObservableProperty]
+    private bool _isLoading;
+
+    [ObservableProperty]
+    private string? _errorMessage;
+
+    [ObservableProperty]
+    private AdminStats? _stats;
+
+    public ObservableCollection<AdminSession> Sessions { get; } = [];
+    public ObservableCollection<Library> Libraries { get; } = [];
+    public ObservableCollection<AdminUser> Users { get; } = [];
+
+    public int SessionCount => Sessions.Count;
+
+    public string StorageDisplay
+    {
+        get
+        {
+            if (Stats is null) return "0 GB";
+            var bytes = Stats.TotalStorageBytes;
+            var tb = bytes / (1024.0 * 1024.0 * 1024.0 * 1024.0);
+            if (tb >= 1.0)
+                return $"{tb:F1} TB";
+            var gb = bytes / (1024.0 * 1024.0 * 1024.0);
+            return $"{(int)Math.Round(gb)} GB";
+        }
+    }
+
+    partial void OnStatsChanged(AdminStats? value)
+    {
+        OnPropertyChanged(nameof(StorageDisplay));
+    }
+
+    [RelayCommand]
+    private async Task LoadAsync()
+    {
+        if (IsLoading) return;
+
+        IsLoading = true;
+        ErrorMessage = null;
+
+        try
+        {
+            var statsTask = _adminApi.GetStatsAsync();
+            var sessionsTask = _adminApi.GetSessionsAsync();
+            var usersTask = _adminApi.GetUsersAsync();
+            var librariesTask = _catalogApi.GetLibrariesAsync();
+
+            await Task.WhenAll(statsTask, sessionsTask, usersTask, librariesTask);
+
+            Stats = statsTask.Result;
+
+            Sessions.Clear();
+            foreach (var s in sessionsTask.Result)
+                Sessions.Add(s);
+
+            Users.Clear();
+            foreach (var u in usersTask.Result)
+                Users.Add(u);
+
+            Libraries.Clear();
+            foreach (var l in librariesTask.Result)
+                Libraries.Add(l);
+
+            OnPropertyChanged(nameof(SessionCount));
+            OnPropertyChanged(nameof(StorageDisplay));
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load dashboard: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    [RelayCommand]
+    private Task RefreshAsync() => LoadAsync();
+
+    [RelayCommand]
+    private async Task ScanAllAsync()
+    {
+        try
+        {
+            await _adminApi.RunScanLibrariesTaskAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Scan failed: {ex.Message}";
+        }
+    }
+
+    public static string GetTimeAgo(string dateStr)
+    {
+        if (!DateTime.TryParse(dateStr, out var dt)) return "";
+        var diff = DateTime.UtcNow - dt.ToUniversalTime();
+        if (diff.TotalMinutes < 1) return "Just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        return $"{(int)diff.TotalDays}d ago";
+    }
+}

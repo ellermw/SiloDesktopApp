@@ -41,7 +41,7 @@ public sealed partial class AdminShellPage : Page
 
         // Navigate to Dashboard on load
         SetActiveNavItem(NavDashboard);
-        AdminContentFrame.Navigate(typeof(PlaceholderPage), "Dashboard");
+        AdminContentFrame.Navigate(typeof(AdminDashboardPage));
     }
 
     // ===== SetActiveNavItem =====
@@ -69,7 +69,7 @@ public sealed partial class AdminShellPage : Page
     private void NavDashboard_Click(object sender, RoutedEventArgs e)
     {
         SetActiveNavItem(NavDashboard);
-        AdminContentFrame.Navigate(typeof(PlaceholderPage), "Dashboard");
+        AdminContentFrame.Navigate(typeof(AdminDashboardPage));
     }
 
     private void NavActivity_Click(object sender, RoutedEventArgs e)
