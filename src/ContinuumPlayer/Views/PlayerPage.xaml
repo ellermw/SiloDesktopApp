@@ -112,6 +112,18 @@
 
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
                         <Button Background="Transparent" BorderThickness="0" Padding="8">
+                            <FontIcon Glyph="&#xED1E;" FontSize="14" Foreground="White" />
+                            <Button.Flyout>
+                                <MenuFlyout x:Name="SubtitleFlyout" />
+                            </Button.Flyout>
+                        </Button>
+                        <Button Background="Transparent" BorderThickness="0" Padding="8">
+                            <FontIcon Glyph="&#xE8D6;" FontSize="14" Foreground="White" />
+                            <Button.Flyout>
+                                <MenuFlyout x:Name="AudioFlyout" />
+                            </Button.Flyout>
+                        </Button>
+                        <Button Background="Transparent" BorderThickness="0" Padding="8">
                             <FontIcon Glyph="&#xE9E9;" FontSize="14" Foreground="White" />
                             <Button.Flyout>
                                 <MenuFlyout x:Name="QualityFlyout" />

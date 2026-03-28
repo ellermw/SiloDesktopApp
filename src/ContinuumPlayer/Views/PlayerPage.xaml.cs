@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml.Input;
+using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Playback;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Helpers;
@@ -14,6 +15,7 @@ public sealed partial class PlayerPage : Page
 {
     private PlayerViewModel? _vm;
     private MediaPlayer? _mediaPlayer;
+    private MediaPlaybackItem? _mediaPlaybackItem;
     private bool _isDisposed;
     private string? _contentId;
     private bool _isFullscreen;
@@ -32,11 +34,23 @@ public sealed partial class PlayerPage : Page
 
     // -- Page lifecycle -------------------------------------------------------
 
+    private bool _playFromStart;
+
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-        if (e.Parameter is string contentId && !string.IsNullOrEmpty(contentId))
-            _contentId = contentId;
+        if (e.Parameter is string param && !string.IsNullOrEmpty(param))
+        {
+            if (param.EndsWith("|fromstart"))
+            {
+                _contentId = param.Replace("|fromstart", "");
+                _playFromStart = true;
+            }
+            else
+            {
+                _contentId = param;
+            }
+        }
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
@@ -138,7 +152,7 @@ public sealed partial class PlayerPage : Page
 
             // Determine start position from user data (resume support)
             double startPosition = 0;
-            if (watchDetail.UserData?.PositionSeconds > 0 && watchDetail.UserData.Played != true)
+            if (!_playFromStart && watchDetail.UserData?.PositionSeconds > 0 && watchDetail.UserData.Played != true)
                 startPosition = watchDetail.UserData.PositionSeconds!.Value;
 
             _resumePosition = startPosition;
@@ -151,7 +165,7 @@ public sealed partial class PlayerPage : Page
             if (session.Position > 0 && _resumePosition == 0)
                 _resumePosition = session.Position;
 
-            // 5. Get the stream URL
+            // 5. Get the stream URL (may be overridden by HLS transcode below)
             var streamUrl = _vm.Manager.StreamUrl;
             if (string.IsNullOrEmpty(streamUrl))
             {
@@ -159,40 +173,84 @@ public sealed partial class PlayerPage : Page
                 return;
             }
 
+            // 6. HLS transcode fallback: if play_method is "transcode", start transcode session
+            if (session.PlayMethod == "transcode")
+            {
+                try
+                {
+                    var playbackApi = App.Services.GetRequiredService<PlaybackApi>();
+                    var transcodeResponse = await playbackApi.StartTranscodeAsync(new TranscodeStartRequest
+                    {
+                        SessionId = session.SessionId,
+                        SeekSeconds = startPosition,
+                        TargetResolution = bestVersion.Resolution,
+                        TargetCodecVideo = "h264",
+                        TargetCodecAudio = "aac",
+                        TargetBitrateKbps = 8000,
+                        SegmentDuration = 2,
+                        SubtitleTrackIndex = -1,
+                        SubtitleBurnIn = false
+                    });
+
+                    // Build HLS manifest URL
+                    var apiClient = App.Services.GetRequiredService<ContinuumApiClient>();
+                    var baseUrl = apiClient.BaseUrl;
+                    var manifestPath = transcodeResponse.ManifestUrl;
+                    if (!manifestPath.StartsWith("http") && !manifestPath.StartsWith("/api/v1"))
+                        manifestPath = "/api/v1" + manifestPath;
+                    streamUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
+                    // HLS endpoints don't need auth -- session UUID is the token
+
+                    _resumePosition = transcodeResponse.PlayerStartSeconds;
+
+                    LogToFile("player_transcode.txt",
+                        $"TranscodeStatus: {transcodeResponse.Status}\nManifestURL: {streamUrl}\nStartSeconds: {transcodeResponse.PlayerStartSeconds}\nSwitchedFile: {transcodeResponse.SwitchedFileId}");
+                }
+                catch (Exception ex)
+                {
+                    LogToFile("player_transcode_error.txt", ex.ToString());
+                    // Fall through to try direct stream URL as a last resort
+                }
+            }
+
             // Log init info for debugging
             LogToFile("player_init.txt",
                 $"StreamURL: {streamUrl}\nPlayMethod: {_vm.PlayMethod}\nResolution: {_vm.Resolution}\nSession: {_vm.Manager.SessionId}\nResumePos: {_resumePosition}");
 
-            // 6. Create MediaPlayer with proper audio category
+            // 7. Create MediaPlayer with proper audio category
             _mediaPlayer = new MediaPlayer();
             _mediaPlayer.AudioCategory = MediaPlayerAudioCategory.Movie;
 
-            // 7. Create MediaSource from stream URL and set source
+            // 8. Create MediaSource from stream URL, load subtitles, wrap in MediaPlaybackItem
             var mediaSource = MediaSource.CreateFromUri(new Uri(streamUrl));
-            _mediaPlayer.Source = mediaSource;
+            LoadSubtitles(mediaSource);
+            _mediaPlaybackItem = new MediaPlaybackItem(mediaSource);
+            _mediaPlayer.Source = _mediaPlaybackItem;
 
-            // 8. Attach to MediaPlayerElement
+            // 9. Attach to MediaPlayerElement
             VideoPlayer.SetMediaPlayer(_mediaPlayer);
 
-            // 9. Subscribe to media events
+            // 10. Subscribe to media events
             _mediaPlayer.MediaOpened += MediaPlayer_MediaOpened;
             _mediaPlayer.MediaEnded += MediaPlayer_MediaEnded;
             _mediaPlayer.MediaFailed += MediaPlayer_MediaFailed;
 
-            // 10. Start playback immediately
+            // 11. Start playback immediately
             _mediaPlayer.Play();
 
-            // 11. Set title and playback info
+            // 12. Set title and playback info, populate flyouts
             TitleText.Text = _vm.Title;
             UpdatePlaybackInfo();
             PopulateQualityFlyout();
+            PopulateSubtitleFlyout();
+            PopulateAudioFlyout();
 
-            // 12. Start UI update timer (250ms)
+            // 13. Start UI update timer (250ms)
             _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
             _uiTimer.Tick += UiTimer_Tick;
             _uiTimer.Start();
 
-            // 13. Start controls auto-hide timer (3s)
+            // 14. Start controls auto-hide timer (3s)
             _hideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
             _hideTimer.Tick += HideTimer_Tick;
             _hideTimer.Start();
@@ -444,8 +502,7 @@ public sealed partial class PlayerPage : Page
         else
         {
             appWindow.SetPresenter(AppWindowPresenterKind.Default);
-            if (App.MainWindowInstance is MainWindow mw)
-                mw.ShowMainNavigation();
+            // Don't show nav -- player stays immersive until exited
         }
 
         _isFullscreen = fs;
@@ -589,18 +646,224 @@ public sealed partial class PlayerPage : Page
             _vm.Resolution = version.Resolution;
             UpdatePlaybackInfo();
             PopulateQualityFlyout();
+            PopulateSubtitleFlyout();
+            PopulateAudioFlyout();
 
             var streamUrl = _vm.Manager.StreamUrl;
             if (string.IsNullOrEmpty(streamUrl)) return;
 
+            // Handle transcode fallback on version switch
+            if (session.PlayMethod == "transcode")
+            {
+                try
+                {
+                    var playbackApi = App.Services.GetRequiredService<PlaybackApi>();
+                    var transcodeResponse = await playbackApi.StartTranscodeAsync(new TranscodeStartRequest
+                    {
+                        SessionId = session.SessionId,
+                        SeekSeconds = currentPos,
+                        TargetResolution = version.Resolution,
+                        TargetCodecVideo = "h264",
+                        TargetCodecAudio = "aac",
+                        TargetBitrateKbps = 8000,
+                        SegmentDuration = 2,
+                        SubtitleTrackIndex = -1,
+                        SubtitleBurnIn = false
+                    });
+
+                    var apiClient = App.Services.GetRequiredService<ContinuumApiClient>();
+                    var baseUrl = apiClient.BaseUrl;
+                    var manifestPath = transcodeResponse.ManifestUrl;
+                    if (!manifestPath.StartsWith("http") && !manifestPath.StartsWith("/api/v1"))
+                        manifestPath = "/api/v1" + manifestPath;
+                    streamUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
+                    currentPos = transcodeResponse.PlayerStartSeconds;
+                }
+                catch (Exception ex)
+                {
+                    LogToFile("player_transcode_error.txt", ex.ToString());
+                }
+            }
+
             _resumePosition = currentPos;
-            _mediaPlayer.Source = MediaSource.CreateFromUri(new Uri(streamUrl));
+            var mediaSource = MediaSource.CreateFromUri(new Uri(streamUrl));
+            LoadSubtitles(mediaSource);
+            _mediaPlaybackItem = new MediaPlaybackItem(mediaSource);
+            _mediaPlayer.Source = _mediaPlaybackItem;
             _mediaPlayer.Play();
         }
         catch (Exception ex)
         {
             LogToFile("player_quality_switch_error.txt", ex.ToString());
             ShowError($"Failed to switch quality: {ex.Message}");
+        }
+    }
+
+    // -- Subtitle selection ---------------------------------------------------
+
+    private void LoadSubtitles(MediaSource mediaSource)
+    {
+        if (_vm?.Manager.CurrentSession == null) return;
+
+        var subtitleUrls = _vm.Manager.GetSubtitleUrls();
+        foreach (var (track, fullUrl) in subtitleUrls)
+        {
+            var codec = track.Codec?.ToLowerInvariant() ?? "";
+            if (codec is "pgs" or "pgssub" or "dvdsub" or "vobsub")
+                continue; // bitmap subs need burn-in via transcode
+
+            try
+            {
+                var tts = TimedTextSource.CreateFromUri(new Uri(fullUrl));
+                tts.Resolved += (s, e) =>
+                {
+                    if (e.Tracks.Count > 0)
+                        e.Tracks[0].Label = track.Label;
+                };
+                mediaSource.ExternalTimedTextSources.Add(tts);
+            }
+            catch { }
+        }
+    }
+
+    private void PopulateSubtitleFlyout()
+    {
+        SubtitleFlyout.Items.Clear();
+
+        // "Off" option to disable subtitles
+        var offItem = new MenuFlyoutItem { Text = "Off" };
+        offItem.Click += (_, _) =>
+        {
+            if (_mediaPlaybackItem == null) return;
+            try
+            {
+                for (uint i = 0; i < _mediaPlaybackItem.TimedMetadataTracks.Count; i++)
+                    _mediaPlaybackItem.TimedMetadataTracks.SetPresentationMode(
+                        i, TimedMetadataTrackPresentationMode.Disabled);
+            }
+            catch { }
+        };
+        SubtitleFlyout.Items.Add(offItem);
+        SubtitleFlyout.Items.Add(new MenuFlyoutSeparator());
+
+        // Subtitle tracks from the session
+        var subtitleUrls = _vm?.Manager.GetSubtitleUrls() ?? [];
+        int trackOffset = 0;
+        for (int idx = 0; idx < subtitleUrls.Count; idx++)
+        {
+            var (track, _) = subtitleUrls[idx];
+            var codec = track.Codec?.ToLowerInvariant() ?? "";
+            if (codec is "pgs" or "pgssub" or "dvdsub" or "vobsub")
+            {
+                trackOffset++;
+                continue; // skip bitmap subs (they were not loaded)
+            }
+
+            var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language;
+            if (string.IsNullOrEmpty(label)) label = $"Track {idx + 1}";
+            if (track.Forced) label += " [Forced]";
+
+            var item = new MenuFlyoutItem { Text = label };
+            int externalIndex = idx - trackOffset; // index into external timed text sources
+            item.Click += (_, _) => SelectSubtitleTrack(externalIndex);
+            SubtitleFlyout.Items.Add(item);
+        }
+    }
+
+    private void SelectSubtitleTrack(int index)
+    {
+        try
+        {
+            if (_mediaPlaybackItem == null) return;
+
+            // First disable all
+            for (uint i = 0; i < _mediaPlaybackItem.TimedMetadataTracks.Count; i++)
+                _mediaPlaybackItem.TimedMetadataTracks.SetPresentationMode(
+                    i, TimedMetadataTrackPresentationMode.Disabled);
+
+            // Then enable the selected one
+            if (index >= 0 && (uint)index < _mediaPlaybackItem.TimedMetadataTracks.Count)
+                _mediaPlaybackItem.TimedMetadataTracks.SetPresentationMode(
+                    (uint)index, TimedMetadataTrackPresentationMode.ApplicationPresented);
+        }
+        catch { }
+    }
+
+    // -- Audio track switching ------------------------------------------------
+
+    private void PopulateAudioFlyout()
+    {
+        AudioFlyout.Items.Clear();
+
+        var currentSession = _vm?.Manager.CurrentSession;
+        if (currentSession == null || _vm == null) return;
+
+        // Get audio tracks from the version that matches the current session
+        var version = _vm.Versions.FirstOrDefault(v => v.FileId == currentSession.MediaFileId);
+        if (version?.AudioTracks == null) return;
+
+        for (int i = 0; i < version.AudioTracks.Count; i++)
+        {
+            var at = version.AudioTracks[i];
+            var label = at.Language ?? "Unknown";
+            if (!string.IsNullOrEmpty(at.Title)) label += $" - {at.Title}";
+            if (!string.IsNullOrEmpty(at.Codec)) label += $" ({at.Codec.ToUpperInvariant()})";
+            if (at.Channels.HasValue) label += $" {at.Channels}ch";
+            if (at.Default) label += " \u2605";
+
+            // Bold the currently active audio track
+            var item = new MenuFlyoutItem { Text = label };
+            if (i == currentSession.AudioTrackIndex)
+                item.FontWeight = Microsoft.UI.Text.FontWeights.Bold;
+
+            int trackIndex = i;
+            item.Click += async (_, _) => await SwitchAudioTrackAsync(trackIndex);
+            AudioFlyout.Items.Add(item);
+        }
+    }
+
+    private async Task SwitchAudioTrackAsync(int trackIndex)
+    {
+        if (_mediaPlayer == null || _vm == null) return;
+
+        var currentPos = _mediaPlayer.PlaybackSession.Position.TotalSeconds;
+
+        try
+        {
+            LoadingOverlay.Visibility = Visibility.Visible;
+
+            var playbackApi = App.Services.GetRequiredService<PlaybackApi>();
+            var response = await playbackApi.ChangeAudioTrackAsync(
+                _vm.Manager.SessionId!, trackIndex, currentPos);
+
+            // Build the new stream URL
+            var apiClient = App.Services.GetRequiredService<ContinuumApiClient>();
+            var baseUrl = apiClient.BaseUrl;
+            var token = apiClient.AccessToken;
+            var streamPath = response.StreamUrl;
+            if (!streamPath.StartsWith("http") && !streamPath.StartsWith("/api/v1"))
+                streamPath = "/api/v1" + streamPath;
+            var url = streamPath.StartsWith("http") ? streamPath : $"{baseUrl}{streamPath}";
+            if (token != null)
+                url += (url.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
+
+            // Update play method in case it changed
+            _vm.PlayMethod = response.PlayMethod;
+            UpdatePlaybackInfo();
+            PopulateAudioFlyout();
+
+            // Reload stream at the current position
+            _resumePosition = currentPos;
+            var mediaSource = MediaSource.CreateFromUri(new Uri(url));
+            LoadSubtitles(mediaSource);
+            _mediaPlaybackItem = new MediaPlaybackItem(mediaSource);
+            _mediaPlayer.Source = _mediaPlaybackItem;
+            _mediaPlayer.Play();
+        }
+        catch (Exception ex)
+        {
+            LogToFile("player_audio_switch_error.txt", ex.ToString());
+            ShowError($"Failed to switch audio: {ex.Message}");
         }
     }
 
