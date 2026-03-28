@@ -1,8 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
+using ContinuumPlayer.Controls;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Catalog;
+using ContinuumPlayer.Core.Models.Home;
 using ContinuumPlayer.Core.Models.Playback;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Helpers;
@@ -16,12 +18,20 @@ public sealed partial class ItemDetailPage : Page
     private CancellationTokenSource? _imageCts;
     private int _highlightedSeasonNumber;
     private WatchDetailResponse? _watchDetail;
+    private FileVersion? _selectedVersion;
 
     public ItemDetailPage()
     {
         ViewModel = App.Services.GetRequiredService<ItemDetailViewModel>();
         this.InitializeComponent();
         SmoothScrollHelper.Attach(ContentScroll);
+
+        // Listen for async property changes (e.g., rating loaded after initial UI update)
+        ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ViewModel.UserRating))
+                DispatcherQueue.TryEnqueue(UpdateStarRating);
+        };
 
         this.Loaded += (_, _) =>
         {
@@ -52,6 +62,12 @@ public sealed partial class ItemDetailPage : Page
             {
                 _ = LoadWatchDetailAsync(contentId);
             }
+
+            // Load rating (non-blocking)
+            _ = ViewModel.LoadRatingCommand.ExecuteAsync(null);
+
+            // Load similar items (non-blocking)
+            _ = LoadSimilarItemsAsync();
 
             if (ViewModel.IsSeries)
             {
@@ -89,8 +105,11 @@ public sealed partial class ItemDetailPage : Page
 
         OverviewText.Text = item.Overview;
 
+        UpdateScoresRow(item);
+        UpdateWatchedButton();
         UpdateFavoriteButton();
         UpdateWatchlistButton();
+        UpdateStarRating();
 
         // Load backdrop
         _imageCts?.Cancel();
@@ -101,10 +120,110 @@ public sealed partial class ItemDetailPage : Page
         BuildCast(item.Cast);
     }
 
+    // ===== Scores Row =====
+
+    private void UpdateScoresRow(MediaItemDetail item)
+    {
+        bool hasAnyScore = false;
+
+        // IMDb score (use RatingTmdb as stand-in since we show TMDB rating as the star score)
+        if (item.RatingTmdb != null)
+        {
+            ImdbScorePanel.Visibility = Visibility.Visible;
+            ImdbScoreText.Text = $"{item.RatingTmdb:F1}";
+            hasAnyScore = true;
+        }
+        else
+        {
+            ImdbScorePanel.Visibility = Visibility.Collapsed;
+        }
+
+        // RT Critic
+        if (item.RatingRtCritic != null)
+        {
+            RtCriticPanel.Visibility = Visibility.Visible;
+            RtCriticText.Text = $"{item.RatingRtCritic}%";
+            hasAnyScore = true;
+        }
+        else
+        {
+            RtCriticPanel.Visibility = Visibility.Collapsed;
+        }
+
+        // RT Audience
+        if (item.RatingRtAudience != null)
+        {
+            RtAudiencePanel.Visibility = Visibility.Visible;
+            RtAudienceText.Text = $"{item.RatingRtAudience}%";
+            hasAnyScore = true;
+        }
+        else
+        {
+            RtAudiencePanel.Visibility = Visibility.Collapsed;
+        }
+
+        ScoresPanel.Visibility = hasAnyScore ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // ===== Watched Toggle =====
+
+    private void UpdateWatchedButton()
+    {
+        if (ViewModel.IsWatched)
+        {
+            WatchedIcon.Glyph = "\uE73E"; // Checkmark
+            WatchedText.Text = "Watched";
+            WatchedIcon.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
+        }
+        else
+        {
+            WatchedIcon.Glyph = "\uE73E"; // Checkmark outline
+            WatchedText.Text = "Mark as Watched";
+            WatchedIcon.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
+        }
+    }
+
+    private async void WatchedButton_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.ToggleWatchedCommand.ExecuteAsync(null);
+        UpdateWatchedButton();
+    }
+
+    // ===== Star Rating =====
+
+    private void UpdateStarRating()
+    {
+        var rating = ViewModel.UserRating;
+        FontIcon[] stars = [Star1Icon, Star2Icon, Star3Icon, Star4Icon, Star5Icon];
+
+        for (int i = 0; i < 5; i++)
+        {
+            bool filled = rating != null && (i + 1) <= rating;
+            stars[i].Glyph = filled ? "\uE735" : "\uE734"; // FavoriteStar vs FavoriteStarFill -- actually E735=filled, E734=outline
+            stars[i].Foreground = filled
+                ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"]
+                : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"];
+        }
+    }
+
+    private async void Star_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.Tag is string tagStr && int.TryParse(tagStr, out int rating))
+        {
+            await ViewModel.SetRatingCommand.ExecuteAsync(rating);
+            UpdateStarRating();
+        }
+    }
+
+    // ===== Favorite & Watchlist =====
+
     private void UpdateFavoriteButton()
     {
         FavoriteIcon.Glyph = ViewModel.IsFavorite ? "\uE735" : "\uE734";
-        FavoriteText.Text = ViewModel.IsFavorite ? "Favorited" : "Favorite";
+        FavoriteIcon.Foreground = ViewModel.IsFavorite
+            ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.IndianRed)
+            : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
+        ToolTipService.SetToolTip(FavoriteButton, ViewModel.IsFavorite ? "Unfavorite" : "Favorite");
     }
 
     private void UpdateWatchlistButton()
@@ -124,6 +243,8 @@ public sealed partial class ItemDetailPage : Page
         await ViewModel.ToggleWatchlistCommand.ExecuteAsync(null);
         UpdateWatchlistButton();
     }
+
+    // ===== Navigation =====
 
     private void BackButton_Click(object sender, RoutedEventArgs e)
     {
@@ -158,7 +279,7 @@ public sealed partial class ItemDetailPage : Page
         }
     }
 
-    private void PlayFromStartButton_Click(object sender, RoutedEventArgs e)
+    private void PlayFromStart_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.Item == null) return;
         NavigateToPlayer(ViewModel.Item.ContentId, fromStart: true);
@@ -169,6 +290,8 @@ public sealed partial class ItemDetailPage : Page
         var nav = App.Services.GetRequiredService<NavigationService>();
         nav.Navigate<PlayerPage>(fromStart ? $"{contentId}|fromstart" : contentId);
     }
+
+    // ===== Watch Detail & Play Button =====
 
     private async Task LoadWatchDetailAsync(string contentId)
     {
@@ -190,18 +313,18 @@ public sealed partial class ItemDetailPage : Page
 
         // Show resume button text if there's saved progress
         var userData = _watchDetail.UserData;
-        if (userData?.PositionSeconds > 0 && userData.Played != true)
+        bool isResuming = userData?.PositionSeconds > 0 && userData.Played != true;
+
+        if (isResuming)
         {
-            var ts = TimeSpan.FromSeconds(userData.PositionSeconds.Value);
+            var ts = TimeSpan.FromSeconds(userData!.PositionSeconds!.Value);
             var timeStr = ts.TotalHours >= 1
                 ? $"{(int)ts.TotalHours}:{ts.Minutes:D2}:{ts.Seconds:D2}"
                 : $"{ts.Minutes}:{ts.Seconds:D2}";
             PlayButtonText.Text = $"Resume from {timeStr}";
-            PlayFromStartButton.Visibility = Visibility.Visible;
         }
         else
         {
-            PlayFromStartButton.Visibility = Visibility.Collapsed;
             PlayButtonText.Text = "Play";
         }
 
@@ -211,59 +334,130 @@ public sealed partial class ItemDetailPage : Page
         {
             var manager = App.Services.GetRequiredService<PlaybackManager>();
             var best = manager.SelectBestVersion(versions);
+            _selectedVersion = best;
+
             if (best != null)
             {
-                var parts = new List<string>();
+                var qualityParts = new List<string>();
                 if (!string.IsNullOrEmpty(best.Resolution))
-                    parts.Add(best.Resolution);
-                if (!string.IsNullOrEmpty(best.CodecVideo))
-                    parts.Add(best.CodecVideo.ToUpperInvariant());
+                    qualityParts.Add(best.Resolution);
                 if (best.Hdr)
-                    parts.Add("HDR");
+                    qualityParts.Add("HDR");
 
-                VersionInfoText.Text = string.Join(" \u2022 ", parts);
-                VersionInfoText.Visibility = Visibility.Visible;
+                if (qualityParts.Count > 0)
+                {
+                    PlayQualityText.Text = $"\u00B7 {string.Join(" ", qualityParts)}";
+                    PlayQualityText.Visibility = Visibility.Visible;
+                }
             }
 
-            // Show version selector if multiple versions exist
-            if (versions.Count > 1)
+            // Show version dropdown if multiple versions OR if resuming (for "Play from Start")
+            if (versions.Count > 1 || isResuming)
             {
-                VersionButton.Visibility = Visibility.Visible;
-                BuildVersionFlyout(versions);
+                VersionDropdownButton.Visibility = Visibility.Visible;
+                VersionSeparator.Visibility = Visibility.Visible;
+                BuildVersionFlyout(versions, isResuming);
+            }
+
+            // Show progress bar overlay
+            if (isResuming && userData?.DurationSeconds > 0)
+            {
+                var fraction = userData.PositionSeconds!.Value / userData.DurationSeconds.Value;
+                // We need to measure the split button width; use a reasonable estimate
+                // The actual width will be set after layout
+                SplitPlayButton.SizeChanged += OnSplitPlayButtonSizeChanged;
+                _playProgressFraction = Math.Min(fraction, 1.0);
             }
         }
     }
 
-    private void BuildVersionFlyout(List<FileVersion> versions)
+    private double _playProgressFraction;
+
+    private void OnSplitPlayButtonSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (_playProgressFraction > 0 && e.NewSize.Width > 0)
+        {
+            PlayProgressBar.Width = e.NewSize.Width * _playProgressFraction;
+        }
+    }
+
+    private void BuildVersionFlyout(List<FileVersion> versions, bool isResuming)
     {
         VersionFlyout.Items.Clear();
-        foreach (var version in versions)
-        {
-            var label = version.Resolution;
-            if (!string.IsNullOrEmpty(version.CodecVideo))
-                label += $" {version.CodecVideo.ToUpperInvariant()}";
-            if (version.Hdr)
-                label += " HDR";
-            if (version.Bitrate > 0)
-                label += $" ({version.Bitrate / 1000}Mbps)";
 
-            var item = new MenuFlyoutItem { Text = label };
-            var fileVersion = version;
-            item.Click += (_, _) =>
+        // "Play from Start" option when resuming
+        if (isResuming)
+        {
+            var playFromStart = new MenuFlyoutItem { Text = "Play from Start" };
+            playFromStart.Click += PlayFromStart_Click;
+            VersionFlyout.Items.Add(playFromStart);
+
+            if (versions.Count > 1)
             {
-                // Update the version info text to show selected version
-                var parts = new List<string>();
-                if (!string.IsNullOrEmpty(fileVersion.Resolution))
-                    parts.Add(fileVersion.Resolution);
-                if (!string.IsNullOrEmpty(fileVersion.CodecVideo))
-                    parts.Add(fileVersion.CodecVideo.ToUpperInvariant());
-                if (fileVersion.Hdr)
-                    parts.Add("HDR");
-                VersionInfoText.Text = string.Join(" \u2022 ", parts);
-            };
-            VersionFlyout.Items.Add(item);
+                VersionFlyout.Items.Add(new MenuFlyoutSeparator());
+            }
+        }
+
+        // Version options (only show if multiple)
+        if (versions.Count > 1)
+        {
+            foreach (var version in versions)
+            {
+                var label = version.Resolution;
+                if (!string.IsNullOrEmpty(version.CodecVideo))
+                    label += $" {version.CodecVideo.ToUpperInvariant()}";
+                if (version.Hdr)
+                    label += " HDR";
+                if (version.Bitrate > 0)
+                    label += $" ({version.Bitrate / 1000}Mbps)";
+
+                var item = new MenuFlyoutItem { Text = label };
+                var fileVersion = version;
+                item.Click += (_, _) =>
+                {
+                    _selectedVersion = fileVersion;
+                    var qualityParts = new List<string>();
+                    if (!string.IsNullOrEmpty(fileVersion.Resolution))
+                        qualityParts.Add(fileVersion.Resolution);
+                    if (fileVersion.Hdr)
+                        qualityParts.Add("HDR");
+                    if (qualityParts.Count > 0)
+                    {
+                        PlayQualityText.Text = $"\u00B7 {string.Join(" ", qualityParts)}";
+                        PlayQualityText.Visibility = Visibility.Visible;
+                    }
+                };
+                VersionFlyout.Items.Add(item);
+            }
         }
     }
+
+    // ===== Similar Items ("More Like This") =====
+
+    private async Task LoadSimilarItemsAsync()
+    {
+        await ViewModel.LoadSimilarCommand.ExecuteAsync(null);
+
+        if (ViewModel.SimilarItems.Count == 0)
+        {
+            SimilarSection.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        SimilarSection.Visibility = Visibility.Visible;
+        SimilarPanel.Children.Clear();
+
+        foreach (var item in ViewModel.SimilarItems)
+        {
+            var posterCard = new PosterCard
+            {
+                MediaItem = item
+            };
+            SimilarPanel.Children.Add(posterCard);
+        }
+    }
+
+    // ===== Backdrop Image =====
 
     private async Task LoadBackdropAsync(MediaItemDetail item, CancellationToken ct)
     {
@@ -317,6 +511,8 @@ public sealed partial class ItemDetailPage : Page
         catch (OperationCanceledException) { }
         catch { }
     }
+
+    // ===== Cast Section =====
 
     private void BuildCast(List<CastMember> cast)
     {

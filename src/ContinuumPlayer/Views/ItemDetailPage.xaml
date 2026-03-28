@@ -136,69 +136,129 @@
                                    TextTrimming="CharacterEllipsis" MaxWidth="400" />
                     </StackPanel>
 
-                    <!-- Action buttons -->
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <StackPanel Spacing="4">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Button
-                                    x:Name="PlayButton"
-                                    Style="{StaticResource AccentButtonStyle}"
-                                    Padding="20,10"
-                                    Click="PlayButton_Click">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <FontIcon x:Name="PlayButtonIcon" Glyph="&#xE768;" FontSize="16" FontFamily="{ThemeResource SymbolThemeFontFamily}" />
-                                        <TextBlock x:Name="PlayButtonText" Text="Play" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button>
-
-                                <!-- Play from start (shown when resuming) -->
-                                <Button
-                                    x:Name="PlayFromStartButton"
-                                    Style="{StaticResource SecondaryButtonStyle}"
-                                    Padding="16,10"
-                                    Visibility="Collapsed"
-                                    Click="PlayFromStartButton_Click">
-                                    <TextBlock Text="Play from Start" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
-                                </Button>
-
-                                <!-- Version selector dropdown -->
-                                <Button
-                                    x:Name="VersionButton"
-                                    Style="{StaticResource SecondaryButtonStyle}"
-                                    Padding="10,10"
-                                    Visibility="Collapsed">
-                                    <FontIcon Glyph="&#xE70D;" FontSize="12" Foreground="{StaticResource PrimaryTextBrush}" />
-                                    <Button.Flyout>
-                                        <MenuFlyout x:Name="VersionFlyout" />
-                                    </Button.Flyout>
-                                </Button>
-                            </StackPanel>
-
-                            <!-- Version info badge -->
-                            <TextBlock
-                                x:Name="VersionInfoText"
-                                Foreground="{StaticResource SecondaryTextBrush}"
-                                FontSize="12"
-                                Visibility="Collapsed" />
+                    <!-- Scores row: RT Critic, RT Audience, IMDb -->
+                    <StackPanel x:Name="ScoresPanel" Orientation="Horizontal" Spacing="20" Visibility="Collapsed">
+                        <!-- IMDb score -->
+                        <StackPanel x:Name="ImdbScorePanel" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
+                            <FontIcon Glyph="&#xE735;" FontSize="14" Foreground="{StaticResource AccentBrush}" />
+                            <TextBlock x:Name="ImdbScoreText" FontSize="15" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" />
+                            <TextBlock Text="/10" FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Bottom" Margin="0,0,0,1" />
                         </StackPanel>
 
+                        <!-- RT Critic score -->
+                        <StackPanel x:Name="RtCriticPanel" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
+                            <TextBlock Text="RT" FontSize="13" FontWeight="Bold" Foreground="#FF6347" />
+                            <TextBlock x:Name="RtCriticText" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                        </StackPanel>
+
+                        <!-- RT Audience score -->
+                        <StackPanel x:Name="RtAudiencePanel" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
+                            <TextBlock Text="Aud" FontSize="13" FontWeight="Bold" Foreground="#DAA520" />
+                            <TextBlock x:Name="RtAudienceText" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Action buttons row -->
+                    <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+
+                        <!-- Split play button: [Play / Resume ... | dropdown] -->
+                        <Grid x:Name="SplitPlayButton" CornerRadius="22" HorizontalAlignment="Left">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Accent background spanning both columns -->
+                            <Border Grid.ColumnSpan="2" Background="{StaticResource AccentBrush}" CornerRadius="22" />
+
+                            <!-- Progress bar overlay -->
+                            <Border x:Name="PlayProgressBar" Grid.ColumnSpan="2" CornerRadius="22"
+                                    HorizontalAlignment="Left" Width="0" Opacity="0.2" IsHitTestVisible="False">
+                                <Border.Background>
+                                    <SolidColorBrush Color="{StaticResource AccentForegroundColor}" />
+                                </Border.Background>
+                            </Border>
+
+                            <!-- Main play/resume button -->
+                            <Button Grid.Column="0" Click="PlayButton_Click"
+                                Background="Transparent" BorderThickness="0"
+                                Padding="24,10" CornerRadius="22,0,0,22">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE768;" FontSize="16" Foreground="{StaticResource AccentForegroundBrush}" />
+                                    <TextBlock x:Name="PlayButtonText" Text="Play" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="Bold" FontSize="15" />
+                                    <TextBlock x:Name="PlayQualityText" Text="" Foreground="{StaticResource AccentForegroundBrush}" Opacity="0.6" FontSize="15" Visibility="Collapsed" />
+                                </StackPanel>
+                            </Button>
+
+                            <!-- Dropdown arrow for versions -->
+                            <Button x:Name="VersionDropdownButton" Grid.Column="1" Background="Transparent" BorderThickness="0"
+                                Padding="12,10" CornerRadius="0,22,22,0" Visibility="Collapsed">
+                                <FontIcon Glyph="&#xE70D;" FontSize="12" Foreground="{StaticResource AccentForegroundBrush}" />
+                                <Button.Flyout>
+                                    <MenuFlyout x:Name="VersionFlyout" />
+                                </Button.Flyout>
+                            </Button>
+
+                            <!-- Left border separator between play and dropdown -->
+                            <Border x:Name="VersionSeparator" Grid.Column="1" Width="1" Opacity="0.3" HorizontalAlignment="Left" Visibility="Collapsed">
+                                <Border.Background>
+                                    <SolidColorBrush Color="{StaticResource AccentForegroundColor}" />
+                                </Border.Background>
+                            </Border>
+                        </Grid>
+
+                        <!-- Watched toggle button -->
+                        <Button
+                            x:Name="WatchedButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Click="WatchedButton_Click"
+                            Padding="16,10"
+                            CornerRadius="22">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon x:Name="WatchedIcon" Glyph="&#xE73E;" FontSize="16"
+                                          Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock x:Name="WatchedText" Text="Mark as Watched" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <!-- Favorite button (icon only, pill) -->
                         <Button
                             x:Name="FavoriteButton"
                             Style="{StaticResource SecondaryButtonStyle}"
                             Click="FavoriteButton_Click"
-                            Padding="16,10">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon x:Name="FavoriteIcon" Glyph="&#xE734;" FontSize="16"
-                                          Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock x:Name="FavoriteText" Text="Favorite" VerticalAlignment="Center" />
-                            </StackPanel>
+                            Padding="12,10"
+                            CornerRadius="22"
+                            ToolTipService.ToolTip="Favorite">
+                            <FontIcon x:Name="FavoriteIcon" Glyph="&#xE734;" FontSize="18"
+                                      Foreground="{StaticResource PrimaryTextBrush}" />
                         </Button>
 
+                        <!-- Star rating: 5 stars -->
+                        <StackPanel x:Name="StarRatingPanel" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                            <Button x:Name="Star1" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" Tag="1">
+                                <FontIcon x:Name="Star1Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                            </Button>
+                            <Button x:Name="Star2" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" Tag="2">
+                                <FontIcon x:Name="Star2Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                            </Button>
+                            <Button x:Name="Star3" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" Tag="3">
+                                <FontIcon x:Name="Star3Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                            </Button>
+                            <Button x:Name="Star4" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" Tag="4">
+                                <FontIcon x:Name="Star4Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                            </Button>
+                            <Button x:Name="Star5" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" Tag="5">
+                                <FontIcon x:Name="Star5Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                            </Button>
+                        </StackPanel>
+
+                        <!-- Watchlist button (moved to overflow) -->
                         <Button
                             x:Name="WatchlistButton"
                             Style="{StaticResource SecondaryButtonStyle}"
                             Click="WatchlistButton_Click"
-                            Padding="16,10">
+                            Padding="16,10"
+                            CornerRadius="22">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <FontIcon x:Name="WatchlistIcon" Glyph="&#xE8B7;" FontSize="16"
                                           Foreground="{StaticResource PrimaryTextBrush}" />
@@ -263,6 +323,19 @@
                             Width="32" Height="32"
                             HorizontalAlignment="Left" />
                         <StackPanel x:Name="EpisodesPanel" Spacing="8" />
+                    </StackPanel>
+
+                    <!-- More Like This section -->
+                    <StackPanel x:Name="SimilarSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">
+                        <TextBlock Text="More Like This" Style="{StaticResource TitleTextStyle}" />
+                        <ScrollViewer
+                            x:Name="SimilarScrollViewer"
+                            HorizontalScrollBarVisibility="Hidden"
+                            VerticalScrollBarVisibility="Disabled"
+                            HorizontalScrollMode="Enabled"
+                            VerticalScrollMode="Disabled">
+                            <StackPanel x:Name="SimilarPanel" Orientation="Horizontal" Spacing="12" />
+                        </ScrollViewer>
                     </StackPanel>
                 </StackPanel>
             </StackPanel>

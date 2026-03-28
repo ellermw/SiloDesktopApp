@@ -68,4 +68,38 @@ public class CatalogApi(ContinuumApiClient client)
 
     public Task<EpisodesResponse> GetEpisodesAsync(string seriesId, int seasonNumber, CancellationToken ct = default)
         => client.GetAsync<EpisodesResponse>($"/api/v1/catalog/series/{seriesId}/seasons/{seasonNumber}/episodes", ct);
+
+    // ===== Watched State =====
+
+    public Task MarkWatchedAsync(string contentId, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/watched/{contentId}", new { }, ct);
+
+    public Task MarkUnwatchedAsync(string contentId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/watched/{contentId}", ct);
+
+    // ===== Ratings =====
+
+    public async Task<int?> GetRatingAsync(string contentId, CancellationToken ct = default)
+    {
+        try
+        {
+            var r = await client.GetAsync<RatingResponse>($"/api/v1/ratings/{contentId}", ct);
+            return r.Rating;
+        }
+        catch (ApiException ex) when (ex.StatusCode == 404)
+        {
+            return null;
+        }
+    }
+
+    public Task SetRatingAsync(string contentId, int rating, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/ratings/{contentId}", new { rating }, ct);
+
+    public Task DeleteRatingAsync(string contentId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/ratings/{contentId}", ct);
+
+    // ===== Recommendations =====
+
+    public Task<SimilarResponse> GetSimilarAsync(string contentId, CancellationToken ct = default)
+        => client.GetAsync<SimilarResponse>($"/api/v1/recommendations/similar/{contentId}", ct);
 }

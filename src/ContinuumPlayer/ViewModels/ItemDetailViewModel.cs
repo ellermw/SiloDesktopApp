@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Catalog;
+using ContinuumPlayer.Core.Models.Home;
 
 namespace ContinuumPlayer.ViewModels;
 
@@ -30,6 +31,12 @@ public partial class ItemDetailViewModel : ObservableObject
     [ObservableProperty]
     private bool _inWatchlist;
 
+    [ObservableProperty]
+    private bool _isWatched;
+
+    [ObservableProperty]
+    private int? _userRating;
+
     // Series support
     [ObservableProperty]
     private bool _isSeries;
@@ -45,6 +52,7 @@ public partial class ItemDetailViewModel : ObservableObject
 
     public ObservableCollection<Season> Seasons { get; } = [];
     public ObservableCollection<Episode> Episodes { get; } = [];
+    public ObservableCollection<MediaItem> SimilarItems { get; } = [];
 
     public string RuntimeDisplay =>
         Item?.Runtime > 0 ? $"{Item.Runtime / 60}h {Item.Runtime % 60}m" : "";
@@ -65,13 +73,16 @@ public partial class ItemDetailViewModel : ObservableObject
         IsSeries = false;
         Seasons.Clear();
         Episodes.Clear();
+        SimilarItems.Clear();
         SelectedSeasonNumber = 0;
+        UserRating = null;
 
         try
         {
             Item = await _catalogApi.GetItemDetailAsync(contentId);
             IsFavorite = Item?.UserState?.IsFavorite ?? false;
             InWatchlist = Item?.UserState?.InWatchlist ?? false;
+            IsWatched = Item?.UserState?.Played ?? false;
             IsSeries = Item?.Type == "series";
             OnPropertyChanged(nameof(RuntimeDisplay));
             OnPropertyChanged(nameof(GenresDisplay));
@@ -84,6 +95,84 @@ public partial class ItemDetailViewModel : ObservableObject
         finally
         {
             IsLoading = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task LoadRatingAsync()
+    {
+        if (Item == null) return;
+        try
+        {
+            UserRating = await _catalogApi.GetRatingAsync(Item.ContentId);
+        }
+        catch
+        {
+            // Rating load failure is non-fatal
+        }
+    }
+
+    [RelayCommand]
+    private async Task SetRatingAsync(int rating)
+    {
+        if (Item == null) return;
+        try
+        {
+            if (UserRating == rating)
+            {
+                // Clicking the same star removes the rating
+                await _catalogApi.DeleteRatingAsync(Item.ContentId);
+                UserRating = null;
+            }
+            else
+            {
+                await _catalogApi.SetRatingAsync(Item.ContentId, rating);
+                UserRating = rating;
+            }
+        }
+        catch
+        {
+            // Rating update failure is non-fatal
+        }
+    }
+
+    [RelayCommand]
+    private async Task ToggleWatchedAsync()
+    {
+        if (Item == null) return;
+        try
+        {
+            if (IsWatched)
+            {
+                await _catalogApi.MarkUnwatchedAsync(Item.ContentId);
+                IsWatched = false;
+            }
+            else
+            {
+                await _catalogApi.MarkWatchedAsync(Item.ContentId);
+                IsWatched = true;
+            }
+        }
+        catch
+        {
+            // Revert on failure
+        }
+    }
+
+    [RelayCommand]
+    private async Task LoadSimilarAsync()
+    {
+        if (Item == null) return;
+        try
+        {
+            var response = await _catalogApi.GetSimilarAsync(Item.ContentId);
+            SimilarItems.Clear();
+            foreach (var item in response.Items)
+                SimilarItems.Add(item);
+        }
+        catch
+        {
+            // Similar items load failure is non-fatal
         }
     }
 
