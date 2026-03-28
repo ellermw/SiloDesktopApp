@@ -135,6 +135,7 @@ public partial class App : Application
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminSettingsDetailViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminApiKeysViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminRecommendationsViewModel>();
+        services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminPlaybackHistoryViewModel>();
 
         return services.BuildServiceProvider();
     }

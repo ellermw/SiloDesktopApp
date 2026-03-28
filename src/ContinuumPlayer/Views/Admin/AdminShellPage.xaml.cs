@@ -111,7 +111,7 @@ public sealed partial class AdminShellPage : Page
     private void NavPlaybackHistory_Click(object sender, RoutedEventArgs e)
     {
         SetActiveNavItem(NavPlaybackHistory);
-        AdminContentFrame.Navigate(typeof(PlaceholderPage), "Playback History");
+        AdminContentFrame.Navigate(typeof(AdminPlaybackHistoryPage));
     }
 
     private void NavScheduledTasks_Click(object sender, RoutedEventArgs e)
