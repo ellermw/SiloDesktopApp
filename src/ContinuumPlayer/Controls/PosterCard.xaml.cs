@@ -46,6 +46,13 @@ public sealed partial class PosterCard : UserControl
         var ct = _loadCts.Token;
 
         TitleText.Text = item.Title;
+
+        // Build subtitle line: "2024 Series" or "2024" (web: year + type in uppercase)
+        var parts = new List<string>();
+        if (item.Year > 0) parts.Add(item.Year.ToString());
+        if (item.Type == "series") parts.Add("SERIES");
+        SubtitleText.Text = string.Join("  ", parts);
+
         PosterImage.Opacity = 0;
 
         // Skip thumbhash -- go straight to loading the real image.
@@ -112,7 +119,7 @@ public sealed partial class PosterCard : UserControl
             var bitmapImage = new BitmapImage
             {
                 // Decode at display size, not full resolution -- huge perf win
-                DecodePixelWidth = 180,
+                DecodePixelWidth = 200,
                 DecodePixelType = DecodePixelType.Logical
             };
             using var stream = new MemoryStream(bytes);

@@ -14,16 +14,15 @@
     <Grid
         x:Name="RootGrid"
         Width="{StaticResource PosterCardWidth}"
-        CornerRadius="{StaticResource PosterCornerRadius}"
         Background="Transparent"
         CacheMode="BitmapCache">
 
         <Grid.RowDefinitions>
-            <RowDefinition Height="225" />
+            <RowDefinition Height="267" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Poster image area -->
+        <!-- Poster image area (2:3 aspect, rounded-xl = 12px) -->
         <Grid
             Grid.Row="0"
             CornerRadius="{StaticResource PosterCornerRadius}">
@@ -48,6 +47,16 @@
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"
                 Opacity="0" />
+
+            <!-- Bottom gradient overlay (from-black/55) -->
+            <Border VerticalAlignment="Bottom" Height="96" IsHitTestVisible="False">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="Transparent" Offset="0.0" />
+                        <GradientStop Color="#8C000000" Offset="1.0" />
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
 
             <!-- Badges overlay at bottom -->
             <StackPanel
@@ -87,15 +96,24 @@
             </StackPanel>
         </Grid>
 
-        <!-- Title below poster -->
-        <TextBlock
-            x:Name="TitleText"
-            Grid.Row="1"
-            Style="{StaticResource CaptionTextStyle}"
-            Foreground="{StaticResource PrimaryTextBrush}"
-            TextTrimming="CharacterEllipsis"
-            MaxLines="2"
-            TextWrapping="Wrap"
-            Margin="2,6,2,0" />
+        <!-- Text below poster (web: px-1 pt-3 = 4px side, 12px top) -->
+        <StackPanel Grid.Row="1" Margin="4,12,4,0">
+            <!-- Title: text-[14px] font-semibold tracking-tight -->
+            <TextBlock
+                x:Name="TitleText"
+                FontSize="14"
+                FontWeight="SemiBold"
+                Foreground="{StaticResource PrimaryTextBrush}"
+                TextTrimming="CharacterEllipsis"
+                MaxLines="1" />
+            <!-- Year/type: text-[11px] font-medium uppercase tracking-[0.14em] -->
+            <TextBlock
+                x:Name="SubtitleText"
+                FontSize="11"
+                FontWeight="Medium"
+                Foreground="{StaticResource SecondaryTextBrush}"
+                CharacterSpacing="140"
+                Margin="0,4,0,0" />
+        </StackPanel>
     </Grid>
 </UserControl>

@@ -1,5 +1,8 @@
 using System.Collections.Specialized;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI;
+using Microsoft.UI.Text;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using ContinuumPlayer.Services;
 using ContinuumPlayer.ViewModels;
@@ -68,22 +71,8 @@ public sealed partial class SettingsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<SettingsViewModel>();
         this.InitializeComponent();
-        PopulateThemeComboBox();
 
         ViewModel.LibraryCards.CollectionChanged += LibraryCards_CollectionChanged;
-    }
-
-    private void PopulateThemeComboBox()
-    {
-        var themeService = App.Services.GetRequiredService<ThemeService>();
-        foreach (var themeId in themeService.AvailableThemeIds)
-        {
-            ThemeComboBox.Items.Add(new ComboBoxItem
-            {
-                Content = ThemeService.GetDisplayName(themeId),
-                Tag = themeId
-            });
-        }
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -92,18 +81,23 @@ public sealed partial class SettingsPage : Page
 
         await ViewModel.LoadCommand.ExecuteAsync(null);
         SyncComboBoxes();
+        BuildThemeCards();
+        UpdateCurrentThemeDisplay();
     }
 
     private void SyncComboBoxes()
     {
         _suppressEvents = true;
 
-        SelectComboBoxByTag(ThemeComboBox, ViewModel.UiTheme);
         SelectComboBoxByTag(QualityComboBox, ViewModel.QualityPreference);
-        SelectComboBoxByTag(MaxQualityComboBox, ViewModel.MaxPlaybackQuality);
         SelectComboBoxByTag(SubtitleLanguageComboBox, ViewModel.SubtitleLanguage);
         SelectComboBoxByTag(SubtitleModeComboBox, ViewModel.SubtitleMode);
         SelectComboBoxByTag(NextUpModeComboBox, ViewModel.NextUpMode);
+
+        // Spoken language is stored on profile.Language
+        // We'll try to set it from the loaded profile data
+        // For now, select "en" as default if no specific language is set
+        SelectComboBoxByTag(SpokenLanguageComboBox, "en");
 
         _suppressEvents = false;
     }
@@ -132,21 +126,274 @@ public sealed partial class SettingsPage : Page
         var tabs = new[] { AppearanceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab };
         foreach (var tab in tabs)
         {
-            tab.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
-            tab.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
-            tab.BorderThickness = new Thickness(0);
+            tab.Style = (Style)Resources["InactiveTabStyle"];
         }
 
-        clickedButton.FontWeight = Microsoft.UI.Text.FontWeights.Bold;
-        clickedButton.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
-        clickedButton.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
-        clickedButton.BorderThickness = new Thickness(0, 0, 0, 2);
+        clickedButton.Style = (Style)Resources["ActiveTabStyle"];
 
         AppearancePanel.Visibility = tag == "Appearance" ? Visibility.Visible : Visibility.Collapsed;
         PlaybackPanel.Visibility = tag == "Playback" ? Visibility.Visible : Visibility.Collapsed;
         LibrariesPanel.Visibility = tag == "Libraries" ? Visibility.Visible : Visibility.Collapsed;
         SubtitlesPanel.Visibility = tag == "Subtitles" ? Visibility.Visible : Visibility.Collapsed;
         HomeScreenPanel.Visibility = tag == "HomeScreen" ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // ===== Theme cards =====
+    private void BuildThemeCards()
+    {
+        ThemeCardsContainer.Items.Clear();
+
+        var themeService = App.Services.GetRequiredService<ThemeService>();
+        var currentTheme = themeService.CurrentTheme;
+
+        // Theme descriptions matching the web UI
+        var themeDescriptions = new Dictionary<string, string>
+        {
+            ["midnight-cinema"] = "Monochromatic cinema -- content is the color",
+            ["cinema-light"] = "Light monochromatic cinema -- content is the color",
+            ["cobalt-studio"] = "Cool blue graphite with crisp contrast",
+            ["oxblood-noir"] = "Deep red-black with restrained luxury warmth",
+            ["ember-slate"] = "Smoked charcoal with ember-red accents",
+            ["evergreen-studio"] = "Refined evergreen accents on dense graphite",
+            ["verdant-ink"] = "Cool green-black with softer luminous contrast",
+            ["catppuccin"] = "Pastel purple on warm dark blue",
+            ["gruvbox"] = "Warm retro with golden accent",
+            ["void-space"] = "Cool blue on deep space black",
+            ["charcoal-studio"] = "Apple-inspired blue on dark gray",
+            ["graphite-pro"] = "Vibrant purple on zinc",
+            ["obsidian-depth"] = "Cyan accent on true dark",
+        };
+
+        // Theme accent colors for the swatch
+        var themeAccents = new Dictionary<string, string>
+        {
+            ["midnight-cinema"] = "#E8E8EC",
+            ["cinema-light"] = "#1A1A1E",
+            ["cobalt-studio"] = "#78AEFC",
+            ["oxblood-noir"] = "#D16A78",
+            ["ember-slate"] = "#F07B62",
+            ["evergreen-studio"] = "#5BC39D",
+            ["verdant-ink"] = "#86D4B6",
+            ["catppuccin"] = "#CBA6F7",
+            ["gruvbox"] = "#FABD2F",
+            ["void-space"] = "#58A6FF",
+            ["charcoal-studio"] = "#0A84FF",
+            ["graphite-pro"] = "#A855F7",
+            ["obsidian-depth"] = "#00D4AA",
+        };
+
+        // Theme background colors for mini preview
+        var themeBgs = new Dictionary<string, string>
+        {
+            ["midnight-cinema"] = "#141417",
+            ["cinema-light"] = "#F4F4F6",
+            ["cobalt-studio"] = "#101722",
+            ["oxblood-noir"] = "#171113",
+            ["ember-slate"] = "#151213",
+            ["evergreen-studio"] = "#101715",
+            ["verdant-ink"] = "#0D1513",
+            ["catppuccin"] = "#1E1E2E",
+            ["gruvbox"] = "#282828",
+            ["void-space"] = "#0D1117",
+            ["charcoal-studio"] = "#1C1C1E",
+            ["graphite-pro"] = "#18181B",
+            ["obsidian-depth"] = "#0F0F0F",
+        };
+
+        // Build a two-column grid of theme cards
+        var wrapGrid = new VariableSizedWrapGrid
+        {
+            Orientation = Orientation.Horizontal,
+            ItemWidth = 330,
+            ItemHeight = 190,
+            MaximumRowsOrColumns = 2,
+        };
+
+        foreach (var themeId in themeService.AvailableThemeIds)
+        {
+            var isActive = themeId == currentTheme;
+            var displayName = ThemeService.GetDisplayName(themeId);
+            var description = themeDescriptions.GetValueOrDefault(themeId, "");
+            var accentHex = themeAccents.GetValueOrDefault(themeId, "#78AEFC");
+            var bgHex = themeBgs.GetValueOrDefault(themeId, "#101722");
+
+            var card = BuildThemeCard(themeId, displayName, description, accentHex, bgHex, isActive);
+            ThemeCardsContainer.Items.Add(card);
+        }
+
+        // Use a WrapGrid panel template
+        ThemeCardsContainer.ItemsPanel = null; // reset first
+    }
+
+    private Border BuildThemeCard(string themeId, string displayName, string description,
+        string accentHex, string bgHex, bool isActive)
+    {
+        var accentColor = ColorFromHex(accentHex);
+        var bgColor = ColorFromHex(bgHex);
+
+        // Outer card border
+        var card = new Border
+        {
+            CornerRadius = new CornerRadius(22),
+            Padding = new Thickness(16),
+            Margin = new Thickness(0, 0, 0, 12),
+            Background = isActive
+                ? new SolidColorBrush(ColorFromHex("#1D2A3B"))
+                : (Brush)Application.Current.Resources["SurfaceBrush"],
+            BorderBrush = isActive
+                ? new SolidColorBrush(Windows.UI.Color.FromArgb(0x4D, accentColor.R, accentColor.G, accentColor.B))
+                : (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+        };
+
+        var outerStack = new StackPanel { Spacing = 12 };
+
+        // Header row: name + check + swatch
+        var headerRow = new Grid();
+        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var nameStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        nameStack.Children.Add(new TextBlock
+        {
+            Text = displayName,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        if (isActive)
+        {
+            nameStack.Children.Add(new FontIcon
+            {
+                Glyph = "\uE73E",
+                FontSize = 14,
+                Foreground = (Brush)Application.Current.Resources["AccentBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+        }
+
+        Grid.SetColumn(nameStack, 0);
+        headerRow.Children.Add(nameStack);
+
+        // Color swatch
+        var swatchStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var swatch = new Border
+        {
+            Width = 14,
+            Height = 14,
+            CornerRadius = new CornerRadius(7),
+            Background = new SolidColorBrush(accentColor),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x26, 255, 255, 255)),
+            BorderThickness = new Thickness(1),
+        };
+        swatchStack.Children.Add(swatch);
+        Grid.SetColumn(swatchStack, 1);
+        headerRow.Children.Add(swatchStack);
+
+        outerStack.Children.Add(headerRow);
+
+        // Description
+        if (!string.IsNullOrEmpty(description))
+        {
+            outerStack.Children.Add(new TextBlock
+            {
+                Text = description,
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        // Mini preview panel (simulating the web UI)
+        var previewBorder = new Border
+        {
+            Background = new SolidColorBrush(bgColor),
+            CornerRadius = new CornerRadius(16),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x26, 255, 255, 255)),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(12),
+            Height = 70,
+        };
+
+        var previewStack = new StackPanel { Spacing = 8 };
+
+        // First row: accent dot + line
+        var previewRow1 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        previewRow1.Children.Add(new Border
+        {
+            Width = 10, Height = 10, CornerRadius = new CornerRadius(5),
+            Background = new SolidColorBrush(accentColor),
+        });
+        previewRow1.Children.Add(new Border
+        {
+            Width = 64, Height = 8, CornerRadius = new CornerRadius(4),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xB3, 255, 255, 255)),
+        });
+        previewStack.Children.Add(previewRow1);
+
+        // Second row: simulated content blocks
+        var previewRow2 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        previewRow2.Children.Add(new Border
+        {
+            Width = 80, Height = 28, CornerRadius = new CornerRadius(10),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x18, 255, 255, 255)),
+        });
+        previewRow2.Children.Add(new Border
+        {
+            Width = 50, Height = 28, CornerRadius = new CornerRadius(10),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x12, 255, 255, 255)),
+        });
+        previewStack.Children.Add(previewRow2);
+
+        previewBorder.Child = previewStack;
+        outerStack.Children.Add(previewBorder);
+
+        card.Child = outerStack;
+
+        // Click handler
+        card.Tapped += (_, _) =>
+        {
+            ViewModel.UiTheme = themeId;
+            _ = ViewModel.SaveUiThemeCommand.ExecuteAsync(null);
+            BuildThemeCards();
+            UpdateCurrentThemeDisplay();
+        };
+
+        return card;
+    }
+
+    private void UpdateCurrentThemeDisplay()
+    {
+        var themeService = App.Services.GetRequiredService<ThemeService>();
+        CurrentThemeName.Text = ThemeService.GetDisplayName(themeService.CurrentTheme);
+
+        var descriptions = new Dictionary<string, string>
+        {
+            ["midnight-cinema"] = "Monochromatic cinema -- content is the color",
+            ["cinema-light"] = "Light monochromatic cinema -- content is the color",
+            ["cobalt-studio"] = "Cool blue graphite with crisp contrast",
+            ["oxblood-noir"] = "Deep red-black with restrained luxury warmth",
+            ["ember-slate"] = "Smoked charcoal with ember-red accents",
+            ["evergreen-studio"] = "Refined evergreen accents on dense graphite",
+            ["verdant-ink"] = "Cool green-black with softer luminous contrast",
+            ["catppuccin"] = "Pastel purple on warm dark blue",
+            ["gruvbox"] = "Warm retro with golden accent",
+            ["void-space"] = "Cool blue on deep space black",
+            ["charcoal-studio"] = "Apple-inspired blue on dark gray",
+            ["graphite-pro"] = "Vibrant purple on zinc",
+            ["obsidian-depth"] = "Cyan accent on true dark",
+        };
+        CurrentThemeDescription.Text = descriptions.GetValueOrDefault(themeService.CurrentTheme, "");
+    }
+
+    private void ResetTheme_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.UiTheme = "midnight-cinema";
+        _ = ViewModel.SaveUiThemeCommand.ExecuteAsync(null);
+        BuildThemeCards();
+        UpdateCurrentThemeDisplay();
     }
 
     // ===== Library cards =====
@@ -179,10 +426,13 @@ public sealed partial class SettingsPage : Page
 
     private Border BuildLibraryCard(LibraryCardViewModel vm)
     {
+        // Web: surface-panel rounded-[1.5rem] border-0
         var cardBorder = new Border
         {
-            Style = (Style)Application.Current.Resources["CardStyle"],
+            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
+            CornerRadius = new CornerRadius(24),
             Padding = new Thickness(20),
+            BorderThickness = new Thickness(0),
         };
 
         var outerStack = new StackPanel { Spacing = 12 };
@@ -193,44 +443,46 @@ public sealed partial class SettingsPage : Page
         headerRow.Children.Add(new TextBlock
         {
             Text = vm.LibraryName,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            FontSize = 16,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 14,
             VerticalAlignment = VerticalAlignment.Center,
         });
 
-        // Type badge
+        // Type badge (web: variant="outline")
         var typeBadge = new Border
         {
-            Style = (Style)Application.Current.Resources["BadgeStyle"],
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(8, 2, 8, 2),
             VerticalAlignment = VerticalAlignment.Center,
         };
         typeBadge.Child = new TextBlock
         {
             Text = vm.LibraryType,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeTextBrush"],
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             FontSize = 11,
         };
         headerRow.Children.Add(typeBadge);
 
-        // Custom badge (bound to HasCustomOverrides)
+        // Custom badge
         var customBadge = new Border
         {
-            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.DarkOrange),
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
             CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(8, 4, 8, 4),
+            Padding = new Thickness(8, 2, 8, 2),
             VerticalAlignment = VerticalAlignment.Center,
             Visibility = vm.HasCustomOverrides ? Visibility.Visible : Visibility.Collapsed,
         };
         customBadge.Child = new TextBlock
         {
             Text = "Custom",
-            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             FontSize = 11,
         };
         headerRow.Children.Add(customBadge);
 
-        // Keep a reference so we can update visibility when HasCustomOverrides changes
         vm.PropertyChanged += (s, e) =>
         {
             if (e.PropertyName == nameof(LibraryCardViewModel.HasCustomOverrides))
@@ -245,7 +497,8 @@ public sealed partial class SettingsPage : Page
         var summaryText = new TextBlock
         {
             Text = vm.SummaryText,
-            Style = (Style)Application.Current.Resources["CaptionTextStyle"],
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap,
         };
         vm.PropertyChanged += (s, e) =>
@@ -259,9 +512,9 @@ public sealed partial class SettingsPage : Page
         var editButton = new Button
         {
             Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"],
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             Padding = new Thickness(0, 4, 0, 4),
-            FontSize = 13,
+            FontSize = 12,
         };
         var editButtonText = new TextBlock();
         UpdateEditButtonText(editButtonText, vm.IsExpanded);
@@ -308,12 +561,13 @@ public sealed partial class SettingsPage : Page
         var resetButton = new Button
         {
             Content = "Reset to profile defaults",
-            Style = (Style)Application.Current.Resources["SecondaryButtonStyle"],
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            FontSize = 12,
             Margin = new Thickness(0, 4, 0, 0),
         };
         resetButton.Click += (s, e) => vm.ResetToDefaultsCommand.Execute(null);
 
-        // When reset happens, update all combos in this card
         vm.PropertyChanged += (s, e) =>
         {
             if (e.PropertyName is nameof(LibraryCardViewModel.AudioLanguage)
@@ -343,9 +597,9 @@ public sealed partial class SettingsPage : Page
         row.Children.Add(new TextBlock
         {
             Text = label,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            FontSize = 13,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            FontWeight = FontWeights.Medium,
+            FontSize = 12,
         });
 
         var combo = new ComboBox { Width = 300 };
@@ -354,10 +608,8 @@ public sealed partial class SettingsPage : Page
             combo.Items.Add(new ComboBoxItem { Content = lbl, Tag = tag });
         }
 
-        // Select current value
         SelectComboBoxByTag(combo, currentValue);
 
-        // Suppress during initial selection
         bool ready = false;
         combo.Loaded += (s, e) => ready = true;
 
@@ -374,11 +626,8 @@ public sealed partial class SettingsPage : Page
         return row;
     }
 
-    /// <summary>Re-syncs the combo boxes inside the expand panel when the VM values change (e.g., after reset).</summary>
     private static void SyncExpandPanelCombos(StackPanel expandPanel, LibraryCardViewModel vm)
     {
-        // The expand panel has: [spoken row, subtitle row, mode row, forced row, reset button]
-        // Each row is a StackPanel with [TextBlock, ComboBox]
         string[] values = [vm.AudioLanguage, vm.SubtitleLanguage, vm.SubtitleMode, vm.ForcedSubtitles];
         int idx = 0;
         foreach (var child in expandPanel.Children)
@@ -399,16 +648,6 @@ public sealed partial class SettingsPage : Page
     }
 
     // ===== ComboBox change handlers =====
-    private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressEvents) return;
-        if (ThemeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
-        {
-            ViewModel.UiTheme = val;
-            _ = ViewModel.SaveUiThemeCommand.ExecuteAsync(null);
-        }
-    }
-
     private void QualityComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressEvents) return;
@@ -419,14 +658,11 @@ public sealed partial class SettingsPage : Page
         }
     }
 
-    private void MaxQualityComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void SpokenLanguageComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        // Spoken language changes are saved via profile update
+        // For now, this is a visual placeholder -- the web UI saves via profile.language
         if (_suppressEvents) return;
-        if (MaxQualityComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
-        {
-            ViewModel.MaxPlaybackQuality = val;
-            _ = ViewModel.SaveMaxPlaybackQualityCommand.ExecuteAsync(null);
-        }
     }
 
     private void SubtitleLanguageComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -457,5 +693,40 @@ public sealed partial class SettingsPage : Page
             ViewModel.NextUpMode = val;
             _ = ViewModel.SaveNextUpModeCommand.ExecuteAsync(null);
         }
+    }
+
+    // ===== Subtitle appearance handlers =====
+    private void SubtitleFontSize_Changed(object sender, SelectionChangedEventArgs e) { }
+    private void SubtitleFontFamily_Changed(object sender, SelectionChangedEventArgs e) { }
+    private void SubtitleBgStyle_Changed(object sender, SelectionChangedEventArgs e) { }
+    private void SubtitleSave_Click(object sender, RoutedEventArgs e) { }
+    private void SubtitleReset_Click(object sender, RoutedEventArgs e) { }
+
+    // ===== Helper =====
+    private static Windows.UI.Color ColorFromHex(string hex)
+    {
+        hex = hex.TrimStart('#');
+        byte a = 0xFF;
+        byte r, g, b;
+
+        if (hex.Length == 8)
+        {
+            a = Convert.ToByte(hex[..2], 16);
+            r = Convert.ToByte(hex[2..4], 16);
+            g = Convert.ToByte(hex[4..6], 16);
+            b = Convert.ToByte(hex[6..8], 16);
+        }
+        else if (hex.Length == 6)
+        {
+            r = Convert.ToByte(hex[..2], 16);
+            g = Convert.ToByte(hex[2..4], 16);
+            b = Convert.ToByte(hex[4..6], 16);
+        }
+        else
+        {
+            r = g = b = 0;
+        }
+
+        return Windows.UI.Color.FromArgb(a, r, g, b);
     }
 }

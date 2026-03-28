@@ -53,12 +53,13 @@
             IsScrollInertiaEnabled="True"
             CanContentRenderOutsideBounds="True">
 
-            <StackPanel x:Name="ContentPanel">
-                <!-- Hero carousel for featured sections -->
-                <controls:HeroCarousel x:Name="HeroCarouselControl" />
+            <!-- Web: space-y-10 py-2 -->
+            <StackPanel x:Name="ContentPanel" Padding="0,8,0,0">
+                <!-- Hero carousel for featured sections (web: mb-10 = 40px) -->
+                <controls:HeroCarousel x:Name="HeroCarouselControl" Margin="0,0,0,40" />
 
-                <!-- Section rows -->
-                <StackPanel x:Name="SectionsPanel" Padding="24,24,24,24" />
+                <!-- Section rows (each section handles its own spacing and padding) -->
+                <StackPanel x:Name="SectionsPanel" />
             </StackPanel>
         </ScrollViewer>
     </Grid>

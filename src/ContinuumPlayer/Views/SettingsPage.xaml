@@ -12,317 +12,343 @@
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
+
+        <!-- Active tab style (pill on surface) -->
+        <Style x:Key="ActiveTabStyle" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource AppBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="Padding" Value="12,10" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+
+        <!-- Inactive tab style -->
+        <Style x:Key="InactiveTabStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="Padding" Value="12,10" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+
+        <!-- Settings group card -->
+        <Style x:Key="SettingsGroupStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
+            <Setter Property="CornerRadius" Value="22" />
+            <Setter Property="Padding" Value="24,20" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+
+        <!-- Settings row separator -->
+        <Style x:Key="SettingsSeparator" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource BorderBrush}" />
+            <Setter Property="Opacity" Value="0.5" />
+            <Setter Property="Height" Value="1" />
+            <Setter Property="Margin" Value="0,16,0,16" />
+        </Style>
     </Page.Resources>
 
-    <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
+    <ScrollViewer IsScrollInertiaEnabled="True">
+        <StackPanel MaxWidth="768" Margin="48,24,48,48">
 
-        <!-- Header -->
-        <StackPanel Grid.Row="0" Margin="24,24,24,8">
+            <!-- ===== Header ===== -->
+            <!-- Web: page-title text-[clamp(2rem,4vw,3rem)] + page-subtitle -->
             <TextBlock
                 Text="Settings"
-                Style="{StaticResource HeaderTextStyle}" />
+                FontSize="32"
+                FontWeight="SemiBold"
+                Foreground="{StaticResource PrimaryTextBrush}" />
             <TextBlock
                 Text="Manage your playback preferences, libraries, and display options."
-                Style="{StaticResource SecondaryTextStyle}"
-                Margin="0,4,0,0" />
-        </StackPanel>
-
-        <!-- Tab bar -->
-        <StackPanel
-            Grid.Row="1"
-            Orientation="Horizontal"
-            Spacing="4"
-            Margin="24,0,24,16">
-            <Button
-                x:Name="AppearanceTab"
-                Content="Appearance"
-                Style="{StaticResource GhostButtonStyle}"
-                Click="Tab_Click"
-                Tag="Appearance"
-                Padding="16,8"
                 FontSize="14"
-                FontWeight="Bold"
-                Foreground="{StaticResource PrimaryTextBrush}"
-                BorderBrush="{StaticResource AccentBrush}"
-                BorderThickness="0,0,0,2" />
-            <Button
-                x:Name="PlaybackTab"
-                Content="Playback"
-                Style="{StaticResource GhostButtonStyle}"
-                Click="Tab_Click"
-                Tag="Playback"
-                Padding="16,8"
-                FontSize="14" />
-            <Button
-                x:Name="LibrariesTab"
-                Content="Libraries"
-                Style="{StaticResource GhostButtonStyle}"
-                Click="Tab_Click"
-                Tag="Libraries"
-                Padding="16,8"
-                FontSize="14" />
-            <Button
-                x:Name="SubtitlesTab"
-                Content="Subtitles"
-                Style="{StaticResource GhostButtonStyle}"
-                Click="Tab_Click"
-                Tag="Subtitles"
-                Padding="16,8"
-                FontSize="14" />
-            <Button
-                x:Name="HomeScreenTab"
-                Content="Home Screen"
-                Style="{StaticResource GhostButtonStyle}"
-                Click="Tab_Click"
-                Tag="HomeScreen"
-                Padding="16,8"
-                FontSize="14" />
-        </StackPanel>
+                Foreground="{StaticResource SecondaryTextBrush}"
+                Margin="0,12,0,0"
+                TextWrapping="Wrap" />
 
-        <!-- Status / Error bar -->
-        <StackPanel Grid.Row="2" Margin="24,0,24,8">
-            <ProgressRing
-                IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-                Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                HorizontalAlignment="Left"
-                Width="24" Height="24" />
-            <TextBlock
-                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
-                Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource CaptionTextStyle}" />
-            <TextBlock
-                Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
-                Visibility="{x:Bind ViewModel.StatusMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
-                Foreground="{StaticResource AccentBrush}"
-                Style="{StaticResource CaptionTextStyle}" />
-        </StackPanel>
+            <!-- ===== Status / Error ===== -->
+            <StackPanel Margin="0,8,0,0">
+                <ProgressRing
+                    IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                    HorizontalAlignment="Left"
+                    Width="24" Height="24" />
+                <TextBlock
+                    Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
+                    Foreground="{StaticResource ErrorBrush}"
+                    FontSize="13"
+                    TextWrapping="Wrap" />
+                <TextBlock
+                    Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.StatusMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
+                    Foreground="{StaticResource AccentBrush}"
+                    FontSize="13" />
+            </StackPanel>
 
-        <!-- ===== Appearance Panel ===== -->
-        <ScrollViewer
-            x:Name="AppearancePanel"
-            Grid.Row="3"
-            Padding="24,0,24,24">
-            <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
-                <Border Style="{StaticResource CardStyle}" Padding="20">
-                    <StackPanel Spacing="4">
-                        <TextBlock Text="UI Theme" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
-                        <TextBlock
-                            Text="Choose a color theme for the application interface."
-                            Style="{StaticResource CaptionTextStyle}"
-                            TextWrapping="Wrap"
-                            Margin="0,0,0,8" />
-                        <ComboBox
-                            x:Name="ThemeComboBox"
-                            Width="300"
-                            SelectionChanged="ThemeComboBox_SelectionChanged" />
+            <!-- ===== Tab Bar (pill style in surface panel) ===== -->
+            <!-- Web: surface-panel-subtle mt-6 rounded-[1.4rem] p-1, tabs rounded-[1rem] px-3 py-2.5 -->
+            <Border
+                Background="{StaticResource SurfaceBrush}"
+                CornerRadius="22"
+                Padding="4"
+                Margin="0,24,0,0">
+                <ScrollViewer
+                    HorizontalScrollBarVisibility="Auto"
+                    VerticalScrollBarVisibility="Disabled"
+                    HorizontalScrollMode="Enabled">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <Button x:Name="AppearanceTab" Click="Tab_Click" Tag="Appearance"
+                                Style="{StaticResource ActiveTabStyle}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE790;" FontSize="16" />
+                                <TextBlock Text="Appearance" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="PlaybackTab" Click="Tab_Click" Tag="Playback"
+                                Style="{StaticResource InactiveTabStyle}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE768;" FontSize="16" />
+                                <TextBlock Text="Playback" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="LibrariesTab" Click="Tab_Click" Tag="Libraries"
+                                Style="{StaticResource InactiveTabStyle}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE8F1;" FontSize="16" />
+                                <TextBlock Text="Libraries" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="SubtitlesTab" Click="Tab_Click" Tag="Subtitles"
+                                Style="{StaticResource InactiveTabStyle}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xED1E;" FontSize="16" />
+                                <TextBlock Text="Subtitles" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="HomeScreenTab" Click="Tab_Click" Tag="HomeScreen"
+                                Style="{StaticResource InactiveTabStyle}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xECA5;" FontSize="16" />
+                                <TextBlock Text="Home Screen" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+
+            <!-- ===== Tab Content (web: pt-8 = 32px top spacing) ===== -->
+
+            <!-- ===== Appearance Panel ===== -->
+            <StackPanel x:Name="AppearancePanel" Spacing="24" Margin="0,32,0,0">
+
+                <TextBlock Text="Appearance" FontSize="24" FontWeight="SemiBold"
+                           Foreground="{StaticResource PrimaryTextBrush}" />
+
+                <!-- Theme group -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Theme" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Click to apply and persist the selection to this profile."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" Margin="0,0,0,8" />
+
+                        <!-- Theme cards grid (built in code-behind) -->
+                        <ItemsControl x:Name="ThemeCardsContainer">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Spacing="12" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <!-- Current selection -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Current selection" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Changes apply immediately and are saved for the active profile."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" />
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock x:Name="CurrentThemeName" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock x:Name="CurrentThemeDescription" FontSize="13"
+                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="Reset to Cinema Dark"
+                                    Style="{StaticResource SecondaryButtonStyle}"
+                                    Padding="12,8" FontSize="14"
+                                    VerticalAlignment="Center"
+                                    Click="ResetTheme_Click" />
+                        </Grid>
                     </StackPanel>
                 </Border>
             </StackPanel>
-        </ScrollViewer>
 
-        <!-- ===== Playback Panel ===== -->
-        <ScrollViewer
-            x:Name="PlaybackPanel"
-            Grid.Row="3"
-            Padding="24,0,24,24"
-            Visibility="Collapsed">
-            <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
+            <!-- ===== Playback Panel ===== -->
+            <StackPanel x:Name="PlaybackPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
 
-                <!-- Quality and Language card -->
-                <Border Style="{StaticResource CardStyle}" Padding="20">
-                    <StackPanel Spacing="20">
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="Video quality" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
-                            <TextBlock
-                                Text="Preferred video quality for playback. Use auto to let the app select the best quality based on your connection."
-                                Style="{StaticResource CaptionTextStyle}"
-                                TextWrapping="Wrap" />
-                            <ComboBox
-                                x:Name="QualityComboBox"
-                                Width="300"
-                                Margin="0,8,0,0"
-                                SelectionChanged="QualityComboBox_SelectionChanged">
-                                <ComboBoxItem Content="Auto" Tag="auto" />
-                                <ComboBoxItem Content="4K" Tag="4k" />
-                                <ComboBoxItem Content="1080p" Tag="1080p" />
-                                <ComboBoxItem Content="720p" Tag="720p" />
-                                <ComboBoxItem Content="480p" Tag="480p" />
-                            </ComboBox>
-                        </StackPanel>
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Playback" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Defaults for quality, language, and playback shortcuts."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
 
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="Max playback quality" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
-                            <TextBlock
-                                Text="Maximum allowed video quality. Streams above this resolution will be transcoded down."
-                                Style="{StaticResource CaptionTextStyle}"
-                                TextWrapping="Wrap" />
-                            <ComboBox
-                                x:Name="MaxQualityComboBox"
-                                Width="300"
-                                Margin="0,8,0,0"
-                                SelectionChanged="MaxQualityComboBox_SelectionChanged">
-                                <ComboBoxItem Content="Auto" Tag="auto" />
-                                <ComboBoxItem Content="4K" Tag="4k" />
-                                <ComboBoxItem Content="1080p" Tag="1080p" />
-                                <ComboBoxItem Content="720p" Tag="720p" />
-                                <ComboBoxItem Content="480p" Tag="480p" />
-                            </ComboBox>
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
+                <!-- Quality and language group -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="0">
+                        <TextBlock Text="Quality and language" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Choose the defaults this profile should use when playback starts."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" Margin="0,4,0,16" />
 
-                <!-- Skipping and Next Up card -->
-                <Border Style="{StaticResource CardStyle}" Padding="20">
-                    <StackPanel Spacing="20">
-                        <!-- Skip intro toggle (right-aligned) -->
+                        <!-- Video quality -->
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Skip the intro automatically" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
-                                <TextBlock
-                                    Text="Automatically skip opening intros when the app detects them."
-                                    Style="{StaticResource CaptionTextStyle}"
-                                    TextWrapping="Wrap" />
+                                <TextBlock Text="Video quality" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Pick the resolution to use when the app can match your connection."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
                             </StackPanel>
-                            <ToggleSwitch
-                                x:Name="AutoSkipIntroToggle"
-                                Grid.Column="1"
-                                IsOn="{x:Bind ViewModel.AutoSkipIntro, Mode=TwoWay}"
-                                VerticalAlignment="Center"
-                                OnContent="" OffContent="" />
+                            <ComboBox x:Name="QualityComboBox" Grid.Column="1" Width="220"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="QualityComboBox_SelectionChanged">
+                                <ComboBoxItem Content="Auto" Tag="auto" />
+                                <ComboBoxItem Content="480p" Tag="480p" />
+                                <ComboBoxItem Content="720p" Tag="720p" />
+                                <ComboBoxItem Content="1080p" Tag="1080p" />
+                                <ComboBoxItem Content="4K" Tag="4k" />
+                            </ComboBox>
                         </Grid>
 
-                        <!-- Skip credits toggle (right-aligned) -->
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
+                        <!-- Spoken language -->
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Skip end credits automatically" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
-                                <TextBlock
-                                    Text="Automatically skip end credits and proceed to the next episode."
-                                    Style="{StaticResource CaptionTextStyle}"
-                                    TextWrapping="Wrap" />
+                                <TextBlock Text="Spoken language" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Choose the audio language you want first when more than one is available."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
                             </StackPanel>
-                            <ToggleSwitch
-                                x:Name="AutoSkipCreditsToggle"
-                                Grid.Column="1"
-                                IsOn="{x:Bind ViewModel.AutoSkipCredits, Mode=TwoWay}"
-                                VerticalAlignment="Center"
-                                OnContent="" OffContent="" />
+                            <ComboBox x:Name="SpokenLanguageComboBox" Grid.Column="1" Width="220"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="SpokenLanguageComboBox_SelectionChanged">
+                                <ComboBoxItem Content="Original Language" Tag="original" />
+                                <ComboBoxItem Content="English" Tag="en" />
+                                <ComboBoxItem Content="Spanish" Tag="es" />
+                                <ComboBoxItem Content="French" Tag="fr" />
+                                <ComboBoxItem Content="German" Tag="de" />
+                                <ComboBoxItem Content="Italian" Tag="it" />
+                                <ComboBoxItem Content="Portuguese" Tag="pt" />
+                                <ComboBoxItem Content="Japanese" Tag="ja" />
+                                <ComboBoxItem Content="Korean" Tag="ko" />
+                                <ComboBoxItem Content="Chinese" Tag="zh" />
+                                <ComboBoxItem Content="Russian" Tag="ru" />
+                                <ComboBoxItem Content="Arabic" Tag="ar" />
+                                <ComboBoxItem Content="Hindi" Tag="hi" />
+                            </ComboBox>
                         </Grid>
 
-                        <!-- Next up mode dropdown -->
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="Next up episodes mode" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
-                            <TextBlock
-                                Text="How next-up episode suggestions are displayed. Combined shows them in a single list, Separate groups by series."
-                                Style="{StaticResource CaptionTextStyle}"
-                                TextWrapping="Wrap" />
-                            <ComboBox
-                                x:Name="NextUpModeComboBox"
-                                Width="300"
-                                Margin="0,8,0,0"
-                                SelectionChanged="NextUpModeComboBox_SelectionChanged">
-                                <ComboBoxItem Content="With Continue Watching" Tag="combined" />
-                                <ComboBoxItem Content="Separate" Tag="separate" />
-                                <ComboBoxItem Content="None" Tag="none" />
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
+                        <!-- Subtitle language -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Subtitle language" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Choose a subtitle language to prefer. Leave it off if you do not have one."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ComboBox x:Name="SubtitleLanguageComboBox" Grid.Column="1" Width="220"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="SubtitleLanguageComboBox_SelectionChanged">
+                                <ComboBoxItem Content="None" Tag="" />
+                                <ComboBoxItem Content="English" Tag="en" />
+                                <ComboBoxItem Content="Spanish" Tag="es" />
+                                <ComboBoxItem Content="French" Tag="fr" />
+                                <ComboBoxItem Content="German" Tag="de" />
+                                <ComboBoxItem Content="Italian" Tag="it" />
+                                <ComboBoxItem Content="Portuguese" Tag="pt" />
+                                <ComboBoxItem Content="Japanese" Tag="ja" />
+                                <ComboBoxItem Content="Korean" Tag="ko" />
+                                <ComboBoxItem Content="Chinese" Tag="zh" />
+                                <ComboBoxItem Content="Russian" Tag="ru" />
+                                <ComboBoxItem Content="Arabic" Tag="ar" />
+                                <ComboBoxItem Content="Hindi" Tag="hi" />
                             </ComboBox>
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-        </ScrollViewer>
+                        </Grid>
 
-        <!-- ===== Libraries Panel ===== -->
-        <ScrollViewer
-            x:Name="LibrariesPanel"
-            Grid.Row="3"
-            Padding="24,0,24,24"
-            Visibility="Collapsed">
-            <StackPanel x:Name="LibraryCardsContainer" Spacing="16" MaxWidth="700" HorizontalAlignment="Left">
-                <!-- Library cards are built dynamically in code-behind -->
-            </StackPanel>
-        </ScrollViewer>
+                        <Border Style="{StaticResource SettingsSeparator}" />
 
-        <!-- ===== Subtitles Panel ===== -->
-        <ScrollViewer
-            x:Name="SubtitlesPanel"
-            Grid.Row="3"
-            Padding="24,0,24,24"
-            Visibility="Collapsed">
-            <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
-
-                <!-- Subtitle language card -->
-                <Border Style="{StaticResource CardStyle}" Padding="20">
-                    <StackPanel Spacing="4">
-                        <TextBlock Text="Subtitle language" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
-                        <TextBlock
-                            Text="Select the preferred language for subtitles. Subtitles will be automatically selected in this language when available."
-                            Style="{StaticResource CaptionTextStyle}"
-                            TextWrapping="Wrap" />
-                        <ComboBox
-                            x:Name="SubtitleLanguageComboBox"
-                            Width="300"
-                            Margin="0,8,0,0"
-                            SelectionChanged="SubtitleLanguageComboBox_SelectionChanged">
-                            <ComboBoxItem Content="English" Tag="en" />
-                            <ComboBoxItem Content="Spanish" Tag="es" />
-                            <ComboBoxItem Content="French" Tag="fr" />
-                            <ComboBoxItem Content="German" Tag="de" />
-                            <ComboBoxItem Content="Japanese" Tag="ja" />
-                            <ComboBoxItem Content="Korean" Tag="ko" />
-                            <ComboBoxItem Content="Chinese" Tag="zh" />
-                            <ComboBoxItem Content="Portuguese" Tag="pt" />
-                            <ComboBoxItem Content="Italian" Tag="it" />
-                            <ComboBoxItem Content="None" Tag="" />
-                        </ComboBox>
-                    </StackPanel>
-                </Border>
-
-                <!-- Subtitle behavior card -->
-                <Border Style="{StaticResource CardStyle}" Padding="20">
-                    <StackPanel Spacing="20">
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="Subtitle behavior" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
-                            <TextBlock
-                                Text="Control when subtitles are shown. 'Always' shows subtitles on every video, 'Auto' shows them only when the audio language differs from your preferred language."
-                                Style="{StaticResource CaptionTextStyle}"
-                                TextWrapping="Wrap" />
-                            <ComboBox
-                                x:Name="SubtitleModeComboBox"
-                                Width="300"
-                                Margin="0,8,0,0"
-                                SelectionChanged="SubtitleModeComboBox_SelectionChanged">
+                        <!-- Subtitle behavior -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Subtitle behavior" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Decide when subtitles should appear if the app has a match."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ComboBox x:Name="SubtitleModeComboBox" Grid.Column="1" Width="220"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="SubtitleModeComboBox_SelectionChanged">
+                                <ComboBoxItem Content="Auto" Tag="auto" />
                                 <ComboBoxItem Content="Always" Tag="always" />
-                                <ComboBoxItem Content="Auto" Tag="auto" />
-                                <ComboBoxItem Content="None" Tag="none" />
+                                <ComboBoxItem Content="Off" Tag="off" />
                             </ComboBox>
-                        </StackPanel>
+                        </Grid>
 
-                        <!-- Forced subtitles toggle (right-aligned) -->
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
+                        <!-- Show forced subtitles -->
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Show forced subtitles" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
-                                <TextBlock
-                                    Text="Display forced subtitles for foreign language dialogue even when subtitles are off."
-                                    Style="{StaticResource CaptionTextStyle}"
-                                    TextWrapping="Wrap" />
+                                <TextBlock Text="Show forced subtitles" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Display subtitles for foreign-language dialogue even when subtitles are off or set to auto."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
                             </StackPanel>
                             <ToggleSwitch
                                 x:Name="ForcedSubtitlesToggle"
@@ -333,35 +359,391 @@
                         </Grid>
                     </StackPanel>
                 </Border>
-            </StackPanel>
-        </ScrollViewer>
 
-        <!-- ===== Home Screen Panel ===== -->
-        <ScrollViewer
-            x:Name="HomeScreenPanel"
-            Grid.Row="3"
-            Padding="24,0,24,24"
-            Visibility="Collapsed">
-            <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
-                <Border Style="{StaticResource CardStyle}" Padding="20">
-                    <StackPanel Spacing="4">
-                        <TextBlock Text="Section overrides" Foreground="{StaticResource PrimaryTextBrush}" FontWeight="SemiBold" />
-                        <TextBlock
-                            Text="Advanced section ordering configuration. This is managed by the server and shown here for reference."
-                            Style="{StaticResource CaptionTextStyle}"
-                            TextWrapping="Wrap"
-                            Margin="0,0,0,8" />
-                        <TextBox
-                            Style="{StaticResource DarkTextBoxStyle}"
-                            Text="{x:Bind ViewModel.SectionOverrides, Mode=OneWay}"
-                            IsReadOnly="True"
-                            TextWrapping="Wrap"
-                            AcceptsReturn="True"
-                            MinHeight="100"
-                            MaxHeight="300" />
+                <!-- Skipping and next up group -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="0">
+                        <TextBlock Text="Skipping and next up" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Control the small playback shortcuts that can save you a few taps."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" Margin="0,4,0,16" />
+
+                        <!-- Skip intros -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="Skip intros automatically" FontSize="14" FontWeight="Medium"
+                                               Foreground="{StaticResource PrimaryTextBrush}" />
+                                    <Border Background="{StaticResource SurfaceBrush}" CornerRadius="10"
+                                            Padding="8,2">
+                                        <TextBlock Text="Coming soon" FontSize="11" FontWeight="Medium"
+                                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                                    </Border>
+                                </StackPanel>
+                                <TextBlock Text="Jump past opening credits when the app can detect them."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="AutoSkipIntroToggle"
+                                Grid.Column="1"
+                                IsOn="{x:Bind ViewModel.AutoSkipIntro, Mode=TwoWay}"
+                                IsEnabled="False"
+                                VerticalAlignment="Center"
+                                OnContent="" OffContent="" />
+                        </Grid>
+
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
+                        <!-- Skip credits -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="Skip end credits automatically" FontSize="14" FontWeight="Medium"
+                                               Foreground="{StaticResource PrimaryTextBrush}" />
+                                    <Border Background="{StaticResource SurfaceBrush}" CornerRadius="10"
+                                            Padding="8,2">
+                                        <TextBlock Text="Coming soon" FontSize="11" FontWeight="Medium"
+                                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                                    </Border>
+                                </StackPanel>
+                                <TextBlock Text="Move on after the episode ends when credits can be skipped."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="AutoSkipCreditsToggle"
+                                Grid.Column="1"
+                                IsOn="{x:Bind ViewModel.AutoSkipCredits, Mode=TwoWay}"
+                                IsEnabled="False"
+                                VerticalAlignment="Center"
+                                OnContent="" OffContent="" />
+                        </Grid>
+
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
+                        <!-- Next up episodes -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Next up episodes" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Choose whether the next unwatched episode appears with Continue Watching or on its own."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ComboBox x:Name="NextUpModeComboBox" Grid.Column="1" Width="240"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="NextUpModeComboBox_SelectionChanged">
+                                <ComboBoxItem Content="With Continue Watching" Tag="combined" />
+                                <ComboBoxItem Content="In a separate section" Tag="separate" />
+                            </ComboBox>
+                        </Grid>
                     </StackPanel>
                 </Border>
             </StackPanel>
-        </ScrollViewer>
-    </Grid>
+
+            <!-- ===== Libraries Panel ===== -->
+            <StackPanel x:Name="LibrariesPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Libraries" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Toggle which libraries appear in your navigation and customize playback defaults per library."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <!-- Library cards container (built in code-behind) -->
+                <StackPanel x:Name="LibraryCardsContainer" Spacing="12" />
+            </StackPanel>
+
+            <!-- ===== Subtitles Panel ===== -->
+            <StackPanel x:Name="SubtitlesPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Subtitles" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Preview changes as you work, then save when the style feels right."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <!-- Preview -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Preview" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="This sample reflects the current subtitle size, color, and positioning."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" />
+                        <!-- 16:9 preview box -->
+                        <Border CornerRadius="20" Margin="0,8,0,0">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                    <GradientStop Color="#0F0F1A" Offset="0" />
+                                    <GradientStop Color="#1A1A3E" Offset="1" />
+                                </LinearGradientBrush>
+                            </Border.Background>
+                            <Grid Height="200">
+                                <StackPanel VerticalAlignment="Bottom" HorizontalAlignment="Center"
+                                            Margin="0,0,0,24" Spacing="4">
+                                    <Border Background="#CC000000" CornerRadius="4" Padding="12,4"
+                                            HorizontalAlignment="Center">
+                                        <TextBlock x:Name="SubtitlePreviewLine1"
+                                                   Text="Sample subtitle text"
+                                                   FontSize="16" Foreground="White"
+                                                   HorizontalAlignment="Center" />
+                                    </Border>
+                                    <Border Background="#CC000000" CornerRadius="4" Padding="12,4"
+                                            HorizontalAlignment="Center">
+                                        <TextBlock x:Name="SubtitlePreviewLine2"
+                                                   Text="with multiple lines"
+                                                   FontSize="16" Foreground="White"
+                                                   HorizontalAlignment="Center" />
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- Text group -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="0">
+                        <TextBlock Text="Text" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Adjust the size, typeface, color, and outline treatment for subtitle text."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" Margin="0,4,0,16" />
+
+                        <!-- Font size -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Font size" FontSize="14" FontWeight="Medium"
+                                       Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
+                            <ComboBox x:Name="SubtitleFontSizeComboBox" Grid.Column="1" Width="192"
+                                      SelectionChanged="SubtitleFontSize_Changed">
+                                <ComboBoxItem Content="Small" Tag="small" />
+                                <ComboBoxItem Content="Medium" Tag="medium" IsSelected="True" />
+                                <ComboBoxItem Content="Large" Tag="large" />
+                                <ComboBoxItem Content="Extra Large" Tag="xlarge" />
+                            </ComboBox>
+                        </Grid>
+
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
+                        <!-- Font family -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Font family" FontSize="14" FontWeight="Medium"
+                                       Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
+                            <ComboBox x:Name="SubtitleFontFamilyComboBox" Grid.Column="1" Width="192"
+                                      SelectionChanged="SubtitleFontFamily_Changed">
+                                <ComboBoxItem Content="Default (Sans-serif)" Tag="default" IsSelected="True" />
+                                <ComboBoxItem Content="Monospace" Tag="monospace" />
+                                <ComboBoxItem Content="Serif" Tag="serif" />
+                            </ComboBox>
+                        </Grid>
+
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
+                        <!-- Text outline -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Text outline" FontSize="14" FontWeight="Medium"
+                                       Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
+                            <ToggleSwitch
+                                x:Name="SubtitleOutlineToggle"
+                                Grid.Column="1"
+                                IsOn="True"
+                                VerticalAlignment="Center"
+                                OnContent="" OffContent="" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- Background group -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="0">
+                        <TextBlock Text="Background" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Change the backing used for boxed subtitles and how strongly it appears."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" Margin="0,4,0,16" />
+
+                        <!-- Background style -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Background style" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Only the boxed style uses a fill, opacity, and background color."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ComboBox x:Name="SubtitleBgStyleComboBox" Grid.Column="1" Width="192"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="SubtitleBgStyle_Changed">
+                                <ComboBoxItem Content="None" Tag="none" />
+                                <ComboBoxItem Content="Box" Tag="box" IsSelected="True" />
+                                <ComboBoxItem Content="Shadow" Tag="shadow" />
+                            </ComboBox>
+                        </Grid>
+
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
+                        <!-- Background opacity -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Background opacity" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Increase this to make the subtitle box more solid."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Slider x:Name="SubtitleBgOpacitySlider" Width="160"
+                                        Minimum="0" Maximum="100" StepFrequency="5" Value="80" />
+                                <TextBlock x:Name="SubtitleBgOpacityLabel" Text="80%"
+                                           FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                                           Width="40" TextAlignment="Right" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- Position group -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="0">
+                        <TextBlock Text="Position" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Place subtitles where they read best on the video frame."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" Margin="0,4,0,16" />
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Position" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Choose where subtitles sit on the video frame."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ComboBox x:Name="SubtitlePositionComboBox" Grid.Column="1" Width="192"
+                                      VerticalAlignment="Center">
+                                <ComboBoxItem Content="Bottom" Tag="bottom" IsSelected="True" />
+                                <ComboBoxItem Content="Top" Tag="top" />
+                            </ComboBox>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- Actions -->
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Save" Style="{StaticResource AccentButtonStyle}"
+                            Padding="16,8" Click="SubtitleSave_Click" />
+                    <Button Content="Reset to Defaults" Style="{StaticResource SecondaryButtonStyle}"
+                            Padding="16,8" Click="SubtitleReset_Click" />
+                </StackPanel>
+            </StackPanel>
+
+            <!-- ===== Home Screen Panel ===== -->
+            <StackPanel x:Name="HomeScreenPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Home screen" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Choose a scope, then arrange the sections that appear on that screen."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <!-- Scope group -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="0">
+                        <TextBlock Text="Scope" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Pick the home screen or library-specific view you want to customize."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" Margin="0,4,0,16" />
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Editing scope" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Changes apply only to the selected home screen."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ComboBox x:Name="HomeScopeComboBox" Grid.Column="1" Width="220"
+                                      VerticalAlignment="Center">
+                                <ComboBoxItem Content="Home" Tag="home" IsSelected="True" />
+                            </ComboBox>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- Sections group -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Sections" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Add, reorder, or hide sections. Drag to change order."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" />
+                        <TextBlock
+                            Text="{x:Bind ViewModel.SectionOverrides, Mode=OneWay}"
+                            FontSize="13"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            TextWrapping="Wrap"
+                            Margin="0,8,0,0" />
+                        <TextBlock
+                            Text="Section ordering is managed by the server. Changes made in the web UI are reflected here."
+                            FontSize="12"
+                            Foreground="{StaticResource TertiaryTextBrush}"
+                            TextWrapping="Wrap"
+                            Margin="0,4,0,0" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+        </StackPanel>
+    </ScrollViewer>
 </Page>

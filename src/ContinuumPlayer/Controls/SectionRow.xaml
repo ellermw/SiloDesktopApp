@@ -9,17 +9,20 @@
     xmlns:models="using:ContinuumPlayer.Core.Models.Home"
     mc:Ignorable="d">
 
-    <Grid Margin="{StaticResource SectionSpacing}">
+    <!-- Web: space-y-3 (12px) between title and cards, px-4 lg:px-12 (48px side padding) -->
+    <Grid Margin="0,0,0,40">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Section title with navigation arrows -->
-        <Grid Grid.Row="0" Margin="0,0,0,12">
+        <!-- Section title with navigation arrows (web: text-sm font-semibold h-6) -->
+        <Grid Grid.Row="0" Margin="48,0,48,12">
             <TextBlock
                 x:Name="SectionTitle"
-                Style="{StaticResource TitleTextStyle}"
+                FontSize="14"
+                FontWeight="SemiBold"
+                Foreground="{StaticResource PrimaryTextBrush}"
                 VerticalAlignment="Center" />
             <StackPanel
                 Orientation="Horizontal"
@@ -44,7 +47,7 @@
             </StackPanel>
         </Grid>
 
-        <!-- Horizontal scrolling row of posters -->
+        <!-- Horizontal scrolling row of posters (web: gap-4 = 16px) -->
         <ScrollViewer
             x:Name="PosterScrollViewer"
             Grid.Row="1"
@@ -53,9 +56,9 @@
             HorizontalScrollMode="Disabled"
             VerticalScrollMode="Disabled">
 
-            <ItemsRepeater x:Name="ItemsRepeater">
+            <ItemsRepeater x:Name="ItemsRepeater" Margin="48,0,48,0">
                 <ItemsRepeater.Layout>
-                    <StackLayout Orientation="Horizontal" Spacing="12" />
+                    <StackLayout Orientation="Horizontal" Spacing="16" />
                 </ItemsRepeater.Layout>
                 <ItemsRepeater.ItemTemplate>
                     <DataTemplate x:DataType="models:MediaItem">

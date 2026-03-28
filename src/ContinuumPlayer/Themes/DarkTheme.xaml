@@ -88,7 +88,7 @@
 
     <!-- ===== Spacing Constants ===== -->
     <Thickness x:Key="PagePadding">24,24,24,24</Thickness>
-    <Thickness x:Key="SectionSpacing">0,0,0,24</Thickness>
+    <Thickness x:Key="SectionSpacing">0,0,0,40</Thickness>
     <Thickness x:Key="CardPadding">12,12,12,12</Thickness>
     <Thickness x:Key="ItemSpacing">0,0,12,0</Thickness>
     <x:Double x:Key="SidebarWidth">240</x:Double>
@@ -102,14 +102,15 @@
     <CornerRadius x:Key="ProfileCardCornerRadius">28</CornerRadius>
     <CornerRadius x:Key="AuthCardCornerRadius">32</CornerRadius>
     <CornerRadius x:Key="CardCornerRadius">8</CornerRadius>
-    <CornerRadius x:Key="PosterCornerRadius">6</CornerRadius>
+    <CornerRadius x:Key="PosterCornerRadius">12</CornerRadius>
     <CornerRadius x:Key="BadgeCornerRadius">4</CornerRadius>
     <CornerRadius x:Key="NavItemCornerRadius">12</CornerRadius>
 
     <!-- ===== PosterCard Dimensions ===== -->
-    <x:Double x:Key="PosterCardWidth">150</x:Double>
-    <x:Double x:Key="PosterCardHeight">225</x:Double>
-    <x:Double x:Key="PosterCardTotalHeight">280</x:Double>
+    <!-- Web UI: w-[140px] sm:w-[160px] lg:w-[185px]; aspect-[2/3] -->
+    <x:Double x:Key="PosterCardWidth">178</x:Double>
+    <x:Double x:Key="PosterCardHeight">267</x:Double>
+    <x:Double x:Key="PosterCardTotalHeight">310</x:Double>
 
     <!-- ===== Text Styles ===== -->
     <Style x:Key="DisplayTextStyle" TargetType="TextBlock">
