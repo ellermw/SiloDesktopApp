@@ -8,74 +8,31 @@
     mc:Ignorable="d"
     Background="#101722"
     Loaded="Page_Loaded"
-    Unloaded="Page_Unloaded">
+    Unloaded="Page_Unloaded"
+    KeyDown="Page_KeyDown"
+    PointerMoved="Page_PointerMoved"
+    PointerPressed="Page_PointerPressed">
 
     <Grid x:Name="RootGrid">
-        <!-- Loading overlay (shown while preparing playback) -->
-        <Grid
-            x:Name="LoadingOverlay"
-            Background="#101722"
-            Visibility="Visible">
-            <StackPanel
-                HorizontalAlignment="Center"
-                VerticalAlignment="Center"
-                Spacing="16">
-                <ProgressRing IsActive="True" Width="48" Height="48" />
-                <TextBlock
-                    Text="Preparing playback..."
-                    Foreground="White"
-                    FontSize="16"
-                    HorizontalAlignment="Center" />
-            </StackPanel>
-        </Grid>
+        <!-- Video player (renders inline with XAML visual tree) -->
+        <MediaPlayerElement
+            x:Name="VideoPlayer"
+            AreTransportControlsEnabled="False"
+            AutoPlay="True"
+            Stretch="Uniform"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch" />
 
-        <!-- Playing state: mpv has its own fullscreen window on top -->
-        <Grid
-            x:Name="PlayingOverlay"
-            Background="#101722"
-            Visibility="Collapsed">
-            <StackPanel
-                HorizontalAlignment="Center"
-                VerticalAlignment="Center"
-                Spacing="16">
-                <FontIcon Glyph="&#xE768;" FontSize="48" Foreground="#999999" />
-                <TextBlock
-                    x:Name="NowPlayingText"
-                    Text=""
-                    Foreground="White"
-                    FontSize="18"
-                    FontWeight="SemiBold"
-                    HorizontalAlignment="Center"
-                    TextAlignment="Center"
-                    TextWrapping="Wrap"
-                    MaxWidth="500" />
-                <TextBlock
-                    x:Name="PlaybackInfoText"
-                    Text=""
-                    Foreground="#999999"
-                    FontSize="14"
-                    HorizontalAlignment="Center" />
-                <TextBlock
-                    Text="mpv is playing in fullscreen. Press ESC or Q in the player to exit."
-                    Foreground="#666666"
-                    FontSize="13"
-                    HorizontalAlignment="Center"
-                    TextAlignment="Center"
-                    Margin="0,16,0,0" />
-                <Button
-                    Content="Stop Playback"
-                    HorizontalAlignment="Center"
-                    Click="StopButton_Click"
-                    Padding="20,10"
-                    Margin="0,8,0,0" />
+        <!-- Loading overlay -->
+        <Grid x:Name="LoadingOverlay" Background="#CC101722">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
+                <ProgressRing IsActive="True" Width="48" Height="48" />
+                <TextBlock Text="Preparing playback..." Foreground="White" FontSize="16" HorizontalAlignment="Center" />
             </StackPanel>
         </Grid>
 
         <!-- Error overlay -->
-        <Grid
-            x:Name="ErrorOverlay"
-            Background="#101722"
-            Visibility="Collapsed">
+        <Grid x:Name="ErrorOverlay" Background="#CC101722" Visibility="Collapsed">
             <StackPanel
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"
@@ -95,6 +52,113 @@
                     HorizontalAlignment="Center"
                     Click="GoBackButton_Click"
                     Padding="20,10" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Skip Intro button -->
+        <Button
+            x:Name="SkipIntroButton"
+            Content="Skip Intro"
+            Click="SkipIntro_Click"
+            Visibility="Collapsed"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Bottom"
+            Margin="0,0,24,140"
+            Padding="20,10"
+            FontSize="14"
+            FontWeight="SemiBold"
+            Background="#CC333333"
+            Foreground="White"
+            BorderBrush="#88FFFFFF"
+            BorderThickness="1"
+            CornerRadius="4" />
+
+        <!-- Skip Credits button -->
+        <Button
+            x:Name="SkipCreditsButton"
+            Content="Skip Credits"
+            Click="SkipCredits_Click"
+            Visibility="Collapsed"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Bottom"
+            Margin="0,0,24,140"
+            Padding="20,10"
+            FontSize="14"
+            FontWeight="SemiBold"
+            Background="#CC333333"
+            Foreground="White"
+            BorderBrush="#88FFFFFF"
+            BorderThickness="1"
+            CornerRadius="4" />
+
+        <!-- Custom controls overlay (bottom) -->
+        <Grid x:Name="ControlsOverlay" VerticalAlignment="Bottom" Opacity="1">
+            <Grid.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="Transparent" Offset="0.0" />
+                    <GradientStop Color="#AA000000" Offset="0.3" />
+                    <GradientStop Color="#EE000000" Offset="1.0" />
+                </LinearGradientBrush>
+            </Grid.Background>
+
+            <StackPanel Padding="24,32,24,20" Spacing="8">
+                <!-- Title -->
+                <TextBlock x:Name="TitleText" Foreground="White" FontSize="18" FontWeight="SemiBold" />
+
+                <!-- Seek bar -->
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="PositionText" Grid.Column="0" Text="0:00" Foreground="#CCCCCC" FontSize="13" VerticalAlignment="Center" />
+                    <Slider
+                        x:Name="SeekSlider"
+                        Grid.Column="1"
+                        Minimum="0"
+                        Maximum="1"
+                        StepFrequency="0.001"
+                        VerticalAlignment="Center"
+                        ValueChanged="SeekSlider_ValueChanged"
+                        PointerPressed="SeekSlider_PointerPressed"
+                        PointerReleased="SeekSlider_PointerReleased"
+                        PointerCaptureLost="SeekSlider_PointerCaptureLost" />
+                    <TextBlock x:Name="DurationText" Grid.Column="2" Text="0:00" Foreground="#CCCCCC" FontSize="13" VerticalAlignment="Center" />
+                </Grid>
+
+                <!-- Control buttons -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Left: Play/Pause + Volume -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4">
+                        <Button x:Name="PlayPauseButton" Click="PlayPause_Click" Background="Transparent" BorderThickness="0" Padding="8">
+                            <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE768;" FontSize="20" Foreground="White" />
+                        </Button>
+                        <Button x:Name="MuteButton" Click="Mute_Click" Background="Transparent" BorderThickness="0" Padding="8">
+                            <FontIcon x:Name="VolumeIcon" Glyph="&#xE767;" FontSize="16" Foreground="White" />
+                        </Button>
+                        <Slider x:Name="VolumeSlider" Width="100" Minimum="0" Maximum="100" Value="100" VerticalAlignment="Center" ValueChanged="VolumeSlider_ValueChanged" />
+                    </StackPanel>
+
+                    <!-- Center: Playback info -->
+                    <TextBlock x:Name="PlaybackInfoText" Grid.Column="1" Foreground="#999999" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
+
+                    <!-- Right: Fullscreen + Close -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
+                        <Button x:Name="FullscreenButton" Click="Fullscreen_Click" Background="Transparent" BorderThickness="0" Padding="8">
+                            <FontIcon x:Name="FullscreenIcon" Glyph="&#xE740;" FontSize="16" Foreground="White" />
+                        </Button>
+                        <Button Click="Close_Click" Background="Transparent" BorderThickness="0" Padding="8">
+                            <FontIcon Glyph="&#xE711;" FontSize="16" Foreground="White" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
             </StackPanel>
         </Grid>
     </Grid>

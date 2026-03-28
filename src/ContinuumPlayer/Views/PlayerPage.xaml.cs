@@ -1,25 +1,35 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.UI.Dispatching;
+using Microsoft.UI.Windowing;
+using Microsoft.UI.Xaml.Input;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Helpers;
-using ContinuumPlayer.Player;
 using ContinuumPlayer.ViewModels;
+using Windows.Media.Core;
+using Windows.Media.Playback;
 
 namespace ContinuumPlayer.Views;
 
 public sealed partial class PlayerPage : Page
 {
     private PlayerViewModel? _vm;
-    private MpvPlayer? _player;
+    private MediaPlayer? _mediaPlayer;
     private bool _isDisposed;
     private string? _contentId;
+    private bool _isFullscreen;
+
+    // Timers
+    private DispatcherTimer? _uiUpdateTimer;
+    private DispatcherTimer? _controlsHideTimer;
+
+    // Seek slider drag state
+    private bool _isSeeking;
 
     public PlayerPage()
     {
         this.InitializeComponent();
     }
 
-    // ── Page lifecycle ───────────────────────────────────────────────────
+    // -- Page lifecycle -------------------------------------------------------
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
@@ -29,18 +39,16 @@ public sealed partial class PlayerPage : Page
             return;
         }
 
+        // Focus the page so keyboard shortcuts work immediately
+        this.Focus(FocusState.Programmatic);
+
         try
         {
             await InitializePlaybackAsync(_contentId);
         }
         catch (Exception ex)
         {
-            var crashLog = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ContinuumPlayer", "player_crash.txt");
-            Directory.CreateDirectory(Path.GetDirectoryName(crashLog)!);
-            File.WriteAllText(crashLog, $"{DateTime.Now}\n{ex}\n");
-
+            LogToFile("player_crash.txt", ex.ToString());
             ShowError($"Player error: {ex.Message}");
         }
     }
@@ -62,6 +70,12 @@ public sealed partial class PlayerPage : Page
         if (_isDisposed) return;
         _isDisposed = true;
 
+        StopTimers();
+
+        // Exit fullscreen if active
+        if (_isFullscreen)
+            SetFullscreen(false);
+
         // Show nav again
         if (App.MainWindowInstance is MainWindow mw)
             mw.ShowMainNavigation();
@@ -73,12 +87,22 @@ public sealed partial class PlayerPage : Page
             catch { }
         }
 
-        // Dispose mpv (closes the mpv window)
-        _player?.Dispose();
-        _player = null;
+        // Dispose media player
+        DisposeMediaPlayer();
     }
 
-    // ── Playback initialization ──────────────────────────────────────────
+    private void DisposeMediaPlayer()
+    {
+        if (_mediaPlayer != null)
+        {
+            _mediaPlayer.Pause();
+            VideoPlayer.SetMediaPlayer(null);
+            _mediaPlayer.Dispose();
+            _mediaPlayer = null;
+        }
+    }
+
+    // -- Playback initialization ----------------------------------------------
 
     private async Task InitializePlaybackAsync(string contentId)
     {
@@ -124,97 +148,7 @@ public sealed partial class PlayerPage : Page
             var session = await _vm.Manager.StartSessionAsync(bestVersion.FileId, startPosition);
             _vm.PlayMethod = session.PlayMethod;
 
-            // 4. Initialize mpv as a standalone fullscreen window
-            var windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance);
-
-            _player = new MpvPlayer();
-            _player.Initialize(windowHandle);
-
-            // 5. Subscribe to mpv events (must marshal to UI thread)
-            var dq = DispatcherQueue;
-
-            _player.PositionChanged += pos =>
-            {
-                dq.TryEnqueue(() =>
-                {
-                    if (_isDisposed || _vm == null) return;
-                    _vm.UpdatePosition(pos);
-                });
-            };
-
-            _player.DurationChanged += dur =>
-            {
-                dq.TryEnqueue(() =>
-                {
-                    if (_isDisposed || _vm == null) return;
-                    _vm.UpdateDuration(dur);
-                });
-            };
-
-            _player.PauseChanged += paused =>
-            {
-                dq.TryEnqueue(() =>
-                {
-                    if (_isDisposed || _vm == null) return;
-                    _vm.IsPlaying = !paused;
-                });
-            };
-
-            _player.PlaybackEnded += () =>
-            {
-                dq.TryEnqueue(() =>
-                {
-                    if (_isDisposed) return;
-                    NavigateBack();
-                });
-            };
-
-            _player.FileLoaded += () =>
-            {
-                dq.TryEnqueue(() =>
-                {
-                    if (_isDisposed || _vm == null) return;
-                    _vm.IsLoading = false;
-
-                    // Switch to "now playing" view
-                    LoadingOverlay.Visibility = Visibility.Collapsed;
-                    PlayingOverlay.Visibility = Visibility.Visible;
-                    NowPlayingText.Text = _vm.Title;
-                    UpdatePlaybackInfo();
-
-                    // Load subtitles AFTER file is loaded (sub-add fails before file load)
-                    LoadSubtitlesAfterFileLoaded();
-
-                    // Auto-play
-                    _player?.Play();
-                });
-            };
-
-            _player.Error += msg =>
-            {
-                // Log all errors to file for debugging
-                try
-                {
-                    var logPath = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        "ContinuumPlayer", "mpv_error.txt");
-                    Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-                    File.AppendAllText(logPath, $"{DateTime.Now}: {msg}\n");
-                }
-                catch { }
-
-                // Only show fatal errors to the user (not subtitle loading failures)
-                if (msg.Contains("sub-add") || msg.Contains("sub_add"))
-                    return;
-
-                dq.TryEnqueue(() =>
-                {
-                    if (_isDisposed) return;
-                    ShowError($"Player error: {msg}");
-                });
-            };
-
-            // 6. Load file
+            // 4. Get the stream URL (auth token already in query param)
             var streamUrl = _vm.Manager.StreamUrl;
             if (string.IsNullOrEmpty(streamUrl))
             {
@@ -223,38 +157,349 @@ public sealed partial class PlayerPage : Page
             }
 
             // Log init info for debugging
-            try
-            {
-                var logPath = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "ContinuumPlayer", "player_init.txt");
-                Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-                File.WriteAllText(logPath, $"{DateTime.Now}\nStreamURL: {streamUrl}\nPlayMethod: {_vm.PlayMethod}\nResolution: {_vm.Resolution}\nSession: {_vm.Manager.SessionId}\n");
-            }
-            catch { }
+            LogToFile("player_init.txt",
+                $"StreamURL: {streamUrl}\nPlayMethod: {_vm.PlayMethod}\nResolution: {_vm.Resolution}\nSession: {_vm.Manager.SessionId}");
 
-            _player.LoadFile(streamUrl);
+            // 5. Create MediaPlayer and attach to MediaPlayerElement
+            _mediaPlayer = new MediaPlayer();
+
+            var mediaSource = MediaSource.CreateFromUri(new Uri(streamUrl));
+
+            // Load external subtitles
+            LoadSubtitles(mediaSource);
+
+            _mediaPlayer.Source = mediaSource;
+            VideoPlayer.SetMediaPlayer(_mediaPlayer);
+
+            // 6. Subscribe to media player events
+            _mediaPlayer.MediaOpened += MediaPlayer_MediaOpened;
+            _mediaPlayer.MediaEnded += MediaPlayer_MediaEnded;
+            _mediaPlayer.MediaFailed += MediaPlayer_MediaFailed;
+
+            // 7. Set title and playback info
+            TitleText.Text = _vm.Title;
+            UpdatePlaybackInfo();
+
+            // 8. Start UI update timer (position, seek bar, skip markers)
+            StartUiUpdateTimer();
+
+            // 9. Start controls auto-hide timer
+            StartControlsHideTimer();
+
+            // 10. Auto-play (also set by AutoPlay="True" on the element, but be explicit)
+            _mediaPlayer.Play();
         }
         catch (Exception ex)
         {
-            var crashLog = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ContinuumPlayer", "player_crash.txt");
-            Directory.CreateDirectory(Path.GetDirectoryName(crashLog)!);
-            File.WriteAllText(crashLog, $"{DateTime.Now}\n{ex}\n");
-
-            ShowError($"Failed to start playback: {ex.Message}\n\nDetails logged to:\n{crashLog}");
+            LogToFile("player_crash.txt", ex.ToString());
+            ShowError($"Failed to start playback: {ex.Message}");
         }
     }
 
-    // ── Button click handlers ────────────────────────────────────────────
+    // -- Subtitle loading -----------------------------------------------------
 
-    private void StopButton_Click(object sender, RoutedEventArgs e)
+    private void LoadSubtitles(MediaSource mediaSource)
     {
-        // Dispose mpv first (closes mpv window), then navigate back
-        _player?.Dispose();
-        _player = null;
-        NavigateBack();
+        if (_vm?.Manager.CurrentSession == null) return;
+
+        var subtitleUrls = _vm.Manager.GetSubtitleUrls();
+        foreach (var (track, fullUrl) in subtitleUrls)
+        {
+            try
+            {
+                var codec = track.Codec?.ToLowerInvariant() ?? "";
+                // Skip bitmap-based subtitle formats (need burn-in via transcode)
+                if (codec is "pgs" or "pgssub" or "dvdsub" or "vobsub")
+                    continue;
+
+                var tts = TimedTextSource.CreateFromUri(new Uri(fullUrl));
+                tts.Resolved += (s, e) =>
+                {
+                    if (e.Tracks.Count > 0)
+                        e.Tracks[0].Label = track.Label;
+                };
+                mediaSource.ExternalTimedTextSources.Add(tts);
+            }
+            catch { }
+        }
+    }
+
+    // -- Media player event handlers ------------------------------------------
+
+    private void MediaPlayer_MediaOpened(MediaPlayer sender, object args)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_isDisposed || _vm == null) return;
+
+            _vm.IsLoading = false;
+            LoadingOverlay.Visibility = Visibility.Collapsed;
+
+            // Update duration
+            var duration = sender.PlaybackSession.NaturalDuration.TotalSeconds;
+            if (duration > 0)
+                _vm.UpdateDuration(duration);
+        });
+    }
+
+    private void MediaPlayer_MediaEnded(MediaPlayer sender, object args)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_isDisposed) return;
+            NavigateBack();
+        });
+    }
+
+    private void MediaPlayer_MediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_isDisposed) return;
+            var message = args.ErrorMessage ?? "Unknown playback error";
+            LogToFile("player_error.txt", $"MediaFailed: {args.Error} - {message}");
+            ShowError($"Playback failed: {message}");
+        });
+    }
+
+    // -- UI update timer (position, seek bar, skip markers) -------------------
+
+    private void StartUiUpdateTimer()
+    {
+        _uiUpdateTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _uiUpdateTimer.Tick += UiUpdateTimer_Tick;
+        _uiUpdateTimer.Start();
+    }
+
+    private void UiUpdateTimer_Tick(object? sender, object e)
+    {
+        if (_isDisposed || _mediaPlayer == null || _vm == null) return;
+
+        var session = _mediaPlayer.PlaybackSession;
+        var position = session.Position.TotalSeconds;
+        var duration = session.NaturalDuration.TotalSeconds;
+
+        // Update view model (this also reports progress to server)
+        bool isPlaying = session.PlaybackState == MediaPlaybackState.Playing;
+        _vm.IsPlaying = isPlaying;
+        _vm.UpdatePosition(position);
+
+        if (duration > 0 && Math.Abs(duration - _vm.Duration) > 0.5)
+            _vm.UpdateDuration(duration);
+
+        // Update seek slider (only if user is not dragging)
+        if (!_isSeeking && duration > 0)
+        {
+            SeekSlider.Maximum = duration;
+            SeekSlider.Value = position;
+        }
+
+        // Update time displays
+        PositionText.Text = PlayerViewModel.FormatTime(position);
+        DurationText.Text = PlayerViewModel.FormatTime(duration);
+
+        // Update play/pause icon
+        PlayPauseIcon.Glyph = isPlaying ? "\uE769" : "\uE768"; // Pause : Play
+
+        // Update skip button visibility
+        SkipIntroButton.Visibility = _vm.ShowSkipIntro ? Visibility.Visible : Visibility.Collapsed;
+        SkipCreditsButton.Visibility = _vm.ShowSkipCredits ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // -- Controls auto-hide ---------------------------------------------------
+
+    private void StartControlsHideTimer()
+    {
+        _controlsHideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        _controlsHideTimer.Tick += ControlsHideTimer_Tick;
+        _controlsHideTimer.Start();
+    }
+
+    private void ControlsHideTimer_Tick(object? sender, object e)
+    {
+        _controlsHideTimer?.Stop();
+
+        // Only hide if playing (keep visible when paused)
+        if (_mediaPlayer?.PlaybackSession.PlaybackState == MediaPlaybackState.Playing)
+        {
+            ControlsOverlay.Opacity = 0;
+            ControlsOverlay.IsHitTestVisible = false;
+        }
+    }
+
+    private void ShowControls()
+    {
+        ControlsOverlay.Opacity = 1;
+        ControlsOverlay.IsHitTestVisible = true;
+
+        // Restart the hide timer
+        _controlsHideTimer?.Stop();
+        _controlsHideTimer?.Start();
+    }
+
+    private void Page_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        ShowControls();
+    }
+
+    private void Page_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        ShowControls();
+        // Ensure focus for keyboard shortcuts
+        this.Focus(FocusState.Programmatic);
+    }
+
+    // -- Keyboard shortcuts ---------------------------------------------------
+
+    private void Page_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (_isDisposed || _mediaPlayer == null) return;
+
+        var session = _mediaPlayer.PlaybackSession;
+
+        switch (e.Key)
+        {
+            case Windows.System.VirtualKey.Space:
+                TogglePlayPause();
+                e.Handled = true;
+                break;
+
+            case Windows.System.VirtualKey.Left:
+                SeekRelative(-10);
+                e.Handled = true;
+                break;
+
+            case Windows.System.VirtualKey.Right:
+                SeekRelative(10);
+                e.Handled = true;
+                break;
+
+            case Windows.System.VirtualKey.Up:
+                AdjustVolume(5);
+                e.Handled = true;
+                break;
+
+            case Windows.System.VirtualKey.Down:
+                AdjustVolume(-5);
+                e.Handled = true;
+                break;
+
+            case Windows.System.VirtualKey.F:
+                ToggleFullscreen();
+                e.Handled = true;
+                break;
+
+            case Windows.System.VirtualKey.Escape:
+                if (_isFullscreen)
+                    SetFullscreen(false);
+                else
+                    ExitPlayer();
+                e.Handled = true;
+                break;
+
+            case Windows.System.VirtualKey.M:
+                ToggleMute();
+                e.Handled = true;
+                break;
+        }
+
+        ShowControls();
+    }
+
+    // -- Playback controls ----------------------------------------------------
+
+    private void TogglePlayPause()
+    {
+        if (_mediaPlayer == null) return;
+
+        if (_mediaPlayer.PlaybackSession.PlaybackState == MediaPlaybackState.Playing)
+            _mediaPlayer.Pause();
+        else
+            _mediaPlayer.Play();
+    }
+
+    private void SeekRelative(double seconds)
+    {
+        if (_mediaPlayer == null) return;
+
+        var session = _mediaPlayer.PlaybackSession;
+        var newPosition = session.Position.TotalSeconds + seconds;
+        newPosition = Math.Max(0, Math.Min(newPosition, session.NaturalDuration.TotalSeconds));
+        session.Position = TimeSpan.FromSeconds(newPosition);
+    }
+
+    private void AdjustVolume(double delta)
+    {
+        if (_mediaPlayer == null) return;
+
+        var newVolume = Math.Max(0, Math.Min(100, VolumeSlider.Value + delta));
+        VolumeSlider.Value = newVolume;
+        // VolumeSlider_ValueChanged will handle updating _mediaPlayer.Volume
+    }
+
+    private void ToggleMute()
+    {
+        if (_mediaPlayer == null) return;
+
+        _mediaPlayer.IsMuted = !_mediaPlayer.IsMuted;
+        UpdateVolumeIcon();
+    }
+
+    private void ToggleFullscreen()
+    {
+        SetFullscreen(!_isFullscreen);
+    }
+
+    private void SetFullscreen(bool fullscreen)
+    {
+        if (App.MainWindowInstance == null) return;
+
+        var appWindow = App.MainWindowInstance.AppWindow;
+        if (appWindow == null) return;
+
+        if (fullscreen)
+        {
+            appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
+            FullscreenIcon.Glyph = "\uE73F"; // ExitFullScreen
+        }
+        else
+        {
+            appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
+            FullscreenIcon.Glyph = "\uE740"; // FullScreen
+        }
+
+        _isFullscreen = fullscreen;
+    }
+
+    // -- Button click handlers ------------------------------------------------
+
+    private void PlayPause_Click(object sender, RoutedEventArgs e)
+    {
+        TogglePlayPause();
+    }
+
+    private void Mute_Click(object sender, RoutedEventArgs e)
+    {
+        ToggleMute();
+    }
+
+    private void VolumeSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (_mediaPlayer == null) return;
+
+        _mediaPlayer.Volume = e.NewValue / 100.0;
+        _mediaPlayer.IsMuted = false;
+        UpdateVolumeIcon();
+    }
+
+    private void Fullscreen_Click(object sender, RoutedEventArgs e)
+    {
+        ToggleFullscreen();
+    }
+
+    private void Close_Click(object sender, RoutedEventArgs e)
+    {
+        ExitPlayer();
     }
 
     private void GoBackButton_Click(object sender, RoutedEventArgs e)
@@ -262,7 +507,66 @@ public sealed partial class PlayerPage : Page
         NavigateBack();
     }
 
-    // ── Playback info ────────────────────────────────────────────────────
+    private void SkipIntro_Click(object sender, RoutedEventArgs e)
+    {
+        if (_mediaPlayer == null || _vm?.IntroEnd == null) return;
+        _mediaPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(_vm.IntroEnd.Value);
+    }
+
+    private void SkipCredits_Click(object sender, RoutedEventArgs e)
+    {
+        if (_mediaPlayer == null || _vm?.CreditsEnd == null) return;
+        _mediaPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(_vm.CreditsEnd.Value);
+    }
+
+    // -- Seek slider interaction ----------------------------------------------
+
+    private void SeekSlider_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        _isSeeking = true;
+    }
+
+    private void SeekSlider_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        CommitSeek();
+    }
+
+    private void SeekSlider_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        CommitSeek();
+    }
+
+    private void SeekSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        // During drag, show the preview position in the time label
+        if (_isSeeking)
+        {
+            PositionText.Text = PlayerViewModel.FormatTime(e.NewValue);
+        }
+    }
+
+    private void CommitSeek()
+    {
+        if (!_isSeeking) return;
+        _isSeeking = false;
+
+        if (_mediaPlayer == null) return;
+        _mediaPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(SeekSlider.Value);
+    }
+
+    // -- Helpers --------------------------------------------------------------
+
+    private void UpdateVolumeIcon()
+    {
+        if (_mediaPlayer == null) return;
+
+        if (_mediaPlayer.IsMuted || _mediaPlayer.Volume <= 0)
+            VolumeIcon.Glyph = "\uE74F"; // Mute
+        else if (_mediaPlayer.Volume < 0.5)
+            VolumeIcon.Glyph = "\uE993"; // Volume1
+        else
+            VolumeIcon.Glyph = "\uE767"; // Volume3
+    }
 
     private void UpdatePlaybackInfo()
     {
@@ -277,7 +581,13 @@ public sealed partial class PlayerPage : Page
         PlaybackInfoText.Text = string.Join(" \u2022 ", parts);
     }
 
-    // ── Navigation ───────────────────────────────────────────────────────
+    private void ExitPlayer()
+    {
+        // Stop the media player, then navigate back
+        StopTimers();
+        DisposeMediaPlayer();
+        NavigateBack();
+    }
 
     private void NavigateBack()
     {
@@ -286,27 +596,13 @@ public sealed partial class PlayerPage : Page
             nav.GoBack();
     }
 
-    // ── Subtitle loading (after file is loaded) ────────────────────────
-
-    private void LoadSubtitlesAfterFileLoaded()
+    private void StopTimers()
     {
-        if (_player == null || _vm == null) return;
-
-        var subtitleUrls = _vm.Manager.GetSubtitleUrls();
-        foreach (var (track, fullUrl) in subtitleUrls)
-        {
-            try
-            {
-                var codec = track.Codec?.ToLowerInvariant() ?? "";
-                if (codec == "pgs" || codec == "pgssub" || codec == "dvdsub" || codec == "vobsub")
-                    continue;
-                _player.AddSubtitle(fullUrl, track.Label, track.Language);
-            }
-            catch { }
-        }
+        _uiUpdateTimer?.Stop();
+        _uiUpdateTimer = null;
+        _controlsHideTimer?.Stop();
+        _controlsHideTimer = null;
     }
-
-    // ── Error display ────────────────────────────────────────────────────
 
     private void ShowError(string message)
     {
@@ -316,8 +612,20 @@ public sealed partial class PlayerPage : Page
             _vm.ErrorMessage = message;
         }
         LoadingOverlay.Visibility = Visibility.Collapsed;
-        PlayingOverlay.Visibility = Visibility.Collapsed;
         ErrorOverlay.Visibility = Visibility.Visible;
         ErrorText.Text = message;
+    }
+
+    private static void LogToFile(string fileName, string content)
+    {
+        try
+        {
+            var logPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ContinuumPlayer", fileName);
+            Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+            File.WriteAllText(logPath, $"{DateTime.Now}\n{content}\n");
+        }
+        catch { }
     }
 }
