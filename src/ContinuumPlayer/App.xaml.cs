@@ -124,6 +124,7 @@ public partial class App : Application
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminDashboardViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminActivityViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminUsersViewModel>();
+        services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminUserDetailViewModel>();
 
         return services.BuildServiceProvider();
     }

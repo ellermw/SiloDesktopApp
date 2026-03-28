@@ -193,6 +193,7 @@ public sealed partial class AdminUsersPage : Page
 
         // Wire up click handlers capturing user
         var capturedUser = user;
+        historyBtn.Click += (_, _) => Frame.Navigate(typeof(AdminUserDetailPage), capturedUser.Id);
         editBtn.Click += async (_, _) => await OpenEditDialogAsync(capturedUser);
         deleteBtn.Click += async (_, _) => await OpenDeleteDialogAsync(capturedUser);
 
