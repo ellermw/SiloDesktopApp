@@ -13,6 +13,8 @@ public sealed partial class LibraryPage : Page
     public LibraryViewModel ViewModel { get; }
     private bool _suppressFilterEvents;
     private bool _recommendedLoaded;
+    private bool _orderAsc = true;
+    private DispatcherTimer? _yearDebounceTimer;
 
     public LibraryPage()
     {
@@ -24,18 +26,19 @@ public sealed partial class LibraryPage : Page
 
         _suppressFilterEvents = true;
         SortComboBox.SelectedIndex = 0;
-        OrderComboBox.SelectedIndex = 0;
         _suppressFilterEvents = false;
 
         ViewModel.Genres.CollectionChanged += (_, _) =>
             DispatcherQueue.TryEnqueue(() => UpdateGenreCombo());
 
+        ViewModel.ContentRatings.CollectionChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(() => UpdateContentRatingCombo());
+
         ViewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(ViewModel.TotalCount))
             {
-                DispatcherQueue.TryEnqueue(() =>
-                    CountText.Text = ViewModel.TotalCount > 0 ? $"{ViewModel.TotalCount:N0} items" : "");
+                DispatcherQueue.TryEnqueue(() => UpdateCountDisplay());
             }
         };
     }
@@ -51,21 +54,25 @@ public sealed partial class LibraryPage : Page
 
             _suppressFilterEvents = true;
             SortComboBox.SelectedIndex = 0;
-            OrderComboBox.SelectedIndex = 0;
             GenreComboBox.SelectedIndex = -1;
+            ContentRatingComboBox.SelectedIndex = -1;
+            YearMinBox.Text = "";
+            YearMaxBox.Text = "";
+            _orderAsc = true;
+            UpdateOrderButton();
             ViewModel.SelectedSort = "title";
             ViewModel.SelectedOrder = "asc";
             ViewModel.SelectedGenre = null;
+            ViewModel.SelectedContentRating = null;
+            ViewModel.SelectedYearMin = null;
+            ViewModel.SelectedYearMax = null;
             _suppressFilterEvents = false;
             _recommendedLoaded = false;
 
-            // Ensure Recommended panel is visible before loading data (default tab)
-            RecommendedPanel.Visibility = Visibility.Visible;
-            FilterBar.Visibility = Visibility.Collapsed;
-            ContentScrollViewer.Visibility = Visibility.Collapsed;
-            CollectionsPanel.Visibility = Visibility.Collapsed;
+            // Show Recommended panel by default
+            ShowTab("Recommended");
 
-            // Load recommendations first since Recommended is the default tab
+            // Load recommendations first (default tab)
             if (!_recommendedLoaded)
                 await LoadRecommendationsAsync();
 
@@ -74,13 +81,35 @@ public sealed partial class LibraryPage : Page
         }
     }
 
+    private void ShowTab(string tag)
+    {
+        // Update tab button styles
+        var tabs = new[] { RecommendedTab, LibraryTab, CollectionsTab };
+        foreach (var tab in tabs)
+        {
+            tab.Style = (Style)Resources["PillTabButtonStyle"];
+        }
+
+        Button activeTab = tag switch
+        {
+            "Library" => LibraryTab,
+            "Collections" => CollectionsTab,
+            _ => RecommendedTab
+        };
+        activeTab.Style = (Style)Resources["PillTabButtonActiveStyle"];
+
+        // Toggle panel visibility
+        FilterBar.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
+        ContentScrollViewer.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
+        RecommendedPanel.Visibility = tag == "Recommended" ? Visibility.Visible : Visibility.Collapsed;
+        CollectionsPanel.Visibility = tag == "Collections" ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     /// <summary>
     /// Keeps loading pages until the content exceeds the viewport height.
-    /// Runs after initial load and after each subsequent load.
     /// </summary>
     private async Task FillViewportAsync()
     {
-        // Give layout a moment to settle
         await Task.Delay(200);
 
         while (ViewModel.HasMore && !ViewModel.IsLoading &&
@@ -88,7 +117,21 @@ public sealed partial class LibraryPage : Page
                ContentScrollViewer.Visibility == Visibility.Visible)
         {
             await ViewModel.LoadMoreCommand.ExecuteAsync(null);
-            await Task.Delay(100); // Let layout recalculate
+            await Task.Delay(100);
+        }
+    }
+
+    private void UpdateCountDisplay()
+    {
+        if (ViewModel.TotalCount > 0)
+        {
+            CountText.Text = ViewModel.TotalCount.ToString("N0");
+            CountLabel.Text = ViewModel.TotalCount == 1 ? "item" : "items";
+        }
+        else
+        {
+            CountText.Text = "0";
+            CountLabel.Text = "items";
         }
     }
 
@@ -106,6 +149,26 @@ public sealed partial class LibraryPage : Page
         _suppressFilterEvents = false;
     }
 
+    private void UpdateContentRatingCombo()
+    {
+        _suppressFilterEvents = true;
+        ContentRatingComboBox.Items.Clear();
+        ContentRatingComboBox.Items.Add(new ComboBoxItem { Content = "All Ratings", Tag = "" });
+        foreach (var rating in ViewModel.ContentRatings)
+        {
+            if (!string.IsNullOrEmpty(rating))
+                ContentRatingComboBox.Items.Add(new ComboBoxItem { Content = rating, Tag = rating });
+        }
+        ContentRatingComboBox.SelectedIndex = 0;
+        _suppressFilterEvents = false;
+    }
+
+    private void UpdateOrderButton()
+    {
+        OrderIcon.Glyph = _orderAsc ? "\uE74A" : "\uE74B"; // Up arrow : Down arrow
+        ToolTipService.SetToolTip(OrderToggleButton, _orderAsc ? "Ascending" : "Descending");
+    }
+
     private async void SortComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressFilterEvents) return;
@@ -117,15 +180,13 @@ public sealed partial class LibraryPage : Page
         }
     }
 
-    private async void OrderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void OrderToggle_Click(object sender, RoutedEventArgs e)
     {
-        if (_suppressFilterEvents) return;
-        if (OrderComboBox.SelectedItem is ComboBoxItem item && item.Tag is string order)
-        {
-            ViewModel.SelectedOrder = order;
-            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
-            await FillViewportAsync();
-        }
+        _orderAsc = !_orderAsc;
+        UpdateOrderButton();
+        ViewModel.SelectedOrder = _orderAsc ? "asc" : "desc";
+        await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+        await FillViewportAsync();
     }
 
     private async void GenreComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -139,9 +200,39 @@ public sealed partial class LibraryPage : Page
         }
     }
 
+    private async void ContentRatingComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressFilterEvents) return;
+        if (ContentRatingComboBox.SelectedItem is ComboBoxItem item && item.Tag is string rating)
+        {
+            ViewModel.SelectedContentRating = string.IsNullOrEmpty(rating) ? null : rating;
+            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+            await FillViewportAsync();
+        }
+    }
+
+    private void YearFilter_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_suppressFilterEvents) return;
+
+        // Debounce year filter changes
+        _yearDebounceTimer?.Stop();
+        _yearDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _yearDebounceTimer.Tick += async (s, args) =>
+        {
+            _yearDebounceTimer?.Stop();
+            _yearDebounceTimer = null;
+
+            ViewModel.SelectedYearMin = string.IsNullOrWhiteSpace(YearMinBox.Text) ? null : YearMinBox.Text;
+            ViewModel.SelectedYearMax = string.IsNullOrWhiteSpace(YearMaxBox.Text) ? null : YearMaxBox.Text;
+            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+            await FillViewportAsync();
+        };
+        _yearDebounceTimer.Start();
+    }
+
     private async void ContentScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
-        // Load more when user scrolls near the bottom
         var offset = ContentScrollViewer.VerticalOffset;
         var scrollable = ContentScrollViewer.ScrollableHeight;
 
@@ -156,23 +247,7 @@ public sealed partial class LibraryPage : Page
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
-        var tabs = new[] { RecommendedTab, LibraryTab, CollectionsTab };
-        foreach (var tab in tabs)
-        {
-            tab.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
-            tab.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
-            tab.BorderThickness = new Thickness(0);
-        }
-
-        clickedButton.FontWeight = Microsoft.UI.Text.FontWeights.Bold;
-        clickedButton.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
-        clickedButton.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
-        clickedButton.BorderThickness = new Thickness(0, 0, 0, 2);
-
-        FilterBar.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
-        ContentScrollViewer.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
-        RecommendedPanel.Visibility = tag == "Recommended" ? Visibility.Visible : Visibility.Collapsed;
-        CollectionsPanel.Visibility = tag == "Collections" ? Visibility.Visible : Visibility.Collapsed;
+        ShowTab(tag);
 
         if (tag == "Recommended" && !_recommendedLoaded)
             await LoadRecommendationsAsync();

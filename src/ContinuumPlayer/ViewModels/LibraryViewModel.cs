@@ -43,6 +43,15 @@ public partial class LibraryViewModel : ObservableObject
     private string? _selectedType;
 
     [ObservableProperty]
+    private string? _selectedContentRating;
+
+    [ObservableProperty]
+    private string? _selectedYearMin;
+
+    [ObservableProperty]
+    private string? _selectedYearMax;
+
+    [ObservableProperty]
     private int _totalCount;
 
     [ObservableProperty]
@@ -53,6 +62,7 @@ public partial class LibraryViewModel : ObservableObject
 
     // Filter options loaded from server
     public ObservableCollection<string> Genres { get; } = [];
+    public ObservableCollection<string> ContentRatings { get; } = [];
     public ObservableCollection<string> SortOptions { get; } = ["title", "year", "rating_imdb", "created_at", "added_at"];
 
     [RelayCommand]
@@ -159,7 +169,6 @@ public partial class LibraryViewModel : ObservableObject
         // For each letter A-Z, find the lowest offset where that letter first appears
         for (char c = 'A'; c <= 'Z'; c++)
         {
-            // Find the sample just before this letter starts
             int bestOffset = 0;
             for (int i = 0; i < samples.Count; i++)
             {
@@ -212,6 +221,7 @@ public partial class LibraryViewModel : ObservableObject
                 sort: SelectedSort,
                 order: SelectedOrder,
                 genre: SelectedGenre,
+                contentRating: SelectedContentRating,
                 limit: PageSize,
                 offset: _offset);
 
@@ -249,6 +259,13 @@ public partial class LibraryViewModel : ObservableObject
             foreach (var genre in filters.Genres)
             {
                 Genres.Add(genre);
+            }
+
+            ContentRatings.Clear();
+            ContentRatings.Add(""); // All ratings
+            foreach (var rating in filters.ContentRatings)
+            {
+                ContentRatings.Add(rating);
             }
         }
         catch

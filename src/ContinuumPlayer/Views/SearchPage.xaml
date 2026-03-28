@@ -13,89 +13,209 @@
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
     </Page.Resources>
 
     <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
-
-        <!-- Search bar -->
-        <Grid Grid.Row="0" Margin="24,24,24,16">
-            <TextBox
-                x:Name="SearchBox"
-                Style="{StaticResource DarkTextBoxStyle}"
-                PlaceholderText="Search movies, shows..."
-                TextChanged="SearchBox_TextChanged"
-                MaxWidth="600"
-                HorizontalAlignment="Stretch" />
-        </Grid>
-
-        <!-- Result count -->
-        <TextBlock
-            x:Name="ResultCountText"
-            Grid.Row="1"
-            Style="{StaticResource SecondaryTextStyle}"
-            Margin="24,0,24,12" />
-
-        <!-- Results grid -->
-        <ScrollViewer Grid.Row="2" Padding="24,0,24,24">
-            <StackPanel>
-                <ItemsRepeater x:Name="ResultsRepeater">
-                    <ItemsRepeater.Layout>
-                        <UniformGridLayout
-                            MinItemWidth="{StaticResource PosterCardWidth}"
-                            MinItemHeight="{StaticResource PosterCardTotalHeight}"
-                            MinColumnSpacing="12"
-                            MinRowSpacing="16"
-                            ItemsStretch="None" />
-                    </ItemsRepeater.Layout>
-                    <ItemsRepeater.ItemTemplate>
-                        <DataTemplate x:DataType="models:MediaItem">
-                            <controls:PosterCard MediaItem="{x:Bind}" />
-                        </DataTemplate>
-                    </ItemsRepeater.ItemTemplate>
-                </ItemsRepeater>
-
-                <!-- Loading -->
-                <ProgressRing
-                    IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                    HorizontalAlignment="Center"
-                    Margin="0,16,0,16"
-                    Width="32" Height="32" />
-
-                <!-- Error -->
-                <TextBlock
-                    Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                    Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
-                    Foreground="{StaticResource ErrorBrush}"
-                    Style="{StaticResource BodyTextStyle}"
-                    HorizontalAlignment="Center"
-                    Margin="0,8,0,8" />
-            </StackPanel>
-        </ScrollViewer>
-
-        <!-- Empty state -->
+        <!-- Empty state: shown when no query entered (web: Catalog.tsx empty search state) -->
         <StackPanel
             x:Name="EmptyState"
-            Grid.Row="2"
             VerticalAlignment="Center"
             HorizontalAlignment="Center"
-            Spacing="8">
+            Spacing="16"
+            Padding="40">
+
+            <!-- Search icon (web: Search h-10 w-10 strokeWidth=1.5) -->
             <FontIcon
                 Glyph="&#xE721;"
-                FontSize="48"
+                FontSize="40"
                 Foreground="{StaticResource SecondaryTextBrush}"
                 HorizontalAlignment="Center" />
+
+            <!-- Title (web: page-title mb-4) -->
             <TextBlock
-                Text="Type to search your library"
-                Style="{StaticResource SecondaryTextStyle}"
-                FontSize="16"
+                Text="Search"
+                FontSize="{StaticResource FontSizeDisplayLarge}"
+                FontWeight="Bold"
+                Foreground="{StaticResource PrimaryTextBrush}"
                 HorizontalAlignment="Center" />
+
+            <!-- Subtitle (web: page-subtitle mb-8 max-w-xl text-sm) -->
+            <TextBlock
+                Text="Find films, series, performances, and rediscover things you forgot you saved."
+                FontSize="14"
+                Foreground="{StaticResource SecondaryTextBrush}"
+                HorizontalAlignment="Center"
+                TextAlignment="Center"
+                TextWrapping="Wrap"
+                MaxWidth="480" />
+
+            <!-- Prominent search bar (web: SearchBar prominent - surface-panel h-14 rounded-[1.4rem] pl-12) -->
+            <Border
+                Background="{StaticResource SurfaceBrush}"
+                CornerRadius="20"
+                MaxWidth="520"
+                HorizontalAlignment="Stretch"
+                Margin="0,8,0,0">
+                <Grid>
+                    <FontIcon
+                        Glyph="&#xE721;"
+                        FontSize="18"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Center"
+                        Margin="16,0,0,0" />
+                    <TextBox
+                        x:Name="SearchBox"
+                        PlaceholderText="Search movies, series..."
+                        TextChanged="SearchBox_TextChanged"
+                        KeyDown="SearchBox_KeyDown"
+                        FontSize="15"
+                        Padding="46,14,16,14"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Foreground="{StaticResource PrimaryTextBrush}" />
+                </Grid>
+            </Border>
         </StackPanel>
+
+        <!-- Results state: shown when query entered -->
+        <Grid
+            x:Name="ResultsState"
+            Visibility="Collapsed">
+
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Header with title + count panel (web: page-header in CatalogResults) -->
+            <Grid Grid.Row="0" Margin="40,24,40,20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Title + subtitle -->
+                <StackPanel Grid.Column="0" Spacing="6">
+                    <TextBlock
+                        x:Name="ResultsTitle"
+                        FontSize="{StaticResource FontSizeDisplayLarge}"
+                        FontWeight="Bold"
+                        Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock
+                        Text="Refine the archive by type, era, rating, or genre."
+                        FontSize="14"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+
+                <!-- Item count panel (web: surface-panel-subtle rounded-[1.35rem] px-5 py-4) -->
+                <Border
+                    Grid.Column="1"
+                    Background="{StaticResource SurfaceBrush}"
+                    CornerRadius="20"
+                    Padding="20,16"
+                    MinWidth="160"
+                    VerticalAlignment="Center">
+                    <StackPanel HorizontalAlignment="Right">
+                        <TextBlock
+                            Text="AVAILABLE NOW"
+                            FontSize="10"
+                            FontWeight="SemiBold"
+                            CharacterSpacing="160"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBlock
+                            x:Name="ResultCountText"
+                            FontSize="24"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource PrimaryTextBrush}"
+                            Margin="0,4,0,0" />
+                        <TextBlock
+                            x:Name="ResultCountLabel"
+                            FontSize="12"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- Search bar in results view (web: same SearchBar but inline in results) -->
+            <Border
+                Grid.Row="1"
+                Background="{StaticResource SurfaceBrush}"
+                CornerRadius="20"
+                Margin="40,0,40,20"
+                MaxWidth="600"
+                HorizontalAlignment="Left">
+                <Grid>
+                    <FontIcon
+                        Glyph="&#xE721;"
+                        FontSize="16"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Center"
+                        Margin="14,0,0,0" />
+                    <TextBox
+                        x:Name="ResultsSearchBox"
+                        PlaceholderText="Search movies, series..."
+                        TextChanged="SearchBox_TextChanged"
+                        KeyDown="SearchBox_KeyDown"
+                        FontSize="14"
+                        Padding="40,10,14,10"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Foreground="{StaticResource PrimaryTextBrush}" />
+                </Grid>
+            </Border>
+
+            <!-- Results grid -->
+            <ScrollViewer Grid.Row="2" Padding="40,0,40,24">
+                <StackPanel>
+                    <ItemsRepeater x:Name="ResultsRepeater">
+                        <ItemsRepeater.Layout>
+                            <UniformGridLayout
+                                MinItemWidth="{StaticResource PosterCardWidth}"
+                                MinItemHeight="{StaticResource PosterCardTotalHeight}"
+                                MinColumnSpacing="12"
+                                MinRowSpacing="16"
+                                ItemsStretch="None" />
+                        </ItemsRepeater.Layout>
+                        <ItemsRepeater.ItemTemplate>
+                            <DataTemplate x:DataType="models:MediaItem">
+                                <controls:PosterCard MediaItem="{x:Bind}" />
+                            </DataTemplate>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
+
+                    <!-- Loading -->
+                    <ProgressRing
+                        IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                        Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                        HorizontalAlignment="Center"
+                        Margin="0,24,0,24"
+                        Width="32" Height="32" />
+
+                    <!-- Error -->
+                    <TextBlock
+                        Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                        Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
+                        Foreground="{StaticResource ErrorBrush}"
+                        Style="{StaticResource BodyTextStyle}"
+                        HorizontalAlignment="Center"
+                        Margin="0,8,0,8" />
+
+                    <!-- No results -->
+                    <TextBlock
+                        x:Name="NoResultsText"
+                        Text="No items found."
+                        FontSize="14"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        HorizontalAlignment="Center"
+                        Margin="0,40,0,0"
+                        Visibility="Collapsed" />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
     </Grid>
 </Page>

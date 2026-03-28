@@ -14,133 +14,261 @@
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
+
+        <!-- Pill tab button style (web: rounded-xl px-4 py-2.5 text-[13px] font-semibold) -->
+        <Style x:Key="PillTabButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="16,10,16,10" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="MinWidth" Value="0" />
+        </Style>
+
+        <!-- Active pill tab (web: bg-accent text-primary) -->
+        <Style x:Key="PillTabButtonActiveStyle" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource AccentBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="16,10,16,10" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="MinWidth" Value="0" />
+        </Style>
+
+        <!-- Pill filter ComboBox style (web: h-9 rounded-full text-[13px]) -->
+        <Style x:Key="PillComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="MinHeight" Value="36" />
+            <Setter Property="Padding" Value="12,6,8,6" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+        </Style>
+
+        <!-- Order toggle button (web: h-9 w-9 rounded-full border) -->
+        <Style x:Key="OrderToggleButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            <Setter Property="CornerRadius" Value="18" />
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="MinWidth" Value="0" />
+        </Style>
+
+        <!-- Year filter input style -->
+        <Style x:Key="YearInputStyle" TargetType="TextBox">
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="MinHeight" Value="36" />
+            <Setter Property="Width" Value="72" />
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+            <Setter Property="TextAlignment" Value="Center" />
+        </Style>
+
+        <!-- Item count panel style (web: surface-panel-subtle rounded-[1.35rem] px-5 py-4) -->
     </Page.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Header -->
-        <TextBlock
-            x:Name="LibraryTitle"
-            Grid.Row="0"
-            Style="{StaticResource HeaderTextStyle}"
-            Margin="24,24,24,16" />
+        <!-- Header: title + subtitle + tab pills (web: px-4 py-4 sm:px-6 lg:px-10 xl:px-12) -->
+        <Grid Grid.Row="0" Margin="40,24,40,20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
-        <!-- Tab bar -->
-        <StackPanel
-            Grid.Row="1"
-            Orientation="Horizontal"
-            Spacing="4"
-            Margin="24,0,24,16">
-            <Button
-                x:Name="RecommendedTab"
-                Content="Recommended"
-                Style="{StaticResource GhostButtonStyle}"
-                Click="Tab_Click"
-                Tag="Recommended"
-                Padding="16,8"
-                FontSize="14"
-                FontWeight="Bold"
-                Foreground="{StaticResource PrimaryTextBrush}"
-                BorderBrush="{StaticResource AccentBrush}"
-                BorderThickness="0,0,0,2" />
-            <Button
-                x:Name="LibraryTab"
-                Content="Library"
-                Style="{StaticResource GhostButtonStyle}"
-                Click="Tab_Click"
-                Tag="Library"
-                Padding="16,8"
-                FontSize="14" />
-            <Button
-                x:Name="CollectionsTab"
-                Content="Collections"
-                Style="{StaticResource GhostButtonStyle}"
-                Click="Tab_Click"
-                Tag="Collections"
-                Padding="16,8"
-                FontSize="14" />
-        </StackPanel>
+            <!-- Title and tabs row (web: page-header gap-5) -->
+            <Grid Grid.Row="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
 
-        <!-- Filter bar -->
+                <!-- Title + subtitle (web: text-[clamp(2rem,5vw,3.4rem)]) -->
+                <StackPanel Grid.Column="0" Spacing="6">
+                    <TextBlock
+                        x:Name="LibraryTitle"
+                        FontSize="{StaticResource FontSizeDisplayLarge}"
+                        FontWeight="Bold"
+                        Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock
+                        Text="Move between recommendations, the full archive, and curated collections."
+                        FontSize="14"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+
+                <!-- Pill tab bar (web: surface-panel-subtle rounded-[1.2rem] gap-1 p-1) -->
+                <Border
+                    Grid.Column="1"
+                    CornerRadius="20"
+                    Padding="4"
+                    VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <Button
+                            x:Name="RecommendedTab"
+                            Content="Recommended"
+                            Style="{StaticResource PillTabButtonActiveStyle}"
+                            Click="Tab_Click"
+                            Tag="Recommended" />
+                        <Button
+                            x:Name="LibraryTab"
+                            Content="Library"
+                            Style="{StaticResource PillTabButtonStyle}"
+                            Click="Tab_Click"
+                            Tag="Library" />
+                        <Button
+                            x:Name="CollectionsTab"
+                            Content="Collections"
+                            Style="{StaticResource PillTabButtonStyle}"
+                            Click="Tab_Click"
+                            Tag="Collections" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- Filter bar (web: AdvancedFilterBar - flex-wrap items-center gap-2) -->
         <StackPanel
             x:Name="FilterBar"
-            Grid.Row="2"
+            Grid.Row="1"
             Orientation="Horizontal"
-            Spacing="12"
-            Margin="24,0,24,16"
+            Spacing="8"
+            Margin="40,0,40,16"
             Visibility="Collapsed">
 
-            <!-- Sort by -->
-            <StackPanel Orientation="Horizontal" Spacing="6">
+            <!-- Genre filter (web: pill select) -->
+            <ComboBox
+                x:Name="GenreComboBox"
+                Style="{StaticResource PillComboBoxStyle}"
+                Width="150"
+                SelectionChanged="GenreComboBox_SelectionChanged"
+                PlaceholderText="All Genres" />
+
+            <!-- Content Rating filter -->
+            <ComboBox
+                x:Name="ContentRatingComboBox"
+                Style="{StaticResource PillComboBoxStyle}"
+                Width="130"
+                SelectionChanged="ContentRatingComboBox_SelectionChanged"
+                PlaceholderText="All Ratings" />
+
+            <!-- Year range (web: Year <from> - <to>) -->
+            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                 <TextBlock
-                    Text="Sort:"
-                    Style="{StaticResource CaptionTextStyle}"
+                    Text="Year"
+                    FontSize="13"
+                    Foreground="{StaticResource SecondaryTextBrush}"
                     VerticalAlignment="Center" />
-                <ComboBox
-                    x:Name="SortComboBox"
-                    Width="140"
-                    SelectionChanged="SortComboBox_SelectionChanged">
-                    <ComboBoxItem Content="Title" Tag="title" />
-                    <ComboBoxItem Content="Year" Tag="year" />
-                    <ComboBoxItem Content="IMDB Rating" Tag="rating_imdb" />
-                    <ComboBoxItem Content="Date Added" Tag="added_at" />
-                </ComboBox>
+                <TextBox
+                    x:Name="YearMinBox"
+                    Style="{StaticResource YearInputStyle}"
+                    PlaceholderText="From"
+                    TextChanged="YearFilter_TextChanged"
+                    InputScope="Number" />
+                <TextBlock
+                    Text="&#x2013;"
+                    FontSize="12"
+                    Foreground="{StaticResource TertiaryTextBrush}"
+                    VerticalAlignment="Center"
+                    Margin="0,0,0,0" />
+                <TextBox
+                    x:Name="YearMaxBox"
+                    Style="{StaticResource YearInputStyle}"
+                    PlaceholderText="To"
+                    TextChanged="YearFilter_TextChanged"
+                    InputScope="Number" />
             </StackPanel>
 
-            <!-- Order -->
-            <StackPanel Orientation="Horizontal" Spacing="6">
-                <TextBlock
-                    Text="Order:"
-                    Style="{StaticResource CaptionTextStyle}"
-                    VerticalAlignment="Center" />
-                <ComboBox
-                    x:Name="OrderComboBox"
-                    Width="100"
-                    SelectionChanged="OrderComboBox_SelectionChanged">
-                    <ComboBoxItem Content="Asc" Tag="asc" />
-                    <ComboBoxItem Content="Desc" Tag="desc" />
-                </ComboBox>
-            </StackPanel>
+            <!-- Spacer to push sort to right -->
+            <Border HorizontalAlignment="Stretch" Width="0" />
 
-            <!-- Genre filter -->
-            <StackPanel Orientation="Horizontal" Spacing="6">
-                <TextBlock
-                    Text="Genre:"
-                    Style="{StaticResource CaptionTextStyle}"
-                    VerticalAlignment="Center" />
-                <ComboBox
-                    x:Name="GenreComboBox"
-                    Width="160"
-                    SelectionChanged="GenreComboBox_SelectionChanged"
-                    PlaceholderText="All Genres" />
-            </StackPanel>
+            <!-- Sort + Order (web: ml-auto, pill) -->
+            <ComboBox
+                x:Name="SortComboBox"
+                Style="{StaticResource PillComboBoxStyle}"
+                Width="160"
+                SelectionChanged="SortComboBox_SelectionChanged">
+                <ComboBoxItem Content="Title" Tag="title" IsSelected="True" />
+                <ComboBoxItem Content="Recently Added" Tag="added_at" />
+                <ComboBoxItem Content="Release Date" Tag="release_date" />
+                <ComboBoxItem Content="Year" Tag="year" />
+                <ComboBoxItem Content="IMDb Rating" Tag="rating_imdb" />
+            </ComboBox>
 
-            <!-- Item count -->
-            <TextBlock
-                x:Name="CountText"
-                Style="{StaticResource SecondaryTextStyle}"
-                VerticalAlignment="Center"
-                Margin="12,0,0,0" />
+            <!-- Order toggle button (web: arrow up/down in circle) -->
+            <Button
+                x:Name="OrderToggleButton"
+                Style="{StaticResource OrderToggleButtonStyle}"
+                Click="OrderToggle_Click"
+                ToolTipService.ToolTip="Ascending">
+                <FontIcon
+                    x:Name="OrderIcon"
+                    Glyph="&#xE74A;"
+                    FontSize="14" />
+            </Button>
+
+            <!-- Item count (web: surface-panel-subtle with count) -->
+            <Border
+                x:Name="CountPanel"
+                Background="{StaticResource SurfaceBrush}"
+                CornerRadius="16"
+                Padding="16,8"
+                Margin="8,0,0,0"
+                VerticalAlignment="Center">
+                <StackPanel HorizontalAlignment="Right">
+                    <TextBlock
+                        Text="AVAILABLE NOW"
+                        FontSize="10"
+                        FontWeight="SemiBold"
+                        CharacterSpacing="160"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                    <TextBlock
+                        x:Name="CountText"
+                        FontSize="20"
+                        FontWeight="SemiBold"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        Margin="0,4,0,0" />
+                    <TextBlock
+                        x:Name="CountLabel"
+                        FontSize="12"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+            </Border>
         </StackPanel>
 
         <!-- Content area with scrollviewer for infinite scroll (Library tab) -->
         <ScrollViewer
             x:Name="ContentScrollViewer"
-            Grid.Row="3"
+            Grid.Row="2"
             ViewChanged="ContentScrollViewer_ViewChanged"
             IsScrollInertiaEnabled="True"
             CanContentRenderOutsideBounds="True"
-            Padding="24,0,24,24"
+            Padding="40,0,40,24"
             Visibility="Collapsed">
 
             <StackPanel>
-                <!-- Poster grid -->
+                <!-- Poster grid (web: grid grid-cols-3..8 gap-3) -->
                 <ItemsRepeater
                     x:Name="PosterRepeater">
                     <ItemsRepeater.Layout>
@@ -178,11 +306,11 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Recommended tab content -->
+        <!-- Recommended tab content (web: space-y-10 py-2 sm:space-y-12) -->
         <ScrollViewer
             x:Name="RecommendedPanel"
-            Grid.Row="3"
-            Padding="24,0,24,24">
+            Grid.Row="2"
+            Padding="0,0,0,24">
             <StackPanel x:Name="RecommendedSectionsPanel" Spacing="8">
                 <ProgressRing
                     x:Name="RecommendedLoading"
@@ -199,23 +327,71 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Placeholder for Collections tab -->
-        <StackPanel
+        <!-- Collections tab (web: shows grid of collection poster cards or empty state) -->
+        <ScrollViewer
             x:Name="CollectionsPanel"
-            Grid.Row="3"
-            Visibility="Collapsed"
-            VerticalAlignment="Center"
-            HorizontalAlignment="Center"
-            Spacing="8">
-            <FontIcon
-                Glyph="&#xE8FD;"
-                FontSize="48"
-                Foreground="{StaticResource SecondaryTextBrush}" />
-            <TextBlock
-                Text="Collections coming soon"
-                Style="{StaticResource SecondaryTextStyle}"
-                FontSize="16"
-                HorizontalAlignment="Center" />
-        </StackPanel>
+            Grid.Row="2"
+            Padding="40,0,40,24"
+            Visibility="Collapsed">
+            <StackPanel Spacing="24">
+                <!-- Collections header (web: page-header) -->
+                <StackPanel Spacing="6">
+                    <TextBlock
+                        Text="Collections"
+                        FontSize="{StaticResource FontSizeDisplay}"
+                        FontWeight="Bold"
+                        Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock
+                        Text="Browse hand-picked shelves and smart lists created for this library."
+                        FontSize="14"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+
+                <!-- Empty state card (web: surface-panel rounded-[2rem] border-0) -->
+                <Border
+                    x:Name="CollectionsEmptyCard"
+                    Background="{StaticResource SurfaceBrush}"
+                    CornerRadius="24"
+                    Padding="40,40"
+                    HorizontalAlignment="Center">
+                    <StackPanel HorizontalAlignment="Center" Spacing="8">
+                        <TextBlock
+                            Text="No collections yet"
+                            FontSize="18"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource PrimaryTextBrush}"
+                            HorizontalAlignment="Center" />
+                        <TextBlock
+                            Text="Create library collections from the admin area to feature curated shelves here."
+                            FontSize="14"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            HorizontalAlignment="Center"
+                            TextWrapping="Wrap"
+                            MaxWidth="400"
+                            TextAlignment="Center" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Collections grid (populated dynamically) -->
+                <ItemsRepeater x:Name="CollectionsRepeater" Visibility="Collapsed">
+                    <ItemsRepeater.Layout>
+                        <UniformGridLayout
+                            MinItemWidth="{StaticResource PosterCardWidth}"
+                            MinItemHeight="{StaticResource PosterCardTotalHeight}"
+                            MinColumnSpacing="12"
+                            MinRowSpacing="16"
+                            ItemsStretch="None" />
+                    </ItemsRepeater.Layout>
+                </ItemsRepeater>
+
+                <!-- Collections loading -->
+                <ProgressRing
+                    x:Name="CollectionsLoading"
+                    IsActive="False"
+                    HorizontalAlignment="Center"
+                    Width="32" Height="32"
+                    Visibility="Collapsed" />
+            </StackPanel>
+        </ScrollViewer>
     </Grid>
 </Page>
