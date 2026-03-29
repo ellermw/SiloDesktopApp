@@ -36,6 +36,12 @@ public sealed class MpvPlayer : IDisposable
     private int _stride;
     private readonly object _renderSizeLock = new();
 
+    // Pre-allocated render params (reused every frame to avoid GC pressure)
+    private int[] _renderSizeArr = new int[2];
+    private GCHandle _renderSizePin;
+    private long _renderStrideValue;
+    private GCHandle _renderStridePin;
+
     // Signals from the update callback that a new frame is available
     private readonly ManualResetEventSlim _frameUpdateEvent = new(false);
 
@@ -105,14 +111,12 @@ public sealed class MpvPlayer : IDisposable
         if (_mpvHandle == IntPtr.Zero)
             throw new InvalidOperationException("mpv_create() returned null.");
 
-        // Hardware decode to system memory (GPU decodes, copies frame to RAM for SW render)
+        // Hardware decode to system memory (GPU decodes at native resolution, copies to RAM)
         SetOption("hwdec", "d3d11va-copy");
 
-        // Disable mpv's on-screen controller -- we handle controls in XAML
+        // Disable mpv's on-screen controller and input — we handle everything in XAML
         SetOption("osc", "no");
         SetOption("osd-level", "0");
-
-        // Disable mpv's keyboard handling -- we handle keyboard in XAML
         SetOption("input-default-bindings", "no");
         SetOption("input-vo-keyboard", "no");
 
@@ -120,29 +124,51 @@ public sealed class MpvPlayer : IDisposable
         SetOption("keep-open", "yes");
         SetOption("idle", "yes");
 
-        // Buffering for high-bitrate content (30-40+ Mbps)
+        // === High-bitrate / 4K remux buffering ===
         SetOption("cache", "yes");
         SetOption("ytdl", "no");
-        SetOption("demuxer-max-bytes", "150MiB");
-        SetOption("demuxer-max-back-bytes", "50MiB");
+        SetOption("demuxer-max-bytes", "800MiB");       // 800MB forward buffer
+        SetOption("demuxer-max-back-bytes", "200MiB");   // 200MB backward buffer
+        SetOption("demuxer-readahead-secs", "300");      // Read ahead 5 minutes
+        SetOption("cache-secs", "300");                  // Keep 5 minutes cached
+        SetOption("cache-pause-initial", "yes");         // Pause until cache has enough data
+        SetOption("cache-pause-wait", "3");              // Wait for 3 seconds of data before resuming
+        SetOption("stream-buffer-size", "4MiB");         // 4MB stream read buffer (default is 128KB)
+
+        // === Seeking performance ===
+        SetOption("hr-seek-framedrop", "yes");           // Drop frames during seek for speed
+        SetOption("hr-seek", "yes");                     // Exact seek (not keyframe-only)
+
+        // === Audio — preserve full quality, no resampling ===
+        SetOption("audio-channels", "auto");             // Pass through native channel layout
+        SetOption("audio-samplerate", "0");              // No resampling — native sample rate
+        SetOption("audio-pitch-correction", "no");       // No pitch correction artifacts
+        SetOption("ad-lavc-downmix", "no");              // Never downmix — preserve all channels
+        SetOption("replaygain", "no");                   // No volume normalization
+
+        // === Video — preserve full quality ===
+        SetOption("video-sync", "audio");                // Sync video to audio (standard, low latency)
+        SetOption("framedrop", "vo");                    // Drop at VO level if display can't keep up
+        SetOption("correct-downscaling", "yes");         // High quality scaling when display < source
+        SetOption("deband", "no");                       // No debanding — preserve original signal
 
         // vo=libmpv is required when using the render API
         SetOption("vo", "libmpv");
 
-        // Enable logging to file for debugging
+        // Logging (production: status only, not verbose)
         var logPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "ContinuumPlayer", "mpv_log.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
         SetOption("log-file", logPath);
-        SetOption("msg-level", "all=v");
+        SetOption("msg-level", "all=status");
 
         // Initialize mpv
         int err = mpv_initialize(_mpvHandle);
         if (err < 0)
         {
             string errMsg = GetErrorString(err);
-            mpv_destroy(_mpvHandle);
+            mpv_terminate_destroy(_mpvHandle);
             _mpvHandle = IntPtr.Zero;
             throw new InvalidOperationException($"mpv_initialize failed: {errMsg}");
         }
@@ -224,6 +250,94 @@ public sealed class MpvPlayer : IDisposable
         }
     }
 
+    // ── GPU window-based initialization ─────────────────────────────────
+
+    /// <summary>
+    /// Creates the mpv instance using GPU rendering into a provided window handle.
+    /// mpv renders directly via D3D11 -- zero frame copies, hardware accelerated.
+    /// </summary>
+    public void InitializeWithWindow(IntPtr windowHandle)
+    {
+        if (_mpvHandle != IntPtr.Zero)
+            throw new InvalidOperationException("MpvPlayer is already initialized.");
+
+        _mpvHandle = mpv_create();
+        if (_mpvHandle == IntPtr.Zero)
+            throw new InvalidOperationException("mpv_create() returned null.");
+
+        // Full hardware decode (GPU stays in GPU, no copy to RAM)
+        SetOption("hwdec", "auto");
+
+        // GPU video output -- renders directly into the wid window
+        SetOption("vo", "gpu");
+        SetOption("gpu-context", "d3d11");
+
+        // Set the target window handle
+        SetOption("wid", windowHandle.ToString());
+
+        // Disable mpv's on-screen controller -- we handle controls in XAML
+        SetOption("osc", "no");
+        SetOption("osd-level", "0");
+
+        // Disable mpv's keyboard/mouse handling -- we handle input in XAML
+        SetOption("input-default-bindings", "no");
+        SetOption("input-vo-keyboard", "no");
+        SetOption("input-cursor", "no");
+
+        // Player behavior
+        SetOption("keep-open", "yes");
+        SetOption("idle", "yes");
+
+        // Buffering for ultra high-bitrate content (100+ Mbps 4K remux)
+        SetOption("cache", "yes");
+        SetOption("ytdl", "no");
+        SetOption("demuxer-max-bytes", "800MiB");
+        SetOption("demuxer-max-back-bytes", "200MiB");
+        SetOption("demuxer-readahead-secs", "120");
+
+        // Performance tuning
+        SetOption("video-sync", "display-resample");
+        SetOption("interpolation", "no");
+        SetOption("hr-seek-framedrop", "yes");
+
+        // HDR passthrough if the display supports it
+        SetOption("target-colorspace-hint", "yes");
+
+        // Logging
+        var logPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ContinuumPlayer", "mpv_log.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+        SetOption("log-file", logPath);
+        SetOption("msg-level", "all=status");
+
+        // Initialize
+        int err = mpv_initialize(_mpvHandle);
+        if (err < 0)
+        {
+            string errMsg = GetErrorString(err);
+            mpv_terminate_destroy(_mpvHandle);
+            _mpvHandle = IntPtr.Zero;
+            throw new InvalidOperationException($"mpv_initialize failed: {errMsg}");
+        }
+
+        // Observe properties
+        mpv_observe_property(_mpvHandle, UD_TIME_POS, "time-pos", MPV_FORMAT_DOUBLE);
+        mpv_observe_property(_mpvHandle, UD_DURATION, "duration", MPV_FORMAT_DOUBLE);
+        mpv_observe_property(_mpvHandle, UD_PAUSE, "pause", MPV_FORMAT_FLAG);
+        mpv_observe_property(_mpvHandle, UD_EOF_REACHED, "eof-reached", MPV_FORMAT_FLAG);
+
+        // Start event loop thread
+        _eventThread = new Thread(EventLoop)
+        {
+            IsBackground = true,
+            Name = "MpvEventLoop"
+        };
+        _eventThread.Start();
+
+        // No render thread needed -- mpv handles rendering internally via vo=gpu
+    }
+
     // ── Render size management ───────────────────────────────────────────
 
     /// <summary>
@@ -266,13 +380,16 @@ public sealed class MpvPlayer : IDisposable
 
     private void RenderLoop()
     {
-        // Pre-allocate pinned memory for render params that don't change type
-        // We'll reallocate the actual param structs each frame since size may change
         byte[] formatBytes = "bgr0\0"u8.ToArray();
         var formatPin = GCHandle.Alloc(formatBytes, GCHandleType.Pinned);
 
         int paramSize = Marshal.SizeOf<MpvRenderParam>();
         IntPtr paramsPtr = Marshal.AllocHGlobal(paramSize * 5);
+
+        // Pre-pin the reusable size buffer (updated in-place each frame)
+        _renderSizePin = GCHandle.Alloc(_renderSizeArr, GCHandleType.Pinned);
+        // Pin initial stride value
+        _renderStridePin = GCHandle.Alloc(_renderStrideValue, GCHandleType.Pinned);
 
         try
         {
@@ -286,34 +403,37 @@ public sealed class MpvPlayer : IDisposable
                 var flags = mpv_render_context_update(_renderCtx);
                 if ((flags & MPV_RENDER_UPDATE_FRAME) == 0) continue;
 
-                int w, h, stride;
                 byte[] buffer;
-                IntPtr bufferPtr;
+                int w, h;
+                long stride;
 
                 lock (_renderSizeLock)
                 {
-                    if (_frameBuffer == null || !_frameBufferPin.IsAllocated) continue;
+                    if (_frameBuffer == null || !_frameBufferPin.IsAllocated)
+                        continue;
+
                     w = _renderWidth;
                     h = _renderHeight;
                     stride = _stride;
                     buffer = _frameBuffer;
-                    bufferPtr = _frameBufferPin.AddrOfPinnedObject();
-                }
 
-                // Build size array [w, h] and pin it
-                int[] sizeArr = { w, h };
-                var sizePin = GCHandle.Alloc(sizeArr, GCHandleType.Pinned);
+                    // Update pre-allocated arrays in place
+                    _renderSizeArr[0] = w;
+                    _renderSizeArr[1] = h;
 
-                // Stride needs to be a pointer to a size_t value (8 bytes on 64-bit)
-                long strideValue = stride;
-                var stridePin = GCHandle.Alloc(strideValue, GCHandleType.Pinned);
+                    // Stride is a boxed long -- must re-pin when value changes
+                    if (_renderStrideValue != stride)
+                    {
+                        _renderStrideValue = stride;
+                        if (_renderStridePin.IsAllocated) _renderStridePin.Free();
+                        _renderStridePin = GCHandle.Alloc(_renderStrideValue, GCHandleType.Pinned);
+                    }
 
-                try
-                {
-                    // Build render params: SW_SIZE, SW_FORMAT, SW_STRIDE, SW_POINTER, terminator
-                    var p0 = new MpvRenderParam { Type = (IntPtr)MPV_RENDER_PARAM_SW_SIZE, Data = sizePin.AddrOfPinnedObject() };
+                    var bufferPtr = _frameBufferPin.AddrOfPinnedObject();
+
+                    var p0 = new MpvRenderParam { Type = (IntPtr)MPV_RENDER_PARAM_SW_SIZE, Data = _renderSizePin.AddrOfPinnedObject() };
                     var p1 = new MpvRenderParam { Type = (IntPtr)MPV_RENDER_PARAM_SW_FORMAT, Data = formatPin.AddrOfPinnedObject() };
-                    var p2 = new MpvRenderParam { Type = (IntPtr)MPV_RENDER_PARAM_SW_STRIDE, Data = stridePin.AddrOfPinnedObject() };
+                    var p2 = new MpvRenderParam { Type = (IntPtr)MPV_RENDER_PARAM_SW_STRIDE, Data = _renderStridePin.AddrOfPinnedObject() };
                     var p3 = new MpvRenderParam { Type = (IntPtr)MPV_RENDER_PARAM_SW_POINTER, Data = bufferPtr };
                     var pEnd = new MpvRenderParam { Type = IntPtr.Zero, Data = IntPtr.Zero };
 
@@ -325,24 +445,18 @@ public sealed class MpvPlayer : IDisposable
 
                     int err = mpv_render_context_render(_renderCtx, paramsPtr);
                     if (err < 0)
-                    {
-                        // Non-fatal, skip this frame
                         continue;
-                    }
+                }
 
-                    // Signal frame ready to the UI layer
-                    FrameReady?.Invoke(buffer, w, h, stride);
-                }
-                finally
-                {
-                    sizePin.Free();
-                    stridePin.Free();
-                }
+                // Signal frame ready OUTSIDE the lock (subscribers copy the buffer)
+                FrameReady?.Invoke(buffer, w, h, (int)stride);
             }
         }
         finally
         {
             if (formatPin.IsAllocated) formatPin.Free();
+            if (_renderSizePin.IsAllocated) _renderSizePin.Free();
+            if (_renderStridePin.IsAllocated) _renderStridePin.Free();
             Marshal.FreeHGlobal(paramsPtr);
         }
     }
@@ -365,6 +479,13 @@ public sealed class MpvPlayer : IDisposable
         }
 
         Command("loadfile", url);
+    }
+
+    /// <summary>Stops the current file without triggering end-of-file events.</summary>
+    public void Stop()
+    {
+        ThrowIfNotInitialized();
+        Command("stop");
     }
 
     /// <summary>Resumes playback.</summary>
@@ -668,6 +789,10 @@ public sealed class MpvPlayer : IDisposable
         // Free pinned buffers
         if (_frameBufferPin.IsAllocated)
             _frameBufferPin.Free();
+        if (_renderSizePin.IsAllocated)
+            _renderSizePin.Free();
+        if (_renderStridePin.IsAllocated)
+            _renderStridePin.Free();
 
         // Free render context creation artifacts
         if (_createParamsPtr != IntPtr.Zero)
