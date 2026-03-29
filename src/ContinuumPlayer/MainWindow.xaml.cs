@@ -114,33 +114,38 @@ public sealed partial class MainWindow : Window
         _navigationService.Navigate<ServerSelectPage>();
     }
 
+    private bool _navInitialized;
+
     public void ShowMainNavigation()
     {
         NavView.IsPaneVisible = true;
-        _ = _viewModel.LoadLibrariesCommand.ExecuteAsync(null);
 
-        // Update profile display in the sidebar footer
-        UpdateProfileDisplay();
-
-        // Show Admin button if user is admin
-        AdminButton.Visibility = _authService.CurrentUser?.Role == "admin"
-            ? Visibility.Visible : Visibility.Collapsed;
-
-        // Watch for library changes to update nav (marshal to UI thread)
-        _viewModel.Libraries.CollectionChanged += (_, _) =>
+        if (!_navInitialized)
         {
-            DispatcherQueue.TryEnqueue(() => UpdateLibraryNavItems());
-        };
+            _navInitialized = true;
+
+            // Fire both loads concurrently -- they are independent
+            _ = _viewModel.LoadLibrariesCommand.ExecuteAsync(null);
+            _ = UpdateProfileDisplayAsync();
+
+            // Show Admin button if user is admin
+            AdminButton.Visibility = _authService.CurrentUser?.Role == "admin"
+                ? Visibility.Visible : Visibility.Collapsed;
+
+            // Watch for library changes to update nav (marshal to UI thread)
+            _viewModel.Libraries.CollectionChanged += (_, _) =>
+            {
+                DispatcherQueue.TryEnqueue(() => UpdateLibraryNavItems());
+            };
+        }
     }
 
-    private void UpdateProfileDisplay()
+    private Task UpdateProfileDisplayAsync()
     {
         var profileId = _authService.SelectedProfileId;
         if (!string.IsNullOrEmpty(profileId))
-        {
-            // Try to load the profile name from the API asynchronously
-            _ = LoadProfileNameAsync(profileId);
-        }
+            return LoadProfileNameAsync(profileId);
+        return Task.CompletedTask;
     }
 
     private async Task LoadProfileNameAsync(string profileId)
