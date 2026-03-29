@@ -4,18 +4,7 @@ using ContinuumPlayer.Core.Models.Catalog;
 namespace ContinuumPlayer.Core.Api;
 
 // Simple list-wrapper response types used by endpoints that return JSON arrays wrapped in an object.
-file class AdminSessionsResponse { public List<AdminSession> Sessions { get; set; } = []; }
-file class AdminUsersResponse { public List<AdminUser> Users { get; set; } = []; }
-file class AdminUserProfilesResponse { public List<AdminUserProfile> Profiles { get; set; } = []; }
-file class AdminUserIPsResponse { public List<UserIPEntry> Ips { get; set; } = []; }
-file class AdminIPUsersResponse { public List<IPUserEntry> Users { get; set; } = []; }
-file class AdminTasksResponse { public List<TaskInfo> Tasks { get; set; } = []; }
-file class AdminTaskHistoryResponse { public List<ExecutionResult> History { get; set; } = []; }
-file class AdminNodesResponse { public List<StreamNode> Nodes { get; set; } = []; }
-file class AdminAPIKeysResponse { public List<AdminAPIKey> ApiKeys { get; set; } = []; }
-file class AdminPlaybackHistoryResponse { public List<AdminPlaybackHistoryItem> Items { get; set; } = []; }
 file class AdminSensitiveStatusResponse { public List<string> Configured { get; set; } = []; }
-file class AdminSkippedRootsResponse { public List<LibrarySkippedRoot> Roots { get; set; } = []; }
 // AdminSectionsListResponse is in Models/Admin/AdminSection.cs
 
 public class AdminApi(ContinuumApiClient client)

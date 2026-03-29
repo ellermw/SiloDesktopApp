@@ -5,7 +5,7 @@ namespace ContinuumPlayer.Player;
 /// <summary>
 /// Raw P/Invoke declarations for libmpv and Win32 window management.
 /// </summary>
-internal static class MpvInterop
+public static class MpvInterop
 {
     private const string LibMpv = "libmpv-2.dll";
 
@@ -64,9 +64,6 @@ internal static class MpvInterop
     [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
     public static extern void mpv_terminate_destroy(IntPtr ctx);
 
-    [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void mpv_destroy(IntPtr ctx);
-
     /// <summary>
     /// Send a command to the player.
     /// args is a NULL-terminated array of UTF-8 string pointers.
@@ -83,11 +80,6 @@ internal static class MpvInterop
     public static extern int mpv_set_property_string(IntPtr ctx,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string data);
-
-    [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int mpv_get_property(IntPtr ctx,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
-        int format, out double data);
 
     [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl, EntryPoint = "mpv_get_property")]
     public static extern int mpv_get_property_int(IntPtr ctx,
