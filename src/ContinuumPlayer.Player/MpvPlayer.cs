@@ -132,8 +132,8 @@ public sealed class MpvPlayer : IDisposable
         SetOption("demuxer-readahead-secs", "300");      // Read ahead 5 minutes
         SetOption("cache-secs", "300");                  // Keep 5 minutes cached
         SetOption("cache-pause-initial", "yes");         // Pause until cache has enough data
-        SetOption("cache-pause-wait", "3");              // Wait for 3 seconds of data before resuming
-        SetOption("stream-buffer-size", "4MiB");         // 4MB stream read buffer (default is 128KB)
+        SetOption("cache-pause-wait", "10");             // Wait for 10 seconds of data before resuming (high-bitrate needs more runway)
+        SetOption("stream-buffer-size", "16MiB");        // 16MB stream read buffer (4K remux at 40+ Mbps needs large reads)
 
         // === Seeking performance ===
         SetOption("hr-seek-framedrop", "yes");           // Drop frames during seek for speed

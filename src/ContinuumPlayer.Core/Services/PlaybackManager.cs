@@ -50,13 +50,15 @@ public class PlaybackManager : IDisposable
         return sorted.First();
     }
 
-    public async Task<PlaybackStartResponse> StartSessionAsync(int fileId, double startPosition = 0, CancellationToken ct = default)
+    public async Task<PlaybackStartResponse> StartSessionAsync(int fileId, double startPosition = 0, bool forceStartPosition = false, CancellationToken ct = default)
     {
         var request = new PlaybackStartRequest
         {
             FileId = fileId,
             ProfileId = _authService.SelectedProfileId ?? "",
-            StartPosition = startPosition > 0 ? startPosition : null,
+            // Send explicit 0 when forceStartPosition is true (play from start).
+            // null means "let server restore saved progress".
+            StartPosition = forceStartPosition ? startPosition : (startPosition > 0 ? startPosition : null),
         };
 
         var response = await _playbackApi.StartPlaybackAsync(request, ct);
