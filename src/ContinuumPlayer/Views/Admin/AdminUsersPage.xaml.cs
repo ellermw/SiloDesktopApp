@@ -13,6 +13,16 @@ public sealed partial class AdminUsersPage : Page
 {
     public AdminUsersViewModel ViewModel { get; }
 
+    // Playback quality options matching web UI
+    private static readonly (string Value, string Label, string Description)[] PlaybackQualityOptions =
+    [
+        ("any", "Any", "Allow all resolutions"),
+        ("standard", "Standard", "Hide 4K and higher versions"),
+        ("4k", "4K", "Allow 4K and lower versions"),
+    ];
+
+    private bool _rebuildPending;
+
     public AdminUsersPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminUsersViewModel>();
@@ -23,13 +33,50 @@ public sealed partial class AdminUsersPage : Page
     {
         try
         {
-            ViewModel.Users.CollectionChanged += (_, _) => BuildUserRows();
+            ViewModel.Users.CollectionChanged += (_, _) => ScheduleRebuild();
             await ViewModel.LoadCommand.ExecuteAsync(null);
         }
         catch (Exception ex)
         {
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
+    }
+
+    private void ScheduleRebuild()
+    {
+        if (_rebuildPending) return;
+        _rebuildPending = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _rebuildPending = false;
+            BuildUserRows();
+        });
+    }
+
+    // ===== Tab Switching =====
+
+    private void TabUsers_Click(object sender, RoutedEventArgs e)
+    {
+        UsersTabContent.Visibility = Visibility.Visible;
+        InviteCodesTabContent.Visibility = Visibility.Collapsed;
+        TabUsersIndicator.Visibility = Visibility.Visible;
+        TabInviteCodesIndicator.Visibility = Visibility.Collapsed;
+        TabUsersText.Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"];
+        TabUsersText.FontWeight = FontWeights.SemiBold;
+        TabInviteCodesText.Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
+        TabInviteCodesText.FontWeight = FontWeights.Normal;
+    }
+
+    private void TabInviteCodes_Click(object sender, RoutedEventArgs e)
+    {
+        UsersTabContent.Visibility = Visibility.Collapsed;
+        InviteCodesTabContent.Visibility = Visibility.Visible;
+        TabUsersIndicator.Visibility = Visibility.Collapsed;
+        TabInviteCodesIndicator.Visibility = Visibility.Visible;
+        TabInviteCodesText.Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"];
+        TabInviteCodesText.FontWeight = FontWeights.SemiBold;
+        TabUsersText.Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
+        TabUsersText.FontWeight = FontWeights.Normal;
     }
 
     // ===== Table Builder =====
@@ -75,45 +122,25 @@ public sealed partial class AdminUsersPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
 
-        // ---- User column: avatar + username ----
-        string initial = user.Username.Length > 0 ? user.Username[0].ToString().ToUpper() : "?";
-
-        var avatarBorder = new Border
+        // ---- Username as clickable link ----
+        var capturedUser = user;
+        var userNameLink = new HyperlinkButton
         {
-            Width = 28,
-            Height = 28,
-            CornerRadius = new CornerRadius(14),
-            Background = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+            Content = user.Username,
+            Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 8, 0)
-        };
-        avatarBorder.Child = new TextBlock
-        {
-            Text = initial,
-            FontSize = 12,
-            FontWeight = FontWeights.Bold,
-            Foreground = (SolidColorBrush)Application.Current.Resources["AccentForegroundBrush"],
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        var userNameBlock = new TextBlock
-        {
-            Text = user.Username,
+            Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
             FontSize = 13,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
+            FontWeight = FontWeights.SemiBold
         };
+        userNameLink.Click += (_, _) => Frame.Navigate(typeof(AdminUserDetailPage), capturedUser.Id);
 
         var userCell = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center
         };
-        userCell.Children.Add(avatarBorder);
-        userCell.Children.Add(userNameBlock);
+        userCell.Children.Add(userNameLink);
 
         // ---- Email column ----
         var emailBlock = new TextBlock
@@ -126,17 +153,15 @@ public sealed partial class AdminUsersPage : Page
         };
 
         // ---- Role badge ----
+        // admin = AccentBackgroundBrush bg / AccentBrush fg (default variant)
+        // user = SurfaceBrush bg / SecondaryTextBrush fg (secondary variant)
         bool isAdmin = user.Role?.ToLowerInvariant() == "admin";
-        var roleBg = isAdmin
-            ? Color.FromArgb(40, 120, 174, 252)
-            : Color.FromArgb(40, 100, 100, 100);
-        var roleFg = isAdmin
-            ? Color.FromArgb(255, 120, 174, 252)
-            : Color.FromArgb(255, 160, 160, 160);
 
         var roleBadge = new Border
         {
-            Background = new SolidColorBrush(roleBg),
+            Background = isAdmin
+                ? (SolidColorBrush)Application.Current.Resources["AccentBackgroundBrush"]
+                : (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(6, 3, 6, 3),
             HorizontalAlignment = HorizontalAlignment.Left,
@@ -147,39 +172,55 @@ public sealed partial class AdminUsersPage : Page
             Text = user.Role ?? "user",
             FontSize = 11,
             FontWeight = FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(roleFg)
+            Foreground = isAdmin
+                ? (SolidColorBrush)Application.Current.Resources["AccentBrush"]
+                : (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
         };
 
         // ---- Status badge ----
-        var statusBg = user.Enabled
-            ? Color.FromArgb(0, 0, 0, 0)
-            : Color.FromArgb(40, 200, 70, 70);
-        var statusFg = user.Enabled
-            ? Color.FromArgb(255, 63, 185, 80)
-            : Color.FromArgb(255, 220, 90, 90);
-        var statusBorderColor = user.Enabled
-            ? Color.FromArgb(120, 63, 185, 80)
-            : Color.FromArgb(120, 200, 70, 70);
-
-        var statusBadge = new Border
+        // Active = outline style (BorderBrush border, transparent bg)
+        // Disabled = ErrorBrush background
+        Border statusBadge;
+        if (user.Enabled)
         {
-            Background = new SolidColorBrush(statusBg),
-            BorderBrush = new SolidColorBrush(statusBorderColor),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(6, 3, 6, 3),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        statusBadge.Child = new TextBlock
+            statusBadge = new Border
+            {
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(6, 3, 6, 3),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            statusBadge.Child = new TextBlock
+            {
+                Text = "Active",
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
+            };
+        }
+        else
         {
-            Text = user.Enabled ? "Active" : "Disabled",
-            FontSize = 11,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(statusFg)
-        };
+            statusBadge = new Border
+            {
+                Background = (SolidColorBrush)Application.Current.Resources["ErrorBrush"],
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(6, 3, 6, 3),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            statusBadge.Child = new TextBlock
+            {
+                Text = "Disabled",
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Colors.White)
+            };
+        }
 
-        // ---- Actions ----
+        // ---- Actions: 28x28 ghost-style icon buttons ----
         var actionsPanel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -187,13 +228,12 @@ public sealed partial class AdminUsersPage : Page
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        var historyBtn = MakeIconButton("\uE81C", "View history");
-        var editBtn = MakeIconButton("\uE70F", "Edit user");
-        var deleteBtn = MakeIconButton("\uE74D", "Delete user");
+        var historyBtn = MakeGhostIconButton("\uE81C", "View history");
+        var editBtn = MakeGhostIconButton("\uE70F", "Edit user");
+        var deleteBtn = MakeGhostIconButton("\uE74D", "Delete user");
 
-        // Wire up click handlers capturing user
-        var capturedUser = user;
-        historyBtn.Click += (_, _) => Frame.Navigate(typeof(AdminUserDetailPage), capturedUser.Id);
+        // Wire up click handlers
+        historyBtn.Click += (_, _) => Frame.Navigate(typeof(AdminPlaybackHistoryPage), capturedUser.Id);
         editBtn.Click += async (_, _) => await OpenEditDialogAsync(capturedUser);
         deleteBtn.Click += async (_, _) => await OpenDeleteDialogAsync(capturedUser);
 
@@ -216,12 +256,17 @@ public sealed partial class AdminUsersPage : Page
         return row;
     }
 
-    private static Button MakeIconButton(string glyph, string tooltip)
+    /// <summary>
+    /// Creates a 28x28 ghost-style icon button (transparent bg, no border).
+    /// </summary>
+    private static Button MakeGhostIconButton(string glyph, string tooltip)
     {
         var btn = new Button
         {
-            Width = 32,
-            Height = 32,
+            Width = 28,
+            Height = 28,
+            MinWidth = 0,
+            MinHeight = 0,
             Padding = new Thickness(0),
             Background = new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
@@ -229,7 +274,7 @@ public sealed partial class AdminUsersPage : Page
             Content = new FontIcon
             {
                 Glyph = glyph,
-                FontSize = 14,
+                FontSize = 12,
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
             }
         };
@@ -246,11 +291,11 @@ public sealed partial class AdminUsersPage : Page
 
     private async void UserDefaultsButton_Click(object sender, RoutedEventArgs e)
     {
-        var content = BuildUserDefaultsForm(out _);
+        var content = BuildUserDefaultsForm();
 
         var dialog = new ContentDialog
         {
-            Title = "User Defaults",
+            Title = "Default New User Settings",
             CloseButtonText = "Close",
             XamlRoot = this.XamlRoot,
             Content = content
@@ -267,7 +312,7 @@ public sealed partial class AdminUsersPage : Page
 
         var dialog = new ContentDialog
         {
-            Title = "Add User",
+            Title = "Create User",
             PrimaryButtonText = "Save",
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
@@ -327,7 +372,7 @@ public sealed partial class AdminUsersPage : Page
     {
         var dialog = new ContentDialog
         {
-            Title = "Delete User",
+            Title = "Delete user",
             Content = $"Delete user \"{user.Username}\"? This action cannot be undone.",
             PrimaryButtonText = "Delete",
             CloseButtonText = "Cancel",
@@ -350,9 +395,8 @@ public sealed partial class AdminUsersPage : Page
     // ===== Form Builder =====
 
     /// <summary>
-    /// Builds the create/edit form.
-    /// Returns (content element, getRequest func).
-    /// getRequest returns (CreateUserRequest?, UpdateUserRequest?) — one is non-null depending on mode.
+    /// Builds the create/edit user form with 3 tabs: Account, Access, Limits.
+    /// Matches web UI's UserForm component.
     /// </summary>
     private (FrameworkElement Content, Func<(CreateUserRequest?, UpdateUserRequest?)> GetRequest)
         BuildUserForm(AdminUser? editingUser)
@@ -400,33 +444,50 @@ public sealed partial class AdminUsersPage : Page
             OffContent = "Disabled"
         };
 
+        // Account tab — 2-column grid for Username/Email/Password/Role
         var accountTab = new StackPanel { Spacing = 14 };
 
-        // Username
+        var accountGrid = new Grid { ColumnSpacing = 12, RowSpacing = 12 };
+        accountGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        accountGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        accountGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        accountGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        // Username (row 0, col 0)
         var usernameGroup = new StackPanel { Spacing = 6 };
         usernameGroup.Children.Add(MakeFormLabel("Username"));
         usernameGroup.Children.Add(usernameBox);
-        accountTab.Children.Add(usernameGroup);
+        Grid.SetRow(usernameGroup, 0);
+        Grid.SetColumn(usernameGroup, 0);
 
-        // Email
+        // Email (row 0, col 1)
         var emailGroup = new StackPanel { Spacing = 6 };
         emailGroup.Children.Add(MakeFormLabel("Email"));
         emailGroup.Children.Add(emailBox);
-        accountTab.Children.Add(emailGroup);
+        Grid.SetRow(emailGroup, 0);
+        Grid.SetColumn(emailGroup, 1);
 
-        // Password
+        // Password (row 1, col 0)
         var passwordGroup = new StackPanel { Spacing = 6 };
         passwordGroup.Children.Add(MakeFormLabel(isEdit ? "Password (leave blank to keep current)" : "Password"));
         passwordGroup.Children.Add(passwordBox);
-        accountTab.Children.Add(passwordGroup);
+        Grid.SetRow(passwordGroup, 1);
+        Grid.SetColumn(passwordGroup, 0);
 
-        // Role
+        // Role (row 1, col 1)
         var roleGroup = new StackPanel { Spacing = 6 };
         roleGroup.Children.Add(MakeFormLabel("Role"));
         roleGroup.Children.Add(roleCombo);
-        accountTab.Children.Add(roleGroup);
+        Grid.SetRow(roleGroup, 1);
+        Grid.SetColumn(roleGroup, 1);
 
-        // Enabled toggle (edit only)
+        accountGrid.Children.Add(usernameGroup);
+        accountGrid.Children.Add(emailGroup);
+        accountGrid.Children.Add(passwordGroup);
+        accountGrid.Children.Add(roleGroup);
+        accountTab.Children.Add(accountGrid);
+
+        // Account status card with toggle (edit only)
         if (isEdit)
         {
             var statusRow = new Border
@@ -443,7 +504,7 @@ public sealed partial class AdminUsersPage : Page
             var statusDesc = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             statusDesc.Children.Add(new TextBlock
             {
-                Text = "Account Status",
+                Text = "Account status",
                 FontSize = 13,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
@@ -463,51 +524,6 @@ public sealed partial class AdminUsersPage : Page
             accountTab.Children.Add(statusRow);
         }
 
-        // ---- Limits tab fields ----
-        var maxStreamsBox = new NumberBox
-        {
-            Value = editingUser?.MaxStreams ?? 0,
-            Minimum = 0,
-            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
-            CornerRadius = new CornerRadius(8),
-            FontSize = 13,
-            HorizontalAlignment = HorizontalAlignment.Stretch
-        };
-
-        var maxTranscodesBox = new NumberBox
-        {
-            Value = editingUser?.MaxTranscodes ?? 0,
-            Minimum = 0,
-            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
-            CornerRadius = new CornerRadius(8),
-            FontSize = 13,
-            HorizontalAlignment = HorizontalAlignment.Stretch
-        };
-
-        var limitsTab = new StackPanel { Spacing = 14 };
-
-        var streamsGroup = new StackPanel { Spacing = 6 };
-        streamsGroup.Children.Add(MakeFormLabel("Max Streams"));
-        streamsGroup.Children.Add(maxStreamsBox);
-        streamsGroup.Children.Add(new TextBlock
-        {
-            Text = "0 = unlimited",
-            FontSize = 11,
-            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
-        });
-        limitsTab.Children.Add(streamsGroup);
-
-        var transcodesGroup = new StackPanel { Spacing = 6 };
-        transcodesGroup.Children.Add(MakeFormLabel("Max Transcodes"));
-        transcodesGroup.Children.Add(maxTranscodesBox);
-        transcodesGroup.Children.Add(new TextBlock
-        {
-            Text = "0 = unlimited",
-            FontSize = 11,
-            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
-        });
-        limitsTab.Children.Add(transcodesGroup);
-
         // ---- Access tab fields ----
         var downloadSwitch = new ToggleSwitch
         {
@@ -525,7 +541,7 @@ public sealed partial class AdminUsersPage : Page
 
         var accessTab = new StackPanel { Spacing = 14 };
 
-        // Library checkboxes
+        // Library access selector with "All libraries" toggle + per-library checkboxes
         var libraryGroup = new StackPanel { Spacing = 6 };
         libraryGroup.Children.Add(MakeFormLabel("Library Access"));
 
@@ -569,12 +585,103 @@ public sealed partial class AdminUsersPage : Page
         libraryGroup.Children.Add(libraryCheckboxPanel);
         accessTab.Children.Add(libraryGroup);
 
+        // Downloads Allowed and Download Transcode Allowed in bordered cards
         var downloadRow = MakeSwitchRow("Downloads Allowed", downloadSwitch);
         var downloadTranscodeRow = MakeSwitchRow("Download Transcode Allowed", downloadTranscodeSwitch);
         accessTab.Children.Add(downloadRow);
         accessTab.Children.Add(downloadTranscodeRow);
 
-        // ---- Tab container ----
+        // ---- Limits tab fields ----
+        var maxStreamsBox = new NumberBox
+        {
+            Value = editingUser?.MaxStreams ?? 0,
+            Minimum = 0,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
+            CornerRadius = new CornerRadius(8),
+            FontSize = 13,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+
+        var maxTranscodesBox = new NumberBox
+        {
+            Value = editingUser?.MaxTranscodes ?? 0,
+            Minimum = 0,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
+            CornerRadius = new CornerRadius(8),
+            FontSize = 13,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+
+        // Max Playback Quality dropdown
+        var qualityCombo = new ComboBox
+        {
+            CornerRadius = new CornerRadius(8),
+            FontSize = 13,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        string currentPreset = PlaybackQualityPresetFromValue(editingUser?.MaxPlaybackQuality);
+        int selectedQualityIndex = 0;
+        for (int i = 0; i < PlaybackQualityOptions.Length; i++)
+        {
+            qualityCombo.Items.Add(PlaybackQualityOptions[i].Label);
+            if (PlaybackQualityOptions[i].Value == currentPreset)
+                selectedQualityIndex = i;
+        }
+        qualityCombo.SelectedIndex = selectedQualityIndex;
+
+        var qualityDescription = new TextBlock
+        {
+            Text = PlaybackQualityOptions[selectedQualityIndex].Description,
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
+        };
+        qualityCombo.SelectionChanged += (_, _) =>
+        {
+            if (qualityCombo.SelectedIndex >= 0 && qualityCombo.SelectedIndex < PlaybackQualityOptions.Length)
+                qualityDescription.Text = PlaybackQualityOptions[qualityCombo.SelectedIndex].Description;
+        };
+
+        var limitsTab = new StackPanel { Spacing = 14 };
+
+        // 2-column grid for Max Streams / Max Transcodes
+        var limitsGrid = new Grid { ColumnSpacing = 12 };
+        limitsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        limitsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var streamsGroup = new StackPanel { Spacing = 4 };
+        streamsGroup.Children.Add(MakeFormLabel("Max Streams"));
+        streamsGroup.Children.Add(maxStreamsBox);
+        streamsGroup.Children.Add(new TextBlock
+        {
+            Text = "0 = unlimited",
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
+        });
+        Grid.SetColumn(streamsGroup, 0);
+
+        var transcodesGroup = new StackPanel { Spacing = 4 };
+        transcodesGroup.Children.Add(MakeFormLabel("Max Transcodes"));
+        transcodesGroup.Children.Add(maxTranscodesBox);
+        transcodesGroup.Children.Add(new TextBlock
+        {
+            Text = "0 = unlimited",
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
+        });
+        Grid.SetColumn(transcodesGroup, 1);
+
+        limitsGrid.Children.Add(streamsGroup);
+        limitsGrid.Children.Add(transcodesGroup);
+        limitsTab.Children.Add(limitsGrid);
+
+        // Max Playback Quality — full width
+        var qualityGroup = new StackPanel { Spacing = 4 };
+        qualityGroup.Children.Add(MakeFormLabel("Max Playback Quality"));
+        qualityGroup.Children.Add(qualityCombo);
+        qualityGroup.Children.Add(qualityDescription);
+        limitsTab.Children.Add(qualityGroup);
+
+        // ---- Tab container using Pivot (line-style tabs) ----
         var pivot = new Pivot
         {
             Margin = new Thickness(-12, 0, -12, 0),
@@ -589,7 +696,7 @@ public sealed partial class AdminUsersPage : Page
         pivot.Items.Add(accessItem);
         pivot.Items.Add(limitsItem);
 
-        var container = new StackPanel { Width = 460, Spacing = 0 };
+        var container = new StackPanel { Width = 520, Spacing = 0 };
         container.Children.Add(pivot);
 
         // ---- GetRequest func ----
@@ -603,6 +710,11 @@ public sealed partial class AdminUsersPage : Page
             int maxTranscodes = double.IsNaN(maxTranscodesBox.Value) ? 0 : (int)maxTranscodesBox.Value;
             bool downloadAllowed = downloadSwitch.IsOn;
             bool downloadTranscodeAllowed = downloadTranscodeSwitch.IsOn;
+
+            // Get playback quality value from selected preset
+            string qualityValue = "";
+            if (qualityCombo.SelectedIndex >= 0 && qualityCombo.SelectedIndex < PlaybackQualityOptions.Length)
+                qualityValue = PlaybackQualityValueFromPreset(PlaybackQualityOptions[qualityCombo.SelectedIndex].Value);
 
             List<int>? libraryIds = null;
             if (allLibsToggle.IsChecked != true)
@@ -624,6 +736,7 @@ public sealed partial class AdminUsersPage : Page
                     LibraryIds = libraryIds,
                     MaxStreams = maxStreams,
                     MaxTranscodes = maxTranscodes,
+                    MaxPlaybackQuality = qualityValue,
                     DownloadAllowed = downloadAllowed,
                     DownloadTranscodeAllowed = downloadTranscodeAllowed
                 };
@@ -641,6 +754,7 @@ public sealed partial class AdminUsersPage : Page
                     LibraryIds = libraryIds,
                     MaxStreams = maxStreams,
                     MaxTranscodes = maxTranscodes,
+                    MaxPlaybackQuality = string.IsNullOrEmpty(qualityValue) ? null : qualityValue,
                     DownloadAllowed = downloadAllowed,
                     DownloadTranscodeAllowed = downloadTranscodeAllowed
                 };
@@ -653,7 +767,7 @@ public sealed partial class AdminUsersPage : Page
 
     // ===== User Defaults Form =====
 
-    private FrameworkElement BuildUserDefaultsForm(out Func<Task> saveAction)
+    private FrameworkElement BuildUserDefaultsForm()
     {
         var maxStreamsBox = new NumberBox
         {
@@ -675,6 +789,28 @@ public sealed partial class AdminUsersPage : Page
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
 
+        var qualityCombo = new ComboBox
+        {
+            CornerRadius = new CornerRadius(8),
+            FontSize = 13,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        for (int i = 0; i < PlaybackQualityOptions.Length; i++)
+            qualityCombo.Items.Add(PlaybackQualityOptions[i].Label);
+        qualityCombo.SelectedIndex = 0; // "Any" by default
+
+        var qualityDescription = new TextBlock
+        {
+            Text = PlaybackQualityOptions[0].Description,
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
+        };
+        qualityCombo.SelectionChanged += (_, _) =>
+        {
+            if (qualityCombo.SelectedIndex >= 0 && qualityCombo.SelectedIndex < PlaybackQualityOptions.Length)
+                qualityDescription.Text = PlaybackQualityOptions[qualityCombo.SelectedIndex].Description;
+        };
+
         var downloadSwitch = new ToggleSwitch
         {
             IsOn = true,
@@ -689,8 +825,9 @@ public sealed partial class AdminUsersPage : Page
             OffContent = "Not allowed"
         };
 
-        var form = new StackPanel { Width = 380, Spacing = 14 };
+        var form = new StackPanel { Width = 420, Spacing = 14 };
 
+        // Subtitle
         form.Children.Add(new TextBlock
         {
             Text = "These defaults will pre-fill the form when creating new users.",
@@ -699,23 +836,74 @@ public sealed partial class AdminUsersPage : Page
             TextWrapping = TextWrapping.Wrap
         });
 
-        var streamsGroup = new StackPanel { Spacing = 6 };
+        // Max Streams / Max Transcodes in 2-column grid
+        var limitsGrid = new Grid { ColumnSpacing = 12 };
+        limitsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        limitsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var streamsGroup = new StackPanel { Spacing = 4 };
         streamsGroup.Children.Add(MakeFormLabel("Max Streams"));
         streamsGroup.Children.Add(maxStreamsBox);
         streamsGroup.Children.Add(new TextBlock { Text = "0 = unlimited", FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] });
-        form.Children.Add(streamsGroup);
+        Grid.SetColumn(streamsGroup, 0);
 
-        var transcodesGroup = new StackPanel { Spacing = 6 };
+        var transcodesGroup = new StackPanel { Spacing = 4 };
         transcodesGroup.Children.Add(MakeFormLabel("Max Transcodes"));
         transcodesGroup.Children.Add(maxTranscodesBox);
         transcodesGroup.Children.Add(new TextBlock { Text = "0 = unlimited", FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] });
-        form.Children.Add(transcodesGroup);
+        Grid.SetColumn(transcodesGroup, 1);
 
+        limitsGrid.Children.Add(streamsGroup);
+        limitsGrid.Children.Add(transcodesGroup);
+        form.Children.Add(limitsGrid);
+
+        // Max Playback Quality — full width
+        var qualityGroup = new StackPanel { Spacing = 4 };
+        qualityGroup.Children.Add(MakeFormLabel("Max Playback Quality"));
+        qualityGroup.Children.Add(qualityCombo);
+        qualityGroup.Children.Add(qualityDescription);
+        form.Children.Add(qualityGroup);
+
+        // Downloads toggles
         form.Children.Add(MakeSwitchRow("Downloads Allowed", downloadSwitch));
         form.Children.Add(MakeSwitchRow("Download Transcode Allowed", downloadTranscodeSwitch));
 
-        saveAction = () => Task.CompletedTask; // Defaults form is informational; real server settings requires AdminApi.UpdateAdminSettingAsync
         return form;
+    }
+
+    // ===== Playback Quality Helpers =====
+
+    private static string PlaybackQualityPresetFromValue(string? value)
+    {
+        string canonical = CanonicalPlaybackQuality(value);
+        return canonical switch
+        {
+            "2160p" => "4k",
+            "1080p" => "standard",
+            _ => "any"
+        };
+    }
+
+    private static string PlaybackQualityValueFromPreset(string preset)
+    {
+        return preset switch
+        {
+            "standard" => "1080p",
+            "4k" => "2160p",
+            _ => ""
+        };
+    }
+
+    private static string CanonicalPlaybackQuality(string? value)
+    {
+        string v = (value ?? "").Trim().ToLowerInvariant();
+        return v switch
+        {
+            "" or "any" => "",
+            "standard" or "480p" or "720p" or "1080p" => "1080p",
+            "4k" or "uhd" or "2160p" or "4320p" => "2160p",
+            _ => ""
+        };
     }
 
     // ===== Helpers =====

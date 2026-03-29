@@ -12,6 +12,7 @@ namespace ContinuumPlayer.Views.Admin;
 public sealed partial class AdminApiKeysPage : Page
 {
     public AdminApiKeysViewModel ViewModel { get; }
+    private bool _rebuildPending;
 
     public AdminApiKeysPage()
     {
@@ -21,7 +22,7 @@ public sealed partial class AdminApiKeysPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        ViewModel.ApiKeys.CollectionChanged += (_, _) => RebuildRows();
+        ViewModel.ApiKeys.CollectionChanged += (_, _) => ScheduleRebuild();
 
         try
         {
@@ -31,6 +32,17 @@ public sealed partial class AdminApiKeysPage : Page
         {
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
+    }
+
+    private void ScheduleRebuild()
+    {
+        if (_rebuildPending) return;
+        _rebuildPending = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _rebuildPending = false;
+            RebuildRows();
+        });
     }
 
     // ===== Row Builder =====
@@ -112,11 +124,12 @@ public sealed partial class AdminApiKeysPage : Page
             VerticalAlignment = VerticalAlignment.Center
         };
 
+        // bg-muted rounded px-1.5 py-0.5 → SurfaceRaisedBrush for contrast inside the card
         var keyCodeBorder = new Border
         {
-            Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
             CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(8, 3, 8, 3),
+            Padding = new Thickness(6, 2, 6, 2),
             VerticalAlignment = VerticalAlignment.Center
         };
         keyCodeBorder.Child = new TextBlock
@@ -128,7 +141,8 @@ public sealed partial class AdminApiKeysPage : Page
         };
         keyPanel.Children.Add(keyCodeBorder);
 
-        var copyBtn = MakeIconButton("\uE8C8", "Copy key");
+        // Copy button: web h-6 w-6 = 24px
+        var copyBtn = MakeIconButton("\uE8C8", "Copy key", size: 24);
         var capturedKey = key;
         copyBtn.Click += (_, _) => CopyToClipboard(capturedKey.Key);
         keyPanel.Children.Add(copyBtn);
@@ -136,29 +150,37 @@ public sealed partial class AdminApiKeysPage : Page
         Grid.SetColumn(keyPanel, 2);
         row.Children.Add(keyPanel);
 
-        // ---- Tier badge ----
-        bool isElevated = key.RateTier.Equals("elevated", StringComparison.OrdinalIgnoreCase);
-        var tierBadge = new Border
+        // ---- Tier dropdown (w-[120px] ComboBox — web uses inline Select) ----
+        var tierCombo = new ComboBox
         {
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(10, 4, 10, 4),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Center,
-            Background = isElevated
-                ? (SolidColorBrush)Application.Current.Resources["AccentBackgroundBrush"]
-                : (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"]
+            Width = 120,
+            FontSize = 13,
+            CornerRadius = new CornerRadius(8),
+            VerticalAlignment = VerticalAlignment.Center
         };
-        tierBadge.Child = new TextBlock
+        tierCombo.Items.Add(new ComboBoxItem { Content = "Standard", Tag = "standard" });
+        tierCombo.Items.Add(new ComboBoxItem { Content = "Elevated", Tag = "elevated" });
+        // Select current tier
+        foreach (ComboBoxItem item in tierCombo.Items)
         {
-            Text = isElevated ? "Elevated" : "Standard",
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = isElevated
-                ? (SolidColorBrush)Application.Current.Resources["AccentBrush"]
-                : (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+            if (string.Equals(item.Tag as string, key.RateTier, StringComparison.OrdinalIgnoreCase))
+            {
+                tierCombo.SelectedItem = item;
+                break;
+            }
+        }
+        if (tierCombo.SelectedIndex < 0) tierCombo.SelectedIndex = 0;
+        var capturedKeyForTier = capturedKey;
+        tierCombo.SelectionChanged += async (_, _) =>
+        {
+            if (tierCombo.SelectedItem is ComboBoxItem selected && selected.Tag is string newTier
+                && !string.Equals(newTier, capturedKeyForTier.RateTier, StringComparison.OrdinalIgnoreCase))
+            {
+                await ViewModel.UpdateTierCommand.ExecuteAsync((capturedKeyForTier.Id, newTier));
+            }
         };
-        Grid.SetColumn(tierBadge, 3);
-        row.Children.Add(tierBadge);
+        Grid.SetColumn(tierCombo, 3);
+        row.Children.Add(tierCombo);
 
         // ---- Created ----
         string createdText = "—";
@@ -198,7 +220,8 @@ public sealed partial class AdminApiKeysPage : Page
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        var deleteBtn = MakeIconButton("\uE74D", "Delete key", Color.FromArgb(255, 220, 90, 90));
+        // Delete button: web h-7 w-7 = 28px
+        var deleteBtn = MakeIconButton("\uE74D", "Delete key", size: 28, fgColor: Color.FromArgb(255, 220, 90, 90));
         deleteBtn.Click += async (_, _) => await OpenDeleteDialogAsync(capturedKey);
 
         actionsPanel.Children.Add(deleteBtn);
@@ -305,17 +328,18 @@ public sealed partial class AdminApiKeysPage : Page
     {
         var warningBlock = new TextBlock
         {
-            Text = "This key will only be shown once. Copy it now and store it securely.",
+            Text = "Copy your API key now. You won't be able to see the full key again.",
             FontSize = 13,
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap
         };
 
+        // bg-muted block rounded p-3 — code block in key reveal dialog
         var keyBorder = new Border
         {
-            Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(14, 10, 14, 10)
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12, 10, 12, 10)
         };
         keyBorder.Child = new TextBlock
         {
@@ -327,6 +351,7 @@ public sealed partial class AdminApiKeysPage : Page
             IsTextSelectionEnabled = true
         };
 
+        // "Copy & Close" button — matches web: copies key then closes dialog
         var copyBtnReveal = new Button
         {
             Style = (Style)Application.Current.Resources["AccentButtonStyle"],
@@ -340,10 +365,9 @@ public sealed partial class AdminApiKeysPage : Page
             Children =
             {
                 new FontIcon { Glyph = "\uE8C8", FontSize = 13 },
-                new TextBlock { Text = "Copy to Clipboard" }
+                new TextBlock { Text = "Copy & Close" }
             }
         };
-        copyBtnReveal.Click += (_, _) => CopyToClipboard(key.Key);
 
         var revealPanel = new StackPanel { Width = 420, Spacing = 14 };
         revealPanel.Children.Add(warningBlock);
@@ -352,11 +376,18 @@ public sealed partial class AdminApiKeysPage : Page
 
         var revealDialog = new ContentDialog
         {
-            Title = $"API Key Created: {key.Label}",
-            CloseButtonText = "Done",
+            Title = "API Key Created",
+            CloseButtonText = "Close",
             XamlRoot = this.XamlRoot,
             Content = revealPanel,
             DefaultButton = ContentDialogButton.Close
+        };
+
+        // Copy & Close: copy key and hide dialog
+        copyBtnReveal.Click += (_, _) =>
+        {
+            CopyToClipboard(key.Key);
+            revealDialog.Hide();
         };
 
         await revealDialog.ShowAsync();
@@ -403,7 +434,7 @@ public sealed partial class AdminApiKeysPage : Page
         Clipboard.SetContent(package);
     }
 
-    private static Button MakeIconButton(string glyph, string tooltip, Color? fgColor = null)
+    private static Button MakeIconButton(string glyph, string tooltip, int size = 32, Color? fgColor = null)
     {
         var fg = fgColor.HasValue
             ? new SolidColorBrush(fgColor.Value)
@@ -411,8 +442,8 @@ public sealed partial class AdminApiKeysPage : Page
 
         var btn = new Button
         {
-            Width = 32,
-            Height = 32,
+            Width = size,
+            Height = size,
             Padding = new Thickness(0),
             Background = new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
@@ -420,7 +451,7 @@ public sealed partial class AdminApiKeysPage : Page
             Content = new FontIcon
             {
                 Glyph = glyph,
-                FontSize = 14,
+                FontSize = 12,
                 Foreground = fg
             }
         };

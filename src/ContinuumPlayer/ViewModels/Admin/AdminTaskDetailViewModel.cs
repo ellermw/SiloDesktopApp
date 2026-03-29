@@ -33,12 +33,14 @@ public partial class AdminTaskDetailViewModel : ObservableObject
 
         try
         {
-            var info = await _adminApi.GetTaskAsync(taskKey);
-            TaskDetail = info;
+            var infoTask    = _adminApi.GetTaskAsync(taskKey);
+            var historyTask = _adminApi.GetTaskHistoryAsync(taskKey, limit: 20);
+            await System.Threading.Tasks.Task.WhenAll(infoTask, historyTask);
 
-            var history = await _adminApi.GetTaskHistoryAsync(taskKey, limit: 20);
+            TaskDetail = infoTask.Result;
+
             History.Clear();
-            foreach (var h in history) History.Add(h);
+            foreach (var h in historyTask.Result) History.Add(h);
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsLoading = false; }

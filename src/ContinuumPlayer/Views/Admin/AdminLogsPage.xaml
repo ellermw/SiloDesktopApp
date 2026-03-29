@@ -15,10 +15,35 @@
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
 
-        <Style x:Key="SectionCardStyle" TargetType="Border">
+        <!-- surface-panel rounded-[1.6rem] border-0 -->
+        <Style x:Key="SurfacePanelStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
+            <Setter Property="CornerRadius" Value="26" />
+            <Setter Property="Padding" Value="12" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+
+        <!-- surface-panel-subtle rounded-[1.4rem] p-3 -->
+        <Style x:Key="SubtlePanelStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+            <Setter Property="CornerRadius" Value="22" />
+            <Setter Property="Padding" Value="12" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+
+        <!-- Table card (no border, rounded top for header) -->
+        <Style x:Key="TableCardStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
             <Setter Property="CornerRadius" Value="24" />
-            <Setter Property="Padding" Value="20" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+
+        <!-- Playback summary card -->
+        <Style x:Key="SummaryCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="16" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
         </Style>
@@ -41,6 +66,15 @@
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
         </Style>
+
+        <!-- Detail panel style -->
+        <Style x:Key="DetailPanelStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
+            <Setter Property="CornerRadius" Value="24" />
+            <Setter Property="Padding" Value="20" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
     </Page.Resources>
 
     <Grid>
@@ -52,40 +86,121 @@
             VerticalAlignment="Center"
             Width="48" Height="48" />
 
-        <!-- Error state -->
-        <StackPanel
-            VerticalAlignment="Center"
-            HorizontalAlignment="Center"
-            Spacing="12"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-            <TextBlock
-                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource BodyTextStyle}"
-                HorizontalAlignment="Center"
-                TextWrapping="Wrap"
-                MaxWidth="400" />
-        </StackPanel>
-
-        <!-- Main content (always visible while not loading) -->
+        <!-- Main content -->
         <ScrollViewer
             x:Name="ContentScrollViewer"
             IsScrollInertiaEnabled="True">
 
             <StackPanel Padding="40,28,40,40" Spacing="24">
 
-                <!-- ===== Header ===== -->
-                <StackPanel Spacing="6">
-                    <TextBlock
-                        Text="Logs"
-                        FontSize="42"
-                        FontWeight="Bold"
-                        Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock
-                        Text="Search application logs and request audit trails without leaving the admin UI."
-                        FontSize="15"
-                        Foreground="{StaticResource SecondaryTextBrush}" />
-                </StackPanel>
+                <!-- ===== Header: title + subtitle left, stream state right ===== -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Spacing="6">
+                        <TextBlock
+                            Text="Logs"
+                            FontSize="42"
+                            FontWeight="Bold"
+                            Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock
+                            Text="Search application logs and request audit trails without leaving the admin UI."
+                            FontSize="15"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top" Spacing="2">
+                        <TextBlock
+                            Text="STREAM"
+                            FontSize="11"
+                            CharacterSpacing="200"
+                            Foreground="{StaticResource TertiaryTextBrush}"
+                            HorizontalAlignment="Right" />
+                        <TextBlock
+                            x:Name="StreamStateText"
+                            Text="{x:Bind ViewModel.ConnectionState, Mode=OneWay}"
+                            FontSize="14"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            HorizontalAlignment="Right" />
+                        <!-- Error text shown below connection state -->
+                        <TextBlock
+                            Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
+                            FontSize="11"
+                            Foreground="{StaticResource TertiaryTextBrush}"
+                            HorizontalAlignment="Right"
+                            TextWrapping="Wrap"
+                            MaxWidth="300" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===== Playback Session Filter ===== -->
+                <Border Style="{StaticResource SurfacePanelStyle}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBox
+                            x:Name="PlaybackSessionBox"
+                            PlaceholderText="Playback Session ID"
+                            Width="380"
+                            FontFamily="Consolas"
+                            FontSize="12"
+                            Style="{StaticResource FilterBoxStyle}"
+                            Text="{x:Bind ViewModel.PlaybackSessionId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                            KeyDown="PlaybackSessionBox_KeyDown" />
+                        <!-- Tag showing short ID when filled -->
+                        <Border
+                            x:Name="PlaybackSessionTag"
+                            Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Padding="12,6"
+                            VerticalAlignment="Center"
+                            Visibility="Collapsed">
+                            <TextBlock
+                                x:Name="PlaybackSessionTagText"
+                                FontSize="12"
+                                Foreground="{StaticResource SecondaryTextBrush}" />
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== Playback Session Summary (visible when playback session ID is set) ===== -->
+                <Border
+                    x:Name="PlaybackSummaryPanel"
+                    Style="{StaticResource SummaryCardStyle}"
+                    Visibility="Collapsed">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel x:Name="SummaryMetricsPanel" Orientation="Horizontal" Spacing="24" Grid.Column="0">
+                            <!-- Metrics populated in code-behind -->
+                        </StackPanel>
+
+                        <Button
+                            x:Name="BtnFilterFfmpeg"
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Padding="12,8"
+                            Click="BtnFilterFfmpeg_Click">
+                            <TextBlock
+                                x:Name="BtnFilterFfmpegText"
+                                Text="Open ffmpeg logs"
+                                FontSize="12"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource TertiaryTextBrush}" />
+                        </Button>
+                    </Grid>
+                </Border>
 
                 <!-- ===== Tab Bar ===== -->
                 <Border
@@ -110,18 +225,23 @@
                 <!-- ===== Application Logs Tab ===== -->
                 <StackPanel x:Name="AppLogsPanel" Spacing="16">
 
-                    <!-- Filter bar -->
-                    <Border
-                        Background="{StaticResource SurfaceBrush}"
-                        CornerRadius="16"
-                        Padding="16,12">
+                    <!-- Filter bar: Request ID, Message contains, Component -->
+                    <Border Style="{StaticResource SubtlePanelStyle}">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <TextBox
-                                x:Name="AppLevelBox"
-                                PlaceholderText="Level (info, warn, error, debug)"
+                                x:Name="AppRequestIdBox"
+                                PlaceholderText="Request ID"
                                 Width="220"
+                                FontFamily="Consolas"
                                 Style="{StaticResource FilterBoxStyle}"
-                                Text="{x:Bind ViewModel.AppLevelFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                Text="{x:Bind ViewModel.AppRequestId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                KeyDown="FilterBox_KeyDown" />
+                            <TextBox
+                                x:Name="AppMessageBox"
+                                PlaceholderText="Message contains..."
+                                Width="260"
+                                Style="{StaticResource FilterBoxStyle}"
+                                Text="{x:Bind ViewModel.AppMessageQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 KeyDown="FilterBox_KeyDown" />
                             <TextBox
                                 x:Name="AppComponentBox"
@@ -139,10 +259,9 @@
                     </Border>
 
                     <!-- App Logs Table -->
-                    <Border Style="{StaticResource SectionCardStyle}" Padding="0">
-
-                        <!-- Column header -->
+                    <Border Style="{StaticResource TableCardStyle}">
                         <StackPanel>
+                            <!-- Column header -->
                             <Grid
                                 Padding="16,10"
                                 ColumnSpacing="8"
@@ -176,15 +295,23 @@
                                 <TextBlock Grid.Column="11" Text="Request" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                             </Grid>
 
-                            <!-- Rows go here -->
+                            <!-- Rows -->
                             <ScrollViewer MaxHeight="600" VerticalScrollBarVisibility="Auto">
                                 <StackPanel x:Name="AppLogsPanel_Rows" Spacing="0" />
                             </ScrollViewer>
 
-                            <!-- Empty state -->
+                            <!-- Empty / loading states -->
                             <TextBlock
                                 x:Name="AppLogsEmpty"
-                                Text="No application logs. Use the filters above and click Search."
+                                Text="No application logs matched the current filters."
+                                FontSize="13"
+                                Foreground="{StaticResource TertiaryTextBrush}"
+                                HorizontalAlignment="Center"
+                                Padding="0,24"
+                                Visibility="Collapsed" />
+                            <TextBlock
+                                x:Name="AppLogsLoading"
+                                Text="Loading logs..."
                                 FontSize="13"
                                 Foreground="{StaticResource TertiaryTextBrush}"
                                 HorizontalAlignment="Center"
@@ -196,9 +323,28 @@
                     <!-- Detail panel (shown when row selected) -->
                     <Border
                         x:Name="AppDetailPanel"
-                        Style="{StaticResource SectionCardStyle}"
+                        Style="{StaticResource DetailPanelStyle}"
                         Visibility="Collapsed">
-                        <StackPanel x:Name="AppDetailContent" Spacing="16" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel x:Name="AppDetailContent" Grid.Column="0" Spacing="16" />
+
+                            <!-- Close button -->
+                            <Button
+                                x:Name="BtnCloseDetail"
+                                Grid.Column="1"
+                                VerticalAlignment="Top"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Padding="8"
+                                Click="BtnCloseDetail_Click">
+                                <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="{StaticResource TertiaryTextBrush}" />
+                            </Button>
+                        </Grid>
                     </Border>
 
                 </StackPanel>
@@ -206,18 +352,31 @@
                 <!-- ===== Audit Logs Tab ===== -->
                 <StackPanel x:Name="AuditLogsPanel" Spacing="16" Visibility="Collapsed">
 
-                    <!-- Filter bar -->
-                    <Border
-                        Background="{StaticResource SurfaceBrush}"
-                        CornerRadius="16"
-                        Padding="16,12">
+                    <!-- Filter bar: Request ID, Method, Client IP -->
+                    <Border Style="{StaticResource SubtlePanelStyle}">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <TextBox
-                                x:Name="AuditUserIdBox"
-                                PlaceholderText="User ID (number)"
-                                Width="200"
+                                x:Name="AuditRequestIdBox"
+                                PlaceholderText="Request ID"
+                                Width="220"
+                                FontFamily="Consolas"
                                 Style="{StaticResource FilterBoxStyle}"
-                                Text="{x:Bind ViewModel.AuditUserId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                Text="{x:Bind ViewModel.AuditRequestId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                KeyDown="AuditFilterBox_KeyDown" />
+                            <TextBox
+                                x:Name="AuditMethodBox"
+                                PlaceholderText="Method"
+                                Width="120"
+                                Style="{StaticResource FilterBoxStyle}"
+                                Text="{x:Bind ViewModel.AuditMethod, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                KeyDown="AuditFilterBox_KeyDown" />
+                            <TextBox
+                                x:Name="AuditClientIpBox"
+                                PlaceholderText="Client IP"
+                                Width="200"
+                                FontFamily="Consolas"
+                                Style="{StaticResource FilterBoxStyle}"
+                                Text="{x:Bind ViewModel.AuditClientIp, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 KeyDown="AuditFilterBox_KeyDown" />
                             <Button
                                 x:Name="BtnSearchAudit"
@@ -228,9 +387,8 @@
                     </Border>
 
                     <!-- Audit Logs Table -->
-                    <Border Style="{StaticResource SectionCardStyle}" Padding="0">
+                    <Border Style="{StaticResource TableCardStyle}">
                         <StackPanel>
-
                             <!-- Column header -->
                             <Grid
                                 Padding="16,10"
@@ -264,10 +422,18 @@
                                 <StackPanel x:Name="AuditLogsPanel_Rows" Spacing="0" />
                             </ScrollViewer>
 
-                            <!-- Empty state -->
+                            <!-- Empty / loading states -->
                             <TextBlock
                                 x:Name="AuditLogsEmpty"
-                                Text="No audit logs. Enter a User ID filter and click Search."
+                                Text="No audit logs matched the current filters."
+                                FontSize="13"
+                                Foreground="{StaticResource TertiaryTextBrush}"
+                                HorizontalAlignment="Center"
+                                Padding="0,24"
+                                Visibility="Collapsed" />
+                            <TextBlock
+                                x:Name="AuditLogsLoading"
+                                Text="Loading logs..."
                                 FontSize="13"
                                 Foreground="{StaticResource TertiaryTextBrush}"
                                 HorizontalAlignment="Center"

@@ -23,12 +23,54 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Header -->
-        <TextBlock
-            Grid.Row="0"
-            Text="Continue Watching"
-            Style="{StaticResource HeaderTextStyle}"
-            Margin="24,24,24,16" />
+        <!-- Header: large title + subtitle + item count panel -->
+        <Grid Grid.Row="0" Margin="40,24,40,20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Spacing="6">
+                <TextBlock
+                    Text="Continue Watching"
+                    FontSize="{StaticResource FontSizeDisplayLarge}"
+                    FontWeight="Bold"
+                    Foreground="{StaticResource PrimaryTextBrush}" />
+                <TextBlock
+                    Text="Pick up where you left off."
+                    FontSize="14"
+                    Foreground="{StaticResource SecondaryTextBrush}" />
+            </StackPanel>
+
+            <Border
+                x:Name="CountPanel"
+                Grid.Column="1"
+                Background="{StaticResource SurfaceBrush}"
+                CornerRadius="20"
+                Padding="20,16"
+                MinWidth="140"
+                VerticalAlignment="Center"
+                Visibility="Collapsed">
+                <StackPanel HorizontalAlignment="Right">
+                    <TextBlock
+                        Text="IN PROGRESS"
+                        FontSize="10"
+                        FontWeight="SemiBold"
+                        CharacterSpacing="160"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                    <TextBlock
+                        x:Name="ItemCountText"
+                        FontSize="24"
+                        FontWeight="SemiBold"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        Margin="0,4,0,0" />
+                    <TextBlock
+                        x:Name="ItemCountLabel"
+                        FontSize="12"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+            </Border>
+        </Grid>
 
         <!-- Loading -->
         <ProgressRing
@@ -49,65 +91,10 @@
             HorizontalAlignment="Center"
             VerticalAlignment="Center" />
 
-        <!-- Content -->
-        <ScrollViewer Grid.Row="1" Padding="24,0,24,24"
+        <!-- Content: poster-card rows -->
+        <ScrollViewer Grid.Row="1" Padding="40,0,40,24"
                       Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
-            <ItemsRepeater x:Name="HistoryRepeater">
-                <ItemsRepeater.Layout>
-                    <StackLayout Spacing="8" />
-                </ItemsRepeater.Layout>
-                <ItemsRepeater.ItemTemplate>
-                    <DataTemplate x:DataType="vm:HistoryDisplayItem">
-                        <Border
-                            Background="{StaticResource CardBackgroundBrush}"
-                            CornerRadius="{StaticResource CardCornerRadius}"
-                            Padding="16,12"
-                            BorderBrush="{StaticResource BorderBrush}"
-                            BorderThickness="1">
-                            <Grid ColumnSpacing="16">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-
-                                <!-- Play icon -->
-                                <FontIcon
-                                    Grid.Column="0"
-                                    Glyph="&#xE768;"
-                                    FontSize="20"
-                                    Foreground="{StaticResource AccentBrush}"
-                                    VerticalAlignment="Center" />
-
-                                <!-- Title and progress -->
-                                <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                                    <TextBlock
-                                        Text="{x:Bind Title}"
-                                        Style="{StaticResource SubtitleTextStyle}"
-                                        TextTrimming="CharacterEllipsis"
-                                        MaxLines="1" />
-                                    <ProgressBar
-                                        Value="{x:Bind ProgressPercent}"
-                                        Maximum="100"
-                                        Height="4"
-                                        Foreground="{StaticResource AccentBrush}"
-                                        Background="{StaticResource SurfaceBrush}" />
-                                    <TextBlock
-                                        Text="{x:Bind ProgressText}"
-                                        Style="{StaticResource CaptionTextStyle}" />
-                                </StackPanel>
-
-                                <!-- Year -->
-                                <TextBlock
-                                    Grid.Column="2"
-                                    Text="{x:Bind Year}"
-                                    Style="{StaticResource SecondaryTextStyle}"
-                                    VerticalAlignment="Center" />
-                            </Grid>
-                        </Border>
-                    </DataTemplate>
-                </ItemsRepeater.ItemTemplate>
-            </ItemsRepeater>
+            <StackPanel x:Name="HistoryCardsPanel" Spacing="10" />
         </ScrollViewer>
 
         <!-- Empty state -->
@@ -116,18 +103,28 @@
             Grid.Row="1"
             VerticalAlignment="Center"
             HorizontalAlignment="Center"
-            Spacing="8"
+            Spacing="12"
+            Padding="40"
             Visibility="Collapsed">
             <FontIcon
                 Glyph="&#xE81C;"
-                FontSize="48"
+                FontSize="40"
                 Foreground="{StaticResource SecondaryTextBrush}"
                 HorizontalAlignment="Center" />
             <TextBlock
-                Text="No viewing history yet"
-                Style="{StaticResource SecondaryTextStyle}"
-                FontSize="16"
+                Text="Nothing in progress"
+                FontSize="{StaticResource FontSizeTitle}"
+                FontWeight="SemiBold"
+                Foreground="{StaticResource PrimaryTextBrush}"
                 HorizontalAlignment="Center" />
+            <TextBlock
+                Text="Start watching something and it will appear here so you can pick up where you left off."
+                FontSize="14"
+                Foreground="{StaticResource SecondaryTextBrush}"
+                HorizontalAlignment="Center"
+                TextAlignment="Center"
+                TextWrapping="Wrap"
+                MaxWidth="420" />
         </StackPanel>
     </Grid>
 </Page>

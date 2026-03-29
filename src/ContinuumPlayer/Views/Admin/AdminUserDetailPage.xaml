@@ -14,20 +14,23 @@
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
 
+        <!-- surface-panel borderless: CardBackgroundBrush, CornerRadius=26, no border -->
         <Style x:Key="CardStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="22" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="26" />
+            <Setter Property="BorderThickness" Value="0" />
         </Style>
 
-        <Style x:Key="TabButtonStyle" TargetType="Button">
+        <!-- Line-style tab button: transparent bg, underline on active -->
+        <Style x:Key="LineTabButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="CornerRadius" Value="20" />
-            <Setter Property="Padding" Value="16,8" />
-            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Padding" Value="12,8,12,10" />
+            <Setter Property="FontSize" Value="14" />
             <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="CornerRadius" Value="0" />
         </Style>
     </Page.Resources>
 
@@ -68,33 +71,32 @@
             <StackPanel Padding="40,28,40,40" Spacing="24">
 
                 <!-- ===== Header ===== -->
-                <Grid>
+                <Grid ColumnSpacing="20">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <!-- Back button -->
+                    <!-- Back button (ghost, 32x32) -->
                     <Button
                         x:Name="BackButton"
                         Grid.Column="0"
-                        Width="36" Height="36"
+                        Width="32" Height="32"
                         Padding="0"
                         Background="Transparent"
                         BorderThickness="0"
-                        CornerRadius="18"
+                        CornerRadius="16"
                         VerticalAlignment="Center"
-                        Margin="0,0,12,0"
                         ToolTipService.ToolTip="Back to Users">
                         <FontIcon Glyph="&#xE72B;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
                     </Button>
 
                     <!-- Title area -->
-                    <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                    <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
                         <!-- Username + badges row -->
                         <StackPanel x:Name="TitleBadgeRow" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" />
-                        <!-- Email -->
+                        <!-- Email subtitle -->
                         <TextBlock
                             x:Name="EmailSubtitle"
                             FontSize="14"
@@ -103,6 +105,10 @@
 
                     <!-- Action buttons -->
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Button
+                            x:Name="ImpersonateButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Content="Impersonate" />
                         <Button
                             x:Name="EditButton"
                             Style="{StaticResource SecondaryButtonStyle}">
@@ -113,24 +119,18 @@
                         </Button>
                         <Button
                             x:Name="DeleteButton"
-                            Background="Transparent"
+                            Background="{StaticResource ErrorBrush}"
+                            Foreground="White"
                             CornerRadius="8"
                             Padding="14,7">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon Glyph="&#xE74D;" FontSize="13" Foreground="{StaticResource ErrorBrush}" />
-                                <TextBlock Text="Delete" Foreground="{StaticResource ErrorBrush}" />
-                            </StackPanel>
+                            <TextBlock Text="Delete" />
                         </Button>
                     </StackPanel>
                 </Grid>
 
-                <!-- ===== Tab bar ===== -->
-                <Border
-                    Background="{StaticResource SurfaceBrush}"
-                    CornerRadius="22"
-                    Padding="4">
-                    <StackPanel x:Name="TabBar" Orientation="Horizontal" Spacing="2" />
-                </Border>
+                <!-- ===== Line-style Tab bar ===== -->
+                <StackPanel x:Name="TabBar" Orientation="Horizontal" Spacing="2"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,0" />
 
                 <!-- ===== Tab panels ===== -->
 
@@ -138,15 +138,15 @@
                 <Grid x:Name="OverviewPanel">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="16" />
+                        <ColumnDefinition Width="24" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
                     <!-- Account card -->
                     <Border Grid.Column="0" Style="{StaticResource CardStyle}">
                         <StackPanel>
-                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="20,14,20,14">
-                                <TextBlock Text="Account" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,12,16,12">
+                                <TextBlock Text="Account" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
                             </Border>
                             <StackPanel x:Name="AccountRows" />
                         </StackPanel>
@@ -155,8 +155,8 @@
                     <!-- Permissions card -->
                     <Border Grid.Column="2" Style="{StaticResource CardStyle}">
                         <StackPanel>
-                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="20,14,20,14">
-                                <TextBlock Text="Permissions &amp; Limits" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,12,16,12">
+                                <TextBlock Text="Permissions &amp; Limits" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
                             </Border>
                             <StackPanel x:Name="PermissionsRows" />
                         </StackPanel>
@@ -172,7 +172,7 @@
                 <Border x:Name="HistoryPanel" Visibility="Collapsed" Style="{StaticResource CardStyle}" Padding="0">
                     <StackPanel>
                         <!-- History table header -->
-                        <Grid Padding="20,12,20,12" ColumnSpacing="12">
+                        <Grid Padding="16,12,16,12" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="3*" />
                                 <ColumnDefinition Width="2*" />
@@ -181,20 +181,20 @@
                                 <ColumnDefinition Width="90" />
                                 <ColumnDefinition Width="150" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="MEDIA" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="1" Text="PROFILE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="METHOD" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="WATCH TIME" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="4" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="5" Text="ENDED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="0" Text="Media" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="Profile" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="2" Text="Method" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="3" Text="Watch Time" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="4" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="5" Text="Ended" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                         </Grid>
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
                         <StackPanel x:Name="HistoryRows" />
                         <Border x:Name="HistoryEmpty" Padding="20,40" Visibility="Collapsed">
                             <TextBlock
                                 Text="No playback history for this user."
-                                FontSize="13"
-                                Foreground="{StaticResource TertiaryTextBrush}"
+                                FontSize="14"
+                                Foreground="{StaticResource SecondaryTextBrush}"
                                 HorizontalAlignment="Center" />
                         </Border>
                     </StackPanel>
@@ -204,25 +204,25 @@
                 <Border x:Name="IPPanel" Visibility="Collapsed" Style="{StaticResource CardStyle}" Padding="0">
                     <StackPanel>
                         <!-- IP table header -->
-                        <Grid Padding="20,12,20,12" ColumnSpacing="12">
+                        <Grid Padding="16,12,16,12" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="2*" />
                                 <ColumnDefinition Width="2*" />
                                 <ColumnDefinition Width="2*" />
                                 <ColumnDefinition Width="80" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="IP ADDRESS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="1" Text="FIRST SEEN" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="LAST SEEN" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="REQUESTS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" HorizontalAlignment="Right" />
+                            <TextBlock Grid.Column="0" Text="IP Address" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="First Seen" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="2" Text="Last Seen" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="3" Text="Requests" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Right" />
                         </Grid>
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
                         <StackPanel x:Name="IPRows" />
                         <Border x:Name="IPEmpty" Padding="20,40" Visibility="Collapsed">
                             <TextBlock
                                 Text="No IP history found for this user."
-                                FontSize="13"
-                                Foreground="{StaticResource TertiaryTextBrush}"
+                                FontSize="14"
+                                Foreground="{StaticResource SecondaryTextBrush}"
                                 HorizontalAlignment="Center" />
                         </Border>
                     </StackPanel>

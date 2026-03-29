@@ -62,12 +62,12 @@
 
                     <StackPanel Grid.Column="0" Spacing="4">
                         <TextBlock
-                            Text="API Keys"
+                            Text="API keys"
                             FontSize="42"
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
-                            Text="Create and manage API keys for programmatic access."
+                            Text="Create and manage machine credentials for integrations, automation, and internal tools."
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
@@ -99,11 +99,11 @@
                 </Border>
 
                 <!-- ===== API Keys Table ===== -->
+                <!-- surface-panel overflow-x-auto rounded-[1.6rem] border-0 -->
                 <Border
                     Background="{StaticResource CardBackgroundBrush}"
-                    CornerRadius="24"
-                    BorderBrush="{StaticResource BorderBrush}"
-                    BorderThickness="1"
+                    CornerRadius="26"
+                    BorderThickness="0"
                     Padding="0">
                     <StackPanel>
                         <!-- Table header -->
@@ -130,26 +130,14 @@
                         <!-- Rows populated in code-behind -->
                         <StackPanel x:Name="KeysPanel" Spacing="0" />
 
-                        <!-- Empty state -->
+                        <!-- Empty state — matches web: "No API keys yet. Create one to get started." -->
                         <Border x:Name="EmptyState" Padding="20,40" Visibility="Collapsed">
-                            <StackPanel HorizontalAlignment="Center" Spacing="8">
-                                <FontIcon
-                                    Glyph="&#xE72E;"
-                                    FontSize="32"
-                                    Foreground="{StaticResource TertiaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                                <TextBlock
-                                    Text="No API keys yet"
-                                    FontSize="15"
-                                    FontWeight="SemiBold"
-                                    Foreground="{StaticResource SecondaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                                <TextBlock
-                                    Text="Create a key to enable programmatic access."
-                                    FontSize="13"
-                                    Foreground="{StaticResource TertiaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                            </StackPanel>
+                            <TextBlock
+                                Text="No API keys yet. Create one to get started."
+                                FontSize="13"
+                                Foreground="{StaticResource TertiaryTextBrush}"
+                                HorizontalAlignment="Center"
+                                TextAlignment="Center" />
                         </Border>
                     </StackPanel>
                 </Border>

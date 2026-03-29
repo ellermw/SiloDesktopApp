@@ -15,6 +15,9 @@ public sealed partial class AdminPlaybackHistoryPage : Page
 
     // Track whether we're programmatically updating comboboxes to avoid feedback loops
     private bool _suppressFilterEvents;
+    private bool _rebuildItemsPending;
+    private bool _rebuildUsersPending;
+    private bool _rebuildProfilesPending;
 
     public AdminPlaybackHistoryPage()
     {
@@ -24,28 +27,51 @@ public sealed partial class AdminPlaybackHistoryPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        ViewModel.Items.CollectionChanged += Items_CollectionChanged;
-        ViewModel.Users.CollectionChanged += Users_CollectionChanged;
-        ViewModel.Profiles.CollectionChanged += Profiles_CollectionChanged;
+        ViewModel.Items.CollectionChanged += (_, _) => ScheduleRebuildItems();
+        ViewModel.Users.CollectionChanged += (_, _) => ScheduleRebuildUsers();
+        ViewModel.Profiles.CollectionChanged += (_, _) => ScheduleRebuildProfiles();
+        ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ViewModel.IsLoading))
+                RefreshStatusText.Text = ViewModel.IsLoading ? "Refreshing..." : "Auto-refreshing";
+        };
 
         await ViewModel.LoadCommand.ExecuteAsync(null);
         RebuildAll();
     }
 
-    private void Items_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    private void ScheduleRebuildItems()
     {
-        UpdateStatCards();
-        RebuildHistoryTable();
+        if (_rebuildItemsPending) return;
+        _rebuildItemsPending = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _rebuildItemsPending = false;
+            UpdateStatCards();
+            RebuildHistoryTable();
+        });
     }
 
-    private void Users_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    private void ScheduleRebuildUsers()
     {
-        RebuildUserComboBox();
+        if (_rebuildUsersPending) return;
+        _rebuildUsersPending = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _rebuildUsersPending = false;
+            RebuildUserComboBox();
+        });
     }
 
-    private void Profiles_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    private void ScheduleRebuildProfiles()
     {
-        RebuildProfileComboBox();
+        if (_rebuildProfilesPending) return;
+        _rebuildProfilesPending = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _rebuildProfilesPending = false;
+            RebuildProfileComboBox();
+        });
     }
 
     private void RebuildAll()
@@ -74,7 +100,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         try
         {
             UserComboBox.Items.Clear();
-            UserComboBox.Items.Add(new ComboBoxItem { Content = "All Users", Tag = (object)"" });
+            UserComboBox.Items.Add(new ComboBoxItem { Content = "All users", Tag = (object)"" });
             foreach (var user in ViewModel.Users)
                 UserComboBox.Items.Add(new ComboBoxItem { Content = user.Username, Tag = (object)user.Id });
 
@@ -104,12 +130,16 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         try
         {
             ProfileComboBox.Items.Clear();
-            ProfileComboBox.Items.Add(new ComboBoxItem { Content = "All Profiles", Tag = (object)"" });
+            ProfileComboBox.Items.Add(new ComboBoxItem { Content = "All profiles", Tag = (object)"" });
             foreach (var profile in ViewModel.Profiles)
                 ProfileComboBox.Items.Add(new ComboBoxItem { Content = profile.Name, Tag = (object)profile.Id });
 
             // Enable/disable based on user selection
             ProfileComboBox.IsEnabled = ViewModel.SelectedUserId.HasValue;
+            if (!ViewModel.SelectedUserId.HasValue)
+                ProfileComboBox.PlaceholderText = "Choose a user first";
+            else
+                ProfileComboBox.PlaceholderText = "All profiles";
 
             // Restore selection
             if (!string.IsNullOrEmpty(ViewModel.SelectedProfileId))
@@ -185,6 +215,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
             UserComboBox.SelectedIndex = 0;
             ProfileComboBox.SelectedIndex = 0;
             ProfileComboBox.IsEnabled = false;
+            ProfileComboBox.PlaceholderText = "Choose a user first";
             StatusComboBox.SelectedIndex = 0;
         }
         finally { _suppressFilterEvents = false; }
@@ -221,11 +252,11 @@ public sealed partial class AdminPlaybackHistoryPage : Page
                 });
             }
             first = false;
-            HistoryRowsPanel.Children.Add(BuildHistoryRow(item));
+            HistoryRowsPanel.Children.Add(BuildHistoryRow(item, this));
         }
     }
 
-    private static FrameworkElement BuildHistoryRow(AdminPlaybackHistoryItem item)
+    private static FrameworkElement BuildHistoryRow(AdminPlaybackHistoryItem item, AdminPlaybackHistoryPage page)
     {
         var row = new Grid
         {
@@ -235,12 +266,13 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.5, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
 
-        // Col 0: Media (title + type/session)
+        // Col 0: Media (title + type · session short)
         string title = !string.IsNullOrEmpty(item.MediaTitle)
             ? item.MediaTitle
             : !string.IsNullOrEmpty(item.MediaItemId)
@@ -277,7 +309,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         };
         Grid.SetColumn(userBlock, 1);
 
-        // Col 2: Profile
+        // Col 2: Profile (name + full profile_id as subtitle)
         var profileStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
         profileStack.Children.Add(new TextBlock
         {
@@ -290,7 +322,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         {
             profileStack.Children.Add(new TextBlock
             {
-                Text = item.ProfileId.Length > 8 ? item.ProfileId[..8] + "..." : item.ProfileId,
+                Text = item.ProfileId,  // full profile_id per web UI
                 FontSize = 11,
                 Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
                 TextTrimming = TextTrimming.CharacterEllipsis
@@ -298,44 +330,36 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         }
         Grid.SetColumn(profileStack, 2);
 
-        // Col 3: Play Method badge
+        // Col 3: Play Method badge (secondary style = muted)
         var methodBadge = BuildMethodBadge(item.PlayMethod);
         methodBadge.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(methodBadge, 3);
 
-        // Col 4: Watch Time
+        // Col 4: Watch Time (formatDuration-style: Xh Ym | Ym Xs | Xs)
         var watchTimeStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
-        var watched = TimeSpan.FromSeconds(item.WatchedSeconds);
-        string watchedStr = watched.TotalHours >= 1
-            ? $"{(int)watched.TotalHours}h {watched.Minutes}m"
-            : $"{(int)watched.TotalMinutes}m";
         watchTimeStack.Children.Add(new TextBlock
         {
-            Text = watchedStr,
+            Text = FormatDuration(item.WatchedSeconds),
             FontSize = 13,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
         if (item.DurationSeconds.HasValue && item.DurationSeconds.Value > 0)
         {
-            var total = TimeSpan.FromSeconds(item.DurationSeconds.Value);
-            string totalStr = total.TotalHours >= 1
-                ? $"{(int)total.TotalHours}h {total.Minutes}m"
-                : $"{(int)total.TotalMinutes}m";
             watchTimeStack.Children.Add(new TextBlock
             {
-                Text = $"of {totalStr}",
+                Text = $"of {FormatDuration(item.DurationSeconds.Value)}",
                 FontSize = 11,
                 Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
             });
         }
         Grid.SetColumn(watchTimeStack, 4);
 
-        // Col 5: Status badge
+        // Col 5: Status badge (default=filled for Completed, outline=border-only for Partial)
         var statusBadge = BuildStatusBadge(item.Completed);
         statusBadge.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(statusBadge, 5);
 
-        // Col 6: Ended date + relative started
+        // Col 6: Ended date + "started X ago"
         var endedStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
         endedStack.Children.Add(new TextBlock
         {
@@ -353,6 +377,45 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         });
         Grid.SetColumn(endedStack, 6);
 
+        // Col 7: Logs — "View Logs" and "FFmpeg Logs" links
+        var logsPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var capturedSessionId = item.SessionId;
+
+        var viewLogsBtn = new Button
+        {
+            Content = "View Logs",
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"]
+        };
+        viewLogsBtn.Click += (_, _) => page.NavigateToLogs(capturedSessionId, false);
+
+        var ffmpegLogsBtn = new Button
+        {
+            Content = "FFmpeg Logs",
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+        };
+        ffmpegLogsBtn.Click += (_, _) => page.NavigateToLogs(capturedSessionId, true);
+
+        logsPanel.Children.Add(viewLogsBtn);
+        logsPanel.Children.Add(ffmpegLogsBtn);
+        Grid.SetColumn(logsPanel, 7);
+
         row.Children.Add(mediaStack);
         row.Children.Add(userBlock);
         row.Children.Add(profileStack);
@@ -360,8 +423,16 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         row.Children.Add(watchTimeStack);
         row.Children.Add(statusBadge);
         row.Children.Add(endedStack);
+        row.Children.Add(logsPanel);
 
         return row;
+    }
+
+    // Navigate to AdminLogsPage with the given playback session ID
+    private void NavigateToLogs(string sessionId, bool ffmpegFilter)
+    {
+        var param = ffmpegFilter ? $"{sessionId}|ffmpeg" : sessionId;
+        Frame.Navigate(typeof(AdminLogsPage), param);
     }
 
     private static Border BuildMethodBadge(string? playMethod)
@@ -375,22 +446,22 @@ public sealed partial class AdminPlaybackHistoryPage : Page
             case "direct":
                 bg = Color.FromArgb(40, 63, 185, 80);
                 fg = Color.FromArgb(255, 63, 185, 80);
-                label = "Direct";
+                label = "direct";
                 break;
             case "remux":
                 bg = Color.FromArgb(40, 56, 139, 253);
                 fg = Color.FromArgb(255, 56, 139, 253);
-                label = "Remux";
+                label = "remux";
                 break;
             case "transcode":
                 bg = Color.FromArgb(40, 219, 109, 40);
                 fg = Color.FromArgb(255, 219, 109, 40);
-                label = "Transcode";
+                label = "transcode";
                 break;
             default:
                 bg = Color.FromArgb(60, 120, 120, 120);
                 fg = Color.FromArgb(255, 160, 160, 160);
-                label = playMethod ?? "Unknown";
+                label = playMethod ?? "unknown";
                 break;
         }
 
@@ -418,12 +489,14 @@ public sealed partial class AdminPlaybackHistoryPage : Page
 
         if (completed)
         {
+            // variant="default" — filled accent
             bg = Color.FromArgb(40, 63, 185, 80);
             fg = Color.FromArgb(255, 63, 185, 80);
             label = "Completed";
         }
         else
         {
+            // variant="outline" — subtle / muted
             bg = Color.FromArgb(60, 120, 120, 120);
             fg = Color.FromArgb(255, 160, 160, 160);
             label = "Partial";
@@ -443,5 +516,19 @@ public sealed partial class AdminPlaybackHistoryPage : Page
             Foreground = new SolidColorBrush(fg)
         };
         return badge;
+    }
+
+    // formatDuration equivalent: Xh Ym | Ym Xs | Xs
+    private static string FormatDuration(double seconds)
+    {
+        if (double.IsNaN(seconds) || seconds <= 0) return "0m";
+        int rounded = Math.Max(0, (int)Math.Floor(seconds));
+        int hours = rounded / 3600;
+        int minutes = (rounded % 3600) / 60;
+        int secs = rounded % 60;
+
+        if (hours > 0) return $"{hours}h {minutes}m";
+        if (minutes > 0) return $"{minutes}m {secs}s";
+        return $"{secs}s";
     }
 }

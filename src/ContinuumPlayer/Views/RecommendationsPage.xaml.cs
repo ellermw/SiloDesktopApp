@@ -33,16 +33,32 @@ public sealed partial class RecommendationsPage : Page
         if (ViewModel.Rows.Count == 0 && !ViewModel.IsLoading)
         {
             EmptyState.Visibility = Visibility.Visible;
+            CountPanel.Visibility = Visibility.Collapsed;
             return;
         }
 
         EmptyState.Visibility = Visibility.Collapsed;
 
+        // Count total items across all rows
+        int totalItems = 0;
+        foreach (var row in ViewModel.Rows)
+            totalItems += row.Items.Count;
+
+        if (totalItems > 0)
+        {
+            CountPanel.Visibility = Visibility.Visible;
+            RowCountText.Text = totalItems.ToString();
+            RowCountLabel.Text = totalItems == 1 ? "suggestion" : "suggestions";
+        }
+        else
+        {
+            CountPanel.Visibility = Visibility.Collapsed;
+        }
+
         foreach (var row in ViewModel.Rows)
         {
             if (row.Items.Count == 0) continue;
 
-            // Convert to HomeSectionWithItems for SectionRow reuse
             var section = new HomeSectionWithItems
             {
                 Title = row.Label,

@@ -28,6 +28,16 @@ public sealed partial class MainWindow : Window
             AppWindow.TitleBar.ExtendsContentIntoTitleBar = false;
         }
 
+        // Set window icon (non-fatal if it fails)
+        try
+        {
+            var exeDir = Path.GetDirectoryName(System.Environment.ProcessPath) ?? "";
+            var iconPath = Path.Combine(exeDir, "Assets", "app.ico");
+            if (File.Exists(iconPath))
+                AppWindow?.SetIcon(iconPath);
+        }
+        catch { /* Icon is cosmetic — don't crash the app */ }
+
         _navigationService = App.Services.GetRequiredService<NavigationService>();
         _viewModel = App.Services.GetRequiredService<MainViewModel>();
         _settingsService = App.Services.GetRequiredService<SettingsService>();
@@ -163,6 +173,11 @@ public sealed partial class MainWindow : Window
         NavView.IsPaneVisible = false;
     }
 
+    public void RestoreMainPane()
+    {
+        NavView.IsPaneVisible = true;
+    }
+
     public void NavigateToHome()
     {
         _navigationService.Navigate<HomePage>();
@@ -226,6 +241,7 @@ public sealed partial class MainWindow : Window
 
     private void Admin_Click(object sender, RoutedEventArgs e)
     {
+        NavView.IsPaneVisible = false;
         _navigationService.Navigate<Views.Admin.AdminShellPage>();
     }
 

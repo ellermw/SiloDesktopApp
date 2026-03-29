@@ -63,4 +63,94 @@ public class SettingsServiceTests : IDisposable
         Assert.Single(settings.Servers);
         Assert.Equal("https://server2.com", settings.Servers[0].Url);
     }
+
+    [Fact]
+    public void Load_ReturnsSameInstance_OnRepeatedCalls()
+    {
+        var first = _service.Load();
+        var second = _service.Load();
+        Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void Save_InvalidatesCache_SoNextLoadReturnsUpdatedData()
+    {
+        var original = _service.Load();
+        Assert.Null(original.LastProfileId);
+
+        var updated = new AppSettings { LastProfileId = "new-profile" };
+        _service.Save(updated);
+
+        var afterSave = _service.Load();
+        Assert.Equal("new-profile", afterSave.LastProfileId);
+    }
+
+    [Fact]
+    public void AddServer_PreventseDuplicates()
+    {
+        _service.AddServer("https://server1.com", "Server 1");
+        _service.AddServer("https://server1.com", "Server 1 Again");
+        var settings = _service.Load();
+        Assert.Single(settings.Servers);
+        Assert.Equal("Server 1", settings.Servers[0].Name);
+    }
+
+    [Fact]
+    public void AddServer_PersistsAndReflectedInLoad()
+    {
+        _service.AddServer("https://server1.com", "Server 1");
+        var settings = _service.Load();
+        Assert.Single(settings.Servers);
+        Assert.Equal("https://server1.com", settings.Servers[0].Url);
+        Assert.Equal("Server 1", settings.Servers[0].Name);
+    }
+
+    [Fact]
+    public void RemoveServer_PersistsRemoval()
+    {
+        _service.AddServer("https://server1.com", "Server 1");
+        _service.AddServer("https://server2.com", "Server 2");
+        _service.RemoveServer("https://server1.com");
+
+        // Create a fresh service to prove it persisted to disk
+        var freshService = new SettingsService(_tempDir);
+        var settings = freshService.Load();
+        Assert.Single(settings.Servers);
+        Assert.Equal("https://server2.com", settings.Servers[0].Url);
+    }
+
+    [Fact]
+    public void UpdateLastUsed_UpdatesTimestamp()
+    {
+        _service.AddServer("https://server1.com", "Server 1");
+        var before = _service.Load().Servers[0].LastUsed;
+
+        // Small delay to ensure timestamp differs
+        Thread.Sleep(10);
+        _service.UpdateLastUsed("https://server1.com");
+
+        var after = _service.Load().Servers[0].LastUsed;
+        Assert.True(after > before);
+    }
+
+    [Fact]
+    public void Load_ReturnsDefaults_WhenNoFileExists()
+    {
+        var emptyDir = Path.Combine(Path.GetTempPath(), "ContinuumPlayerTest_Empty_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var freshService = new SettingsService(emptyDir);
+            var settings = freshService.Load();
+            Assert.NotNull(settings);
+            Assert.Empty(settings.Servers);
+            Assert.Null(settings.LastProfileId);
+            Assert.Null(settings.LastTheme);
+            Assert.Empty(settings.HiddenLibraryIds);
+        }
+        finally
+        {
+            if (Directory.Exists(emptyDir))
+                Directory.Delete(emptyDir, true);
+        }
+    }
 }

@@ -1,5 +1,39 @@
+# Build output
 bin/
 obj/
 .vs/
 *.user
+
+# Superpowers plugin cache
 .superpowers/
+
+# Claude local settings (permissions, session-specific)
+.claude/settings.local.json
+
+# Development reference files (not needed in repo)
+test_images/
+WebUI.png
+compare.png
+webui-ref.tar.gz
+continuum-webui-ref/
+
+# mpv dev archive (only the dll is needed)
+libs/mpv/mpv-dev.7z
+
+# IDE
+.idea/
+*.suo
+*.sln.docstates
+
+# Icon generator tool (dev-only)
+tools/bin/
+tools/obj/
+
+# Build output (publish & dist)
+publish/
+dist/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

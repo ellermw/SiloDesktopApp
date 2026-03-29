@@ -18,29 +18,56 @@ public partial class AdminLogsViewModel : ObservableObject
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string? _errorMessage;
 
+    // Connection state display
+    [ObservableProperty] private string _connectionState = "Disconnected";
+
+    // Playback session filter (shared across both tabs)
+    [ObservableProperty] private string _playbackSessionId = "";
+
     // App log filters
-    [ObservableProperty] private string _appLevelFilter = "";
+    [ObservableProperty] private string _appRequestId = "";
+    [ObservableProperty] private string _appMessageQuery = "";
     [ObservableProperty] private string _appComponent = "";
 
-    // Audit log filters — userId only (API limitation)
-    [ObservableProperty] private string _auditUserId = "";
+    // Audit log filters
+    [ObservableProperty] private string _auditRequestId = "";
+    [ObservableProperty] private string _auditMethod = "";
+    [ObservableProperty] private string _auditClientIp = "";
+
+    // Playback session summary computed fields
+    [ObservableProperty] private int _summaryAppCount;
+    [ObservableProperty] private int _summaryFfmpegCount;
+    [ObservableProperty] private int _summaryAuditCount;
+    [ObservableProperty] private string _summaryFirstSeen = "-";
+    [ObservableProperty] private string _summaryLastSeen = "-";
+    [ObservableProperty] private string _summaryNodes = "-";
 
     [RelayCommand]
     private async Task LoadAppLogsAsync()
     {
         IsLoading = true;
         ErrorMessage = null;
+        ConnectionState = "Connecting...";
         try
         {
             var response = await _adminApi.GetAppLogsAsync(
-                string.IsNullOrWhiteSpace(AppLevelFilter) ? null : AppLevelFilter.Trim().ToLowerInvariant(),
-                string.IsNullOrWhiteSpace(AppComponent) ? null : AppComponent.Trim(),
+                level: null,
+                component: string.IsNullOrWhiteSpace(AppComponent) ? null : AppComponent.Trim(),
+                requestId: string.IsNullOrWhiteSpace(AppRequestId) ? null : AppRequestId.Trim(),
+                q: string.IsNullOrWhiteSpace(AppMessageQuery) ? null : AppMessageQuery.Trim(),
+                playbackSessionId: string.IsNullOrWhiteSpace(PlaybackSessionId) ? null : PlaybackSessionId.Trim(),
                 cursor: null,
                 limit: 200);
             AppLogs.Clear();
             foreach (var entry in response.Entries) AppLogs.Add(entry);
+            ConnectionState = "Live";
+            UpdatePlaybackSummary();
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+            ConnectionState = "Disconnected";
+        }
         finally { IsLoading = false; }
     }
 
@@ -49,27 +76,78 @@ public partial class AdminLogsViewModel : ObservableObject
     {
         IsLoading = true;
         ErrorMessage = null;
+        ConnectionState = "Connecting...";
         try
         {
-            int? userId = null;
-            if (!string.IsNullOrWhiteSpace(AuditUserId) && int.TryParse(AuditUserId.Trim(), out var parsed))
-                userId = parsed;
-
             var response = await _adminApi.GetAuditLogsAsync(
-                userId,
+                userId: null,
+                requestId: string.IsNullOrWhiteSpace(AuditRequestId) ? null : AuditRequestId.Trim(),
+                method: string.IsNullOrWhiteSpace(AuditMethod) ? null : AuditMethod.Trim(),
+                clientIp: string.IsNullOrWhiteSpace(AuditClientIp) ? null : AuditClientIp.Trim(),
+                playbackSessionId: string.IsNullOrWhiteSpace(PlaybackSessionId) ? null : PlaybackSessionId.Trim(),
                 cursor: null,
                 limit: 200);
             AuditLogs.Clear();
             foreach (var entry in response.Entries) AuditLogs.Add(entry);
+            ConnectionState = "Live";
+            UpdatePlaybackSummary();
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+            ConnectionState = "Disconnected";
+        }
         finally { IsLoading = false; }
     }
+
+    public void UpdatePlaybackSummary()
+    {
+        if (string.IsNullOrWhiteSpace(PlaybackSessionId))
+        {
+            SummaryAppCount = 0;
+            SummaryFfmpegCount = 0;
+            SummaryAuditCount = 0;
+            SummaryFirstSeen = "-";
+            SummaryLastSeen = "-";
+            SummaryNodes = "-";
+            return;
+        }
+
+        var pid = PlaybackSessionId.Trim();
+        var matchingApp = AppLogs.Where(r => r.PlaybackSessionId == pid).ToList();
+        var matchingAudit = AuditLogs.Where(r => r.PlaybackSessionId == pid).ToList();
+
+        SummaryAppCount = matchingApp.Count;
+        SummaryFfmpegCount = matchingApp.Count(r => r.Component == "ffmpeg");
+        SummaryAuditCount = matchingAudit.Count;
+
+        var timestamps = matchingApp.Select(r => r.Timestamp)
+            .Concat(matchingAudit.Select(r => r.Timestamp))
+            .OrderBy(t => t)
+            .ToList();
+
+        SummaryFirstSeen = timestamps.Count > 0 ? FormatDateTime(timestamps[0]) : "-";
+        SummaryLastSeen = timestamps.Count > 1 ? FormatDateTime(timestamps[^1]) : "-";
+
+        var nodes = matchingApp.Select(r => r.NodeId).Where(n => !string.IsNullOrEmpty(n))
+            .Concat(matchingAudit.Select(r => r.NodeId).Where(n => !string.IsNullOrEmpty(n)))
+            .Distinct()
+            .ToList();
+        SummaryNodes = nodes.Count > 0 ? string.Join(", ", nodes) : "-";
+    }
+
+    // ===== Formatting helpers =====
 
     public static string FormatTimestamp(string iso)
     {
         if (!DateTime.TryParse(iso, out var dt)) return iso;
         return dt.ToLocalTime().ToString("HH:mm:ss.fff");
+    }
+
+    public static string FormatDateTime(string iso)
+    {
+        if (!DateTime.TryParse(iso, out var dt)) return iso;
+        return dt.ToLocalTime().ToString("g"); // short date + short time (locale)
     }
 
     public static string FormatDate(string iso)
@@ -98,5 +176,19 @@ public partial class AdminLogsViewModel : ObservableObject
         if (val is double d) return $"{d:F0} ms";
         var s = val?.ToString();
         return s != null ? $"{s} ms" : "-";
+    }
+
+    public static string ShortId(string? id)
+    {
+        if (string.IsNullOrEmpty(id)) return "-";
+        if (id.Length <= 12) return id;
+        return $"{id[..8]}...{id[^4..]}";
+    }
+
+    public static string FormatClientIp(string? ip)
+    {
+        if (string.IsNullOrEmpty(ip)) return "-";
+        var slashIdx = ip.IndexOf('/');
+        return slashIdx >= 0 ? ip[..slashIdx] : ip;
     }
 }

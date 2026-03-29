@@ -15,23 +15,24 @@
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
 
-        <Style x:Key="SectionCardStyle" TargetType="Border">
+        <!-- Borderless surface panel style: rounded-[1.6rem] p-4, no border -->
+        <Style x:Key="SurfacePanelStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="24" />
-            <Setter Property="Padding" Value="20" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="26" />
+            <Setter Property="Padding" Value="16" />
+            <Setter Property="BorderThickness" Value="0" />
         </Style>
 
-        <!-- Filter toggle button style -->
+        <!-- Filter toggle button style: text-[11px] rounded-md border px-2.5 py-1.5 -->
         <Style x:Key="FilterToggleButtonStyle" TargetType="Button">
-            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="8" />
-            <Setter Property="Padding" Value="12,6" />
-            <Setter Property="FontSize" Value="13" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="FontSize" Value="11" />
             <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            <Setter Property="FontWeight" Value="Medium" />
         </Style>
     </Page.Resources>
 
@@ -70,7 +71,7 @@
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <StackPanel Padding="40,28,40,40" Spacing="20">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -87,7 +88,7 @@
                                 FontSize="42"
                                 FontWeight="Bold"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
-                            <!-- Live badge — populated in code-behind -->
+                            <!-- Live badge -->
                             <Border
                                 x:Name="LiveBadge"
                                 Background="{StaticResource AccentBackgroundBrush}"
@@ -102,10 +103,11 @@
                                     Foreground="{StaticResource AccentBrush}" />
                             </Border>
                         </StackPanel>
+                        <!-- Subtitle: text-[13px], includes node count -->
                         <TextBlock
                             x:Name="SubtitleText"
-                            Text="0 active streams"
-                            FontSize="14"
+                            Text="No active streams"
+                            FontSize="13"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
 
@@ -118,15 +120,10 @@
                 </Grid>
 
                 <!-- ===== IP Lookup Panel ===== -->
-                <Border Style="{StaticResource SectionCardStyle}">
-                    <StackPanel Spacing="14">
-                        <TextBlock
-                            Text="IP Lookup"
-                            FontSize="16"
-                            FontWeight="Bold"
-                            Foreground="{StaticResource PrimaryTextBrush}" />
-
-                        <!-- Input row -->
+                <!-- Web: surface-panel rounded-[1.6rem] border-0 p-4, NO title text -->
+                <Border Style="{StaticResource SurfacePanelStyle}">
+                    <StackPanel Spacing="12">
+                        <!-- Input row (no title) -->
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -139,16 +136,19 @@
                                 Text="{x:Bind ViewModel.IpLookupText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 KeyDown="IpLookupBox_KeyDown"
                                 FontSize="13"
-                                CornerRadius="8" />
+                                FontFamily="Consolas"
+                                CornerRadius="8"
+                                MaxWidth="320"
+                                HorizontalAlignment="Left" />
                             <Button
                                 Grid.Column="1"
                                 Content="Lookup"
-                                Style="{StaticResource AccentButtonStyle}"
+                                Style="{StaticResource SecondaryButtonStyle}"
                                 Command="{x:Bind ViewModel.LookupIPCommand}"
                                 IsEnabled="{x:Bind ViewModel.IpLookupLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}" />
                         </Grid>
 
-                        <!-- IP results table — built in code-behind -->
+                        <!-- IP results table -->
                         <StackPanel x:Name="IpResultsPanel" Spacing="0" Visibility="Collapsed">
                             <!-- Header row -->
                             <Grid x:Name="IpResultsHeader" Padding="0,0,0,8">
@@ -169,55 +169,61 @@
                     </StackPanel>
                 </Border>
 
-                <!-- ===== Play Method Distribution ===== -->
-                <Border Style="{StaticResource SectionCardStyle}">
-                    <StackPanel Spacing="12">
-                        <TextBlock
-                            Text="Stream Methods"
-                            FontSize="16"
-                            FontWeight="Bold"
-                            Foreground="{StaticResource PrimaryTextBrush}" />
+                <!-- ===== Play Method Distribution (Summary Strip) ===== -->
+                <!-- Web: surface-panel rounded-[1.6rem] border-0 p-4, only shown when sessions > 0 -->
+                <Border x:Name="SummaryStrip" Style="{StaticResource SurfacePanelStyle}" Visibility="Collapsed">
+                    <StackPanel Spacing="0">
+                        <StackPanel Spacing="0" Margin="0,0,0,0">
+                            <!-- Uppercase label: text-[10px] font-semibold tracking-wider uppercase -->
+                            <TextBlock
+                                Text="PLAY METHOD"
+                                FontSize="10"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource TertiaryTextBrush}"
+                                CharacterSpacing="120"
+                                Margin="0,0,0,8" />
 
-                        <!-- Proportional bar -->
-                        <Grid x:Name="MethodBar" Height="8" CornerRadius="4">
-                            <!-- Filled in code-behind with colored Border segments -->
-                        </Grid>
+                            <!-- Proportional bar: h-1.5 rounded-full = 6px, fully rounded -->
+                            <Grid x:Name="MethodBar" Height="6" CornerRadius="3">
+                                <!-- Filled in code-behind with colored Border segments -->
+                            </Grid>
 
-                        <!-- Method toggle buttons -->
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button x:Name="BtnFilterDirect" Click="BtnFilterDirect_Click">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Border Width="10" Height="10" CornerRadius="2" Background="#3FB950" VerticalAlignment="Center" />
-                                    <TextBlock x:Name="BtnDirectText" Text="Direct · 0" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
-                                </StackPanel>
-                            </Button>
-                            <Button x:Name="BtnFilterRemux" Click="BtnFilterRemux_Click">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Border Width="10" Height="10" CornerRadius="2" Background="#388BFD" VerticalAlignment="Center" />
-                                    <TextBlock x:Name="BtnRemuxText" Text="Remux · 0" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
-                                </StackPanel>
-                            </Button>
-                            <Button x:Name="BtnFilterTranscode" Click="BtnFilterTranscode_Click">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Border Width="10" Height="10" CornerRadius="2" Background="#DB6D28" VerticalAlignment="Center" />
-                                    <TextBlock x:Name="BtnTranscodeText" Text="Transcode · 0" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
-                                </StackPanel>
-                            </Button>
+                            <!-- Method toggle buttons: mt-2 flex gap-x-4 -->
+                            <StackPanel x:Name="MethodButtonsPanel" Orientation="Horizontal" Spacing="16" Margin="0,8,0,0">
+                                <!-- Built in code-behind -->
+                            </StackPanel>
                         </StackPanel>
+
+                        <!-- Node breakdown: conditionally shown when >1 node -->
+                        <Border x:Name="NodeBreakdownPanel" Visibility="Collapsed"
+                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0"
+                                Margin="0,12,0,0" Padding="0,12,0,0">
+                            <StackPanel Spacing="8">
+                                <TextBlock
+                                    Text="BY NODE"
+                                    FontSize="10"
+                                    FontWeight="SemiBold"
+                                    Foreground="{StaticResource TertiaryTextBrush}"
+                                    CharacterSpacing="120" />
+                                <StackPanel x:Name="NodeButtonsPanel" Orientation="Horizontal" Spacing="6">
+                                    <!-- Built in code-behind -->
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Border>
 
                 <!-- ===== Filter Bar ===== -->
+                <!-- Web: flex flex-wrap items-center gap-2 -->
                 <Grid ColumnSpacing="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <!-- Search box with icon -->
+                    <!-- Search box: h-8 (32px), text-[13px], with icon and X clear button -->
                     <Grid Grid.Column="0">
                         <TextBox
                             x:Name="SearchBox"
@@ -225,7 +231,8 @@
                             Text="{x:Bind ViewModel.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                             FontSize="13"
                             CornerRadius="8"
-                            Padding="36,8,8,8" />
+                            Height="32"
+                            Padding="36,6,30,6" />
                         <FontIcon
                             Glyph="&#xE721;"
                             FontSize="14"
@@ -234,48 +241,75 @@
                             VerticalAlignment="Center"
                             Margin="10,0,0,0"
                             IsHitTestVisible="False" />
+                        <!-- X clear button (visible when search text entered) -->
+                        <Button
+                            x:Name="SearchClearButton"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Margin="0,0,4,0"
+                            Padding="4"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Visibility="Collapsed"
+                            Click="SearchClearButton_Click">
+                            <FontIcon
+                                Glyph="&#xE711;"
+                                FontSize="12"
+                                Foreground="{StaticResource TertiaryTextBrush}" />
+                        </Button>
                     </Grid>
 
-                    <!-- Movies toggle -->
-                    <Button
-                        x:Name="BtnTypeMovie"
-                        Grid.Column="1"
-                        Content="Movies"
-                        Click="BtnTypeMovie_Click"
-                        Style="{StaticResource FilterToggleButtonStyle}" />
+                    <!-- Type filter buttons: text-[11px] rounded-md border px-2.5 py-1.5 -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                        <Button
+                            x:Name="BtnTypeMovie"
+                            Content="Movies"
+                            Click="BtnTypeMovie_Click"
+                            Style="{StaticResource FilterToggleButtonStyle}" />
+                        <Button
+                            x:Name="BtnTypeSeries"
+                            Content="Series"
+                            Click="BtnTypeSeries_Click"
+                            Style="{StaticResource FilterToggleButtonStyle}" />
+                    </StackPanel>
 
-                    <!-- Series toggle -->
-                    <Button
-                        x:Name="BtnTypeSeries"
-                        Grid.Column="2"
-                        Content="Series"
-                        Click="BtnTypeSeries_Click"
-                        Style="{StaticResource FilterToggleButtonStyle}" />
-
-                    <!-- Clear button -->
+                    <!-- Clear filters button: text-[11px] -->
                     <Button
                         x:Name="BtnClearFilters"
-                        Grid.Column="3"
-                        Content="Clear"
-                        Style="{StaticResource SecondaryButtonStyle}"
+                        Grid.Column="2"
                         Visibility="Collapsed"
-                        Click="BtnClearFilters_Click" />
-
-                    <!-- Count label -->
-                    <TextBlock
-                        x:Name="FilterCountText"
-                        Grid.Column="4"
-                        Text="Showing 0 of 0 streams"
-                        FontSize="12"
-                        Foreground="{StaticResource TertiaryTextBrush}"
-                        VerticalAlignment="Center" />
+                        Click="BtnClearFilters_Click"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Padding="4,2">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <FontIcon Glyph="&#xE711;" FontSize="10" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Text="Clear filters" FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" />
+                        </StackPanel>
+                    </Button>
                 </Grid>
 
+                <!-- "Showing X of Y": text-[11px], only visible when filters active -->
+                <TextBlock
+                    x:Name="FilterCountText"
+                    Text=""
+                    FontSize="11"
+                    Foreground="{StaticResource TertiaryTextBrush}"
+                    Visibility="Collapsed"
+                    Margin="0,-12,0,0" />
+
                 <!-- ===== Streams Table ===== -->
-                <Border Style="{StaticResource SectionCardStyle}" Padding="0">
+                <!-- Web: rounded-lg border (CornerRadius=8, NOT 24) -->
+                <Border
+                    Background="{StaticResource CardBackgroundBrush}"
+                    CornerRadius="8"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    Padding="0">
                     <StackPanel>
-                        <!-- Table header -->
-                        <Grid x:Name="TableHeader" Padding="20,14,20,14" ColumnSpacing="12">
+                        <!-- Table header: bg-surface/50 py-2.5 -->
+                        <Grid x:Name="TableHeader" Padding="16,10,16,10" ColumnSpacing="12"
+                              Background="{StaticResource SurfaceBrush}" Opacity="0.8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="1.5*" />
                                 <ColumnDefinition Width="2.2*" />
@@ -284,17 +318,17 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="80" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="USER" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="1" Text="STREAM" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="VIDEO" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="AUDIO" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="4" Text="NODE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="5" Text="TIME" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" HorizontalAlignment="Right" />
+                            <TextBlock Grid.Column="0" Text="USER" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" />
+                            <TextBlock Grid.Column="1" Text="STREAM" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" />
+                            <TextBlock Grid.Column="2" Text="VIDEO" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" />
+                            <TextBlock Grid.Column="3" Text="AUDIO" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" />
+                            <TextBlock Grid.Column="4" Text="NODE" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" />
+                            <TextBlock Grid.Column="5" Text="TIME" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" HorizontalAlignment="Right" />
                         </Grid>
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
 
-                        <!-- Stream rows — populated in code-behind -->
+                        <!-- Stream rows -->
                         <StackPanel x:Name="StreamsPanel" Spacing="0" />
 
                         <!-- Empty state -->

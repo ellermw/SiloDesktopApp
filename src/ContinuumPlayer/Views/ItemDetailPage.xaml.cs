@@ -97,10 +97,24 @@ public sealed partial class ItemDetailPage : Page
             ? Visibility.Collapsed : Visibility.Visible;
 
         YearText.Text = item.Year > 0 ? item.Year.ToString() : "";
-        ContentRatingText.Text = item.ContentRating ?? "";
+
+        // Content rating in pill badge
+        if (!string.IsNullOrEmpty(item.ContentRating))
+        {
+            ContentRatingText.Text = item.ContentRating;
+            ContentRatingBadge.Visibility = Visibility.Visible;
+            MetaDot1.Visibility = item.Year > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        else
+        {
+            ContentRatingBadge.Visibility = Visibility.Collapsed;
+            MetaDot1.Visibility = Visibility.Collapsed;
+        }
+
         RuntimeText.Text = ViewModel.RuntimeDisplay;
-        RatingText.Text = ViewModel.RatingDisplay != ""
-            ? $"TMDB: {ViewModel.RatingDisplay}" : "";
+        MetaDot2.Visibility = !string.IsNullOrEmpty(ViewModel.RuntimeDisplay) &&
+            (item.Year > 0 || !string.IsNullOrEmpty(item.ContentRating))
+            ? Visibility.Visible : Visibility.Collapsed;
 
         OverviewText.Text = item.Overview;
 

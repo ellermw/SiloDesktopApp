@@ -141,6 +141,29 @@
                         </StackPanel>
                     </Button>
 
+                    <!-- Admin nav item (visible only for admin users) -->
+                    <Button
+                        x:Name="AdminButton"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Left"
+                        Padding="16,10"
+                        Margin="4,0"
+                        CornerRadius="12"
+                        Visibility="Collapsed"
+                        Click="Admin_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <FontIcon Glyph="&#xE7EF;" FontSize="18" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock
+                                Text="Admin"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                VerticalAlignment="Center"
+                                FontSize="13"
+                                FontWeight="Medium" />
+                        </StackPanel>
+                    </Button>
+
                     <!-- Profile button -->
                     <Button
                         x:Name="ProfileFooterButton"

@@ -14,13 +14,6 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
-
-        <Style x:Key="SectionCardStyle" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="24" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-        </Style>
     </Page.Resources>
 
     <Grid>
@@ -73,7 +66,7 @@
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
-                            Text="Manage user accounts, roles, and access permissions."
+                            Text="Manage access, defaults, and invite flow for the people using Continuum."
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
@@ -113,51 +106,102 @@
                         Foreground="{StaticResource AccentBrush}" />
                 </Border>
 
-                <!-- ===== Users Table ===== -->
-                <Border Style="{StaticResource SectionCardStyle}" Padding="0">
-                    <StackPanel>
-                        <!-- Table header -->
-                        <Grid Padding="20,14,20,14" ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="80" />
-                                <ColumnDefinition Width="80" />
-                                <ColumnDefinition Width="120" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="USER" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="1" Text="EMAIL" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="ROLE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="4" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                        </Grid>
+                <!-- ===== Line-style Tabs: Users / Invite Codes ===== -->
+                <StackPanel Spacing="0">
+                    <!-- Tab bar -->
+                    <StackPanel Orientation="Horizontal" Spacing="0">
+                        <Button x:Name="TabUsersButton" Click="TabUsers_Click"
+                                Background="Transparent" BorderThickness="0"
+                                Padding="16,10" CornerRadius="0">
+                            <TextBlock x:Name="TabUsersText" Text="Users" FontSize="14" FontWeight="SemiBold"
+                                       Foreground="{StaticResource PrimaryTextBrush}" />
+                        </Button>
+                        <Button x:Name="TabInviteCodesButton" Click="TabInviteCodes_Click"
+                                Background="Transparent" BorderThickness="0"
+                                Padding="16,10" CornerRadius="0">
+                            <TextBlock x:Name="TabInviteCodesText" Text="Invite Codes" FontSize="14"
+                                       Foreground="{StaticResource SecondaryTextBrush}" />
+                        </Button>
+                    </StackPanel>
+                    <!-- Tab underline track -->
+                    <Grid Height="2">
+                        <Border Background="{StaticResource BorderBrush}" VerticalAlignment="Bottom" Height="1" />
+                        <Border x:Name="TabUsersIndicator" Background="{StaticResource AccentBrush}" Height="2"
+                                HorizontalAlignment="Left" Width="70" VerticalAlignment="Bottom" />
+                        <Border x:Name="TabInviteCodesIndicator" Background="{StaticResource AccentBrush}" Height="2"
+                                HorizontalAlignment="Left" Width="110" Margin="70,0,0,0"
+                                VerticalAlignment="Bottom" Visibility="Collapsed" />
+                    </Grid>
+                </StackPanel>
 
-                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
+                <!-- ===== Users Tab Content ===== -->
+                <StackPanel x:Name="UsersTabContent" Spacing="0">
+                    <!-- Users Table — borderless surface-panel style -->
+                    <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="26" Padding="0"
+                            BorderThickness="0">
+                        <StackPanel>
+                            <!-- Table header -->
+                            <Grid Padding="20,14,20,14" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="80" />
+                                    <ColumnDefinition Width="80" />
+                                    <ColumnDefinition Width="120" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="USERNAME" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="1" Text="EMAIL" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Text="ROLE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="4" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            </Grid>
 
-                        <!-- User rows — populated in code-behind -->
-                        <StackPanel x:Name="UsersPanel" Spacing="0" />
+                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
 
-                        <!-- Empty state -->
-                        <Border x:Name="EmptyState" Padding="20,40" Visibility="Collapsed">
-                            <StackPanel HorizontalAlignment="Center" Spacing="8">
-                                <FontIcon
-                                    Glyph="&#xE716;"
-                                    FontSize="32"
-                                    Foreground="{StaticResource TertiaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                                <TextBlock
-                                    Text="No users found"
-                                    FontSize="16"
-                                    FontWeight="SemiBold"
-                                    Foreground="{StaticResource SecondaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                                <TextBlock
-                                    Text="Add a user to get started."
-                                    FontSize="13"
-                                    Foreground="{StaticResource TertiaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                            </StackPanel>
-                        </Border>
+                            <!-- User rows — populated in code-behind -->
+                            <StackPanel x:Name="UsersPanel" Spacing="0" />
+
+                            <!-- Empty state -->
+                            <Border x:Name="EmptyState" Padding="20,40" Visibility="Collapsed">
+                                <StackPanel HorizontalAlignment="Center" Spacing="8">
+                                    <FontIcon
+                                        Glyph="&#xE716;"
+                                        FontSize="32"
+                                        Foreground="{StaticResource TertiaryTextBrush}"
+                                        HorizontalAlignment="Center" />
+                                    <TextBlock
+                                        Text="No users found"
+                                        FontSize="16"
+                                        FontWeight="SemiBold"
+                                        Foreground="{StaticResource SecondaryTextBrush}"
+                                        HorizontalAlignment="Center" />
+                                    <TextBlock
+                                        Text="Add a user to get started."
+                                        FontSize="13"
+                                        Foreground="{StaticResource TertiaryTextBrush}"
+                                        HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- ===== Invite Codes Tab Content ===== -->
+                <Border x:Name="InviteCodesTabContent" Visibility="Collapsed"
+                        Background="{StaticResource CardBackgroundBrush}" CornerRadius="26" Padding="32"
+                        BorderThickness="0">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                        <FontIcon Glyph="&#xE8EA;" FontSize="32"
+                                  Foreground="{StaticResource TertiaryTextBrush}"
+                                  HorizontalAlignment="Center" />
+                        <TextBlock Text="Invite Codes"
+                                   FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource SecondaryTextBrush}"
+                                   HorizontalAlignment="Center" />
+                        <TextBlock Text="Invite codes are managed through the server."
+                                   FontSize="13"
+                                   Foreground="{StaticResource TertiaryTextBrush}"
+                                   HorizontalAlignment="Center" />
                     </StackPanel>
                 </Border>
 

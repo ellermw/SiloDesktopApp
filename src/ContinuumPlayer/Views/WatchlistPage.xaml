@@ -16,24 +16,122 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
+
+        <Style x:Key="PillComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="MinHeight" Value="36" />
+            <Setter Property="Padding" Value="12,6,8,6" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+        </Style>
+
+        <Style x:Key="OrderToggleButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            <Setter Property="CornerRadius" Value="18" />
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="MinWidth" Value="0" />
+        </Style>
     </Page.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Header -->
-        <TextBlock
-            Grid.Row="0"
-            Text="Watchlist"
-            Style="{StaticResource HeaderTextStyle}"
-            Margin="24,24,24,16" />
+        <!-- Header: large title + subtitle + item count panel -->
+        <Grid Grid.Row="0" Margin="40,24,40,20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Spacing="6">
+                <TextBlock
+                    Text="Watchlist"
+                    FontSize="{StaticResource FontSizeDisplayLarge}"
+                    FontWeight="Bold"
+                    Foreground="{StaticResource PrimaryTextBrush}" />
+                <TextBlock
+                    Text="Movies and series you want to watch later."
+                    FontSize="14"
+                    Foreground="{StaticResource SecondaryTextBrush}" />
+            </StackPanel>
+
+            <Border
+                x:Name="CountPanel"
+                Grid.Column="1"
+                Background="{StaticResource SurfaceBrush}"
+                CornerRadius="20"
+                Padding="20,16"
+                MinWidth="140"
+                VerticalAlignment="Center"
+                Visibility="Collapsed">
+                <StackPanel HorizontalAlignment="Right">
+                    <TextBlock
+                        Text="WATCHLIST"
+                        FontSize="10"
+                        FontWeight="SemiBold"
+                        CharacterSpacing="160"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                    <TextBlock
+                        x:Name="ItemCountText"
+                        FontSize="24"
+                        FontWeight="SemiBold"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        Margin="0,4,0,0" />
+                    <TextBlock
+                        x:Name="ItemCountLabel"
+                        FontSize="12"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Sort bar -->
+        <StackPanel
+            x:Name="SortBar"
+            Grid.Row="1"
+            Orientation="Horizontal"
+            Spacing="8"
+            Margin="40,0,40,16"
+            Visibility="Collapsed">
+
+            <ComboBox
+                x:Name="SortComboBox"
+                Style="{StaticResource PillComboBoxStyle}"
+                Width="150"
+                SelectionChanged="SortComboBox_SelectionChanged"
+                PlaceholderText="Sort by">
+                <ComboBoxItem Content="Title" Tag="title" IsSelected="True" />
+                <ComboBoxItem Content="Year" Tag="year" />
+                <ComboBoxItem Content="Date Added" Tag="added_at" />
+                <ComboBoxItem Content="Rating" Tag="rating_imdb" />
+            </ComboBox>
+
+            <Button
+                x:Name="OrderButton"
+                Style="{StaticResource OrderToggleButtonStyle}"
+                Click="OrderButton_Click"
+                ToolTipService.ToolTip="Toggle sort order">
+                <FontIcon x:Name="OrderIcon" Glyph="&#xE74A;" FontSize="12"
+                          Foreground="{StaticResource SecondaryTextBrush}" />
+            </Button>
+        </StackPanel>
 
         <!-- Loading -->
         <ProgressRing
-            Grid.Row="1"
+            Grid.Row="2"
             IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
             HorizontalAlignment="Center"
@@ -42,7 +140,7 @@
 
         <!-- Error -->
         <TextBlock
-            Grid.Row="1"
+            Grid.Row="2"
             Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
             Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
             Foreground="{StaticResource ErrorBrush}"
@@ -50,8 +148,8 @@
             HorizontalAlignment="Center"
             VerticalAlignment="Center" />
 
-        <!-- Content -->
-        <ScrollViewer Grid.Row="1" Padding="24,0,24,24"
+        <!-- Content grid -->
+        <ScrollViewer Grid.Row="2" Padding="40,0,40,24"
                       Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
             <StackPanel>
                 <ItemsRepeater x:Name="PosterRepeater">
@@ -75,21 +173,31 @@
         <!-- Empty state -->
         <StackPanel
             x:Name="EmptyState"
-            Grid.Row="1"
+            Grid.Row="2"
             VerticalAlignment="Center"
             HorizontalAlignment="Center"
-            Spacing="8"
+            Spacing="12"
+            Padding="40"
             Visibility="Collapsed">
             <FontIcon
                 Glyph="&#xE8B7;"
-                FontSize="48"
+                FontSize="40"
                 Foreground="{StaticResource SecondaryTextBrush}"
                 HorizontalAlignment="Center" />
             <TextBlock
                 Text="Your watchlist is empty"
-                Style="{StaticResource SecondaryTextStyle}"
-                FontSize="16"
+                FontSize="{StaticResource FontSizeTitle}"
+                FontWeight="SemiBold"
+                Foreground="{StaticResource PrimaryTextBrush}"
                 HorizontalAlignment="Center" />
+            <TextBlock
+                Text="Add movies and series to your watchlist to keep track of what you want to watch."
+                FontSize="14"
+                Foreground="{StaticResource SecondaryTextBrush}"
+                HorizontalAlignment="Center"
+                TextAlignment="Center"
+                TextWrapping="Wrap"
+                MaxWidth="400" />
         </StackPanel>
     </Grid>
 </Page>

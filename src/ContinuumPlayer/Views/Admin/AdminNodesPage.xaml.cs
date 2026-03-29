@@ -11,6 +11,8 @@ namespace ContinuumPlayer.Views.Admin;
 public sealed partial class AdminNodesPage : Page
 {
     public AdminNodesViewModel ViewModel { get; }
+    private bool _rebuildProxyPending;
+    private bool _rebuildTranscodePending;
 
     public AdminNodesPage()
     {
@@ -20,8 +22,8 @@ public sealed partial class AdminNodesPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        ViewModel.ProxyNodes.CollectionChanged += (_, _) => RebuildProxyRows();
-        ViewModel.TranscodeNodes.CollectionChanged += (_, _) => RebuildTranscodeRows();
+        ViewModel.ProxyNodes.CollectionChanged += (_, _) => ScheduleRebuildProxy();
+        ViewModel.TranscodeNodes.CollectionChanged += (_, _) => ScheduleRebuildTranscode();
 
         try
         {
@@ -31,6 +33,28 @@ public sealed partial class AdminNodesPage : Page
         {
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
+    }
+
+    private void ScheduleRebuildProxy()
+    {
+        if (_rebuildProxyPending) return;
+        _rebuildProxyPending = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _rebuildProxyPending = false;
+            RebuildProxyRows();
+        });
+    }
+
+    private void ScheduleRebuildTranscode()
+    {
+        if (_rebuildTranscodePending) return;
+        _rebuildTranscodePending = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _rebuildTranscodePending = false;
+            RebuildTranscodeRows();
+        });
     }
 
     // ===== Row Builders =====
@@ -192,9 +216,9 @@ public sealed partial class AdminNodesPage : Page
         };
         healthPanel.Children.Add(new Border
         {
-            Width = 8,
-            Height = 8,
-            CornerRadius = new CornerRadius(4),
+            Width = 10,
+            Height = 10,
+            CornerRadius = new CornerRadius(5),
             Background = new SolidColorBrush(healthColor),
             VerticalAlignment = VerticalAlignment.Center
         });
@@ -202,7 +226,7 @@ public sealed partial class AdminNodesPage : Page
         {
             Text = healthText,
             FontSize = 12,
-            Foreground = new SolidColorBrush(healthColor)
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
         });
         Grid.SetColumn(healthPanel, 3);
         row.Children.Add(healthPanel);
@@ -387,7 +411,7 @@ public sealed partial class AdminNodesPage : Page
     {
         var dialog = new ContentDialog
         {
-            Title = "Delete Node",
+            Title = "Delete node",
             Content = $"Delete stream node \"{node.Name}\"? This action cannot be undone.",
             PrimaryButtonText = "Delete",
             CloseButtonText = "Cancel",

@@ -10,12 +10,10 @@ namespace ContinuumPlayer.ViewModels.Admin;
 public partial class AdminDashboardViewModel : ObservableObject
 {
     private readonly AdminApi _adminApi;
-    private readonly CatalogApi _catalogApi;
 
-    public AdminDashboardViewModel(AdminApi adminApi, CatalogApi catalogApi)
+    public AdminDashboardViewModel(AdminApi adminApi)
     {
         _adminApi = adminApi;
-        _catalogApi = catalogApi;
     }
 
     [ObservableProperty]
@@ -65,7 +63,7 @@ public partial class AdminDashboardViewModel : ObservableObject
             var statsTask = _adminApi.GetStatsAsync();
             var sessionsTask = _adminApi.GetSessionsAsync();
             var usersTask = _adminApi.GetUsersAsync();
-            var librariesTask = _catalogApi.GetLibrariesAsync();
+            var librariesTask = _adminApi.GetAdminLibrariesAsync();
 
             await Task.WhenAll(statsTask, sessionsTask, usersTask, librariesTask);
 
@@ -105,6 +103,18 @@ public partial class AdminDashboardViewModel : ObservableObject
         try
         {
             await _adminApi.RunScanLibrariesTaskAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Scan failed: {ex.Message}";
+        }
+    }
+
+    public async Task ScanLibraryAsync(int libraryId)
+    {
+        try
+        {
+            await _adminApi.ScanLibraryAsync(libraryId);
         }
         catch (Exception ex)
         {

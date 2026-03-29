@@ -14,33 +14,27 @@ public sealed partial class AdminSectionsPage : Page
 
     private bool _suppressPickerChange;
     private string _currentScope = "home";
+    private bool _rebuildPending;
 
-    // Section type human-readable labels
+    // Section type labels — matches sectionTypes.ts exactly
     private static readonly Dictionary<string, string> SectionTypeLabels = new()
     {
-        { "trending",                        "Trending" },
-        { "recently_added",                  "Recently Added" },
-        { "continue_watching",               "Continue Watching" },
-        { "next_up",                         "Next Up" },
-        { "popular",                         "Popular" },
-        { "genre",                           "Genre" },
-        { "collection",                      "Collection" },
-        { "recommendations_for_you",         "For You" },
-        { "recommendations_because_watched", "Because You Watched" },
+        { "recently_added",    "Recently Added" },
+        { "recently_released", "Recently Released" },
+        { "genre",             "Genre" },
+        { "custom_filter",     "Custom Filter" },
+        { "random",            "Random" },
+        { "continue_watching", "Continue Watching" },
+        { "watchlist",         "Watchlist" },
+        { "favorites",         "Favorites" },
+        { "collection",        "Collection" },
     };
 
-    private static readonly string[] SectionTypeValues =
-    [
-        "trending",
-        "recently_added",
-        "continue_watching",
-        "next_up",
-        "popular",
-        "genre",
-        "collection",
-        "recommendations_for_you",
-        "recommendations_because_watched",
-    ];
+    // Destructive red for delete button
+    private static readonly Color DestructiveColor = Color.FromArgb(255, 220, 90, 90);
+
+    // Yellow-500 for featured star (fill-yellow-500 text-yellow-500)
+    private static readonly Color YellowStarColor = Color.FromArgb(255, 234, 179, 8);
 
     public AdminSectionsPage()
     {
@@ -52,7 +46,7 @@ public sealed partial class AdminSectionsPage : Page
     {
         try
         {
-            ViewModel.Sections.CollectionChanged += (_, _) => BuildSectionRows();
+            ViewModel.Sections.CollectionChanged += (_, _) => ScheduleRebuild();
             SetScopeActive("home");
             await ViewModel.LoadCommand.ExecuteAsync(null);
             PopulateLibraryPicker();
@@ -61,6 +55,17 @@ public sealed partial class AdminSectionsPage : Page
         {
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
+    }
+
+    private void ScheduleRebuild()
+    {
+        if (_rebuildPending) return;
+        _rebuildPending = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _rebuildPending = false;
+            BuildSectionRows();
+        });
     }
 
     // ===== Scope Tabs =====
@@ -84,6 +89,11 @@ public sealed partial class AdminSectionsPage : Page
         ScopeLibraryButton.Foreground = isHome ? secondaryFg : accentFg;
 
         LibraryPickerPanel.Visibility = isHome ? Visibility.Collapsed : Visibility.Visible;
+
+        // Subtitle varies by scope — matches web UI
+        SubtitleText.Text = isHome
+            ? "Configure the shelves visitors see on the front page."
+            : "Configure the shelves for library views.";
     }
 
     private async void ScopeHomeButton_Click(object sender, RoutedEventArgs e)
@@ -96,11 +106,8 @@ public sealed partial class AdminSectionsPage : Page
     private async void ScopeLibraryButton_Click(object sender, RoutedEventArgs e)
     {
         SetScopeActive("library");
-        // Trigger reload using the currently selected library
         if (LibraryPicker.SelectedItem is ComboBoxItem item && item.Tag is int libId)
-        {
             ViewModel.SelectedLibraryId = libId;
-        }
         await ViewModel.LoadCommand.ExecuteAsync(null);
     }
 
@@ -108,6 +115,16 @@ public sealed partial class AdminSectionsPage : Page
 
     private void PopulateLibraryPicker()
     {
+        if (ViewModel.Libraries.Count == 0)
+        {
+            LibraryPicker.Visibility = Visibility.Collapsed;
+            NoLibrariesText.Visibility = Visibility.Visible;
+            return;
+        }
+
+        LibraryPicker.Visibility = Visibility.Visible;
+        NoLibrariesText.Visibility = Visibility.Collapsed;
+
         _suppressPickerChange = true;
         LibraryPicker.Items.Clear();
         foreach (var lib in ViewModel.Libraries)
@@ -139,9 +156,15 @@ public sealed partial class AdminSectionsPage : Page
     {
         SectionsPanel.Children.Clear();
 
+        // Show/hide reorder hint
+        ReorderHintText.Visibility = ViewModel.Sections.Count > 1
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
         if (ViewModel.Sections.Count == 0)
         {
             EmptyState.Visibility = Visibility.Visible;
+            EmptyStateText.Text = $"No sections configured for {_currentScope} scope.";
             return;
         }
 
@@ -170,24 +193,31 @@ public sealed partial class AdminSectionsPage : Page
             Padding = new Thickness(20, 12, 20, 12),
             ColumnSpacing = 12
         };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.5, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
 
-        // ---- Drag handle column ----
-        var dragHandle = new FontIcon
+        // ---- Move up/down buttons (column 0) ----
+        var movePanel = new StackPanel
         {
-            Glyph = "\uE700",
-            FontSize = 14,
-            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            Orientation = Orientation.Horizontal,
+            Spacing = 2,
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        // ---- Title column ----
+        var capturedSection = section;
+        var upBtn = MakeSmallIconButton("\uE70E", "Move up");
+        var downBtn = MakeSmallIconButton("\uE70D", "Move down");
+        upBtn.Click += async (_, _) => await ViewModel.MoveSectionAsync(capturedSection, -1);
+        downBtn.Click += async (_, _) => await ViewModel.MoveSectionAsync(capturedSection, +1);
+        movePanel.Children.Add(upBtn);
+        movePanel.Children.Add(downBtn);
+
+        // ---- Title column (column 1) ----
         var titleBlock = new TextBlock
         {
             Text = section.Title,
@@ -198,12 +228,49 @@ public sealed partial class AdminSectionsPage : Page
             TextTrimming = TextTrimming.CharacterEllipsis
         };
 
-        // ---- Type badge column ----
-        var typeLabel = SectionTypeLabels.TryGetValue(section.SectionType, out var lbl)
-            ? lbl : section.SectionType;
-        var typeBadge = MakeOutlineBadge(typeLabel);
+        // ---- Type column (column 2) — multiple badges ----
+        // Badge 1: section type label (secondary/filled style)
+        // Badge 2+: media scope (Movies/Series) as outline
+        // Badge 3+: library filter names as outline
+        // Badge 4: collection name as outline (for collection type)
+        var typePanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            VerticalAlignment = VerticalAlignment.Center
+        };
 
-        // ---- Items column ----
+        var typeLabel = SectionTypeLabels.TryGetValue(section.SectionType, out var lbl) ? lbl : section.SectionType;
+        typePanel.Children.Add(MakeSecondaryBadge(typeLabel));
+
+        // Extract media_scope from Config
+        string? mediaScope = GetConfigString(section, "media_scope");
+        if (mediaScope == "movie")
+            typePanel.Children.Add(MakeOutlineBadge("Movies"));
+        else if (mediaScope == "series")
+            typePanel.Children.Add(MakeOutlineBadge("Series"));
+
+        // Extract library_ids from Config (library filter badges)
+        var libraryIds = GetConfigLibraryIds(section);
+        foreach (var libId in libraryIds)
+        {
+            var lib = ViewModel.Libraries.FirstOrDefault(l => l.Id == libId);
+            if (lib != null)
+                typePanel.Children.Add(MakeOutlineBadge(lib.Name));
+        }
+
+        // Collection badge
+        if (section.SectionType == "collection")
+        {
+            string? collectionId = GetConfigString(section, "library_collection_id");
+            if (!string.IsNullOrEmpty(collectionId))
+            {
+                // Show collection ID shortened or just indicate "Collection" badge
+                typePanel.Children.Add(MakeOutlineBadge("Collection"));
+            }
+        }
+
+        // ---- Items column (column 3) ----
         var itemsBlock = new TextBlock
         {
             Text = section.ItemLimit.ToString(),
@@ -212,35 +279,33 @@ public sealed partial class AdminSectionsPage : Page
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        // ---- Featured column ----
-        var featuredColor = section.Featured
-            ? Color.FromArgb(255, 255, 200, 0)
-            : Color.FromArgb(80, 150, 150, 150);
-        var featuredIcon = new FontIcon
+        // ---- Featured column (column 4) ----
+        // Only show filled yellow star when featured=true; nothing when false
+        FrameworkElement featuredCell;
+        if (section.Featured)
         {
-            Glyph = "\uE735",
-            FontSize = 16,
-            Foreground = new SolidColorBrush(featuredColor),
-            VerticalAlignment = VerticalAlignment.Center
-        };
+            featuredCell = new FontIcon
+            {
+                // Segoe MDL2: \uE735 = StarLegacy (filled); \uE734 = StarEmpty
+                // For filled star matching fill-yellow-500 text-yellow-500:
+                Glyph = "\uE735",
+                FontSize = 16,
+                Foreground = new SolidColorBrush(YellowStarColor),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+        }
+        else
+        {
+            // Empty placeholder so layout is stable
+            featuredCell = new TextBlock { Text = "" };
+        }
 
-        // ---- Enabled toggle ----
-        var enabledSwitch = new ToggleSwitch
-        {
-            IsOn = section.Enabled,
-            OnContent = "",
-            OffContent = "",
-            MinWidth = 0,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        var capturedSection = section;
-        enabledSwitch.Toggled += async (_, _) =>
-        {
-            try { await ViewModel.ToggleEnabledAsync(capturedSection); }
-            catch { enabledSwitch.IsOn = capturedSection.Enabled; }
-        };
+        // ---- Enabled column (column 5) — badge "On"/"Off" ----
+        var enabledBadge = section.Enabled
+            ? MakeFilledBadge("On")
+            : MakeSecondaryBadge("Off");
 
-        // ---- Actions column ----
+        // ---- Actions column (column 6) ----
         var actionsPanel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -248,8 +313,9 @@ public sealed partial class AdminSectionsPage : Page
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        var editBtn = MakeIconButton("\uE70F", "Edit section");
-        var deleteBtn = MakeIconButton("\uE74D", "Delete section", Color.FromArgb(255, 220, 90, 90));
+        // 28x28 ghost buttons matching h-7 w-7
+        var editBtn = MakeActionButton("\uE70F", "Edit section");
+        var deleteBtn = MakeActionButton("\uE74D", "Delete section", DestructiveColor);
 
         editBtn.Click += async (_, _) => await OpenEditDialogAsync(capturedSection);
         deleteBtn.Click += async (_, _) => await OpenDeleteDialogAsync(capturedSection);
@@ -257,23 +323,57 @@ public sealed partial class AdminSectionsPage : Page
         actionsPanel.Children.Add(editBtn);
         actionsPanel.Children.Add(deleteBtn);
 
-        Grid.SetColumn(dragHandle, 0);
+        Grid.SetColumn(movePanel, 0);
         Grid.SetColumn(titleBlock, 1);
-        Grid.SetColumn(typeBadge, 2);
+        Grid.SetColumn(typePanel, 2);
         Grid.SetColumn(itemsBlock, 3);
-        Grid.SetColumn(featuredIcon, 4);
-        Grid.SetColumn(enabledSwitch, 5);
+        Grid.SetColumn(featuredCell, 4);
+        Grid.SetColumn(enabledBadge, 5);
         Grid.SetColumn(actionsPanel, 6);
 
-        row.Children.Add(dragHandle);
+        row.Children.Add(movePanel);
         row.Children.Add(titleBlock);
-        row.Children.Add(typeBadge);
+        row.Children.Add(typePanel);
         row.Children.Add(itemsBlock);
-        row.Children.Add(featuredIcon);
-        row.Children.Add(enabledSwitch);
+        row.Children.Add(featuredCell);
+        row.Children.Add(enabledBadge);
         row.Children.Add(actionsPanel);
 
         return row;
+    }
+
+    // ===== Config helpers =====
+
+    private static string? GetConfigString(AdminSection section, string key)
+    {
+        if (section.Config == null) return null;
+        if (section.Config.TryGetValue(key, out var val))
+            return val?.ToString();
+        return null;
+    }
+
+    private static List<int> GetConfigLibraryIds(AdminSection section)
+    {
+        if (section.Config == null) return [];
+        if (!section.Config.TryGetValue("library_ids", out var val)) return [];
+
+        // May be deserialized as List<object>, JsonElement, etc.
+        var result = new List<int>();
+        if (val is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var el in je.EnumerateArray())
+            {
+                if (el.TryGetInt32(out int id))
+                    result.Add(id);
+            }
+        }
+        else if (val is IEnumerable<object> list)
+        {
+            foreach (var item in list)
+                if (item != null && int.TryParse(item.ToString(), out int id))
+                    result.Add(id);
+        }
+        return result;
     }
 
     // ===== Header Buttons =====
@@ -285,23 +385,57 @@ public sealed partial class AdminSectionsPage : Page
 
     private async void RestoreDefaultsButton_Click(object sender, RoutedEventArgs e)
     {
+        // Matches web UI: "Restore Default Sections" dialog with "reset profiles" toggle
+        bool resetProfiles = false;
+
+        var resetProfilesSwitch = new ToggleSwitch
+        {
+            IsOn = false,
+            OnContent = "",
+            OffContent = "",
+            MinWidth = 0
+        };
+
+        var dialogContent = new StackPanel { Width = 380, Spacing = 16 };
+
+        dialogContent.Children.Add(new TextBlock
+        {
+            Text = $"This will replace all {(_currentScope == "home" ? "home" : "library")} sections with the defaults. Any custom sections will be removed.",
+            FontSize = 13,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        var switchRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        switchRow.Children.Add(resetProfilesSwitch);
+        switchRow.Children.Add(new TextBlock
+        {
+            Text = "Also reset all user customizations for this scope",
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap
+        });
+        dialogContent.Children.Add(switchRow);
+
         var dialog = new ContentDialog
         {
             Title = "Restore Default Sections",
-            Content = "Restore default sections? This will reset all custom sections for the current scope.",
-            PrimaryButtonText = "Restore",
+            PrimaryButtonText = "Restore Defaults",
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
+            Content = dialogContent,
             DefaultButton = ContentDialogButton.Close
         };
 
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
         {
+            resetProfiles = resetProfilesSwitch.IsOn;
             try
             {
-                await ViewModel.RestoreDefaultsCommand.ExecuteAsync(null);
-                ShowStatus(ViewModel.StatusMessage ?? "Default sections restored.");
+                await ViewModel.RestoreDefaultsCommand.ExecuteAsync(resetProfiles);
+                ShowStatus(ViewModel.StatusMessage ?? "Sections restored to defaults.");
             }
             catch { }
         }
@@ -316,7 +450,7 @@ public sealed partial class AdminSectionsPage : Page
         var dialog = new ContentDialog
         {
             Title = "Add Section",
-            PrimaryButtonText = "Save",
+            PrimaryButtonText = "Create",
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
             Content = formContent,
@@ -346,7 +480,7 @@ public sealed partial class AdminSectionsPage : Page
         var dialog = new ContentDialog
         {
             Title = "Edit Section",
-            PrimaryButtonText = "Save",
+            PrimaryButtonText = "Update",
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
             Content = formContent,
@@ -373,7 +507,7 @@ public sealed partial class AdminSectionsPage : Page
     {
         var dialog = new ContentDialog
         {
-            Title = "Delete Section",
+            Title = "Delete section",
             Content = $"Delete section \"{section.Title}\"? This action cannot be undone.",
             PrimaryButtonText = "Delete",
             CloseButtonText = "Cancel",
@@ -411,11 +545,8 @@ public sealed partial class AdminSectionsPage : Page
             FontSize = 13,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
-        foreach (var type in SectionTypeValues)
-        {
-            var label = SectionTypeLabels.TryGetValue(type, out var l) ? l : type;
-            typeCombo.Items.Add(new ComboBoxItem { Content = label, Tag = type });
-        }
+        foreach (var kvp in SectionTypeLabels)
+            typeCombo.Items.Add(new ComboBoxItem { Content = kvp.Value, Tag = kvp.Key });
         typeCombo.SelectedIndex = 0;
         if (existing != null)
         {
@@ -442,7 +573,7 @@ public sealed partial class AdminSectionsPage : Page
         var featuredSwitch = new ToggleSwitch
         {
             IsOn = existing?.Featured ?? false,
-            OnContent = "Featured",
+            OnContent = "Featured (Hero Banner)",
             OffContent = "Not featured"
         };
 
@@ -473,27 +604,55 @@ public sealed partial class AdminSectionsPage : Page
         AddField("Section Type", typeCombo);
         AddField("Item Limit", itemLimitBox);
 
-        var featuredGroup = new StackPanel { Spacing = 6 };
-        featuredGroup.Children.Add(new TextBlock
+        // Featured — label + switch in a row matching web UI "flex items-center justify-between"
+        var featuredRow = new Grid();
+        featuredRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        featuredRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
+        var featuredLabel = new TextBlock
         {
             Text = "Featured (Hero Banner)",
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
-        });
-        featuredGroup.Children.Add(featuredSwitch);
-        form.Children.Add(featuredGroup);
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
+        };
+        var featuredSwitchSmall = new ToggleSwitch
+        {
+            IsOn = existing?.Featured ?? false,
+            OnContent = "",
+            OffContent = "",
+            MinWidth = 0,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(featuredLabel, 0);
+        Grid.SetColumn(featuredSwitchSmall, 1);
+        featuredRow.Children.Add(featuredLabel);
+        featuredRow.Children.Add(featuredSwitchSmall);
+        form.Children.Add(featuredRow);
 
-        var enabledGroup = new StackPanel { Spacing = 6 };
-        enabledGroup.Children.Add(new TextBlock
+        // Enabled — same layout
+        var enabledRow = new Grid();
+        enabledRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        enabledRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
+        var enabledLabel = new TextBlock
         {
             Text = "Enabled",
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
-        });
-        enabledGroup.Children.Add(enabledSwitch);
-        form.Children.Add(enabledGroup);
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
+        };
+        var enabledSwitchSmall = new ToggleSwitch
+        {
+            IsOn = existing?.Enabled ?? true,
+            OnContent = "",
+            OffContent = "",
+            MinWidth = 0,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(enabledLabel, 0);
+        Grid.SetColumn(enabledSwitchSmall, 1);
+        enabledRow.Children.Add(enabledLabel);
+        enabledRow.Children.Add(enabledSwitchSmall);
+        form.Children.Add(enabledRow);
 
         object? GetBody()
         {
@@ -506,22 +665,22 @@ public sealed partial class AdminSectionsPage : Page
 
             int itemLimit = double.IsNaN(itemLimitBox.Value) ? 20 : (int)itemLimitBox.Value;
 
-            return ViewModel.BuildCreateBody(title, sectionType, itemLimit, featuredSwitch.IsOn, enabledSwitch.IsOn);
+            return ViewModel.BuildCreateBody(title, sectionType, itemLimit, featuredSwitchSmall.IsOn, enabledSwitchSmall.IsOn);
         }
 
         return (form, GetBody);
     }
 
-    // ===== Helpers =====
+    // ===== Badge Helpers =====
 
-    private static Border MakeOutlineBadge(string text)
+    // Secondary badge: filled with CardBackground bg, secondary text (like Badge variant="secondary")
+    private static Border MakeSecondaryBadge(string text)
     {
         var badge = new Border
         {
-            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(6, 3, 6, 3),
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(8, 3, 8, 3),
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center
         };
@@ -535,7 +694,53 @@ public sealed partial class AdminSectionsPage : Page
         return badge;
     }
 
-    private static Button MakeIconButton(string glyph, string tooltip, Color? fgColor = null)
+    // Outline badge: border only, no background (like Badge variant="outline")
+    private static Border MakeOutlineBadge(string text)
+    {
+        var badge = new Border
+        {
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(8, 3, 8, 3),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        badge.Child = new TextBlock
+        {
+            Text = text,
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+        };
+        return badge;
+    }
+
+    // Filled badge: accent-like appearance (like Badge variant="default")
+    private static Border MakeFilledBadge(string text)
+    {
+        var badge = new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["AccentBackgroundBrush"],
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(8, 3, 8, 3),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        badge.Child = new TextBlock
+        {
+            Text = text,
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"]
+        };
+        return badge;
+    }
+
+    // ===== Button Helpers =====
+
+    // 28x28 ghost action button (h-7 w-7 p-0 ghost) matching the web
+    private static Button MakeActionButton(string glyph, string tooltip, Color? fgColor = null)
     {
         var fg = fgColor.HasValue
             ? new SolidColorBrush(fgColor.Value)
@@ -543,8 +748,8 @@ public sealed partial class AdminSectionsPage : Page
 
         var btn = new Button
         {
-            Width = 32,
-            Height = 32,
+            Width = 28,
+            Height = 28,
             Padding = new Thickness(0),
             Background = new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
@@ -552,8 +757,30 @@ public sealed partial class AdminSectionsPage : Page
             Content = new FontIcon
             {
                 Glyph = glyph,
-                FontSize = 14,
+                FontSize = 13,
                 Foreground = fg
+            }
+        };
+        ToolTipService.SetToolTip(btn, tooltip);
+        return btn;
+    }
+
+    // Small 24x24 icon button for move up/down
+    private static Button MakeSmallIconButton(string glyph, string tooltip)
+    {
+        var btn = new Button
+        {
+            Width = 24,
+            Height = 24,
+            Padding = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(4),
+            Content = new FontIcon
+            {
+                Glyph = glyph,
+                FontSize = 11,
+                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
             }
         };
         ToolTipService.SetToolTip(btn, tooltip);

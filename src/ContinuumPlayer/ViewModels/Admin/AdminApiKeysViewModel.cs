@@ -31,15 +31,16 @@ public partial class AdminApiKeysViewModel : ObservableObject
         ErrorMessage = null;
         try
         {
-            var keys = await _adminApi.GetAPIKeysAsync();
-            var users = await _adminApi.GetUsersAsync();
+            var keysTask = _adminApi.GetAPIKeysAsync();
+            var usersTask = _adminApi.GetUsersAsync();
+            await Task.WhenAll(keysTask, usersTask);
 
             ApiKeys.Clear();
-            foreach (var k in keys)
+            foreach (var k in keysTask.Result)
                 ApiKeys.Add(k);
 
             Users.Clear();
-            foreach (var u in users)
+            foreach (var u in usersTask.Result)
                 Users.Add(u);
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }

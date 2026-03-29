@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using System.Text.Json;
 using Windows.UI;
 using ContinuumPlayer.Core.Models.Admin;
@@ -15,6 +16,12 @@ public sealed partial class AdminLogsPage : Page
 
     private bool _isAppTab = true;
     private OperationalLogEntry? _selectedAppEntry;
+    private bool _rebuildAppPending;
+    private bool _rebuildAuditPending;
+
+    // Navigation parameter: pass a string "sessionId" or "sessionId|ffmpeg" to pre-filter logs
+    private string? _pendingSessionId;
+    private bool _pendingFfmpegFilter;
 
     public AdminLogsPage()
     {
@@ -22,14 +29,62 @@ public sealed partial class AdminLogsPage : Page
         this.InitializeComponent();
     }
 
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        if (e.Parameter is string param && !string.IsNullOrWhiteSpace(param))
+        {
+            var parts = param.Split('|');
+            _pendingSessionId = parts[0];
+            _pendingFfmpegFilter = parts.Length > 1 && parts[1] == "ffmpeg";
+        }
+    }
+
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        ViewModel.AppLogs.CollectionChanged += (_, _) => RebuildAppTable();
-        ViewModel.AuditLogs.CollectionChanged += (_, _) => RebuildAuditTable();
+        ViewModel.AppLogs.CollectionChanged += (_, _) => ScheduleRebuildApp();
+        ViewModel.AuditLogs.CollectionChanged += (_, _) => ScheduleRebuildAudit();
+        ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ViewModel.PlaybackSessionId))
+                DispatcherQueue.TryEnqueue(UpdatePlaybackSessionTag);
+        };
+
+        // Apply navigation parameter (from "View Logs" / "FFmpeg Logs" links)
+        if (!string.IsNullOrWhiteSpace(_pendingSessionId))
+        {
+            ViewModel.PlaybackSessionId = _pendingSessionId;
+            if (_pendingFfmpegFilter)
+                ViewModel.AppComponent = "ffmpeg";
+            _pendingSessionId = null;
+        }
 
         SetActiveTab(true);
+        UpdatePlaybackSessionTag();
         try { await ViewModel.LoadAppLogsCommand.ExecuteAsync(null); }
         catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+    }
+
+    private void ScheduleRebuildApp()
+    {
+        if (_rebuildAppPending) return;
+        _rebuildAppPending = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _rebuildAppPending = false;
+            RebuildAppTable();
+        });
+    }
+
+    private void ScheduleRebuildAudit()
+    {
+        if (_rebuildAuditPending) return;
+        _rebuildAuditPending = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _rebuildAuditPending = false;
+            RebuildAuditTable();
+        });
     }
 
     // ===== Tab switching =====
@@ -72,6 +127,83 @@ public sealed partial class AdminLogsPage : Page
         HideAppDetail();
     }
 
+    // ===== Playback session tag & summary =====
+
+    private void UpdatePlaybackSessionTag()
+    {
+        var pid = ViewModel.PlaybackSessionId;
+        if (!string.IsNullOrWhiteSpace(pid))
+        {
+            PlaybackSessionTag.Visibility = Visibility.Visible;
+            PlaybackSessionTagText.Text = $"Playback session {AdminLogsViewModel.ShortId(pid.Trim())}";
+            PlaybackSummaryPanel.Visibility = Visibility.Visible;
+            RebuildPlaybackSummary();
+        }
+        else
+        {
+            PlaybackSessionTag.Visibility = Visibility.Collapsed;
+            PlaybackSummaryPanel.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void RebuildPlaybackSummary()
+    {
+        ViewModel.UpdatePlaybackSummary();
+        SummaryMetricsPanel.Children.Clear();
+
+        AddSummaryMetric("Playback Session", AdminLogsViewModel.ShortId(ViewModel.PlaybackSessionId), true);
+        AddSummaryMetric("Application Logs", ViewModel.SummaryAppCount.ToString(), false);
+        AddSummaryMetric("FFmpeg Logs", ViewModel.SummaryFfmpegCount.ToString(), false);
+        AddSummaryMetric("Audit Logs", ViewModel.SummaryAuditCount.ToString(), false);
+        AddSummaryMetric("First Seen", ViewModel.SummaryFirstSeen, false);
+        if (ViewModel.SummaryLastSeen != "-")
+            AddSummaryMetric("Last Seen", ViewModel.SummaryLastSeen, false);
+        AddSummaryMetric("Nodes Seen", ViewModel.SummaryNodes, ViewModel.SummaryNodes != "-");
+
+        // Update ffmpeg button text
+        var isFFmpegFilter = ViewModel.AppComponent.Trim().Equals("ffmpeg", StringComparison.OrdinalIgnoreCase);
+        BtnFilterFfmpegText.Text = isFFmpegFilter ? "Showing ffmpeg only" : "Open ffmpeg logs";
+    }
+
+    private void AddSummaryMetric(string label, string value, bool mono)
+    {
+        var stack = new StackPanel { Spacing = 2 };
+        stack.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = value,
+            FontSize = mono ? 12 : 13,
+            FontFamily = mono ? new FontFamily("Consolas") : null,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap
+        });
+        SummaryMetricsPanel.Children.Add(stack);
+    }
+
+    private void BtnFilterFfmpeg_Click(object sender, RoutedEventArgs e)
+    {
+        var isFFmpegFilter = ViewModel.AppComponent.Trim().Equals("ffmpeg", StringComparison.OrdinalIgnoreCase);
+        ViewModel.AppComponent = isFFmpegFilter ? "" : "ffmpeg";
+        RebuildPlaybackSummary();
+        _ = ViewModel.LoadAppLogsCommand.ExecuteAsync(null);
+    }
+
+    private void PlaybackSessionBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Enter)
+        {
+            UpdatePlaybackSessionTag();
+            // Reload both tabs with the playback session filter
+            _ = ViewModel.LoadAppLogsCommand.ExecuteAsync(null);
+            _ = ViewModel.LoadAuditLogsCommand.ExecuteAsync(null);
+        }
+    }
+
     // ===== Search button handlers =====
 
     private async void BtnSearchApp_Click(object sender, RoutedEventArgs e)
@@ -109,11 +241,13 @@ public sealed partial class AdminLogsPage : Page
         var logs = ViewModel.AppLogs;
         if (logs.Count == 0)
         {
-            AppLogsEmpty.Visibility = Visibility.Visible;
+            AppLogsEmpty.Visibility = ViewModel.IsLoading ? Visibility.Collapsed : Visibility.Visible;
+            AppLogsLoading.Visibility = ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
             return;
         }
 
         AppLogsEmpty.Visibility = Visibility.Collapsed;
+        AppLogsLoading.Visibility = Visibility.Collapsed;
 
         bool first = true;
         foreach (var entry in logs)
@@ -131,15 +265,25 @@ public sealed partial class AdminLogsPage : Page
             var row = BuildAppLogRow(entry);
             AppLogsPanel_Rows.Children.Add(row);
         }
+
+        // Update summary if playback session is active
+        if (!string.IsNullOrWhiteSpace(ViewModel.PlaybackSessionId))
+            RebuildPlaybackSummary();
     }
 
     private FrameworkElement BuildAppLogRow(OperationalLogEntry entry)
     {
+        // Highlight ffmpeg rows when in playback focus mode
+        bool highlight = !string.IsNullOrWhiteSpace(ViewModel.PlaybackSessionId) && entry.Component == "ffmpeg";
+
         var row = new Grid
         {
             Padding = new Thickness(16, 8, 16, 8),
             ColumnSpacing = 8,
-            Tag = entry
+            Tag = entry,
+            Background = highlight
+                ? new SolidColorBrush(Color.FromArgb(12, 99, 102, 241))  // bg-primary/5
+                : new SolidColorBrush(Colors.Transparent)
         };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
@@ -154,10 +298,12 @@ public sealed partial class AdminLogsPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
 
-        // Time
-        row.Children.Add(MakeMonoCell(0, AdminLogsViewModel.FormatTimestamp(entry.Timestamp), 11));
+        var defaultBg = row.Background;
 
-        // Level (colored)
+        // Time (whitespace-nowrap)
+        row.Children.Add(MakeMonoCell(0, AdminLogsViewModel.FormatDateTime(entry.Timestamp), 11));
+
+        // Level (uppercase)
         var levelBlock = new TextBlock
         {
             Text = entry.Level.ToUpperInvariant(),
@@ -173,58 +319,72 @@ public sealed partial class AdminLogsPage : Page
         // Component
         row.Children.Add(MakeTextCell(2, entry.Component, 12));
 
-        // User
+        // User: #ID or -
         row.Children.Add(MakeTextCell(3, entry.UserId.HasValue ? $"#{entry.UserId}" : "-", 12));
 
-        // Session (short)
-        row.Children.Add(MakeMonoCell(4, ShortId(entry.SessionId), 11));
+        // Session (mono 12px)
+        row.Children.Add(MakeMonoCell(4, entry.SessionId ?? AdminLogsViewModel.GetAttr(entry, "session_id"), 11));
 
-        // Playback session (short)
-        row.Children.Add(MakeMonoCell(5, ShortId(entry.PlaybackSessionId), 11));
+        // Playback (mono 12px)
+        row.Children.Add(MakeMonoCell(5, entry.PlaybackSessionId ?? AdminLogsViewModel.GetAttr(entry, "playback_session_id"), 11));
 
         // Method from attrs
         row.Children.Add(MakeTextCell(6, AdminLogsViewModel.GetAttr(entry, "method"), 12));
 
-        // Path from attrs (truncated)
+        // Path from attrs (mono 12px, max-w 260px truncated with title tooltip)
         var pathAttr = AdminLogsViewModel.GetAttr(entry, "path");
-        row.Children.Add(MakeMonoCell(7, AdminLogsViewModel.TruncatePath(pathAttr), 11));
+        var pathBlock = new TextBlock
+        {
+            Text = pathAttr,
+            FontSize = 11,
+            FontFamily = new FontFamily("Consolas"),
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 260,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        ToolTipService.SetToolTip(pathBlock, pathAttr);
+        Grid.SetColumn(pathBlock, 7);
+        row.Children.Add(pathBlock);
 
         // Status from attrs
         row.Children.Add(MakeTextCell(8, AdminLogsViewModel.GetAttr(entry, "status"), 12));
 
-        // Duration from attrs
+        // Duration from attrs (duration_ms + " ms")
         row.Children.Add(MakeTextCell(9, AdminLogsViewModel.GetDurationAttr(entry), 11));
 
-        // Message (truncated)
+        // Message (max-w 360px truncated with title tooltip)
         var msgBlock = new TextBlock
         {
             Text = entry.Message,
             FontSize = 12,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 360,
             VerticalAlignment = VerticalAlignment.Center
         };
+        ToolTipService.SetToolTip(msgBlock, entry.Message);
         Grid.SetColumn(msgBlock, 10);
         row.Children.Add(msgBlock);
 
-        // Request ID
-        row.Children.Add(MakeMonoCell(11, ShortId(entry.RequestId), 11));
+        // Request ID (mono 12px)
+        row.Children.Add(MakeMonoCell(11, entry.RequestId ?? "-", 11));
 
-        // Make row clickable
-        row.PointerPressed += (_, _) => ShowAppDetail(entry, row);
+        // Make row clickable (cursor-pointer)
+        row.PointerPressed += (_, _) => ShowAppDetail(entry);
         row.PointerEntered += (_, _) =>
             row.Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"];
         row.PointerExited += (_, _) =>
-            row.Background = new SolidColorBrush(Colors.Transparent);
+            row.Background = defaultBg;
 
         return row;
     }
 
     // ===== App detail panel =====
 
-    private void ShowAppDetail(OperationalLogEntry entry, Grid clickedRow)
+    private void ShowAppDetail(OperationalLogEntry entry)
     {
-        // Deselect previous
+        // Toggle: deselect if same entry clicked again
         if (_selectedAppEntry == entry)
         {
             HideAppDetail();
@@ -245,15 +405,15 @@ public sealed partial class AdminLogsPage : Page
             TextWrapping = TextWrapping.Wrap
         });
 
-        // Subtitle line
+        // Subtitle: component . LEVEL . timestamp
         AppDetailContent.Children.Add(new TextBlock
         {
-            Text = $"{entry.Component} · {entry.Level.ToUpperInvariant()} · {AdminLogsViewModel.FormatDate(entry.Timestamp)}",
+            Text = $"{entry.Component} \u00B7 {entry.Level.ToUpperInvariant()} \u00B7 {AdminLogsViewModel.FormatDateTime(entry.Timestamp)}",
             FontSize = 12,
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
         });
 
-        // Detail grid
+        // 2-column detail grid
         var detailGrid = new Grid { ColumnSpacing = 16, RowSpacing = 12 };
         detailGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         detailGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -274,10 +434,10 @@ public sealed partial class AdminLogsPage : Page
         for (int i = 0; i < fields.Length; i++)
         {
             var (label, value, mono) = fields[i];
-            int row = i / 2;
+            int gridRow = i / 2;
             int col = i % 2;
 
-            while (detailGrid.RowDefinitions.Count <= row)
+            while (detailGrid.RowDefinitions.Count <= gridRow)
                 detailGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             var fieldStack = new StackPanel { Spacing = 2 };
@@ -290,18 +450,43 @@ public sealed partial class AdminLogsPage : Page
             fieldStack.Children.Add(new TextBlock
             {
                 Text = value,
-                FontSize = 12,
-                FontFamily = mono ? new Microsoft.UI.Xaml.Media.FontFamily("Consolas") : null,
+                FontSize = mono ? 12 : 13,
+                FontFamily = mono ? new FontFamily("Consolas") : null,
                 Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
                 TextWrapping = TextWrapping.Wrap
             });
 
-            Grid.SetRow(fieldStack, row);
+            Grid.SetRow(fieldStack, gridRow);
             Grid.SetColumn(fieldStack, col);
             detailGrid.Children.Add(fieldStack);
         }
 
         AppDetailContent.Children.Add(detailGrid);
+
+        // "View related playback session logs" link button
+        var playbackId = entry.PlaybackSessionId ?? AdminLogsViewModel.GetAttr(entry, "playback_session_id");
+        if (!string.IsNullOrEmpty(playbackId) && playbackId != "-")
+        {
+            var linkBtn = new Button
+            {
+                Content = "View related playback session logs",
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(0, 4, 0, 4),
+                Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold
+            };
+            linkBtn.Click += (_, _) =>
+            {
+                ViewModel.PlaybackSessionId = playbackId;
+                UpdatePlaybackSessionTag();
+                HideAppDetail();
+                _ = ViewModel.LoadAppLogsCommand.ExecuteAsync(null);
+                _ = ViewModel.LoadAuditLogsCommand.ExecuteAsync(null);
+            };
+            AppDetailContent.Children.Add(linkBtn);
+        }
 
         // Path block
         var pathVal = AdminLogsViewModel.GetAttr(entry, "path");
@@ -311,7 +496,7 @@ public sealed partial class AdminLogsPage : Page
             pathStack.Children.Add(new TextBlock
             {
                 Text = "Path",
-                FontSize = 12,
+                FontSize = 13,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
             });
@@ -319,11 +504,11 @@ public sealed partial class AdminLogsPage : Page
             {
                 Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
                 CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(10, 6, 10, 6),
+                Padding = new Thickness(12, 8, 12, 8),
                 Child = new TextBlock
                 {
                     Text = pathVal,
-                    FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+                    FontFamily = new FontFamily("Consolas"),
                     FontSize = 12,
                     Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
                     TextWrapping = TextWrapping.Wrap
@@ -337,7 +522,7 @@ public sealed partial class AdminLogsPage : Page
         attrsStack.Children.Add(new TextBlock
         {
             Text = "Attributes",
-            FontSize = 12,
+            FontSize = 13,
             FontWeight = FontWeights.SemiBold,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
@@ -350,15 +535,15 @@ public sealed partial class AdminLogsPage : Page
         {
             Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
             CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(10, 8, 10, 8),
+            Padding = new Thickness(12, 8, 12, 8),
             Child = new ScrollViewer
             {
-                MaxHeight = 300,
+                MaxHeight = 420,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 Content = new TextBlock
                 {
                     Text = attrsJson,
-                    FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+                    FontFamily = new FontFamily("Consolas"),
                     FontSize = 11,
                     Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
                     TextWrapping = TextWrapping.Wrap
@@ -376,6 +561,11 @@ public sealed partial class AdminLogsPage : Page
         AppDetailContent.Children.Clear();
     }
 
+    private void BtnCloseDetail_Click(object sender, RoutedEventArgs e)
+    {
+        HideAppDetail();
+    }
+
     // ===== Audit log table =====
 
     private void RebuildAuditTable()
@@ -385,11 +575,13 @@ public sealed partial class AdminLogsPage : Page
         var logs = ViewModel.AuditLogs;
         if (logs.Count == 0)
         {
-            AuditLogsEmpty.Visibility = Visibility.Visible;
+            AuditLogsEmpty.Visibility = ViewModel.IsLoading ? Visibility.Collapsed : Visibility.Visible;
+            AuditLogsLoading.Visibility = ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
             return;
         }
 
         AuditLogsEmpty.Visibility = Visibility.Collapsed;
+        AuditLogsLoading.Visibility = Visibility.Collapsed;
 
         bool first = true;
         foreach (var entry in logs)
@@ -405,6 +597,10 @@ public sealed partial class AdminLogsPage : Page
             first = false;
             AuditLogsPanel_Rows.Children.Add(BuildAuditLogRow(entry));
         }
+
+        // Update summary if playback session is active
+        if (!string.IsNullOrWhiteSpace(ViewModel.PlaybackSessionId))
+            RebuildPlaybackSummary();
     }
 
     private static FrameworkElement BuildAuditLogRow(AuditLogEntry entry)
@@ -424,14 +620,26 @@ public sealed partial class AdminLogsPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
 
-        // Time
-        row.Children.Add(MakeMonoCell(0, AdminLogsViewModel.FormatDate(entry.Timestamp), 11));
+        // Time (formatted, whitespace-nowrap)
+        row.Children.Add(MakeMonoCell(0, AdminLogsViewModel.FormatDateTime(entry.Timestamp), 11));
 
         // Method
         row.Children.Add(MakeTextCell(1, entry.Method, 12, bold: true));
 
-        // Path (monospace, truncated)
-        row.Children.Add(MakeMonoCell(2, AdminLogsViewModel.TruncatePath(entry.Path, 70), 11));
+        // Path (monospace 12px, max-w 420px truncated with title tooltip)
+        var pathBlock = new TextBlock
+        {
+            Text = entry.Path,
+            FontSize = 11,
+            FontFamily = new FontFamily("Consolas"),
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 420,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        ToolTipService.SetToolTip(pathBlock, entry.Path);
+        Grid.SetColumn(pathBlock, 2);
+        row.Children.Add(pathBlock);
 
         // Status (colored)
         var statusBlock = new TextBlock
@@ -446,20 +654,20 @@ public sealed partial class AdminLogsPage : Page
         Grid.SetColumn(statusBlock, 3);
         row.Children.Add(statusBlock);
 
-        // Client IP
-        row.Children.Add(MakeMonoCell(4, FormatClientIp(entry.ClientIp), 11));
+        // Client IP (strip CIDR suffix, mono 12px)
+        row.Children.Add(MakeMonoCell(4, AdminLogsViewModel.FormatClientIp(entry.ClientIp), 11));
 
-        // User
+        // User: #ID or -
         row.Children.Add(MakeTextCell(5, entry.UserId.HasValue ? $"#{entry.UserId}" : "-", 12));
 
-        // Session
-        row.Children.Add(MakeMonoCell(6, ShortId(entry.SessionId), 11));
+        // Session (mono 12px)
+        row.Children.Add(MakeMonoCell(6, entry.SessionId ?? "-", 11));
 
-        // Playback session
-        row.Children.Add(MakeMonoCell(7, ShortId(entry.PlaybackSessionId), 11));
+        // Playback session (mono 12px)
+        row.Children.Add(MakeMonoCell(7, entry.PlaybackSessionId ?? "-", 11));
 
-        // Request ID
-        row.Children.Add(MakeMonoCell(8, ShortId(entry.RequestId), 11));
+        // Request ID (mono 12px)
+        row.Children.Add(MakeMonoCell(8, entry.RequestId ?? "-", 11));
 
         row.PointerEntered += (_, _) =>
             row.Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"];
@@ -494,7 +702,7 @@ public sealed partial class AdminLogsPage : Page
         {
             Text = text,
             FontSize = fontSize,
-            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+            FontFamily = new FontFamily("Consolas"),
             Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center
@@ -520,19 +728,4 @@ public sealed partial class AdminLogsPage : Page
             >= 200 and < 300 => new SolidColorBrush(Color.FromArgb(255, 63, 185, 80)),
             _ => (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
         };
-
-    private static string FormatClientIp(string? ip)
-    {
-        if (string.IsNullOrEmpty(ip)) return "-";
-        // Strip CIDR suffix if present (e.g. "1.2.3.4/32" -> "1.2.3.4")
-        var slashIdx = ip.IndexOf('/');
-        return slashIdx >= 0 ? ip[..slashIdx] : ip;
-    }
-
-    private static string ShortId(string? id)
-    {
-        if (string.IsNullOrEmpty(id)) return "-";
-        if (id.Length <= 12) return id;
-        return $"{id[..8]}...{id[^4..]}";
-    }
 }

@@ -10,12 +10,10 @@ namespace ContinuumPlayer.ViewModels.Admin;
 public partial class AdminUsersViewModel : ObservableObject
 {
     private readonly AdminApi _adminApi;
-    private readonly CatalogApi _catalogApi;
 
-    public AdminUsersViewModel(AdminApi adminApi, CatalogApi catalogApi)
+    public AdminUsersViewModel(AdminApi adminApi)
     {
         _adminApi = adminApi;
-        _catalogApi = catalogApi;
     }
 
     public ObservableCollection<AdminUser> Users { get; } = [];
@@ -34,7 +32,7 @@ public partial class AdminUsersViewModel : ObservableObject
         try
         {
             var usersTask = _adminApi.GetUsersAsync();
-            var librariesTask = _catalogApi.GetLibrariesAsync();
+            var librariesTask = _adminApi.GetAdminLibrariesAsync();
             await Task.WhenAll(usersTask, librariesTask);
 
             Users.Clear();

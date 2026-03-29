@@ -14,13 +14,6 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
-
-        <Style x:Key="SectionCardStyle" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="24" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-        </Style>
     </Page.Resources>
 
     <Grid>
@@ -66,14 +59,14 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                    <StackPanel Grid.Column="0" Spacing="6" VerticalAlignment="Center">
                         <TextBlock
                             Text="Libraries"
                             FontSize="42"
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
-                            Text="Manage media libraries, scan content, and configure metadata sources."
+                            Text="Manage library roots and scans. Catalog import/export now lives under Maintenance."
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
@@ -84,7 +77,7 @@
                             Style="{StaticResource SecondaryButtonStyle}"
                             Click="ScanAllButton_Click">
                             <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                                <FontIcon x:Name="ScanAllIcon" Glyph="&#xE72C;" FontSize="14" />
                                 <TextBlock Text="Scan All" />
                             </StackPanel>
                         </Button>
@@ -114,25 +107,34 @@
                 </Border>
 
                 <!-- ===== Libraries Table ===== -->
-                <Border Style="{StaticResource SectionCardStyle}" Padding="0">
+                <!-- surface-panel rounded-[1.6rem] border-0 -->
+                <Border
+                    Background="{StaticResource CardBackgroundBrush}"
+                    CornerRadius="26"
+                    BorderThickness="0"
+                    Padding="0">
                     <StackPanel>
-                        <!-- Table header -->
+                        <!-- Table header: Name | Paths | Type | Status | Last Scanned | Actions -->
                         <Grid Padding="20,14,20,14" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.5*" />
                                 <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="100" />
                                 <ColumnDefinition Width="80" />
-                                <ColumnDefinition Width="150" />
+                                <ColumnDefinition Width="130" />
+                                <ColumnDefinition Width="140" />
+                                <ColumnDefinition Width="180" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="NAME" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="1" Text="TYPE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="PATHS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="2" Text="TYPE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="3" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="4" Text="LAST SCANNED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="5" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                         </Grid>
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
 
-                        <!-- Library rows — populated in code-behind -->
+                        <!-- Library rows populated in code-behind -->
                         <StackPanel x:Name="LibrariesPanel" Spacing="0" />
 
                         <!-- Empty state -->
@@ -156,6 +158,53 @@
                                     HorizontalAlignment="Center" />
                             </StackPanel>
                         </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== Skipped Roots Section ===== -->
+                <Border
+                    x:Name="SkippedRootsSection"
+                    Background="{StaticResource CardBackgroundBrush}"
+                    CornerRadius="12"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    Padding="16"
+                    Visibility="Collapsed">
+                    <StackPanel Spacing="12">
+                        <StackPanel Spacing="4">
+                            <TextBlock
+                                Text="Troubleshooting"
+                                FontSize="14"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock
+                                Text="Skipped roots are listed here for low-key admin visibility when scanner matching is gated by missing folder IDs."
+                                FontSize="13"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <!-- Skipped roots table header -->
+                        <Grid ColumnSpacing="12" Padding="0,8,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*" />
+                                <ColumnDefinition Width="1*" />
+                                <ColumnDefinition Width="90" />
+                                <ColumnDefinition Width="2*" />
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="120" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="SKIPPED ROOTS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="LIBRARY" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="2" Text="REASON" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="3" Text="SAMPLE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="4" Text="FIRST SEEN" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="5" Text="LAST SEEN" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                        </Grid>
+
+                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
+
+                        <StackPanel x:Name="SkippedRootsPanel" Spacing="0" />
                     </StackPanel>
                 </Border>
 

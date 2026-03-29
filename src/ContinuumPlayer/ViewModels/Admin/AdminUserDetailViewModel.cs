@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Admin;
+using ContinuumPlayer.Core.Models.Catalog;
 
 namespace ContinuumPlayer.ViewModels.Admin;
 
@@ -22,6 +23,7 @@ public partial class AdminUserDetailViewModel : ObservableObject
     public ObservableCollection<AdminUserProfile> Profiles { get; } = [];
     public ObservableCollection<AdminPlaybackHistoryItem> History { get; } = [];
     public ObservableCollection<UserIPEntry> IPs { get; } = [];
+    public ObservableCollection<Library> Libraries { get; } = [];
 
     [RelayCommand]
     private async Task LoadAsync(int userId)
@@ -34,8 +36,9 @@ public partial class AdminUserDetailViewModel : ObservableObject
             var profilesTask = _adminApi.GetUserProfilesAsync(userId);
             var historyTask  = _adminApi.GetPlaybackHistoryAsync(userId: userId, limit: 50);
             var ipsTask      = _adminApi.GetUserIPsAsync(userId, days: 30);
+            var librariesTask = _adminApi.GetAdminLibrariesAsync();
 
-            await Task.WhenAll(userTask, profilesTask, historyTask, ipsTask);
+            await Task.WhenAll(userTask, profilesTask, historyTask, ipsTask, librariesTask);
 
             User = userTask.Result;
 
@@ -47,6 +50,9 @@ public partial class AdminUserDetailViewModel : ObservableObject
 
             IPs.Clear();
             foreach (var ip in ipsTask.Result) IPs.Add(ip);
+
+            Libraries.Clear();
+            foreach (var l in librariesTask.Result) Libraries.Add(l);
         }
         catch (Exception ex)
         {

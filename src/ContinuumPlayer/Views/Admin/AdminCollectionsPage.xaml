@@ -14,13 +14,6 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
-
-        <Style x:Key="SectionCardStyle" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="24" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-        </Style>
     </Page.Resources>
 
     <Grid>
@@ -73,54 +66,42 @@
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
-                            Text="Manage library collections, sync from external sources, and curate shelves."
+                            Text="Curate library shelves and sync them from MDBList or TMDB trending."
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
 
-                    <Button
-                        x:Name="AddCollectionButton"
+                    <!-- Library picker + Add Collection button (top-right) -->
+                    <StackPanel
                         Grid.Column="1"
-                        Style="{StaticResource AccentButtonStyle}"
-                        VerticalAlignment="Center"
-                        Click="AddCollectionButton_Click">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <FontIcon Glyph="&#xE710;" FontSize="14" />
-                            <TextBlock Text="Add Collection" />
-                        </StackPanel>
-                    </Button>
+                        Orientation="Horizontal"
+                        Spacing="8"
+                        VerticalAlignment="Center">
+                        <ComboBox
+                            x:Name="LibraryPicker"
+                            MinWidth="180"
+                            CornerRadius="8"
+                            FontSize="13"
+                            SelectionChanged="LibraryPicker_SelectionChanged" />
+                        <Button
+                            x:Name="AddCollectionButton"
+                            Style="{StaticResource AccentButtonStyle}"
+                            VerticalAlignment="Center"
+                            Click="AddCollectionButton_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE710;" FontSize="14" />
+                                <TextBlock Text="Add Collection" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
                 </Grid>
 
-                <!-- ===== Status banner ===== -->
-                <Border
-                    x:Name="StatusBanner"
-                    Background="{StaticResource AccentBackgroundBrush}"
-                    CornerRadius="8"
-                    Padding="14,10"
-                    Visibility="Collapsed">
-                    <TextBlock
-                        x:Name="StatusBannerText"
-                        FontSize="13"
-                        Foreground="{StaticResource AccentBrush}" />
-                </Border>
-
-                <!-- ===== Library Picker ===== -->
-                <StackPanel Orientation="Horizontal" Spacing="10">
-                    <TextBlock
-                        Text="Filter by library:"
-                        FontSize="13"
-                        Foreground="{StaticResource SecondaryTextBrush}"
-                        VerticalAlignment="Center" />
-                    <ComboBox
-                        x:Name="LibraryPicker"
-                        MinWidth="200"
-                        CornerRadius="8"
-                        FontSize="13"
-                        SelectionChanged="LibraryPicker_SelectionChanged" />
-                </StackPanel>
-
                 <!-- ===== Collections Table ===== -->
-                <Border Style="{StaticResource SectionCardStyle}" Padding="0">
+                <Border
+                    Background="{StaticResource CardBackgroundBrush}"
+                    CornerRadius="26"
+                    BorderThickness="0"
+                    Padding="0">
                     <StackPanel>
                         <!-- Table header -->
                         <Grid Padding="20,14,20,14" ColumnSpacing="12">
@@ -135,7 +116,7 @@
                             <TextBlock Grid.Column="0" Text="TITLE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                             <TextBlock Grid.Column="1" Text="SOURCE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                             <TextBlock Grid.Column="2" Text="ITEMS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="SYNC STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="3" Text="SYNC" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                             <TextBlock Grid.Column="4" Text="UPDATED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                             <TextBlock Grid.Column="5" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                         </Grid>
@@ -147,24 +128,11 @@
 
                         <!-- Empty state -->
                         <Border x:Name="EmptyState" Padding="20,40" Visibility="Collapsed">
-                            <StackPanel HorizontalAlignment="Center" Spacing="8">
-                                <FontIcon
-                                    Glyph="&#xE8A1;"
-                                    FontSize="32"
-                                    Foreground="{StaticResource TertiaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                                <TextBlock
-                                    Text="No collections found"
-                                    FontSize="16"
-                                    FontWeight="SemiBold"
-                                    Foreground="{StaticResource SecondaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                                <TextBlock
-                                    Text="Add a collection to get started."
-                                    FontSize="13"
-                                    Foreground="{StaticResource TertiaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                            </StackPanel>
+                            <TextBlock
+                                Text="No collections found for this library yet."
+                                FontSize="13"
+                                Foreground="{StaticResource TertiaryTextBrush}"
+                                HorizontalAlignment="Center" />
                         </Border>
                     </StackPanel>
                 </Border>

@@ -10,4 +10,7 @@ public class AppSettings
     public List<ServerEntry> Servers { get; set; } = [];
     public string? LastProfileId { get; set; }
     public string? LastTheme { get; set; }
+    public List<int> HiddenLibraryIds { get; set; } = [];
+    public string? LastUserRole { get; set; }
+    public string? LastUsername { get; set; }
 }

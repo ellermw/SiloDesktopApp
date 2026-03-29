@@ -34,7 +34,6 @@ public sealed partial class AdminShellPage : Page
         _navItems.Add((NavPlaybackHistory, NavPlaybackHistoryBar, NavPlaybackHistoryIcon, NavPlaybackHistoryText));
         _navItems.Add((NavScheduledTasks,  NavScheduledTasksBar,  NavScheduledTasksIcon,  NavScheduledTasksText));
         _navItems.Add((NavNodes,           NavNodesBar,           NavNodesIcon,           NavNodesText));
-        _navItems.Add((NavMaintenance,     NavMaintenanceBar,     NavMaintenanceIcon,     NavMaintenanceText));
         _navItems.Add((NavSettings,        NavSettingsBar,        NavSettingsIcon,        NavSettingsText));
         _navItems.Add((NavRecommendations, NavRecommendationsBar, NavRecommendationsIcon, NavRecommendationsText));
         _navItems.Add((NavApiKeys,         NavApiKeysBar,         NavApiKeysIcon,         NavApiKeysText));
@@ -126,12 +125,6 @@ public sealed partial class AdminShellPage : Page
         AdminContentFrame.Navigate(typeof(AdminNodesPage));
     }
 
-    private void NavMaintenance_Click(object sender, RoutedEventArgs e)
-    {
-        SetActiveNavItem(NavMaintenance);
-        AdminContentFrame.Navigate(typeof(PlaceholderPage), "Maintenance");
-    }
-
     private void NavSettings_Click(object sender, RoutedEventArgs e)
     {
         SetActiveNavItem(NavSettings);
@@ -152,11 +145,9 @@ public sealed partial class AdminShellPage : Page
 
     private void BackToApp_Click(object sender, RoutedEventArgs e)
     {
-        _navigationService.Navigate<HomePage>();
-
-        // Restore the main nav pane visibility
         if (App.MainWindowInstance != null)
         {
+            App.MainWindowInstance.RestoreMainPane();
             App.MainWindowInstance.NavigateToHome();
         }
     }

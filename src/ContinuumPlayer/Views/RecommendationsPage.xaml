@@ -22,12 +22,55 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Header -->
-        <TextBlock
-            Grid.Row="0"
-            Text="Recommendations"
-            Style="{StaticResource HeaderTextStyle}"
-            Margin="24,24,24,16" />
+        <!-- Header: large title + subtitle -->
+        <Grid Grid.Row="0" Margin="40,24,40,20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Spacing="6">
+                <TextBlock
+                    Text="Recommendations"
+                    FontSize="{StaticResource FontSizeDisplayLarge}"
+                    FontWeight="Bold"
+                    Foreground="{StaticResource PrimaryTextBrush}" />
+                <TextBlock
+                    Text="Personalized picks based on your viewing history and taste."
+                    FontSize="14"
+                    Foreground="{StaticResource SecondaryTextBrush}" />
+            </StackPanel>
+
+            <!-- Row count panel -->
+            <Border
+                x:Name="CountPanel"
+                Grid.Column="1"
+                Background="{StaticResource SurfaceBrush}"
+                CornerRadius="20"
+                Padding="20,16"
+                MinWidth="140"
+                VerticalAlignment="Center"
+                Visibility="Collapsed">
+                <StackPanel HorizontalAlignment="Right">
+                    <TextBlock
+                        Text="FOR YOU"
+                        FontSize="10"
+                        FontWeight="SemiBold"
+                        CharacterSpacing="160"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                    <TextBlock
+                        x:Name="RowCountText"
+                        FontSize="24"
+                        FontWeight="SemiBold"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        Margin="0,4,0,0" />
+                    <TextBlock
+                        x:Name="RowCountLabel"
+                        FontSize="12"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+            </Border>
+        </Grid>
 
         <!-- Loading -->
         <ProgressRing
@@ -54,7 +97,7 @@
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
             <StackPanel
                 x:Name="RowsPanel"
-                Padding="24,0,24,24" />
+                Padding="40,0,40,24" />
         </ScrollViewer>
 
         <!-- Empty state -->
@@ -63,18 +106,28 @@
             Grid.Row="1"
             VerticalAlignment="Center"
             HorizontalAlignment="Center"
-            Spacing="8"
+            Spacing="12"
+            Padding="40"
             Visibility="Collapsed">
             <FontIcon
                 Glyph="&#xE735;"
-                FontSize="48"
+                FontSize="40"
                 Foreground="{StaticResource SecondaryTextBrush}"
                 HorizontalAlignment="Center" />
             <TextBlock
                 Text="No recommendations yet"
-                Style="{StaticResource SecondaryTextStyle}"
-                FontSize="16"
+                FontSize="{StaticResource FontSizeTitle}"
+                FontWeight="SemiBold"
+                Foreground="{StaticResource PrimaryTextBrush}"
                 HorizontalAlignment="Center" />
+            <TextBlock
+                Text="Watch a few things and we'll start building personalized suggestions for you."
+                FontSize="14"
+                Foreground="{StaticResource SecondaryTextBrush}"
+                HorizontalAlignment="Center"
+                TextAlignment="Center"
+                TextWrapping="Wrap"
+                MaxWidth="420" />
         </StackPanel>
     </Grid>
 </Page>

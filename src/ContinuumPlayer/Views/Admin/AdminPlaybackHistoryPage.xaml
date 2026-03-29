@@ -15,12 +15,20 @@
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
 
-        <Style x:Key="SectionCardStyle" TargetType="Border">
+        <!-- surface-panel rounded-[1.5rem] border-0 — info cards -->
+        <Style x:Key="InfoCardStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
             <Setter Property="CornerRadius" Value="24" />
-            <Setter Property="Padding" Value="20" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="16" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+
+        <!-- surface-panel rounded-[1.6rem] border-0 — table card -->
+        <Style x:Key="TableCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
+            <Setter Property="CornerRadius" Value="26" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
         </Style>
     </Page.Resources>
 
@@ -67,66 +75,59 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                    <StackPanel Grid.Column="0" Spacing="12" VerticalAlignment="Center">
                         <TextBlock
                             Text="Playback History"
                             FontSize="42"
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
-                            Text="Review playback sessions across all users and profiles."
+                            Text="Finalized playback attempts across all users and profiles."
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
 
-                    <Button
-                        Grid.Column="1"
-                        Content="Refresh"
-                        Style="{StaticResource SecondaryButtonStyle}"
-                        VerticalAlignment="Center"
-                        Command="{x:Bind ViewModel.LoadCommand}" />
+                    <!-- Filter controls in header row -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+
+                        <!-- User ComboBox -->
+                        <ComboBox
+                            x:Name="UserComboBox"
+                            MinWidth="180"
+                            PlaceholderText="All users"
+                            SelectionChanged="UserComboBox_SelectionChanged">
+                            <ComboBoxItem Content="All users" Tag="" />
+                        </ComboBox>
+
+                        <!-- Profile ComboBox -->
+                        <ComboBox
+                            x:Name="ProfileComboBox"
+                            MinWidth="180"
+                            PlaceholderText="All profiles"
+                            SelectionChanged="ProfileComboBox_SelectionChanged">
+                            <ComboBoxItem Content="All profiles" Tag="" />
+                        </ComboBox>
+
+                        <!-- Completion status ComboBox -->
+                        <ComboBox
+                            x:Name="StatusComboBox"
+                            MinWidth="160"
+                            SelectedIndex="0"
+                            SelectionChanged="StatusComboBox_SelectionChanged">
+                            <ComboBoxItem Content="All attempts" Tag="all" />
+                            <ComboBoxItem Content="Completed" Tag="true" />
+                            <ComboBoxItem Content="Partial" Tag="false" />
+                        </ComboBox>
+
+                        <!-- Reset button -->
+                        <Button
+                            x:Name="ResetButton"
+                            Content="Reset"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Visibility="Collapsed"
+                            Click="ResetButton_Click" />
+                    </StackPanel>
                 </Grid>
-
-                <!-- ===== Filter Controls ===== -->
-                <StackPanel Orientation="Horizontal" Spacing="8" x:Name="FilterRow">
-
-                    <!-- User ComboBox -->
-                    <ComboBox
-                        x:Name="UserComboBox"
-                        MinWidth="180"
-                        PlaceholderText="All Users"
-                        SelectionChanged="UserComboBox_SelectionChanged">
-                        <ComboBoxItem Content="All Users" Tag="" />
-                    </ComboBox>
-
-                    <!-- Profile ComboBox -->
-                    <ComboBox
-                        x:Name="ProfileComboBox"
-                        MinWidth="180"
-                        PlaceholderText="All Profiles"
-                        SelectionChanged="ProfileComboBox_SelectionChanged">
-                        <ComboBoxItem Content="All Profiles" Tag="" />
-                    </ComboBox>
-
-                    <!-- Status ComboBox -->
-                    <ComboBox
-                        x:Name="StatusComboBox"
-                        MinWidth="160"
-                        SelectedIndex="0"
-                        SelectionChanged="StatusComboBox_SelectionChanged">
-                        <ComboBoxItem Content="All Attempts" Tag="all" />
-                        <ComboBoxItem Content="Completed" Tag="true" />
-                        <ComboBoxItem Content="Partial" Tag="false" />
-                    </ComboBox>
-
-                    <!-- Reset button -->
-                    <Button
-                        x:Name="ResetButton"
-                        Content="Reset"
-                        Style="{StaticResource SecondaryButtonStyle}"
-                        Visibility="Collapsed"
-                        Click="ResetButton_Click" />
-                </StackPanel>
 
                 <!-- ===== Stat Cards ===== -->
                 <Grid ColumnSpacing="12">
@@ -137,79 +138,105 @@
                     </Grid.ColumnDefinitions>
 
                     <!-- Visible Rows -->
-                    <Border Grid.Column="0" Style="{StaticResource SectionCardStyle}" Padding="16">
+                    <Border Grid.Column="0" Style="{StaticResource InfoCardStyle}">
                         <StackPanel Spacing="4">
                             <TextBlock
-                                Text="VISIBLE ROWS"
+                                Text="Visible Rows"
                                 FontSize="11"
-                                FontWeight="SemiBold"
+                                FontWeight="Medium"
                                 Foreground="{StaticResource TertiaryTextBrush}" />
                             <TextBlock
                                 x:Name="TotalCountText"
                                 Text="0"
-                                FontSize="28"
+                                FontSize="24"
                                 FontWeight="ExtraBold"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
                         </StackPanel>
                     </Border>
 
                     <!-- Completed -->
-                    <Border Grid.Column="1" Style="{StaticResource SectionCardStyle}" Padding="16">
+                    <Border Grid.Column="1" Style="{StaticResource InfoCardStyle}">
                         <StackPanel Spacing="4">
                             <TextBlock
-                                Text="COMPLETED"
+                                Text="Completed"
                                 FontSize="11"
-                                FontWeight="SemiBold"
+                                FontWeight="Medium"
                                 Foreground="{StaticResource TertiaryTextBrush}" />
                             <TextBlock
                                 x:Name="CompletedCountText"
                                 Text="0"
-                                FontSize="28"
+                                FontSize="24"
                                 FontWeight="ExtraBold"
-                                Foreground="#3FB950" />
+                                Foreground="{StaticResource PrimaryTextBrush}" />
                         </StackPanel>
                     </Border>
 
                     <!-- Partial -->
-                    <Border Grid.Column="2" Style="{StaticResource SectionCardStyle}" Padding="16">
+                    <Border Grid.Column="2" Style="{StaticResource InfoCardStyle}">
                         <StackPanel Spacing="4">
                             <TextBlock
-                                Text="PARTIAL"
+                                Text="Partial"
                                 FontSize="11"
-                                FontWeight="SemiBold"
+                                FontWeight="Medium"
                                 Foreground="{StaticResource TertiaryTextBrush}" />
                             <TextBlock
                                 x:Name="PartialCountText"
                                 Text="0"
-                                FontSize="28"
+                                FontSize="24"
                                 FontWeight="ExtraBold"
                                 Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
                     </Border>
                 </Grid>
 
-                <!-- ===== History Table ===== -->
-                <Border Style="{StaticResource SectionCardStyle}" Padding="0">
+                <!-- ===== History Table Card ===== -->
+                <Border Style="{StaticResource TableCardStyle}">
                     <StackPanel>
 
-                        <!-- Table header -->
+                        <!-- Card header: "Recent Playback" + refresh status -->
+                        <Grid Padding="20,16,20,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock
+                                Grid.Column="0"
+                                Text="Recent Playback"
+                                FontSize="13"
+                                FontWeight="Bold"
+                                Foreground="{StaticResource PrimaryTextBrush}"
+                                VerticalAlignment="Center" />
+                            <TextBlock
+                                x:Name="RefreshStatusText"
+                                Grid.Column="1"
+                                Text="Auto-refreshing"
+                                FontSize="12"
+                                Foreground="{StaticResource TertiaryTextBrush}"
+                                VerticalAlignment="Center" />
+                        </Grid>
+
+                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
+
+                        <!-- Table header row -->
                         <Grid x:Name="TableHeader" Padding="20,14,20,14" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="2.5*" />
                                 <ColumnDefinition Width="1.2*" />
                                 <ColumnDefinition Width="1.2*" />
-                                <ColumnDefinition Width="100" />
+                                <ColumnDefinition Width="90" />
                                 <ColumnDefinition Width="1.2*" />
-                                <ColumnDefinition Width="100" />
+                                <ColumnDefinition Width="90" />
                                 <ColumnDefinition Width="1.4*" />
+                                <ColumnDefinition Width="1.2*" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="MEDIA" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="1" Text="USER" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="PROFILE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="METHOD" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="4" Text="WATCH TIME" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="5" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="6" Text="ENDED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="0" Text="Media" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="User" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="2" Text="Profile" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="3" Text="Method" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="4" Text="Watch Time" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="5" Text="Status" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="6" Text="Ended" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="7" Text="Logs" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" HorizontalAlignment="Right" />
                         </Grid>
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
@@ -219,24 +246,12 @@
 
                         <!-- Empty state -->
                         <Border x:Name="EmptyState" Padding="20,48" Visibility="Collapsed">
-                            <StackPanel HorizontalAlignment="Center" Spacing="8">
-                                <FontIcon
-                                    Glyph="&#xE916;"
-                                    FontSize="32"
-                                    Foreground="{StaticResource TertiaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                                <TextBlock
-                                    Text="No playback history"
-                                    FontSize="16"
-                                    FontWeight="SemiBold"
-                                    Foreground="{StaticResource SecondaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                                <TextBlock
-                                    Text="No playback history matches the current filters."
-                                    FontSize="13"
-                                    Foreground="{StaticResource TertiaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                            </StackPanel>
+                            <TextBlock
+                                Text="No playback history matches the current filters."
+                                FontSize="13"
+                                Foreground="{StaticResource TertiaryTextBrush}"
+                                HorizontalAlignment="Center"
+                                TextAlignment="Center" />
                         </Border>
 
                     </StackPanel>

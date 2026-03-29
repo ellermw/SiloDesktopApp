@@ -420,6 +420,14 @@ public sealed partial class SettingsPage : Page
 
         foreach (var card in ViewModel.LibraryCards)
         {
+            // When user toggles library visibility, refresh sidebar immediately
+            card.LibraryVisibilityChanged += () =>
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    App.MainWindowInstance?.UpdateLibraryNavItems();
+                });
+            };
             LibraryCardsContainer.Children.Add(BuildLibraryCard(card));
         }
     }
@@ -437,8 +445,12 @@ public sealed partial class SettingsPage : Page
 
         var outerStack = new StackPanel { Spacing = 12 };
 
-        // === Row 1: Name + type badge + custom badge ===
-        var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        // === Row 1: Name + badges on left, visibility toggle on right ===
+        var headerGrid = new Grid();
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
 
         headerRow.Children.Add(new TextBlock
         {
@@ -491,7 +503,40 @@ public sealed partial class SettingsPage : Page
             }
         };
 
-        outerStack.Children.Add(headerRow);
+        Grid.SetColumn(headerRow, 0);
+        headerGrid.Children.Add(headerRow);
+
+        // Visibility toggle (web: "hidden on navigation" label + toggle switch on right)
+        var togglePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+
+        var visibilityLabel = new TextBlock
+        {
+            Text = vm.IsEnabled ? "Visible on navigation" : "Hidden on navigation",
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        togglePanel.Children.Add(visibilityLabel);
+
+        var visibilityToggle = new ToggleSwitch
+        {
+            IsOn = vm.IsEnabled,
+            MinWidth = 0,
+            MinHeight = 0,
+            OnContent = "",
+            OffContent = "",
+        };
+        visibilityToggle.Toggled += (s, e) =>
+        {
+            vm.IsEnabled = visibilityToggle.IsOn;
+            visibilityLabel.Text = visibilityToggle.IsOn ? "Visible on navigation" : "Hidden on navigation";
+        };
+        togglePanel.Children.Add(visibilityToggle);
+
+        Grid.SetColumn(togglePanel, 1);
+        headerGrid.Children.Add(togglePanel);
+
+        outerStack.Children.Add(headerGrid);
 
         // === Row 2: Summary text ===
         var summaryText = new TextBlock

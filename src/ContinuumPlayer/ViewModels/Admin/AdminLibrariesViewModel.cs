@@ -18,8 +18,18 @@ public partial class AdminLibrariesViewModel : ObservableObject
     }
 
     public ObservableCollection<Library> Libraries { get; } = [];
+    public ObservableCollection<LibrarySkippedRoot> SkippedRoots { get; } = [];
+
+    /// <summary>Per-library mount check results, keyed by library ID.</summary>
+    public Dictionary<int, LibraryMountCheckResponse> MountCheckResults { get; } = new();
+
+    /// <summary>Set of library IDs currently performing an operation (scan, refresh, mount check).</summary>
+    public HashSet<int> ScanningIds { get; } = [];
+    public HashSet<int> RefreshingIds { get; } = [];
+    public HashSet<int> MountCheckingIds { get; } = [];
 
     [ObservableProperty] private bool _isLoading;
+    [ObservableProperty] private bool _isScanningAll;
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private string? _statusMessage;
 
@@ -33,12 +43,26 @@ public partial class AdminLibrariesViewModel : ObservableObject
         StatusMessage = null;
         try
         {
-            var libs = await _catalogApi.GetLibrariesAsync();
+            var libs = await _adminApi.GetAdminLibrariesAsync();
             Libraries.Clear();
             foreach (var l in libs) Libraries.Add(l);
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsLoading = false; }
+
+        // Load skipped roots in background (non-blocking)
+        _ = LoadSkippedRootsAsync();
+    }
+
+    private async Task LoadSkippedRootsAsync()
+    {
+        try
+        {
+            var skipped = await _adminApi.GetSkippedRootsAsync();
+            SkippedRoots.Clear();
+            foreach (var s in skipped) SkippedRoots.Add(s);
+        }
+        catch { /* Non-critical */ }
     }
 
     // ===== Scan All =====
@@ -48,12 +72,14 @@ public partial class AdminLibrariesViewModel : ObservableObject
     {
         StatusMessage = null;
         ErrorMessage = null;
+        IsScanningAll = true;
         try
         {
             await _adminApi.RunScanLibrariesTaskAsync();
             StatusMessage = "Scan all libraries started.";
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
+        finally { IsScanningAll = false; }
     }
 
     // ===== Scan Library =====
@@ -63,12 +89,19 @@ public partial class AdminLibrariesViewModel : ObservableObject
     {
         StatusMessage = null;
         ErrorMessage = null;
+        ScanningIds.Add(id);
+        OnPropertyChanged(nameof(ScanningIds));
         try
         {
             await _adminApi.ScanLibraryAsync(id);
             StatusMessage = "Library scan started.";
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
+        finally
+        {
+            ScanningIds.Remove(id);
+            OnPropertyChanged(nameof(ScanningIds));
+        }
     }
 
     // ===== Refresh Metadata =====
@@ -78,10 +111,56 @@ public partial class AdminLibrariesViewModel : ObservableObject
     {
         StatusMessage = null;
         ErrorMessage = null;
+        RefreshingIds.Add(id);
+        OnPropertyChanged(nameof(RefreshingIds));
         try
         {
             await _adminApi.RefreshLibraryMetadataAsync(id);
             StatusMessage = "Metadata refresh started.";
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
+        finally
+        {
+            RefreshingIds.Remove(id);
+            OnPropertyChanged(nameof(RefreshingIds));
+        }
+    }
+
+    // ===== Check Mount =====
+
+    [RelayCommand]
+    private async Task CheckMountAsync(int id)
+    {
+        StatusMessage = null;
+        ErrorMessage = null;
+        MountCheckingIds.Add(id);
+        OnPropertyChanged(nameof(MountCheckingIds));
+        try
+        {
+            var result = await _adminApi.CheckLibraryMountAsync(id);
+            MountCheckResults[id] = result;
+            OnPropertyChanged(nameof(MountCheckResults));
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
+        finally
+        {
+            MountCheckingIds.Remove(id);
+            OnPropertyChanged(nameof(MountCheckingIds));
+        }
+    }
+
+    // ===== Confirm Empty Root Cleanup =====
+
+    [RelayCommand]
+    private async Task ConfirmEmptyRootCleanupAsync(int id)
+    {
+        StatusMessage = null;
+        ErrorMessage = null;
+        try
+        {
+            await _adminApi.ConfirmEmptyRootCleanupAsync(id);
+            StatusMessage = "Empty root cleanup confirmed.";
+            await LoadAsync();
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
     }

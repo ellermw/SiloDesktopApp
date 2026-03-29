@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Auth;
 
@@ -40,6 +42,11 @@ public class AuthService
         ScheduleRefresh(expiresIn);
     }
 
+    public void SetCurrentUser(UserInfo user)
+    {
+        CurrentUser = user;
+    }
+
     public void SelectProfile(string profileId, string? profileToken = null)
     {
         SelectedProfileId = profileId;
@@ -66,6 +73,15 @@ public class AuthService
             _apiClient.SetAccessToken(response.AccessToken);
             RefreshToken = response.RefreshToken;
             ScheduleRefresh(response.ExpiresIn);
+
+            // Extract user info from JWT claims if not already set
+            if (CurrentUser == null)
+            {
+                var user = TryParseUserFromJwt(response.AccessToken);
+                if (user != null)
+                    CurrentUser = user;
+            }
+
             TokenRefreshed?.Invoke();
             return true;
         }
@@ -73,6 +89,47 @@ public class AuthService
         {
             Logout();
             return false;
+        }
+    }
+
+    /// <summary>Extracts user info (username, role) from a JWT access token payload.</summary>
+    private static UserInfo? TryParseUserFromJwt(string jwt)
+    {
+        try
+        {
+            var parts = jwt.Split('.');
+            if (parts.Length < 2) return null;
+
+            // JWT payload is base64url-encoded
+            var payload = parts[1];
+            // Pad to multiple of 4
+            payload = payload.Replace('-', '+').Replace('_', '/');
+            switch (payload.Length % 4)
+            {
+                case 2: payload += "=="; break;
+                case 3: payload += "="; break;
+            }
+
+            var json = Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var user = new UserInfo();
+
+            if (root.TryGetProperty("sub", out var sub))
+                user.Username = sub.GetString() ?? "";
+            if (root.TryGetProperty("username", out var username))
+                user.Username = username.GetString() ?? "";
+            if (root.TryGetProperty("role", out var role))
+                user.Role = role.GetString() ?? "user";
+            if (root.TryGetProperty("user_id", out var userId) && userId.TryGetInt32(out var uid))
+                user.Id = uid;
+
+            return user;
+        }
+        catch
+        {
+            return null;
         }
     }
 

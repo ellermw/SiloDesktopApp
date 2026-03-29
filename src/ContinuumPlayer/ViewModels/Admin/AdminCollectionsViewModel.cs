@@ -10,12 +10,10 @@ namespace ContinuumPlayer.ViewModels.Admin;
 public partial class AdminCollectionsViewModel : ObservableObject
 {
     private readonly AdminApi _adminApi;
-    private readonly CatalogApi _catalogApi;
 
-    public AdminCollectionsViewModel(AdminApi adminApi, CatalogApi catalogApi)
+    public AdminCollectionsViewModel(AdminApi adminApi)
     {
         _adminApi = adminApi;
-        _catalogApi = catalogApi;
     }
 
     public ObservableCollection<LibraryCollection> Collections { get; } = [];
@@ -39,7 +37,7 @@ public partial class AdminCollectionsViewModel : ObservableObject
             // Load libraries if not yet loaded
             if (Libraries.Count == 0)
             {
-                var libs = await _catalogApi.GetLibrariesAsync();
+                var libs = await _adminApi.GetAdminLibrariesAsync();
                 Libraries.Clear();
                 foreach (var l in libs) Libraries.Add(l);
             }

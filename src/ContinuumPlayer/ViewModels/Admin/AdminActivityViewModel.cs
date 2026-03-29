@@ -20,6 +20,7 @@ public partial class AdminActivityViewModel : ObservableObject
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private string? _methodFilter;
+    [ObservableProperty] private string? _nodeFilter;
     [ObservableProperty] private string? _typeFilter;
     [ObservableProperty] private string _ipLookupText = "";
     [ObservableProperty] private bool _ipLookupLoading;
@@ -30,7 +31,47 @@ public partial class AdminActivityViewModel : ObservableObject
 
     partial void OnSearchTextChanged(string value) => ApplyFilters();
     partial void OnMethodFilterChanged(string? value) => ApplyFilters();
+    partial void OnNodeFilterChanged(string? value) => ApplyFilters();
     partial void OnTypeFilterChanged(string? value) => ApplyFilters();
+
+    /// <summary>
+    /// Returns method -> count dictionary from all sessions.
+    /// </summary>
+    public Dictionary<string, int> GetMethodCounts()
+    {
+        var counts = new Dictionary<string, int>();
+        foreach (var s in _allSessions)
+        {
+            var key = s.PlayMethod ?? "unknown";
+            counts[key] = counts.GetValueOrDefault(key) + 1;
+        }
+        return counts;
+    }
+
+    /// <summary>
+    /// Returns node -> count dictionary from all sessions.
+    /// </summary>
+    public Dictionary<string, int> GetNodeCounts()
+    {
+        var counts = new Dictionary<string, int>();
+        foreach (var s in _allSessions)
+        {
+            var key = s.ReportingNode ?? "unknown";
+            counts[key] = counts.GetValueOrDefault(key) + 1;
+        }
+        return counts;
+    }
+
+    public bool HasActiveFilters =>
+        !string.IsNullOrEmpty(SearchText)
+        || MethodFilter != null
+        || NodeFilter != null
+        || TypeFilter != null;
+
+    public int ActiveFilterCount =>
+        (MethodFilter != null ? 1 : 0)
+        + (NodeFilter != null ? 1 : 0)
+        + (TypeFilter != null ? 1 : 0);
 
     [RelayCommand]
     private async Task LoadAsync()
@@ -70,6 +111,7 @@ public partial class AdminActivityViewModel : ObservableObject
     {
         SearchText = "";
         MethodFilter = null;
+        NodeFilter = null;
         TypeFilter = null;
     }
 
@@ -84,31 +126,167 @@ public partial class AdminActivityViewModel : ObservableObject
                 (s.SeriesName?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) == true));
         }
         if (MethodFilter != null) result = result.Where(s => s.PlayMethod == MethodFilter);
+        if (NodeFilter != null) result = result.Where(s => s.ReportingNode == NodeFilter);
         if (TypeFilter != null) result = result.Where(s => s.MediaType == TypeFilter);
 
         FilteredSessions.Clear();
         foreach (var s in result) FilteredSessions.Add(s);
     }
 
-    public static string GetTimeAgo(string dateStr)
+    // ===== Formatting helpers =====
+
+    private static readonly Dictionary<string, string> CodecLabels = new(StringComparer.OrdinalIgnoreCase)
     {
-        if (!DateTime.TryParse(dateStr, out var dt)) return "";
-        var diff = DateTime.UtcNow - dt.ToUniversalTime();
-        if (diff.TotalMinutes < 1) return "Just now";
-        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
-        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
-        return $"{(int)diff.TotalDays}d ago";
+        ["aac"] = "AAC",
+        ["ac3"] = "AC3",
+        ["av1"] = "AV1",
+        ["dts"] = "DTS",
+        ["dtshd"] = "DTS-HD",
+        ["eac3"] = "EAC3",
+        ["flac"] = "FLAC",
+        ["h264"] = "H.264",
+        ["hevc"] = "HEVC",
+        ["mp3"] = "MP3",
+        ["opus"] = "Opus",
+        ["truehd"] = "TrueHD",
+    };
+
+    public static string FormatCodecLabel(string? codec)
+    {
+        if (string.IsNullOrWhiteSpace(codec)) return "\u2014";
+        var trimmed = codec.Trim();
+        if (string.IsNullOrEmpty(trimmed)) return "\u2014";
+        return CodecLabels.TryGetValue(trimmed, out var label) ? label : trimmed.ToUpperInvariant();
+    }
+
+    public static string FormatChannelLayout(int? channels)
+    {
+        if (!channels.HasValue || channels.Value <= 0) return "";
+        return channels.Value switch
+        {
+            1 => "1.0",
+            2 => "2.0",
+            6 => "5.1",
+            8 => "7.1",
+            _ => $"{channels.Value}ch"
+        };
+    }
+
+    public static string GetDisplayTitle(AdminSession session)
+    {
+        if (session.SeriesName != null && session.SeasonNumber != null && session.EpisodeNumber != null)
+            return session.SeriesName;
+        return session.MediaTitle ?? $"File #{session.MediaFileId}";
+    }
+
+    public static string? GetDisplaySubtitle(AdminSession session)
+    {
+        if (session.SeriesName != null && session.SeasonNumber != null && session.EpisodeNumber != null)
+        {
+            var ep = $"S{session.SeasonNumber}E{session.EpisodeNumber}";
+            return !string.IsNullOrEmpty(session.MediaTitle) ? $"{ep} \u00b7 {session.MediaTitle}" : ep;
+        }
+        if (session.MediaType == "movie") return "Movie";
+        if (session.MediaType == "series") return "Series";
+        return null;
+    }
+
+    public static string FormatVideoSummary(AdminSession session)
+    {
+        var parts = new List<string>();
+        var codec = FormatCodecLabel(session.SourceVideoCodec);
+        if (codec != "\u2014") parts.Add(codec);
+        var res = session.SourceVideoResolution?.Trim();
+        if (!string.IsNullOrEmpty(res)) parts.Add(res);
+        return parts.Count > 0 ? string.Join(" \u00b7 ", parts) : "Unknown source";
+    }
+
+    public static string FormatVideoDetail(AdminSession session)
+    {
+        var decision = session.VideoDecision ?? session.PlayMethod;
+        if (decision == "transcode")
+        {
+            var parts = new List<string>();
+            var codec = FormatCodecLabel(session.TargetVideoCodec);
+            if (codec != "\u2014") parts.Add(codec);
+            var res = session.TargetResolution?.Trim();
+            if (!string.IsNullOrEmpty(res)) parts.Add(res);
+            var target = string.Join(" \u00b7 ", parts);
+            return !string.IsNullOrEmpty(target) ? $"\u2192 {target}" : "Transcoding";
+        }
+        if (decision == "remux") return "Container remux";
+        if (decision == "direct") return "No video conversion";
+        return "\u2014";
+    }
+
+    public static string FormatAudioSummary(AdminSession session)
+    {
+        var lead = session.SourceAudioTitle?.Trim();
+        if (string.IsNullOrEmpty(lead)) lead = session.SourceAudioLanguage?.Trim();
+
+        var formatParts = new List<string>();
+        var codec = FormatCodecLabel(session.SourceAudioCodec);
+        if (codec != "\u2014") formatParts.Add(codec);
+        var ch = FormatChannelLayout(session.SourceAudioChannels);
+        if (!string.IsNullOrEmpty(ch)) formatParts.Add(ch);
+        var format = string.Join(" ", formatParts);
+
+        var summaryParts = new List<string>();
+        if (!string.IsNullOrEmpty(lead)) summaryParts.Add(lead);
+        if (!string.IsNullOrEmpty(format)) summaryParts.Add(format);
+        return summaryParts.Count > 0 ? string.Join(" \u00b7 ", summaryParts) : "Unknown source";
+    }
+
+    public static string FormatAudioDetail(AdminSession session)
+    {
+        var decision = session.AudioDecision ?? (session.TranscodeAudio ? "transcode" : session.PlayMethod);
+        if (decision == "transcode")
+        {
+            var parts = new List<string>();
+            var codec = FormatCodecLabel(session.TargetAudioCodec ?? "aac");
+            if (codec != "\u2014") parts.Add(codec);
+            var ch = FormatChannelLayout(session.SourceAudioChannels);
+            if (!string.IsNullOrEmpty(ch)) parts.Add(ch);
+            var target = string.Join(" ", parts);
+            return !string.IsNullOrEmpty(target) ? $"\u2192 {target}" : "Audio transcode";
+        }
+        if (decision == "remux") return "Container remux";
+        if (decision == "direct") return "No audio conversion";
+        return "\u2014";
+    }
+
+    public static string FormatSessionBitrate(int? kbps)
+    {
+        if (!kbps.HasValue || kbps.Value <= 0) return "";
+        if (kbps.Value >= 1000) return $"{kbps.Value / 1000.0:F1} Mbps";
+        return $"{kbps.Value} kbps";
     }
 
     public static string GetElapsed(string dateStr)
     {
-        if (!DateTime.TryParse(dateStr, out var dt)) return "00:00";
+        if (!DateTime.TryParse(dateStr, out var dt)) return "0:00";
         var diff = DateTime.UtcNow - dt.ToUniversalTime();
-        return diff.TotalHours >= 1
-            ? $"{(int)diff.TotalHours}:{diff.Minutes:D2}:{diff.Seconds:D2}"
-            : $"{diff.Minutes:D2}:{diff.Seconds:D2}";
+        if (diff.TotalSeconds < 0) diff = TimeSpan.Zero;
+        int totalSec = (int)diff.TotalSeconds;
+        int h = totalSec / 3600;
+        int m = (totalSec % 3600) / 60;
+        int s = totalSec % 60;
+        if (h > 0) return $"{h}:{m:D2}:{s:D2}";
+        return $"{m}:{s:D2}";
     }
 
     public static string FormatDecision(string? decision) =>
-        decision switch { "direct" => "Direct", "copy" => "Direct", "transcode" => "Transcode", _ => decision ?? "" };
+        decision switch
+        {
+            "direct" => "Direct",
+            "remux" => "Remux",
+            "transcode" => "Transcode",
+            _ => "Unknown"
+        };
+
+    public static string FormatLocaleDateTime(string dateStr)
+    {
+        if (!DateTime.TryParse(dateStr, out var dt)) return "";
+        return dt.ToLocalTime().ToString("g");
+    }
 }

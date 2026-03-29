@@ -54,14 +54,14 @@
             <StackPanel Padding="40,28,40,40" Spacing="24">
 
                 <!-- ===== Header ===== -->
-                <StackPanel Spacing="4">
+                <StackPanel Spacing="12">
                     <TextBlock
-                        Text="Scheduled Tasks"
+                        Text="Scheduled tasks"
                         FontSize="42"
                         FontWeight="Bold"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock
-                        Text="Background jobs that keep your library fresh and metadata current."
+                        Text="View and manage background tasks. You can trigger tasks manually or adjust their schedules."
                         FontSize="14"
                         Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>

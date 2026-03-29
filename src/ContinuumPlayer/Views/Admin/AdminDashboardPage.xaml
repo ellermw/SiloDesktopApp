@@ -104,7 +104,7 @@
                 </Grid>
 
                 <!-- ===== Stats Row ===== -->
-                <Grid x:Name="StatsGrid" ColumnSpacing="12">
+                <Grid x:Name="StatsGrid" ColumnSpacing="14">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
@@ -115,11 +115,12 @@
 
                     <!-- 1: Active Streams -->
                     <Border Grid.Column="0" Style="{StaticResource StatCardStyle}">
-                        <StackPanel Spacing="6">
-                            <Grid>
+                        <StackPanel>
+                            <Grid Margin="0,0,0,8">
                                 <TextBlock
                                     Text="Active Streams"
                                     FontSize="11"
+                                    FontWeight="Medium"
                                     Foreground="{StaticResource SecondaryTextBrush}"
                                     VerticalAlignment="Center" />
                                 <FontIcon
@@ -134,7 +135,9 @@
                                 Text="0"
                                 FontSize="28"
                                 FontWeight="ExtraBold"
-                                Foreground="{StaticResource PrimaryTextBrush}" />
+                                Foreground="{StaticResource PrimaryTextBrush}"
+                                CharacterSpacing="-30"
+                                Margin="0,0,0,2" />
                             <TextBlock
                                 x:Name="StatActiveStreamsSub"
                                 Text="0 sessions"
@@ -145,11 +148,12 @@
 
                     <!-- 2: Total Movies -->
                     <Border Grid.Column="1" Style="{StaticResource StatCardStyle}">
-                        <StackPanel Spacing="6">
-                            <Grid>
+                        <StackPanel>
+                            <Grid Margin="0,0,0,8">
                                 <TextBlock
                                     Text="Total Movies"
                                     FontSize="11"
+                                    FontWeight="Medium"
                                     Foreground="{StaticResource SecondaryTextBrush}"
                                     VerticalAlignment="Center" />
                                 <FontIcon
@@ -164,7 +168,9 @@
                                 Text="0"
                                 FontSize="28"
                                 FontWeight="ExtraBold"
-                                Foreground="{StaticResource PrimaryTextBrush}" />
+                                Foreground="{StaticResource PrimaryTextBrush}"
+                                CharacterSpacing="-30"
+                                Margin="0,0,0,2" />
                             <TextBlock
                                 x:Name="StatMoviesSub"
                                 Text="of 0 items"
@@ -175,11 +181,12 @@
 
                     <!-- 3: Total Shows -->
                     <Border Grid.Column="2" Style="{StaticResource StatCardStyle}">
-                        <StackPanel Spacing="6">
-                            <Grid>
+                        <StackPanel>
+                            <Grid Margin="0,0,0,8">
                                 <TextBlock
                                     Text="Total Shows"
                                     FontSize="11"
+                                    FontWeight="Medium"
                                     Foreground="{StaticResource SecondaryTextBrush}"
                                     VerticalAlignment="Center" />
                                 <FontIcon
@@ -194,7 +201,9 @@
                                 Text="0"
                                 FontSize="28"
                                 FontWeight="ExtraBold"
-                                Foreground="{StaticResource PrimaryTextBrush}" />
+                                Foreground="{StaticResource PrimaryTextBrush}"
+                                CharacterSpacing="-30"
+                                Margin="0,0,0,2" />
                             <TextBlock
                                 x:Name="StatShowsSub"
                                 Text="0 files total"
@@ -205,11 +214,12 @@
 
                     <!-- 4: Users -->
                     <Border Grid.Column="3" Style="{StaticResource StatCardStyle}">
-                        <StackPanel Spacing="6">
-                            <Grid>
+                        <StackPanel>
+                            <Grid Margin="0,0,0,8">
                                 <TextBlock
                                     Text="Users"
                                     FontSize="11"
+                                    FontWeight="Medium"
                                     Foreground="{StaticResource SecondaryTextBrush}"
                                     VerticalAlignment="Center" />
                                 <FontIcon
@@ -224,7 +234,9 @@
                                 Text="0"
                                 FontSize="28"
                                 FontWeight="ExtraBold"
-                                Foreground="{StaticResource PrimaryTextBrush}" />
+                                Foreground="{StaticResource PrimaryTextBrush}"
+                                CharacterSpacing="-30"
+                                Margin="0,0,0,2" />
                             <TextBlock
                                 x:Name="StatUsersSub"
                                 Text="0 registered"
@@ -235,11 +247,12 @@
 
                     <!-- 5: Storage -->
                     <Border Grid.Column="4" Style="{StaticResource StatCardStyle}">
-                        <StackPanel Spacing="6">
-                            <Grid>
+                        <StackPanel>
+                            <Grid Margin="0,0,0,8">
                                 <TextBlock
                                     Text="Storage"
                                     FontSize="11"
+                                    FontWeight="Medium"
                                     Foreground="{StaticResource SecondaryTextBrush}"
                                     VerticalAlignment="Center" />
                                 <FontIcon
@@ -254,7 +267,9 @@
                                 Text="0 GB"
                                 FontSize="28"
                                 FontWeight="ExtraBold"
-                                Foreground="{StaticResource PrimaryTextBrush}" />
+                                Foreground="{StaticResource PrimaryTextBrush}"
+                                CharacterSpacing="-30"
+                                Margin="0,0,0,2" />
                             <TextBlock
                                 x:Name="StatStorageSub"
                                 Text="0 files"
@@ -275,7 +290,7 @@
                         <TextBlock
                             Grid.Column="0"
                             Text="Now Playing"
-                            FontSize="18"
+                            FontSize="16"
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}"
                             VerticalAlignment="Center" />
@@ -283,13 +298,13 @@
                             x:Name="NowPlayingViewAll"
                             Grid.Column="1"
                             Text="View all 0 streams ›"
-                            FontSize="13"
-                            Foreground="{StaticResource AccentBrush}"
+                            FontSize="11"
+                            Foreground="{StaticResource SecondaryTextBrush}"
                             VerticalAlignment="Center" />
                     </Grid>
 
                     <!-- Stream cards grid (2 columns) -->
-                    <Grid x:Name="StreamCardsGrid" ColumnSpacing="12" RowSpacing="12">
+                    <Grid x:Name="StreamCardsGrid" ColumnSpacing="14" RowSpacing="14">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
@@ -298,9 +313,9 @@
                 </StackPanel>
 
                 <!-- ===== Libraries + Users Two-Column Section ===== -->
-                <Grid ColumnSpacing="20">
+                <Grid ColumnSpacing="14">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="1.4*" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
@@ -316,14 +331,14 @@
                                 <TextBlock
                                     Grid.Column="0"
                                     Text="Libraries"
-                                    FontSize="16"
+                                    FontSize="14"
                                     FontWeight="Bold"
                                     Foreground="{StaticResource PrimaryTextBrush}"
                                     VerticalAlignment="Center" />
                                 <TextBlock
                                     Grid.Column="1"
                                     Text="Manage ›"
-                                    FontSize="13"
+                                    FontSize="11"
                                     Foreground="{StaticResource SecondaryTextBrush}"
                                     VerticalAlignment="Center" />
                             </Grid>
@@ -344,19 +359,19 @@
                                 <TextBlock
                                     Grid.Column="0"
                                     Text="Users"
-                                    FontSize="16"
+                                    FontSize="14"
                                     FontWeight="Bold"
                                     Foreground="{StaticResource PrimaryTextBrush}"
                                     VerticalAlignment="Center" />
                                 <TextBlock
                                     Grid.Column="1"
                                     Text="Manage ›"
-                                    FontSize="13"
+                                    FontSize="11"
                                     Foreground="{StaticResource SecondaryTextBrush}"
                                     VerticalAlignment="Center" />
                             </Grid>
                             <!-- User rows populated in code-behind -->
-                            <StackPanel x:Name="UsersPanel" Spacing="8" />
+                            <StackPanel x:Name="UsersPanel" Spacing="0" />
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -373,19 +388,19 @@
                             <TextBlock
                                 Grid.Column="0"
                                 Text="Recent Activity"
-                                FontSize="16"
+                                FontSize="14"
                                 FontWeight="Bold"
                                 Foreground="{StaticResource PrimaryTextBrush}"
                                 VerticalAlignment="Center" />
                             <TextBlock
                                 Grid.Column="1"
                                 Text="View all ›"
-                                FontSize="13"
-                                Foreground="{StaticResource AccentBrush}"
+                                FontSize="11"
+                                Foreground="{StaticResource SecondaryTextBrush}"
                                 VerticalAlignment="Center" />
                         </Grid>
                         <!-- Activity items populated in code-behind -->
-                        <StackPanel x:Name="ActivityPanel" Spacing="8" />
+                        <StackPanel x:Name="ActivityPanel" Spacing="0" />
                     </StackPanel>
                 </Border>
 

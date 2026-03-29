@@ -165,9 +165,14 @@ public partial class ProfileSelectViewModel : ObservableObject
     {
         _authService.SelectProfile(profile.Id, profileToken);
 
-        // Save last profile
+        // Save last profile and user info
         var settings = _settingsService.Load();
         settings.LastProfileId = profile.Id;
+        if (_authService.CurrentUser != null)
+        {
+            settings.LastUserRole = _authService.CurrentUser.Role;
+            settings.LastUsername = _authService.CurrentUser.Username;
+        }
         _settingsService.Save(settings);
 
         ProfileSelected?.Invoke();

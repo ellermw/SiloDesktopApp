@@ -23,6 +23,7 @@ public sealed partial class AdminTaskDetailPage : Page
 
         BackButton.Click   += (_, _) => GoBack();
         RetryButton.Click  += async (_, _) => await LoadAsync();
+        EditScheduleButton.Click += (_, _) => { /* Schedule editing not implemented */ };
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -111,20 +112,18 @@ public sealed partial class AdminTaskDetailPage : Page
     {
         TitleBadgeRow.Children.Clear();
 
+        // Task name — page-title clamp(2rem,4vw,3rem) = large bold
         TitleBadgeRow.Children.Add(new TextBlock
         {
-            Text      = task.Name,
-            FontSize  = 24,
+            Text       = task.Name,
+            FontSize   = 32,
             FontWeight = FontWeights.Bold,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center
         });
 
-        // Category badge
-        TitleBadgeRow.Children.Add(MakeBadge(
-            task.Category,
-            Color.FromArgb(40, 120, 120, 120),
-            Color.FromArgb(255, 160, 160, 160)));
+        // Category badge — variant="outline"
+        TitleBadgeRow.Children.Add(MakeOutlineBadge(task.Category));
 
         DescriptionText.Text = task.Description;
 
@@ -171,9 +170,12 @@ public sealed partial class AdminTaskDetailPage : Page
 
         if (!isActive) return;
 
+        // Web: Math.max(task.progress, 2)% where task.progress is 0-100
+        // Our model: Progress is 0.0-1.0, so multiply by 100
         double pct = Math.Max(task.Progress * 100, 2);
         TaskProgressBar.Value = pct;
 
+        // Cancelling → yellow-500, else accent (primary)
         TaskProgressBar.Foreground = task.State == "cancelling"
             ? new SolidColorBrush(Color.FromArgb(255, 234, 179, 8))
             : (SolidColorBrush)Application.Current.Resources["AccentBrush"];
@@ -197,74 +199,47 @@ public sealed partial class AdminTaskDetailPage : Page
 
         NoTriggersMessage.Visibility = Visibility.Collapsed;
 
-        bool isFirst = true;
-        foreach (var trigger in task.Triggers)
+        for (int i = 0; i < task.Triggers.Count; i++)
         {
-            if (!isFirst)
+            if (i > 0)
             {
+                // border-b between rows
                 TriggersPanel.Children.Add(new Border
                 {
                     BorderBrush     = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
                     BorderThickness = new Thickness(0, 1, 0, 0)
                 });
             }
-            isFirst = false;
-
-            TriggersPanel.Children.Add(BuildTriggerRow(trigger));
+            TriggersPanel.Children.Add(BuildTriggerRow(task.Triggers[i]));
         }
     }
 
     private FrameworkElement BuildTriggerRow(TriggerConfig trigger)
     {
-        var row = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing     = 10,
-            Padding     = new Thickness(20, 12, 20, 12),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        // Type icon
-        string glyph = trigger.Type switch
-        {
-            "interval" => "\uE916",  // Clock
-            "daily"    => "\uE787",  // Calendar day
-            "weekly"   => "\uE787",  // Calendar
-            "startup"  => "\uE7E8",  // Power
-            _          => "\uE916"
-        };
-
-        row.Children.Add(new FontIcon
-        {
-            Glyph      = glyph,
-            FontSize   = 14,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center
-        });
-
+        // Web: border-b px-4 py-2.5 text-sm last:border-b-0
+        // px-4 = 16px, py-2.5 = 10px
         string description = DescribeTrigger(trigger);
 
         // If max runtime is set, append it
-        string maxRuntime = "";
         if (trigger.MaxRuntimeMs.HasValue && trigger.MaxRuntimeMs.Value > 0)
         {
             long minutes = trigger.MaxRuntimeMs.Value / 60_000;
-            maxRuntime = $"  (max {minutes}m)";
+            description += $"  (max {minutes}m)";
         }
 
-        row.Children.Add(new TextBlock
+        return new TextBlock
         {
-            Text              = description + maxRuntime,
+            Text              = description,
             FontSize          = 13,
             Foreground        = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            Padding           = new Thickness(16, 10, 16, 10),
             VerticalAlignment = VerticalAlignment.Center
-        });
-
-        return row;
+        };
     }
 
     private static string DescribeTrigger(TriggerConfig trigger)
     {
+        // Matches web describeTrigger() exactly
         switch (trigger.Type)
         {
             case "interval":
@@ -278,11 +253,13 @@ public sealed partial class AdminTaskDetailPage : Page
                 return $"Daily at {trigger.TimeOfDay ?? "00:00"}";
             case "weekly":
             {
+                // Web: "${days[t.day_of_week ?? 0]} at ${t.time_of_day ?? "00:00"}"
+                // No "Weekly on" prefix
                 string[] days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
                 string day = (trigger.DayOfWeek.HasValue && trigger.DayOfWeek.Value >= 0 && trigger.DayOfWeek.Value < 7)
                     ? days[trigger.DayOfWeek.Value]
                     : "Sunday";
-                return $"Weekly on {day} at {trigger.TimeOfDay ?? "00:00"}";
+                return $"{day} at {trigger.TimeOfDay ?? "00:00"}";
             }
             case "startup":
                 return "On server startup";
@@ -305,10 +282,9 @@ public sealed partial class AdminTaskDetailPage : Page
 
         NoHistoryMessage.Visibility = Visibility.Collapsed;
 
-        bool isFirst = true;
-        foreach (var result in ViewModel.History)
+        for (int i = 0; i < ViewModel.History.Count; i++)
         {
-            if (!isFirst)
+            if (i > 0)
             {
                 HistoryRowsPanel.Children.Add(new Border
                 {
@@ -316,22 +292,28 @@ public sealed partial class AdminTaskDetailPage : Page
                     BorderThickness = new Thickness(0, 1, 0, 0)
                 });
             }
-            isFirst = false;
-            HistoryRowsPanel.Children.Add(BuildHistoryRow(result));
+            HistoryRowsPanel.Children.Add(BuildHistoryRow(ViewModel.History[i]));
         }
     }
 
     private FrameworkElement BuildHistoryRow(ExecutionResult result)
     {
+        // Web: px-4 py-2 per cell (16px horiz, 8px vert)
         var row = new Grid
         {
-            Padding       = new Thickness(20, 10, 20, 10),
+            Padding       = new Thickness(16, 8, 16, 8),
             ColumnSpacing = 12
         };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
+
+        // Failed rows get bg-destructive/5
+        if (result.Status.Equals("failed", StringComparison.OrdinalIgnoreCase))
+        {
+            row.Background = new SolidColorBrush(Color.FromArgb(13, 220, 70, 70)); // ~5% opacity red
+        }
 
         // Started
         var startedBlock = new TextBlock
@@ -351,14 +333,15 @@ public sealed partial class AdminTaskDetailPage : Page
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        // Status badge
+        // Status badge — matches web Badge variants:
+        // failed → destructive, cancelled → outline, else → secondary
         var statusBadge = BuildStatusBadge(result.Status);
 
-        // Error
+        // Error — text-muted-foreground max-w-xs truncate
         var errorBlock = new TextBlock
         {
             Text              = result.ErrorMessage ?? "\u2014",  // em dash
-            FontSize          = 12,
+            FontSize          = 13,
             Foreground        = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming      = TextTrimming.CharacterEllipsis,
@@ -382,45 +365,63 @@ public sealed partial class AdminTaskDetailPage : Page
 
     private static Border BuildStatusBadge(string status)
     {
-        Color bg, fg;
+        // Web Badge variants:
+        //   failed → destructive (red bg/text)
+        //   cancelled → outline (border only, muted text)
+        //   else (completed) → secondary (muted bg, normal text)
         switch (status.ToLowerInvariant())
         {
-            case "completed":
-                bg = Color.FromArgb(40, 34, 197, 94);
-                fg = Color.FromArgb(255, 34, 197, 94);
-                break;
             case "failed":
-                bg = Color.FromArgb(40, 220, 70, 70);
-                fg = Color.FromArgb(255, 220, 90, 90);
-                break;
+                return MakeBadge(status,
+                    Color.FromArgb(40, 220, 70, 70),
+                    Color.FromArgb(255, 220, 90, 90));
             case "cancelled":
-                bg = Color.FromArgb(40, 234, 179, 8);
-                fg = Color.FromArgb(255, 234, 179, 8);
-                break;
+                // outline variant: transparent bg, just a border
+                return MakeOutlineBadge(status);
             default:
-                bg = Color.FromArgb(40, 120, 120, 120);
-                fg = Color.FromArgb(255, 160, 160, 160);
-                break;
+                // secondary: muted bg
+                return MakeBadge(status,
+                    Color.FromArgb(40, 120, 120, 120),
+                    Color.FromArgb(255, 160, 160, 160));
         }
-
-        return MakeBadge(status, bg, fg);
     }
 
     private static Border MakeBadge(string text, Color bg, Color fg)
     {
         return new Border
         {
-            Background        = new SolidColorBrush(bg),
-            CornerRadius      = new CornerRadius(4),
-            Padding           = new Thickness(7, 3, 7, 3),
-            VerticalAlignment = VerticalAlignment.Center,
+            Background          = new SolidColorBrush(bg),
+            CornerRadius        = new CornerRadius(6),
+            Padding             = new Thickness(8, 2, 8, 2),
+            VerticalAlignment   = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Left,
             Child = new TextBlock
             {
                 Text       = text,
-                FontSize   = 11,
-                FontWeight = FontWeights.SemiBold,
+                FontSize   = 12,
+                FontWeight = FontWeights.Medium,
                 Foreground = new SolidColorBrush(fg)
+            }
+        };
+    }
+
+    private static Border MakeOutlineBadge(string text)
+    {
+        return new Border
+        {
+            Background          = new SolidColorBrush(Colors.Transparent),
+            BorderBrush         = new SolidColorBrush(Color.FromArgb(100, 160, 160, 160)),
+            BorderThickness     = new Thickness(1),
+            CornerRadius        = new CornerRadius(6),
+            Padding             = new Thickness(8, 2, 8, 2),
+            VerticalAlignment   = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Child = new TextBlock
+            {
+                Text       = text,
+                FontSize   = 12,
+                FontWeight = FontWeights.Medium,
+                Foreground = new SolidColorBrush(Color.FromArgb(255, 160, 160, 160))
             }
         };
     }

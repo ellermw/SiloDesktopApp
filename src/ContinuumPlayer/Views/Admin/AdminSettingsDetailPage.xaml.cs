@@ -168,8 +168,11 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddToggleField(tcCard, "Transcoding Enabled", "playback.transcode_enabled");
         AddToggleField(tcCard, "Allow HEVC Encoding", "playback.allow_hevc_encoding");
         AddToggleField(tcCard, "Allow 4K Transcoding", "allow_4k_transcode");
-        AddToggleField(tcCard, "Enable Transcode Throttling", "enable_transcode_throttle");
-        AddNumberField(tcCard, "Throttle Buffer (seconds)", "transcode_throttle_seconds", "How many seconds ahead FFmpeg transcodes before pausing. Minimum: 60.");
+        AddConditionalToggleWithNumberField(
+            tcCard,
+            "Enable Transcode Throttling", "enable_transcode_throttle",
+            "Throttle Buffer (seconds)", "transcode_throttle_seconds",
+            "How many seconds ahead FFmpeg transcodes before pausing. Minimum: 60.");
         EndCard(tcCard);
 
         AddSectionHeader("Segments");
@@ -206,34 +209,222 @@ public sealed partial class AdminSettingsDetailPage : Page
     {
         AddTabHeader("Rate Limiting", "Configure request budgets for API keys, IPs, and authentication endpoints.");
 
-        AddSectionHeader("Global");
-        var globalCard = BeginCard();
-        AddToggleField(globalCard, "Enable Rate Limiting", "rate_limit.enabled", "When disabled, no rate limits are enforced.");
-        AddSelectField(globalCard, "Backend", "rate_limit.backend", ["memory", "redis"], "Requires restart. Redis recommended for multi-instance deployments.");
-        AddNumberField(globalCard, "Global Requests Per Second", "rate_limit.global_rps", "Maximum requests per second across all clients combined.");
-        EndCard(globalCard);
+        var cfg = ViewModel.DirtyRateLimitConfig ?? ViewModel.RateLimitConfig;
 
+        if (cfg == null)
+        {
+            var errCard = BeginCard();
+            AddTextBlock(errCard, "Rate limit configuration could not be loaded. Check server connectivity.");
+            EndCard(errCard);
+            return;
+        }
+
+        // Work on a mutable copy
+        var working = new Core.Models.Admin.RateLimitConfig
+        {
+            Enabled = cfg.Enabled,
+            Backend = cfg.Backend,
+            GlobalRequestsPerSecond = cfg.GlobalRequestsPerSecond,
+            IpRequestsPerSecond = cfg.IpRequestsPerSecond,
+            IpRequestsPerMinute = cfg.IpRequestsPerMinute,
+            IpBurst = cfg.IpBurst,
+            Tiers = new System.Collections.Generic.Dictionary<string, Core.Models.Admin.RateLimitTierConfig>(cfg.Tiers),
+            AuthEndpoints = new System.Collections.Generic.Dictionary<string, Core.Models.Admin.RateLimitAuthEndpointConfig>(cfg.AuthEndpoints),
+        };
+
+        void MarkDirty() { ViewModel.DirtyRateLimitConfig = working; UpdateDirtyCountText(); }
+
+        // ---- Enable + Backend ----
+        {
+            var card = BeginCard();
+
+            // Enable Rate Limiting toggle
+            var enableField = new Grid { Margin = new Thickness(0, 8, 0, 8) };
+            enableField.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            enableField.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var enableLabelStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+            enableLabelStack.Children.Add(new TextBlock { Text = "Enable Rate Limiting", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            enableLabelStack.Children.Add(new TextBlock { Text = "When disabled, no rate limits are enforced.", FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextWrapping = TextWrapping.Wrap });
+            var enableToggle = new ToggleSwitch { IsOn = working.Enabled, OnContent = "", OffContent = "", VerticalAlignment = VerticalAlignment.Center };
+            enableToggle.Toggled += (s, e) => { working.Enabled = enableToggle.IsOn; MarkDirty(); };
+            Grid.SetColumn(enableLabelStack, 0); Grid.SetColumn(enableToggle, 1);
+            enableField.Children.Add(enableLabelStack); enableField.Children.Add(enableToggle);
+            card.Children.Add(enableField);
+
+            AddDivider(card);
+
+            // Backend select
+            var backendField = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 8) };
+            backendField.Children.Add(new TextBlock { Text = "Backend", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            var backendCombo = new ComboBox { Width = 180, HorizontalAlignment = HorizontalAlignment.Left };
+            backendCombo.Items.Add(new ComboBoxItem { Content = "In-Memory", Tag = "memory" });
+            backendCombo.Items.Add(new ComboBoxItem { Content = "Redis", Tag = "redis" });
+            for (int i = 0; i < backendCombo.Items.Count; i++)
+                if (backendCombo.Items[i] is ComboBoxItem ci && ci.Tag?.ToString() == working.Backend) { backendCombo.SelectedIndex = i; break; }
+            if (backendCombo.SelectedIndex < 0) backendCombo.SelectedIndex = 0;
+            backendCombo.SelectionChanged += (s, e) => { if (backendCombo.SelectedItem is ComboBoxItem sel) { working.Backend = sel.Tag?.ToString() ?? "memory"; MarkDirty(); } };
+            backendField.Children.Add(backendCombo);
+            backendField.Children.Add(new TextBlock { Text = "Requires a restart to take effect. Redis is recommended for multi-instance deployments.", FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextWrapping = TextWrapping.Wrap, MaxWidth = 460 });
+            card.Children.Add(backendField);
+
+            EndCard(card);
+        }
+
+        // ---- Global Settings ----
+        AddSectionHeader("Global Settings");
+        {
+            var card = BeginCard();
+            var globalField = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 8) };
+            globalField.Children.Add(new TextBlock { Text = "Global Requests Per Second", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            var globalRpsBox = new Microsoft.UI.Xaml.Controls.NumberBox { Value = working.GlobalRequestsPerSecond, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, Width = 180, HorizontalAlignment = HorizontalAlignment.Left };
+            globalRpsBox.ValueChanged += (s, e) => { if (!double.IsNaN(globalRpsBox.Value)) { working.GlobalRequestsPerSecond = (int)globalRpsBox.Value; MarkDirty(); } };
+            globalField.Children.Add(globalRpsBox);
+            globalField.Children.Add(new TextBlock { Text = "Maximum requests per second across all clients combined.", FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextWrapping = TextWrapping.Wrap, MaxWidth = 460 });
+            card.Children.Add(globalField);
+            EndCard(card);
+        }
+
+        // ---- Per-IP Limits ----
         AddSectionHeader("Per-IP Limits");
-        var ipCard = BeginCard();
-        AddNumberField(ipCard, "Requests / Second", "rate_limit.per_ip.rps");
-        AddNumberField(ipCard, "Requests / Minute", "rate_limit.per_ip.rpm");
-        AddNumberField(ipCard, "Burst", "rate_limit.per_ip.burst");
-        EndCard(ipCard);
+        {
+            var card = BeginCard();
+            AddTextBlock(card, "Applied to all authenticated requests from a single IP address.");
+
+            AddDivider(card);
+            var ipGrid = new Grid { Margin = new Thickness(0, 8, 0, 8) };
+            ipGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            ipGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            ipGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var rpsField = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 8, 0) };
+            rpsField.Children.Add(new TextBlock { Text = "Requests / Second", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            var rpsBox = new Microsoft.UI.Xaml.Controls.NumberBox { Value = working.IpRequestsPerSecond, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
+            rpsBox.ValueChanged += (s, e) => { if (!double.IsNaN(rpsBox.Value)) { working.IpRequestsPerSecond = (int)rpsBox.Value; MarkDirty(); } };
+            rpsField.Children.Add(rpsBox);
+
+            var rpmField = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 8, 0) };
+            rpmField.Children.Add(new TextBlock { Text = "Requests / Minute", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            var rpmBox = new Microsoft.UI.Xaml.Controls.NumberBox { Value = working.IpRequestsPerMinute, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
+            rpmBox.ValueChanged += (s, e) => { if (!double.IsNaN(rpmBox.Value)) { working.IpRequestsPerMinute = (int)rpmBox.Value; MarkDirty(); } };
+            rpmField.Children.Add(rpmBox);
+
+            var burstField = new StackPanel { Spacing = 4 };
+            burstField.Children.Add(new TextBlock { Text = "Burst", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            var burstBox = new Microsoft.UI.Xaml.Controls.NumberBox { Value = working.IpBurst, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
+            burstBox.ValueChanged += (s, e) => { if (!double.IsNaN(burstBox.Value)) { working.IpBurst = (int)burstBox.Value; MarkDirty(); } };
+            burstField.Children.Add(burstBox);
+
+            Grid.SetColumn(rpsField, 0); Grid.SetColumn(rpmField, 1); Grid.SetColumn(burstField, 2);
+            ipGrid.Children.Add(rpsField); ipGrid.Children.Add(rpmField); ipGrid.Children.Add(burstField);
+            card.Children.Add(ipGrid);
+            EndCard(card);
+        }
+
+        // ---- Tier Settings ----
+        string[] tiers = ["standard", "elevated"];
+        string[] tierLabels = ["Standard Tier", "Elevated Tier"];
+        string[] tierDescs = ["Per API key limits for the standard tier.", "Per API key limits for the elevated tier."];
+        for (int t = 0; t < tiers.Length; t++)
+        {
+            var tierKey = tiers[t];
+            var tierLabel = tierLabels[t];
+            var tierDesc = tierDescs[t];
+            if (!working.Tiers.TryGetValue(tierKey, out var tierCfg))
+                tierCfg = new Core.Models.Admin.RateLimitTierConfig { RequestsPerSecond = 10, RequestsPerMinute = 600, Burst = 20 };
+            working.Tiers[tierKey] = tierCfg;
+
+            AddSectionHeader(tierLabel);
+            var card = BeginCard();
+            AddTextBlock(card, tierDesc);
+            AddDivider(card);
+
+            var grid = new Grid { Margin = new Thickness(0, 8, 0, 8) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var rpsF = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 8, 0) };
+            rpsF.Children.Add(new TextBlock { Text = "Requests / Second", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            var rpsB = new Microsoft.UI.Xaml.Controls.NumberBox { Value = tierCfg.RequestsPerSecond, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
+            rpsB.ValueChanged += (s, e) => { if (!double.IsNaN(rpsB.Value)) { tierCfg.RequestsPerSecond = (int)rpsB.Value; MarkDirty(); } };
+            rpsF.Children.Add(rpsB);
+
+            var rpmF = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 8, 0) };
+            rpmF.Children.Add(new TextBlock { Text = "Requests / Minute", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            var rpmB = new Microsoft.UI.Xaml.Controls.NumberBox { Value = tierCfg.RequestsPerMinute, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
+            rpmB.ValueChanged += (s, e) => { if (!double.IsNaN(rpmB.Value)) { tierCfg.RequestsPerMinute = (int)rpmB.Value; MarkDirty(); } };
+            rpmF.Children.Add(rpmB);
+
+            var burstF = new StackPanel { Spacing = 4 };
+            burstF.Children.Add(new TextBlock { Text = "Burst", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            var burstB = new Microsoft.UI.Xaml.Controls.NumberBox { Value = tierCfg.Burst, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
+            burstB.ValueChanged += (s, e) => { if (!double.IsNaN(burstB.Value)) { tierCfg.Burst = (int)burstB.Value; MarkDirty(); } };
+            burstF.Children.Add(burstB);
+
+            Grid.SetColumn(rpsF, 0); Grid.SetColumn(rpmF, 1); Grid.SetColumn(burstF, 2);
+            grid.Children.Add(rpsF); grid.Children.Add(rpmF); grid.Children.Add(burstF);
+            card.Children.Add(grid);
+            EndCard(card);
+        }
+
+        // ---- Auth Endpoint Limits ----
+        AddSectionHeader("Auth Endpoint Limits");
+        {
+            var card = BeginCard();
+            AddTextBlock(card, "Per-IP limits for authentication endpoints to prevent brute-force attacks.");
+
+            string[] endpoints = ["login", "signup", "setup"];
+            string[] endpointLabels = ["Login", "Signup", "Setup"];
+            for (int ep = 0; ep < endpoints.Length; ep++)
+            {
+                var epKey = endpoints[ep];
+                var epLabel = endpointLabels[ep];
+                if (!working.AuthEndpoints.TryGetValue(epKey, out var epCfg))
+                    epCfg = new Core.Models.Admin.RateLimitAuthEndpointConfig { RequestsPerMinute = 20, Burst = 10 };
+                working.AuthEndpoints[epKey] = epCfg;
+
+                AddDivider(card);
+
+                var epHeader = new TextBlock { Text = epLabel, FontSize = 12, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"], Margin = new Thickness(0, 8, 0, 4) };
+                card.Children.Add(epHeader);
+
+                var epGrid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+                epGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                epGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                var epRpmF = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 8, 0) };
+                epRpmF.Children.Add(new TextBlock { Text = "Requests / Minute", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+                var epRpmB = new Microsoft.UI.Xaml.Controls.NumberBox { Value = epCfg.RequestsPerMinute, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
+                epRpmB.ValueChanged += (s, e) => { if (!double.IsNaN(epRpmB.Value)) { epCfg.RequestsPerMinute = (int)epRpmB.Value; MarkDirty(); } };
+                epRpmF.Children.Add(epRpmB);
+
+                var epBurstF = new StackPanel { Spacing = 4 };
+                epBurstF.Children.Add(new TextBlock { Text = "Burst", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+                var epBurstB = new Microsoft.UI.Xaml.Controls.NumberBox { Value = epCfg.Burst, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
+                epBurstB.ValueChanged += (s, e) => { if (!double.IsNaN(epBurstB.Value)) { epCfg.Burst = (int)epBurstB.Value; MarkDirty(); } };
+                epBurstF.Children.Add(epBurstB);
+
+                Grid.SetColumn(epRpmF, 0); Grid.SetColumn(epBurstF, 1);
+                epGrid.Children.Add(epRpmF); epGrid.Children.Add(epBurstF);
+                card.Children.Add(epGrid);
+            }
+            EndCard(card);
+        }
     }
 
     private void BuildIntegrationsTab()
     {
-        AddTabHeader("Integrations", "External services and API keys for metadata providers.");
+        AddTabHeader("Integrations", "External services, subtitle providers, and metadata providers.");
 
         AddSectionHeader("MetaDB");
         var metaCard = BeginCard();
-        AddTextField(metaCard, "MetaDB URL", "metadb.url");
-        AddPasswordField(metaCard, "MetaDB API Key", "metadb.api_key");
+        AddTextField(metaCard, "URL", "metadb.url");
+        AddPasswordField(metaCard, "API Key", "metadb.api_key");
         EndCard(metaCard);
 
         AddSectionHeader("TMDB");
         var tmdbCard = BeginCard();
-        AddPasswordField(tmdbCard, "TMDB API Key", "tmdb.api_key", "Shared by TMDB metadata providers and TMDB collection/trending features.");
+        AddPasswordField(tmdbCard, "API Key", "tmdb.api_key", "Shared by TMDB metadata providers and TMDB collection/trending features.");
         EndCard(tmdbCard);
     }
 
@@ -267,7 +458,7 @@ public sealed partial class AdminSettingsDetailPage : Page
 
         AddSectionHeader("Redis");
         var redisCard = BeginCard();
-        AddPasswordField(redisCard, "Connection URL", "redis.url", "redis://host:6379");
+        AddRedisSection(redisCard);
         EndCard(redisCard);
 
         AddSectionHeader("User Database");
@@ -275,15 +466,154 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddTextField(udbCard, "User DB Backend", "userdb.backend", "postgres or sqlite");
         AddNumberField(udbCard, "Pool Max Open", "userdb.pool_max_open");
         AddDurationField(udbCard, "Idle Timeout", "userdb.idle_timeout", "e.g. 12h");
+        AddDurationField(udbCard, "Litestream Sync Interval", "userdb.litestream_sync", "e.g. 1s");
+        AddNumberField(udbCard, "Stale Grace Seconds", "userdb.stale_grace_seconds");
         EndCard(udbCard);
+    }
+
+    private void AddRedisSection(StackPanel parent)
+    {
+        // Toggle to enable Redis (derived from whether redis.url is non-empty)
+        var redisUrl = ViewModel.GetSetting("redis.url");
+        bool redisEnabled = !string.IsNullOrWhiteSpace(redisUrl);
+
+        // We need a reference to the URL field container so we can show/hide it
+        StackPanel? urlFieldContainer = null;
+
+        if (parent.Children.Count > 0) AddDivider(parent);
+
+        var toggleField = new Grid { Margin = new Thickness(0, 8, 0, 8) };
+        toggleField.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        toggleField.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var labelStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        labelStack.Children.Add(new TextBlock
+        {
+            Text = "Enable Redis",
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
+        });
+        labelStack.Children.Add(new TextBlock
+        {
+            Text = "Leave disabled to run without Redis",
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        var toggle = new ToggleSwitch
+        {
+            IsOn = redisEnabled,
+            OnContent = "",
+            OffContent = "",
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        Grid.SetColumn(labelStack, 0);
+        Grid.SetColumn(toggle, 1);
+        toggleField.Children.Add(labelStack);
+        toggleField.Children.Add(toggle);
+        parent.Children.Add(toggleField);
+
+        // URL field (only visible when redis is enabled)
+        AddDivider(parent);
+        urlFieldContainer = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 8), Visibility = redisEnabled ? Visibility.Visible : Visibility.Collapsed };
+
+        urlFieldContainer.Children.Add(new TextBlock
+        {
+            Text = "Connection URL",
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
+        });
+
+        var currentUrl = ViewModel.GetSetting("redis.url");
+        bool isUrlConfigured = ViewModel.IsSensitiveConfigured("redis.url");
+
+        var passwordBox = new PasswordBox
+        {
+            Password = "",
+            Style = (Style)Application.Current.Resources["DarkPasswordBoxStyle"],
+            MaxWidth = 460,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            PlaceholderText = isUrlConfigured ? "\u2022\u2022\u2022\u2022 configured" : "redis://host:6379"
+        };
+
+        if (isUrlConfigured)
+        {
+            var badge = new Border
+            {
+                Background = (SolidColorBrush)Application.Current.Resources["BadgeResolutionBrush"],
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(6, 1, 6, 1),
+                Margin = new Thickness(8, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = "configured",
+                    FontSize = 10,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = new SolidColorBrush(Microsoft.UI.Colors.White)
+                }
+            };
+            var labelTextBlock = (urlFieldContainer.Children[0] as TextBlock)!;
+            urlFieldContainer.Children.RemoveAt(0);
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0 };
+            row.Children.Add(labelTextBlock);
+            row.Children.Add(badge);
+            urlFieldContainer.Children.Insert(0, row);
+        }
+
+        passwordBox.PasswordChanged += (s, e) =>
+        {
+            if (!string.IsNullOrEmpty(passwordBox.Password))
+                ViewModel.SetSetting("redis.url", passwordBox.Password);
+            UpdateDirtyCountText();
+        };
+        urlFieldContainer.Children.Add(passwordBox);
+
+        urlFieldContainer.Children.Add(new TextBlock
+        {
+            Text = "redis://host:6379",
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        parent.Children.Add(urlFieldContainer);
+
+        // Wire toggle to show/hide URL field and clear value when disabled
+        toggle.Toggled += (s, e) =>
+        {
+            if (toggle.IsOn)
+            {
+                urlFieldContainer.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                urlFieldContainer.Visibility = Visibility.Collapsed;
+                ViewModel.SetSetting("redis.url", "");
+                UpdateDirtyCountText();
+            }
+        };
+
+        _fieldRebuilders.Add(() =>
+        {
+            var v = ViewModel.GetSetting("redis.url");
+            bool isOn = !string.IsNullOrWhiteSpace(v);
+            toggle.IsOn = isOn;
+            urlFieldContainer.Visibility = isOn ? Visibility.Visible : Visibility.Collapsed;
+        });
     }
 
     private void BuildStorageTab()
     {
         AddTabHeader("Storage", "S3-compatible object storage for artwork, operational exports, and future replicated data.");
 
-        AddSectionHeader("MetaDB Posters (S3)");
+        AddSectionHeader("MetaDB Posters");
         var metaCard = BeginCard();
+        AddTextBlock(metaCard, "Used by MetaDB for storing and serving poster/artwork images. Generates presigned URLs for clients to fetch images directly from S3.");
         AddTextField(metaCard, "Endpoint", "s3.metadata_endpoint");
         AddTextField(metaCard, "Region", "s3.metadata_region");
         AddToggleField(metaCard, "Path Style", "s3.metadata_path_style");
@@ -293,8 +623,9 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddDurationField(metaCard, "Presign Expiry", "s3.metadata_presign_expiry", "e.g. 4h");
         EndCard(metaCard);
 
-        AddSectionHeader("General Purpose (S3)");
+        AddSectionHeader("General Purpose");
         var opCard = BeginCard();
+        AddTextBlock(opCard, "General-purpose storage for operational tasks such as catalog import/export.");
         AddTextField(opCard, "Endpoint", "s3.operational_endpoint");
         AddTextField(opCard, "Region", "s3.operational_region");
         AddToggleField(opCard, "Path Style", "s3.operational_path_style");
@@ -306,15 +637,20 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void BuildLogRetentionTab()
     {
-        AddTabHeader("Log Retention", "Prune oldest operational logs by global caps and per-bucket overrides.");
+        AddTabHeader("Log Retention", "Prune oldest operational logs by global caps and per-bucket overrides. Bucket rules match on component and level.");
 
         AddSectionHeader("Global Limits");
         var globalCard = BeginCard();
-        AddNumberField(globalCard, "Retention Days", "opslog_retention_days", "Logs older than this are pruned first.");
-        AddNumberField(globalCard, "Cleanup Interval (Minutes)", "opslog_cleanup_interval", "How often the retention worker checks caps and prunes oldest rows.");
-        AddNumberField(globalCard, "Max Rows", "opslog_max_rows", "Keeps only the newest rows once this total is exceeded.");
-        AddNumberField(globalCard, "Max Size (MB)", "opslog_max_size_mb", "Uses estimated log row size. Oldest rows are pruned when the budget is exceeded.");
+        AddNumberField(globalCard, "Retention Days", "opslog.retention_days", "Logs older than this are pruned first.");
+        AddNumberField(globalCard, "Cleanup Interval (Minutes)", "opslog.cleanup_interval_minutes", "How often the retention worker checks caps and prunes oldest rows.");
+        AddNumberField(globalCard, "Max Rows", "opslog.max_rows", "Keeps only the newest rows once this total is exceeded.");
+        AddNumberField(globalCard, "Max Size (MB)", "opslog.max_size_mb", "Uses estimated log row size. Oldest rows are pruned when the budget is exceeded.");
         EndCard(globalCard);
+
+        AddSectionHeader("Bucket Overrides");
+        var bucketCard = BeginCard();
+        AddTextBlock(bucketCard, "Per-bucket overrides are stored as a JSON array in the setting key opslog.bucket_policies. Edit the server settings directly to configure bucket-level rules, or use the web UI for the full bucket rule editor.");
+        EndCard(bucketCard);
     }
 
     // ===== UI Builder Helpers =====
@@ -346,7 +682,7 @@ public sealed partial class AdminSettingsDetailPage : Page
     {
         var header = new TextBlock
         {
-            Text = text.ToUpperInvariant(),
+            Text = text,
             Style = (Style)Application.Current.Resources["SectionHeaderTextStyle"],
             Margin = new Thickness(4, 8, 0, 0)
         };
@@ -362,8 +698,8 @@ public sealed partial class AdminSettingsDetailPage : Page
     {
         var border = new Border
         {
-            Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(22),
+            Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
+            CornerRadius = new CornerRadius(26),
             Padding = new Thickness(20, 16, 20, 16),
             Child = cardContent
         };
@@ -378,6 +714,18 @@ public sealed partial class AdminSettingsDetailPage : Page
             Background = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
             Margin = new Thickness(0, 4, 0, 4),
             Opacity = 0.5
+        });
+    }
+
+    private void AddTextBlock(StackPanel parent, string text)
+    {
+        parent.Children.Add(new TextBlock
+        {
+            Text = text,
+            FontSize = 12,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 8)
         });
     }
 
@@ -443,22 +791,58 @@ public sealed partial class AdminSettingsDetailPage : Page
         });
 
         var currentVal = ViewModel.GetSetting(key);
+        bool isConfigured = ViewModel.IsSensitiveConfigured(key);
+
+        // For sensitive fields: don't pre-fill the actual value (API returns empty for secrets).
+        // Show "configured" placeholder if the server reports it's set.
         var passwordBox = new PasswordBox
         {
-            Password = currentVal,
+            Password = "",
             Style = (Style)Application.Current.Resources["DarkPasswordBoxStyle"],
             MaxWidth = 460,
             HorizontalAlignment = HorizontalAlignment.Left,
-            PlaceholderText = string.IsNullOrEmpty(currentVal) ? (hint ?? "Not configured") : "configured"
+            PlaceholderText = isConfigured ? "\u2022\u2022\u2022\u2022 configured" : (hint ?? "Not configured")
         };
+
+        // Show a "configured" indicator badge next to the label
+        if (isConfigured)
+        {
+            var badge = new Border
+            {
+                Background = (SolidColorBrush)Application.Current.Resources["BadgeResolutionBrush"],
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(6, 1, 6, 1),
+                Margin = new Thickness(8, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = "configured",
+                    FontSize = 10,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = new SolidColorBrush(Microsoft.UI.Colors.White)
+                }
+            };
+            // Wrap label + badge in a horizontal panel
+            var labelRow = (field.Children[0] as TextBlock);
+            if (labelRow != null)
+            {
+                field.Children.RemoveAt(0);
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0 };
+                row.Children.Add(labelRow);
+                row.Children.Add(badge);
+                field.Children.Insert(0, row);
+            }
+        }
+
         passwordBox.PasswordChanged += (s, e) =>
         {
-            ViewModel.SetSetting(key, passwordBox.Password);
+            if (!string.IsNullOrEmpty(passwordBox.Password))
+                ViewModel.SetSetting(key, passwordBox.Password);
             UpdateDirtyCountText();
         };
         field.Children.Add(passwordBox);
 
-        _fieldRebuilders.Add(() => passwordBox.Password = ViewModel.GetSetting(key));
+        _fieldRebuilders.Add(() => { /* Don't refill passwords on discard */ });
 
         if (hint != null)
         {
@@ -708,6 +1092,122 @@ public sealed partial class AdminSettingsDetailPage : Page
         }
 
         parent.Children.Add(field);
+    }
+
+    /// <summary>
+    /// A toggle field that conditionally shows a number field when the toggle is enabled.
+    /// Mirrors the web pattern: {form.getValue(toggleKey) === "true" && &lt;SettingField .../&gt;}
+    /// </summary>
+    private void AddConditionalToggleWithNumberField(
+        StackPanel parent,
+        string toggleLabel, string toggleKey,
+        string numberLabel, string numberKey,
+        string? numberHint = null)
+    {
+        if (parent.Children.Count > 0) AddDivider(parent);
+
+        var toggleField = new Grid { Margin = new Thickness(0, 8, 0, 8) };
+        toggleField.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        toggleField.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var labelStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        labelStack.Children.Add(new TextBlock
+        {
+            Text = toggleLabel,
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
+        });
+
+        var currentToggleVal = ViewModel.GetSetting(toggleKey);
+        var toggle = new ToggleSwitch
+        {
+            IsOn = currentToggleVal.Equals("true", StringComparison.OrdinalIgnoreCase),
+            OnContent = "",
+            OffContent = "",
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        Grid.SetColumn(labelStack, 0);
+        Grid.SetColumn(toggle, 1);
+        toggleField.Children.Add(labelStack);
+        toggleField.Children.Add(toggle);
+        parent.Children.Add(toggleField);
+
+        // Number field shown only when toggle is on
+        var divider = new Border
+        {
+            Height = 1,
+            Background = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            Margin = new Thickness(0, 4, 0, 4),
+            Opacity = 0.5,
+            Visibility = toggle.IsOn ? Visibility.Visible : Visibility.Collapsed
+        };
+        parent.Children.Add(divider);
+
+        var numberField = new StackPanel
+        {
+            Spacing = 4,
+            Margin = new Thickness(0, 8, 0, 8),
+            Visibility = toggle.IsOn ? Visibility.Visible : Visibility.Collapsed
+        };
+        numberField.Children.Add(new TextBlock
+        {
+            Text = numberLabel,
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
+        });
+
+        var currentNumVal = ViewModel.GetSetting(numberKey);
+        double.TryParse(currentNumVal, out var numVal);
+        var numberBox = new Microsoft.UI.Xaml.Controls.NumberBox
+        {
+            Value = string.IsNullOrEmpty(currentNumVal) ? double.NaN : numVal,
+            SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact,
+            Minimum = 0,
+            Width = 180,
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        numberBox.ValueChanged += (s, e) =>
+        {
+            var val = double.IsNaN(numberBox.Value) ? "" : ((int)numberBox.Value).ToString();
+            ViewModel.SetSetting(numberKey, val);
+            UpdateDirtyCountText();
+        };
+        numberField.Children.Add(numberBox);
+
+        if (numberHint != null)
+        {
+            numberField.Children.Add(new TextBlock
+            {
+                Text = numberHint,
+                FontSize = 11,
+                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 460
+            });
+        }
+        parent.Children.Add(numberField);
+
+        toggle.Toggled += (s, e) =>
+        {
+            ViewModel.SetSetting(toggleKey, toggle.IsOn ? "true" : "false");
+            divider.Visibility = toggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
+            numberField.Visibility = toggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
+            UpdateDirtyCountText();
+        };
+
+        _fieldRebuilders.Add(() =>
+        {
+            var v = ViewModel.GetSetting(toggleKey);
+            toggle.IsOn = v.Equals("true", StringComparison.OrdinalIgnoreCase);
+            divider.Visibility = toggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
+            numberField.Visibility = toggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
+
+            var nv = ViewModel.GetSetting(numberKey);
+            numberBox.Value = double.TryParse(nv, out var n) ? n : double.NaN;
+        });
     }
 
     // ===== Save/Discard handlers =====

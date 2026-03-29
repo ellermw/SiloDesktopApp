@@ -14,11 +14,18 @@
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
 
-        <Style x:Key="CardStyle" TargetType="Border">
+        <!-- surface-panel: CardBackgroundBrush, CornerRadius=26, no border -->
+        <Style x:Key="SurfacePanelStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
+            <Setter Property="CornerRadius" Value="26" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+
+        <!-- surface-panel-subtle: slightly transparent, CornerRadius=22, no border -->
+        <Style x:Key="SurfacePanelSubtleStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
             <Setter Property="CornerRadius" Value="22" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderThickness" Value="0" />
         </Style>
     </Page.Resources>
 
@@ -58,61 +65,66 @@
 
             <StackPanel Padding="40,28,40,40" Spacing="24">
 
-                <!-- ===== Header ===== -->
-                <Grid>
+                <!-- ===== Back link ===== -->
+                <!-- Matches web: <Link> with ArrowLeft + "Scheduled Tasks" text, text-muted-foreground -->
+                <Button
+                    x:Name="BackButton"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Padding="0"
+                    HorizontalAlignment="Left"
+                    ToolTipService.ToolTip="Back to Scheduled Tasks">
+                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                        <FontIcon Glyph="&#xE72B;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBlock
+                            Text="Scheduled Tasks"
+                            FontSize="13"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                </Button>
+
+                <!-- ===== Page header (flex justify-between items-end) ===== -->
+                <!-- Matches web: page-header gap-5 -->
+                <Grid ColumnSpacing="20">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <!-- Back button -->
-                    <Button
-                        x:Name="BackButton"
-                        Grid.Column="0"
-                        Width="36" Height="36"
-                        Padding="0"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        CornerRadius="18"
-                        VerticalAlignment="Top"
-                        Margin="0,4,12,0"
-                        ToolTipService.ToolTip="Back to Scheduled Tasks">
-                        <FontIcon Glyph="&#xE72B;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
-                    </Button>
-
-                    <!-- Title area -->
-                    <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
-                        <!-- Name + category badge row (populated in code-behind) -->
-                        <StackPanel x:Name="TitleBadgeRow" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center" />
-                        <!-- Description -->
+                    <!-- Left: title + badge + description (space-y-3) -->
+                    <StackPanel Grid.Column="0" Spacing="12">
+                        <!-- Name + category badge (flex items-center gap-3) -->
+                        <StackPanel x:Name="TitleBadgeRow" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center" />
+                        <!-- Description (page-subtitle text-sm) -->
                         <TextBlock
                             x:Name="DescriptionText"
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}"
-                            TextWrapping="WrapWholeWords" />
+                            TextWrapping="WrapWholeWords"
+                            MaxWidth="700" />
                     </StackPanel>
 
-                    <!-- Action button (Run / Cancel) -->
+                    <!-- Right: Run / Cancel button (w-auto, variant=outline) -->
                     <Button
                         x:Name="ActionButton"
-                        Grid.Column="2"
+                        Grid.Column="1"
                         Style="{StaticResource SecondaryButtonStyle}"
-                        VerticalAlignment="Center" />
+                        VerticalAlignment="Bottom" />
                 </Grid>
 
                 <!-- ===== Progress section (running only) ===== -->
+                <!-- Matches web: surface-panel-subtle rounded-[1.4rem] p-4 space-y-1 -->
                 <Border
                     x:Name="ProgressSection"
-                    Style="{StaticResource CardStyle}"
-                    Padding="20,16"
+                    Style="{StaticResource SurfacePanelSubtleStyle}"
+                    Padding="16"
                     Visibility="Collapsed">
-                    <StackPanel Spacing="8">
+                    <StackPanel Spacing="4">
                         <ProgressBar
                             x:Name="TaskProgressBar"
                             Minimum="0"
                             Maximum="100"
-                            Height="6"
+                            Height="10"
                             Foreground="{StaticResource AccentBrush}" />
                         <TextBlock
                             x:Name="ProgressMessageText"
@@ -121,69 +133,92 @@
                     </StackPanel>
                 </Border>
 
-                <!-- ===== Schedule card ===== -->
-                <Border Style="{StaticResource CardStyle}" Padding="0">
-                    <StackPanel>
-                        <!-- Card header -->
-                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="20,14,20,14">
-                            <TextBlock
-                                Text="Schedule"
-                                FontSize="13"
-                                FontWeight="SemiBold"
-                                Foreground="{StaticResource PrimaryTextBrush}" />
-                        </Border>
-                        <!-- Trigger rows (populated in code-behind) -->
-                        <StackPanel x:Name="TriggersPanel" />
-                        <!-- Empty state -->
-                        <Border x:Name="NoTriggersMessage" Padding="20,20" Visibility="Collapsed">
-                            <TextBlock
-                                Text="No triggers configured."
-                                FontSize="13"
-                                Foreground="{StaticResource TertiaryTextBrush}" />
-                        </Border>
-                    </StackPanel>
-                </Border>
+                <!-- ===== Schedule section ===== -->
+                <!-- Matches web: space-y-3 with header row (h2 + Edit Schedule btn) + card -->
+                <StackPanel Spacing="12">
+                    <!-- Section header row (flex justify-between items-center) -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            Grid.Column="0"
+                            Text="Schedule"
+                            FontSize="18"
+                            FontWeight="Medium"
+                            Foreground="{StaticResource PrimaryTextBrush}"
+                            VerticalAlignment="Center" />
+                        <Button
+                            x:Name="EditScheduleButton"
+                            Grid.Column="1"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Content="Edit Schedule"
+                            FontSize="13"
+                            Padding="12,6" />
+                    </Grid>
 
-                <!-- ===== Execution History card ===== -->
-                <Border Style="{StaticResource CardStyle}" Padding="0">
-                    <StackPanel>
-                        <!-- Card header -->
-                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="20,14,20,14">
-                            <TextBlock
-                                Text="Execution History"
-                                FontSize="13"
-                                FontWeight="SemiBold"
-                                Foreground="{StaticResource PrimaryTextBrush}" />
-                        </Border>
+                    <!-- surface-panel overflow-hidden rounded-[1.6rem] border-0 -->
+                    <Border x:Name="ScheduleCard" Style="{StaticResource SurfacePanelStyle}" Padding="0">
+                        <StackPanel>
+                            <!-- Trigger rows (populated in code-behind) -->
+                            <StackPanel x:Name="TriggersPanel" />
+                            <!-- Empty state: p-4 text-sm text-muted-foreground -->
+                            <Border x:Name="NoTriggersMessage" Padding="16,16" Visibility="Collapsed">
+                                <TextBlock
+                                    Text="No triggers configured."
+                                    FontSize="13"
+                                    Foreground="{StaticResource TertiaryTextBrush}" />
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
 
-                        <!-- Table column headers -->
-                        <Grid Padding="20,10,20,10" ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="100" />
-                                <ColumnDefinition Width="100" />
-                                <ColumnDefinition Width="3*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="STARTED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="1" Text="DURATION" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="ERROR" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                        </Grid>
-                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
+                <!-- ===== Execution history section ===== -->
+                <!-- Matches web: space-y-3 with h2 "Execution history" + table card -->
+                <StackPanel Spacing="12">
+                    <!-- Section header: h2 text-lg font-medium tracking-tight -->
+                    <TextBlock
+                        Text="Execution history"
+                        FontSize="18"
+                        FontWeight="Medium"
+                        Foreground="{StaticResource PrimaryTextBrush}" />
 
-                        <!-- History rows (populated in code-behind) -->
-                        <StackPanel x:Name="HistoryRowsPanel" />
+                    <!-- surface-panel overflow-hidden rounded-[1.6rem] border-0 -->
+                    <Border Style="{StaticResource SurfacePanelStyle}" Padding="0">
+                        <StackPanel>
+                            <!-- Table column headers: bg-muted/50 border-b, text-left font-medium -->
+                            <Grid Padding="16,8,16,8" ColumnSpacing="12">
+                                <Grid.Background>
+                                    <SolidColorBrush Color="{StaticResource LayerFillColorDefault}" />
+                                </Grid.Background>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="100" />
+                                    <ColumnDefinition Width="100" />
+                                    <ColumnDefinition Width="3*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Started" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="1" Text="Duration" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="Error" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Grid>
+                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
 
-                        <!-- Empty state -->
-                        <Border x:Name="NoHistoryMessage" Padding="20,32" Visibility="Collapsed">
-                            <TextBlock
-                                Text="No execution history."
-                                FontSize="13"
-                                Foreground="{StaticResource TertiaryTextBrush}"
-                                HorizontalAlignment="Center" />
-                        </Border>
-                    </StackPanel>
-                </Border>
+                            <!-- History rows (populated in code-behind) -->
+                            <StackPanel x:Name="HistoryRowsPanel" />
+
+                            <!-- Empty state: text-muted-foreground px-4 py-4 text-center -->
+                            <Border x:Name="NoHistoryMessage" Padding="16,16" Visibility="Collapsed">
+                                <TextBlock
+                                    Text="No execution history."
+                                    FontSize="13"
+                                    Foreground="{StaticResource TertiaryTextBrush}"
+                                    HorizontalAlignment="Center" />
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
 
             </StackPanel>
         </ScrollViewer>

@@ -14,9 +14,9 @@ file class AdminTaskHistoryResponse { public List<ExecutionResult> History { get
 file class AdminNodesResponse { public List<StreamNode> Nodes { get; set; } = []; }
 file class AdminAPIKeysResponse { public List<AdminAPIKey> ApiKeys { get; set; } = []; }
 file class AdminPlaybackHistoryResponse { public List<AdminPlaybackHistoryItem> Items { get; set; } = []; }
-file class AdminSensitiveStatusResponse { public Dictionary<string, bool> Keys { get; set; } = []; }
-file class AdminSkippedRootsResponse { public List<string> Roots { get; set; } = []; }
-file class AdminSectionsResponse { public List<object> Sections { get; set; } = []; }
+file class AdminSensitiveStatusResponse { public List<string> Configured { get; set; } = []; }
+file class AdminSkippedRootsResponse { public List<LibrarySkippedRoot> Roots { get; set; } = []; }
+// AdminSectionsListResponse is in Models/Admin/AdminSection.cs
 
 public class AdminApi(ContinuumApiClient client)
 {
@@ -56,6 +56,9 @@ public class AdminApi(ContinuumApiClient client)
 
     // ===== Libraries =====
 
+    public Task<List<Library>> GetAdminLibrariesAsync(CancellationToken ct = default)
+        => client.GetAsync<List<Library>>("/api/v1/libraries", ct);
+
     public Task<Library> CreateLibraryAsync(object body, CancellationToken ct = default)
         => client.PostAsync<Library>("/api/v1/libraries", body, ct);
 
@@ -71,14 +74,17 @@ public class AdminApi(ContinuumApiClient client)
     public Task RunScanLibrariesTaskAsync(CancellationToken ct = default)
         => client.PostNoContentAsync("/api/v1/admin/tasks/scan_libraries/run", new { }, ct);
 
-    public Task CheckLibraryMountAsync(int id, CancellationToken ct = default)
-        => client.PostNoContentAsync($"/api/v1/libraries/{id}/check-mount", new { }, ct);
+    public Task<LibraryMountCheckResponse> CheckLibraryMountAsync(int id, CancellationToken ct = default)
+        => client.PostAsync<LibraryMountCheckResponse>($"/api/v1/libraries/{id}/check-mount", new { }, ct);
 
     public Task RefreshLibraryMetadataAsync(int id, CancellationToken ct = default)
         => client.PostNoContentAsync($"/api/v1/libraries/{id}/refresh-metadata", new { }, ct);
 
-    public Task<List<string>> GetSkippedRootsAsync(CancellationToken ct = default)
-        => client.GetAsync<List<string>>("/api/v1/libraries/skipped-roots", ct);
+    public Task ConfirmEmptyRootCleanupAsync(int id, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/libraries/{id}/confirm-empty-root-cleanup", new { }, ct);
+
+    public Task<List<LibrarySkippedRoot>> GetSkippedRootsAsync(CancellationToken ct = default)
+        => client.GetAsync<List<LibrarySkippedRoot>>("/api/v1/libraries/skipped-roots", ct);
 
     // ===== Tasks =====
 
@@ -117,6 +123,14 @@ public class AdminApi(ContinuumApiClient client)
     public Task<CheckNodeResponse> CheckNodeAsync(int id, CancellationToken ct = default)
         => client.PostAsync<CheckNodeResponse>($"/api/v1/admin/nodes/{id}/check", new { }, ct);
 
+    // ===== Rate Limits =====
+
+    public Task<RateLimitConfig> GetRateLimitConfigAsync(CancellationToken ct = default)
+        => client.GetAsync<RateLimitConfig>("/api/v1/admin/rate-limits/config", ct);
+
+    public Task UpdateRateLimitConfigAsync(RateLimitConfig config, CancellationToken ct = default)
+        => client.PutNoContentAsync("/api/v1/admin/rate-limits/config", config, ct);
+
     // ===== Settings =====
 
     public Task<Dictionary<string, string>> GetAdminSettingsAsync(CancellationToken ct = default)
@@ -125,8 +139,11 @@ public class AdminApi(ContinuumApiClient client)
     public Task UpdateAdminSettingAsync(string key, string value, CancellationToken ct = default)
         => client.PutNoContentAsync($"/api/v1/admin/settings/{Uri.EscapeDataString(key)}", new { value }, ct);
 
-    public Task<Dictionary<string, bool>> GetSensitiveStatusAsync(CancellationToken ct = default)
-        => client.GetAsync<Dictionary<string, bool>>("/api/v1/admin/settings/sensitive-status", ct);
+    public async Task<HashSet<string>> GetSensitiveStatusAsync(CancellationToken ct = default)
+    {
+        var response = await client.GetAsync<AdminSensitiveStatusResponse>("/api/v1/admin/settings/sensitive-status", ct);
+        return new HashSet<string>(response.Configured);
+    }
 
     // ===== API Keys =====
 
@@ -165,6 +182,9 @@ public class AdminApi(ContinuumApiClient client)
     public Task<OperationalLogListResponse> GetAppLogsAsync(
         string? level = null,
         string? component = null,
+        string? requestId = null,
+        string? q = null,
+        string? playbackSessionId = null,
         string? cursor = null,
         int limit = 100,
         CancellationToken ct = default)
@@ -172,18 +192,29 @@ public class AdminApi(ContinuumApiClient client)
         var query = $"/api/v1/admin/logs/app?limit={limit}";
         if (level != null) query += $"&level={Uri.EscapeDataString(level)}";
         if (component != null) query += $"&component={Uri.EscapeDataString(component)}";
+        if (requestId != null) query += $"&request_id={Uri.EscapeDataString(requestId)}";
+        if (q != null) query += $"&q={Uri.EscapeDataString(q)}";
+        if (playbackSessionId != null) query += $"&playback_session_id={Uri.EscapeDataString(playbackSessionId)}";
         if (cursor != null) query += $"&cursor={Uri.EscapeDataString(cursor)}";
         return client.GetAsync<OperationalLogListResponse>(query, ct);
     }
 
     public Task<AuditLogListResponse> GetAuditLogsAsync(
         int? userId = null,
+        string? requestId = null,
+        string? method = null,
+        string? clientIp = null,
+        string? playbackSessionId = null,
         string? cursor = null,
         int limit = 100,
         CancellationToken ct = default)
     {
         var query = $"/api/v1/admin/logs/audit?limit={limit}";
         if (userId.HasValue) query += $"&user_id={userId}";
+        if (requestId != null) query += $"&request_id={Uri.EscapeDataString(requestId)}";
+        if (method != null) query += $"&method={Uri.EscapeDataString(method)}";
+        if (clientIp != null) query += $"&client_ip={Uri.EscapeDataString(clientIp)}";
+        if (playbackSessionId != null) query += $"&playback_session_id={Uri.EscapeDataString(playbackSessionId)}";
         if (cursor != null) query += $"&cursor={Uri.EscapeDataString(cursor)}";
         return client.GetAsync<AuditLogListResponse>(query, ct);
     }
@@ -211,11 +242,12 @@ public class AdminApi(ContinuumApiClient client)
 
     // ===== Sections =====
 
-    public Task<List<object>> GetSectionsAsync(string? scope = null, CancellationToken ct = default)
+    public async Task<List<AdminSection>> GetSectionsAsync(string? scope = null, CancellationToken ct = default)
     {
         var query = "/api/v1/admin/sections";
         if (scope != null) query += $"?scope={Uri.EscapeDataString(scope)}";
-        return client.GetAsync<List<object>>(query, ct);
+        var response = await client.GetAsync<AdminSectionsListResponse>(query, ct);
+        return response.Sections;
     }
 
     public Task<object> CreateSectionAsync(object body, CancellationToken ct = default)
@@ -230,20 +262,24 @@ public class AdminApi(ContinuumApiClient client)
     public Task ReorderSectionsAsync(object body, CancellationToken ct = default)
         => client.PutNoContentAsync("/api/v1/admin/sections/reorder", body, ct);
 
-    public Task RestoreSectionDefaultsAsync(CancellationToken ct = default)
-        => client.PostNoContentAsync("/api/v1/admin/sections/restore-defaults", new { }, ct);
+    public Task RestoreSectionDefaultsAsync(string scope, int? libraryId, bool resetProfiles, CancellationToken ct = default)
+        => client.PostNoContentAsync("/api/v1/admin/sections/restore-defaults",
+            new { scope, library_id = libraryId, reset_profiles = resetProfiles }, ct);
 
     // ===== Recommendations =====
 
+    public Task<RecommendationsStatus> GetRecommendationsStatusAsync(CancellationToken ct = default)
+        => client.GetAsync<RecommendationsStatus>("/api/v1/admin/recommendations/status", ct);
+
     public Task RunEmbeddingsAsync(CancellationToken ct = default)
-        => client.PostNoContentAsync("/api/v1/admin/recommendations/embeddings/run", new { }, ct);
+        => client.PostNoContentAsync("/api/v1/admin/recommendations/trigger/embeddings", new { }, ct);
 
     public Task RunTasteProfilesAsync(CancellationToken ct = default)
-        => client.PostNoContentAsync("/api/v1/admin/recommendations/taste-profiles/run", new { }, ct);
+        => client.PostNoContentAsync("/api/v1/admin/recommendations/trigger/taste-profiles", new { }, ct);
 
     public Task RunCowatchAsync(CancellationToken ct = default)
-        => client.PostNoContentAsync("/api/v1/admin/recommendations/cowatch/run", new { }, ct);
+        => client.PostNoContentAsync("/api/v1/admin/recommendations/trigger/cowatch", new { }, ct);
 
     public Task RunGenerateRecommendationsAsync(CancellationToken ct = default)
-        => client.PostNoContentAsync("/api/v1/admin/recommendations/generate/run", new { }, ct);
+        => client.PostNoContentAsync("/api/v1/admin/recommendations/trigger/recommendations", new { }, ct);
 }

@@ -13,20 +13,29 @@ namespace ContinuumPlayer.ViewModels;
 public partial class LibraryCardViewModel : ObservableObject
 {
     private readonly SettingsApi _settingsApi;
+    private readonly SettingsService _settingsService;
     private readonly Action<string> _showStatus;
     private readonly Action<string> _showError;
     private bool _suppressSave;
 
+    /// <summary>Fired when the user toggles library visibility so the sidebar can update.</summary>
+    public event Action? LibraryVisibilityChanged;
+
     public LibraryCardViewModel(Library library, LibraryPlaybackPreference? pref, SettingsApi settingsApi,
-        Action<string> showStatus, Action<string> showError)
+        SettingsService settingsService, Action<string> showStatus, Action<string> showError)
     {
         _settingsApi = settingsApi;
+        _settingsService = settingsService;
         _showStatus = showStatus;
         _showError = showError;
 
         LibraryId = library.Id;
         LibraryName = library.Name;
         LibraryType = library.Type;
+
+        // Initialise visibility from persisted settings
+        var appSettings = settingsService.Load();
+        _isEnabled = !appSettings.HiddenLibraryIds.Contains(library.Id);
 
         _suppressSave = true;
         if (pref != null)
@@ -50,6 +59,21 @@ public partial class LibraryCardViewModel : ObservableObject
     public int LibraryId { get; }
     public string LibraryName { get; }
     public string LibraryType { get; }
+
+    [ObservableProperty]
+    private bool _isEnabled = true;
+
+    partial void OnIsEnabledChanged(bool value)
+    {
+        // Persist to settings
+        var appSettings = _settingsService.Load();
+        if (value)
+            appSettings.HiddenLibraryIds.Remove(LibraryId);
+        else if (!appSettings.HiddenLibraryIds.Contains(LibraryId))
+            appSettings.HiddenLibraryIds.Add(LibraryId);
+        _settingsService.Save(appSettings);
+        LibraryVisibilityChanged?.Invoke();
+    }
 
     [ObservableProperty]
     private string _audioLanguage = "";
@@ -193,15 +217,18 @@ public partial class SettingsViewModel : ObservableObject
     private readonly CatalogApi _catalogApi;
     private readonly AuthService _authService;
     private readonly ThemeService _themeService;
+    private readonly SettingsService _settingsService;
     private Profile? _profile;
     private bool _suppressSave;
 
-    public SettingsViewModel(SettingsApi settingsApi, CatalogApi catalogApi, AuthService authService, ThemeService themeService)
+    public SettingsViewModel(SettingsApi settingsApi, CatalogApi catalogApi, AuthService authService,
+        ThemeService themeService, SettingsService settingsService)
     {
         _settingsApi = settingsApi;
         _catalogApi = catalogApi;
         _authService = authService;
         _themeService = themeService;
+        _settingsService = settingsService;
     }
 
     /// <summary>Theme service for populating theme list and applying themes.</summary>
@@ -360,7 +387,7 @@ public partial class SettingsViewModel : ObservableObject
             foreach (var lib in libraries)
             {
                 prefsMap.TryGetValue(lib.Id, out var pref);
-                LibraryCards.Add(new LibraryCardViewModel(lib, pref, _settingsApi, ShowStatus, ShowError));
+                LibraryCards.Add(new LibraryCardViewModel(lib, pref, _settingsApi, _settingsService, ShowStatus, ShowError));
             }
         }
         catch (Exception ex)

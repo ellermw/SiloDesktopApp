@@ -15,6 +15,7 @@ public sealed partial class AdminCollectionsPage : Page
 
     // Track whether the picker is being updated programmatically so we don't re-trigger a load
     private bool _suppressPickerChange;
+    private bool _rebuildPending;
 
     public AdminCollectionsPage()
     {
@@ -26,7 +27,7 @@ public sealed partial class AdminCollectionsPage : Page
     {
         try
         {
-            ViewModel.Collections.CollectionChanged += (_, _) => BuildCollectionRows();
+            ViewModel.Collections.CollectionChanged += (_, _) => ScheduleRebuild();
             await ViewModel.LoadCommand.ExecuteAsync(null);
             PopulateLibraryPicker();
         }
@@ -34,6 +35,17 @@ public sealed partial class AdminCollectionsPage : Page
         {
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
+    }
+
+    private void ScheduleRebuild()
+    {
+        if (_rebuildPending) return;
+        _rebuildPending = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _rebuildPending = false;
+            BuildCollectionRows();
+        });
     }
 
     // ===== Library Picker =====
@@ -120,51 +132,41 @@ public sealed partial class AdminCollectionsPage : Page
             TextTrimming = TextTrimming.CharacterEllipsis
         });
 
+        // Featured badge (default/accent style)
         if (col.Featured)
         {
-            titleRow.Children.Add(new FontIcon
-            {
-                Glyph = "\uE734",
-                FontSize = 12,
-                Foreground = new SolidColorBrush(Color.FromArgb(255, 255, 200, 0)),
-                VerticalAlignment = VerticalAlignment.Center
-            });
+            titleRow.Children.Add(MakeBadgeDefault("Featured"));
         }
 
-        titleRow.Children.Add(MakeBadge(col.Visibility,
-            col.Visibility == "visible"
-                ? Color.FromArgb(255, 63, 185, 80)
-                : Color.FromArgb(255, 130, 130, 130)));
+        // Visibility badge (secondary/neutral style)
+        titleRow.Children.Add(MakeBadgeSecondary(col.Visibility));
 
         titlePanel.Children.Add(titleRow);
 
-        if (!string.IsNullOrEmpty(col.Description))
+        titlePanel.Children.Add(new TextBlock
         {
-            titlePanel.Children.Add(new TextBlock
-            {
-                Text = col.Description,
-                FontSize = 12,
-                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
-                TextWrapping = TextWrapping.Wrap,
-                MaxLines = 2,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                MaxWidth = 300
-            });
-        }
+            Text = string.IsNullOrEmpty(col.Description) ? "No summary provided." : col.Description,
+            FontSize = 12,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            MaxLines = 2,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 300
+        });
 
         // ---- Source column ----
         var sourcePanel = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
-        sourcePanel.Children.Add(MakeBadge(col.CollectionType, Color.FromArgb(120, 130, 130, 130)));
+        sourcePanel.Children.Add(MakeBadgeOutline(col.CollectionType));
 
         if (!string.IsNullOrEmpty(col.SourceUrl))
         {
             sourcePanel.Children.Add(new TextBlock
             {
                 Text = col.SourceUrl,
-                FontSize = 11,
+                FontSize = 12,
                 Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                MaxWidth = 200
+                MaxWidth = 220
             });
         }
         else
@@ -172,7 +174,7 @@ public sealed partial class AdminCollectionsPage : Page
             sourcePanel.Children.Add(new TextBlock
             {
                 Text = "Local metadata",
-                FontSize = 11,
+                FontSize = 12,
                 Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
             });
         }
@@ -189,25 +191,16 @@ public sealed partial class AdminCollectionsPage : Page
 
         // ---- Sync Status column ----
         var syncPanel = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
-
-        var syncColor = col.LastSyncStatus switch
-        {
-            "running" => Color.FromArgb(255, 59, 130, 246),
-            "success" => Color.FromArgb(255, 63, 185, 80),
-            "failed" => Color.FromArgb(255, 220, 90, 90),
-            "warning" => Color.FromArgb(255, 245, 158, 11),
-            _ => Color.FromArgb(255, 130, 130, 130) // idle / unknown
-        };
-        syncPanel.Children.Add(MakeBadge(col.LastSyncStatus, syncColor));
+        syncPanel.Children.Add(MakeBadgeOutline(col.LastSyncStatus));
 
         string syncMsg = string.IsNullOrEmpty(col.LastSyncMessage) ? "Not synced yet" : col.LastSyncMessage;
         syncPanel.Children.Add(new TextBlock
         {
             Text = syncMsg,
-            FontSize = 11,
+            FontSize = 12,
             Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = 200
+            MaxWidth = 220
         });
 
         // ---- Updated column ----
@@ -227,15 +220,17 @@ public sealed partial class AdminCollectionsPage : Page
         };
 
         // ---- Actions column ----
+        // 3 ghost icon buttons: Sync (RefreshCw), Edit (Pencil), Delete (Trash2)
         var actionsPanel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 4,
+            Spacing = 2,
             VerticalAlignment = VerticalAlignment.Center
         };
 
         var syncBtn = MakeIconButton("\uE72C", "Sync collection");
-        var deleteBtn = MakeIconButton("\uE74D", "Delete collection", Color.FromArgb(255, 220, 90, 90));
+        var editBtn = MakeIconButton("\uE70F", "Edit collection");
+        var deleteBtn = MakeIconButton("\uE74D", "Delete collection");
 
         var capturedCol = col;
         syncBtn.Click += async (_, _) =>
@@ -244,13 +239,14 @@ public sealed partial class AdminCollectionsPage : Page
             try
             {
                 await ViewModel.SyncCollectionCommand.ExecuteAsync(capturedCol.Id);
-                ShowStatus(ViewModel.StatusMessage ?? "Sync started.");
             }
             finally { syncBtn.IsEnabled = true; }
         };
+        editBtn.Click += async (_, _) => await OpenEditDialogAsync(capturedCol);
         deleteBtn.Click += async (_, _) => await OpenDeleteDialogAsync(capturedCol);
 
         actionsPanel.Children.Add(syncBtn);
+        actionsPanel.Children.Add(editBtn);
         actionsPanel.Children.Add(deleteBtn);
 
         Grid.SetColumn(titlePanel, 0);
@@ -281,7 +277,7 @@ public sealed partial class AdminCollectionsPage : Page
 
     private async Task OpenCreateDialogAsync()
     {
-        var (formContent, getBody) = BuildCollectionForm();
+        var (formContent, getBody) = BuildCollectionForm(null);
 
         var dialog = new ContentDialog
         {
@@ -302,7 +298,36 @@ public sealed partial class AdminCollectionsPage : Page
             try
             {
                 await ViewModel.LoadCommand.ExecuteAsync(null);
-                ShowStatus("Collection created.");
+            }
+            catch { }
+        }
+    }
+
+    // ===== Edit Dialog =====
+
+    private async Task OpenEditDialogAsync(LibraryCollection col)
+    {
+        var (formContent, getBody) = BuildCollectionForm(col);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Edit Collection",
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot,
+            Content = formContent,
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary)
+        {
+            var body = getBody();
+            if (body == null) return;
+
+            try
+            {
+                await ViewModel.LoadCommand.ExecuteAsync(null);
             }
             catch { }
         }
@@ -328,7 +353,6 @@ public sealed partial class AdminCollectionsPage : Page
             try
             {
                 await ViewModel.DeleteCollectionCommand.ExecuteAsync(col.Id);
-                ShowStatus(ViewModel.StatusMessage ?? "Collection deleted.");
             }
             catch { }
         }
@@ -336,11 +360,12 @@ public sealed partial class AdminCollectionsPage : Page
 
     // ===== Form Builder =====
 
-    private (FrameworkElement Content, Func<ContinuumPlayer.Core.Models.Admin.CreateLibraryCollectionRequest?> GetBody) BuildCollectionForm()
+    private (FrameworkElement Content, Func<ContinuumPlayer.Core.Models.Admin.CreateLibraryCollectionRequest?> GetBody) BuildCollectionForm(LibraryCollection? existing)
     {
         var titleBox = new TextBox
         {
             PlaceholderText = "Collection title",
+            Text = existing?.Title ?? "",
             CornerRadius = new CornerRadius(8),
             FontSize = 13
         };
@@ -348,6 +373,7 @@ public sealed partial class AdminCollectionsPage : Page
         var descBox = new TextBox
         {
             PlaceholderText = "Description (optional)",
+            Text = existing?.Description ?? "",
             AcceptsReturn = false,
             CornerRadius = new CornerRadius(8),
             FontSize = 13
@@ -356,6 +382,7 @@ public sealed partial class AdminCollectionsPage : Page
         var sourceUrlBox = new TextBox
         {
             PlaceholderText = "Source URL (MDBList / TMDB, optional)",
+            Text = existing?.SourceUrl ?? "",
             CornerRadius = new CornerRadius(8),
             FontSize = 13
         };
@@ -371,6 +398,11 @@ public sealed partial class AdminCollectionsPage : Page
         typeCombo.Items.Add(new ComboBoxItem { Content = "MDBList", Tag = "mdblist" });
         typeCombo.Items.Add(new ComboBoxItem { Content = "TMDB", Tag = "tmdb" });
         typeCombo.SelectedIndex = 0;
+        if (existing != null)
+        {
+            foreach (ComboBoxItem item in typeCombo.Items)
+                if (item.Tag is string t && t == existing.CollectionType) { typeCombo.SelectedItem = item; break; }
+        }
 
         var visibilityCombo = new ComboBox
         {
@@ -381,10 +413,15 @@ public sealed partial class AdminCollectionsPage : Page
         visibilityCombo.Items.Add(new ComboBoxItem { Content = "Visible", Tag = "visible" });
         visibilityCombo.Items.Add(new ComboBoxItem { Content = "Hidden", Tag = "hidden" });
         visibilityCombo.SelectedIndex = 0;
+        if (existing != null)
+        {
+            foreach (ComboBoxItem item in visibilityCombo.Items)
+                if (item.Tag is string v && v == existing.Visibility) { visibilityCombo.SelectedItem = item; break; }
+        }
 
         var featuredSwitch = new ToggleSwitch
         {
-            IsOn = false,
+            IsOn = existing?.Featured ?? false,
             OnContent = "Featured",
             OffContent = "Not featured"
         };
@@ -400,12 +437,13 @@ public sealed partial class AdminCollectionsPage : Page
         foreach (var lib in ViewModel.Libraries)
             libCombo.Items.Add(new ComboBoxItem { Content = lib.Name, Tag = (int?)lib.Id });
 
-        // Pre-select filtered library if one is active
-        if (ViewModel.SelectedLibraryId.HasValue)
+        // Pre-select the collection's library or the currently filtered library
+        int? preSelectLibId = existing?.LibraryId ?? ViewModel.SelectedLibraryId;
+        if (preSelectLibId.HasValue)
         {
             foreach (ComboBoxItem item in libCombo.Items)
             {
-                if (item.Tag is int id && id == ViewModel.SelectedLibraryId.Value)
+                if (item.Tag is int id && id == preSelectLibId.Value)
                 {
                     libCombo.SelectedItem = item;
                     break;
@@ -480,14 +518,41 @@ public sealed partial class AdminCollectionsPage : Page
         return (form, GetBody);
     }
 
-    // ===== Helpers =====
+    // ===== Badge Helpers =====
 
-    private static Border MakeBadge(string text, Color color)
+    /// <summary>Default/accent badge — used for Featured.</summary>
+    private static Border MakeBadgeDefault(string text)
+    {
+        var bg = Color.FromArgb(40, 99, 102, 241);   // indigo-ish accent tint
+        var fg = Color.FromArgb(255, 139, 142, 255);
+        var border = Color.FromArgb(80, 99, 102, 241);
+        return MakeBadgeColored(text, bg, fg, border);
+    }
+
+    /// <summary>Secondary/neutral badge — used for visibility.</summary>
+    private static Border MakeBadgeSecondary(string text)
+    {
+        var bg = Color.FromArgb(30, 130, 130, 130);
+        var fg = Color.FromArgb(255, 160, 160, 170);
+        var border = Color.FromArgb(60, 130, 130, 130);
+        return MakeBadgeColored(text, bg, fg, border);
+    }
+
+    /// <summary>Outline badge — used for collection type and sync status.</summary>
+    private static Border MakeBadgeOutline(string text)
+    {
+        var bg = Color.FromArgb(0, 0, 0, 0);         // transparent
+        var fg = Color.FromArgb(255, 150, 150, 160);
+        var border = Color.FromArgb(80, 150, 150, 160);
+        return MakeBadgeColored(text, bg, fg, border);
+    }
+
+    private static Border MakeBadgeColored(string text, Color bg, Color fg, Color borderColor)
     {
         var badge = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(30, color.R, color.G, color.B)),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(120, color.R, color.G, color.B)),
+            Background = new SolidColorBrush(bg),
+            BorderBrush = new SolidColorBrush(borderColor),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(6, 3, 6, 3),
@@ -498,21 +563,18 @@ public sealed partial class AdminCollectionsPage : Page
             Text = text,
             FontSize = 11,
             FontWeight = FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(color)
+            Foreground = new SolidColorBrush(fg)
         };
         return badge;
     }
 
-    private static Button MakeIconButton(string glyph, string tooltip, Color? fgColor = null)
+    /// <summary>Ghost icon button, 28×28 — matches web h-7 w-7.</summary>
+    private static Button MakeIconButton(string glyph, string tooltip)
     {
-        var fg = fgColor.HasValue
-            ? new SolidColorBrush(fgColor.Value)
-            : (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
-
         var btn = new Button
         {
-            Width = 32,
-            Height = 32,
+            Width = 28,
+            Height = 28,
             Padding = new Thickness(0),
             Background = new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
@@ -520,25 +582,11 @@ public sealed partial class AdminCollectionsPage : Page
             Content = new FontIcon
             {
                 Glyph = glyph,
-                FontSize = 14,
-                Foreground = fg
+                FontSize = 12,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
             }
         };
         ToolTipService.SetToolTip(btn, tooltip);
         return btn;
-    }
-
-    private void ShowStatus(string message)
-    {
-        StatusBannerText.Text = message;
-        StatusBanner.Visibility = Visibility.Visible;
-
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
-        timer.Tick += (_, _) =>
-        {
-            StatusBanner.Visibility = Visibility.Collapsed;
-            timer.Stop();
-        };
-        timer.Start();
     }
 }
