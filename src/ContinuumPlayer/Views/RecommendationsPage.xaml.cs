@@ -8,20 +8,25 @@ namespace ContinuumPlayer.Views;
 public sealed partial class RecommendationsPage : Page
 {
     public RecommendationsViewModel ViewModel { get; }
+    private bool _eventsAttached;
 
     public RecommendationsPage()
     {
         ViewModel = App.Services.GetRequiredService<RecommendationsViewModel>();
         this.InitializeComponent();
-
-        ViewModel.Rows.CollectionChanged += (_, _) =>
-        {
-            DispatcherQueue.TryEnqueue(BuildRows);
-        };
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        if (!_eventsAttached)
+        {
+            _eventsAttached = true;
+            ViewModel.Rows.CollectionChanged += (_, _) =>
+            {
+                DispatcherQueue.TryEnqueue(BuildRows);
+            };
+        }
+
         await ViewModel.LoadCommand.ExecuteAsync(null);
         BuildRows();
     }

@@ -10,6 +10,7 @@ namespace ContinuumPlayer.Views;
 public sealed partial class HomePage : Page
 {
     public HomeViewModel ViewModel { get; }
+    private bool _eventsAttached;
 
     public HomePage()
     {
@@ -29,8 +30,12 @@ public sealed partial class HomePage : Page
 
             BuildContent();
 
-            ViewModel.FeaturedSections.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(() => BuildContent());
-            ViewModel.Sections.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(() => BuildContent());
+            if (!_eventsAttached)
+            {
+                _eventsAttached = true;
+                ViewModel.FeaturedSections.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(() => BuildContent());
+                ViewModel.Sections.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(() => BuildContent());
+            }
         }
         catch (Exception ex)
         {
