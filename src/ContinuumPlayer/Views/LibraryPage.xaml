@@ -92,7 +92,7 @@
         </Grid.RowDefinitions>
 
         <!-- Header: title + subtitle + tab pills (web: px-4 py-4 sm:px-6 lg:px-10 xl:px-12) -->
-        <Grid Grid.Row="0" Margin="40,24,40,20">
+        <Grid Grid.Row="0" Margin="40,24,40,20" Canvas.ZIndex="10" Background="{StaticResource AppBackgroundBrush}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -155,6 +155,8 @@
             Orientation="Horizontal"
             Spacing="8"
             Margin="40,0,40,16"
+            Canvas.ZIndex="10"
+            Background="{StaticResource AppBackgroundBrush}"
             Visibility="Collapsed">
 
             <!-- Genre filter (web: pill select) -->
@@ -263,7 +265,6 @@
             Grid.Row="2"
             ViewChanged="ContentScrollViewer_ViewChanged"
             IsScrollInertiaEnabled="True"
-            CanContentRenderOutsideBounds="True"
             Padding="40,0,40,24"
             Visibility="Collapsed">
 

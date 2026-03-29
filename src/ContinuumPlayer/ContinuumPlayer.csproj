@@ -12,6 +12,7 @@
 
         <!-- Project Options -->
         <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <LangVersion>latest</LangVersion>
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>ContinuumPlayer</RootNamespace>
@@ -60,6 +61,7 @@
     </ItemGroup>
     <ItemGroup>
       <ProjectReference Include="..\ContinuumPlayer.Core\ContinuumPlayer.Core.csproj" />
+      <ProjectReference Include="..\ContinuumPlayer.Player\ContinuumPlayer.Player.csproj" />
     </ItemGroup>
 
     <!-- 

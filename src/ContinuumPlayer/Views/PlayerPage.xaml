@@ -14,13 +14,11 @@
     Tapped="Page_Tapped">
 
     <Grid>
-        <!-- Video display: native MediaPlayerElement with transport controls disabled -->
-        <MediaPlayerElement x:Name="VideoPlayer"
-                            AreTransportControlsEnabled="False"
-                            AutoPlay="False"
-                            Stretch="Uniform"
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Center" />
+        <!-- Video frame rendered by mpv SW render into WriteableBitmap -->
+        <Image x:Name="VideoFrame"
+               Stretch="Uniform"
+               HorizontalAlignment="Center"
+               VerticalAlignment="Center" />
 
         <!-- Loading overlay (opaque, covers video during loading) -->
         <Grid x:Name="LoadingOverlay" Background="#101722">
