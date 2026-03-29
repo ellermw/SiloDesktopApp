@@ -72,9 +72,6 @@ public sealed partial class WatchlistPage : Page
             "year" => _ascending
                 ? ViewModel.Items.OrderBy(i => i.Year).ToList()
                 : ViewModel.Items.OrderByDescending(i => i.Year).ToList(),
-            "rating_imdb" => _ascending
-                ? ViewModel.Items.OrderBy(i => i.Year).ToList()
-                : ViewModel.Items.OrderByDescending(i => i.Year).ToList(),
             _ => _ascending
                 ? ViewModel.Items.OrderBy(i => i.Title).ToList()
                 : ViewModel.Items.OrderByDescending(i => i.Title).ToList(),

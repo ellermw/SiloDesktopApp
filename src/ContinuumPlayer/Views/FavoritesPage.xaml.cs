@@ -72,9 +72,6 @@ public sealed partial class FavoritesPage : Page
             "year" => _ascending
                 ? ViewModel.Items.OrderBy(i => i.Year).ToList()
                 : ViewModel.Items.OrderByDescending(i => i.Year).ToList(),
-            "rating_imdb" => _ascending
-                ? ViewModel.Items.OrderBy(i => i.Year).ToList()
-                : ViewModel.Items.OrderByDescending(i => i.Year).ToList(),
             "added_at" => _ascending
                 ? ViewModel.Items.ToList()     // preserve server order (roughly added_at)
                 : ViewModel.Items.Reverse().ToList(),

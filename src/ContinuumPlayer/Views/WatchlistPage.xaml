@@ -116,7 +116,6 @@
                 <ComboBoxItem Content="Title" Tag="title" IsSelected="True" />
                 <ComboBoxItem Content="Year" Tag="year" />
                 <ComboBoxItem Content="Date Added" Tag="added_at" />
-                <ComboBoxItem Content="Rating" Tag="rating_imdb" />
             </ComboBox>
 
             <Button
