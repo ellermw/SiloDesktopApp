@@ -12,6 +12,7 @@ public class PlaybackManager : IDisposable
     private string? _sessionId;
     private double _lastReportedPosition;
     private bool _isPaused;
+    private readonly SemaphoreSlim _progressGuard = new(1, 1);
 
     public PlaybackManager(PlaybackApi playbackApi, AuthService authService, ContinuumApiClient apiClient)
     {
@@ -122,8 +123,20 @@ public class PlaybackManager : IDisposable
         _progressTimer = new Timer(async _ =>
         {
             if (_sessionId == null) return;
-            try { await _playbackApi.ReportProgressAsync(_sessionId, _lastReportedPosition, _isPaused); }
-            catch { }
+            if (!_progressGuard.Wait(0)) return; // skip if previous report still in-flight
+            try
+            {
+                await _playbackApi.ReportProgressAsync(_sessionId, _lastReportedPosition, _isPaused);
+            }
+            catch (Exception)
+            {
+                // Progress report failed -- non-fatal but the server will reap
+                // the session after ~45s without progress if this persists.
+            }
+            finally
+            {
+                _progressGuard.Release();
+            }
         }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(7));
     }
 
@@ -141,6 +154,14 @@ public class PlaybackManager : IDisposable
     public void Dispose()
     {
         StopProgressReporting();
-        _ = StopSessionAsync();
+        if (_sessionId != null)
+        {
+            _ = Task.Run(async () =>
+            {
+                try { await _playbackApi.StopPlaybackAsync(_sessionId); }
+                catch { }
+            });
+        }
+        _progressGuard.Dispose();
     }
 }

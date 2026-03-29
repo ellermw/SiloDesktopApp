@@ -136,7 +136,12 @@ public class AuthService
     private void ScheduleRefresh(int expiresInSeconds)
     {
         _refreshTimer?.Dispose();
+        if (expiresInSeconds <= 0) return;
         var refreshIn = TimeSpan.FromSeconds(expiresInSeconds * 0.8);
-        _refreshTimer = new Timer(async _ => { await TryRefreshAsync(); }, null, refreshIn, Timeout.InfiniteTimeSpan);
+        _refreshTimer = new Timer(async _ =>
+        {
+            try { await TryRefreshAsync(); }
+            catch { /* TryRefreshAsync handles failure internally via Logout() */ }
+        }, null, refreshIn, Timeout.InfiniteTimeSpan);
     }
 }
