@@ -60,7 +60,7 @@ public class ContinuumApiClient
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, BuildUrl(path));
         AddHeaders(request);
-        request.Content = JsonContent.Create(body, options: JsonOptions);
+        request.Content = CreateJsonContent(body);
         return await SendAsync<T>(request, ct);
     }
 
@@ -68,7 +68,7 @@ public class ContinuumApiClient
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, BuildUrl(path));
         AddHeaders(request);
-        request.Content = JsonContent.Create(body, options: JsonOptions);
+        request.Content = CreateJsonContent(body);
         var response = await _http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct);
     }
@@ -77,7 +77,7 @@ public class ContinuumApiClient
     {
         using var request = new HttpRequestMessage(HttpMethod.Put, BuildUrl(path));
         AddHeaders(request);
-        request.Content = JsonContent.Create(body, options: JsonOptions);
+        request.Content = CreateJsonContent(body);
         return await SendAsync<T>(request, ct);
     }
 
@@ -85,7 +85,7 @@ public class ContinuumApiClient
     {
         using var request = new HttpRequestMessage(HttpMethod.Put, BuildUrl(path));
         AddHeaders(request);
-        if (body != null) request.Content = JsonContent.Create(body, options: JsonOptions);
+        if (body != null) request.Content = CreateJsonContent(body);
         var response = await _http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct);
     }
@@ -102,8 +102,18 @@ public class ContinuumApiClient
     {
         using var request = new HttpRequestMessage(HttpMethod.Patch, BuildUrl(path));
         AddHeaders(request);
-        request.Content = JsonContent.Create(body, options: JsonOptions);
+        request.Content = CreateJsonContent(body);
         return await SendAsync<T>(request, ct);
+    }
+
+    /// <summary>
+    /// Serialize with the actual runtime type (not 'object') so all properties are included.
+    /// JsonContent.Create(object) loses type info in trimmed/AOT builds.
+    /// </summary>
+    private static StringContent CreateJsonContent(object body)
+    {
+        var json = JsonSerializer.Serialize(body, body.GetType(), JsonOptions);
+        return new StringContent(json, System.Text.Encoding.UTF8, "application/json");
     }
 
     private void AddHeaders(HttpRequestMessage request)
