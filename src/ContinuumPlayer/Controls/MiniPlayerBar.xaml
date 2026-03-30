@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="ContinuumPlayer.Controls.MiniPlayerBar"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Height="64">
+
+    <Border Background="{StaticResource CardBackgroundBrush}"
+            BorderBrush="{StaticResource SidebarBorderBrush}"
+            BorderThickness="0,1,0,0">
+        <Grid ColumnSpacing="12" Padding="8,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />  <!-- Video thumbnail -->
+                <ColumnDefinition Width="*" />      <!-- Title + progress -->
+                <ColumnDefinition Width="Auto" />   <!-- Transport controls -->
+                <ColumnDefinition Width="Auto" />   <!-- Volume -->
+                <ColumnDefinition Width="Auto" />   <!-- Close -->
+            </Grid.ColumnDefinitions>
+
+            <!-- Live video thumbnail with expand overlay -->
+            <Grid Grid.Column="0" Width="90" Height="50" Margin="0,7"
+                  Tapped="VideoThumbnail_Tapped" Background="Black" CornerRadius="4">
+                <Image x:Name="MiniVideoFrame" Stretch="Uniform" />
+                <!-- Expand chevron overlay -->
+                <Border Background="#88000000" CornerRadius="4"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Padding="6,2" Opacity="0" x:Name="ExpandOverlay">
+                    <FontIcon Glyph="&#xE70E;" FontSize="12" Foreground="White" />
+                </Border>
+            </Grid>
+
+            <!-- Title + thin seek bar -->
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                <TextBlock x:Name="TitleText" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{StaticResource PrimaryTextBrush}"
+                           TextTrimming="CharacterEllipsis" MaxLines="1" />
+                <TextBlock x:Name="SubtitleText" FontSize="11"
+                           Foreground="{StaticResource SecondaryTextBrush}"
+                           TextTrimming="CharacterEllipsis" MaxLines="1" />
+                <Slider x:Name="SeekSlider" Minimum="0" Maximum="1" Height="16"
+                        Margin="0,-2,0,0" ValueChanged="SeekSlider_ValueChanged" />
+            </StackPanel>
+
+            <!-- Transport controls -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
+                <Button Click="PlayPause_Click" Background="Transparent" BorderThickness="0" Padding="10,8">
+                    <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE768;" FontSize="18" Foreground="{StaticResource PrimaryTextBrush}" />
+                </Button>
+            </StackPanel>
+
+            <!-- Volume -->
+            <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                <Button Click="Mute_Click" Background="Transparent" BorderThickness="0" Padding="6">
+                    <FontIcon x:Name="VolumeIcon" Glyph="&#xE767;" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                </Button>
+                <Slider x:Name="VolumeSlider" Width="60" Minimum="0" Maximum="100" Value="100"
+                        VerticalAlignment="Center" ValueChanged="VolumeSlider_ValueChanged" />
+            </StackPanel>
+
+            <!-- Close -->
+            <Button Grid.Column="4" Click="Close_Click" Background="Transparent" BorderThickness="0"
+                    Padding="10,8" VerticalAlignment="Center" ToolTipService.ToolTip="Stop playback">
+                <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+            </Button>
+        </Grid>
+    </Border>
+</UserControl>
