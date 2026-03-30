@@ -107,13 +107,51 @@ public class ContinuumApiClient
     }
 
     /// <summary>
-    /// Serialize with the actual runtime type (not 'object') so all properties are included.
-    /// JsonContent.Create(object) loses type info in trimmed/AOT builds.
+    /// Serialize using property reflection that works in all build modes.
+    /// .NET 8 self-contained publish disables System.Text.Json reflection by default,
+    /// so we build a dictionary manually from the object's properties.
     /// </summary>
     private static StringContent CreateJsonContent(object body)
     {
-        var json = JsonSerializer.Serialize(body, body.GetType(), JsonOptions);
+        // Build a dictionary from the object's public properties,
+        // applying snake_case naming manually. This bypasses System.Text.Json's
+        // broken reflection path in .NET 8 self-contained publish builds.
+        var props = body.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        var dict = new Dictionary<string, object?>();
+        foreach (var prop in props)
+        {
+            if (!prop.CanRead) continue;
+            try
+            {
+                var value = prop.GetValue(body);
+                if (value == null) continue;
+                var name = ToSnakeCase(prop.Name);
+                dict[name] = value;
+            }
+            catch { /* skip properties whose getter was trimmed */ }
+        }
+
+        var json = JsonSerializer.Serialize(dict, JsonOptions);
         return new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+    }
+
+    private static string ToSnakeCase(string name)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < name.Length; i++)
+        {
+            var c = name[i];
+            if (char.IsUpper(c))
+            {
+                if (i > 0) sb.Append('_');
+                sb.Append(char.ToLowerInvariant(c));
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
     }
 
     private void AddHeaders(HttpRequestMessage request)

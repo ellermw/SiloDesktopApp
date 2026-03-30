@@ -30,21 +30,8 @@ public sealed partial class PlayerOverlay : UserControl
 
     public PlayerOverlay()
     {
-        try
-        {
-            _playerService = App.Services.GetRequiredService<PlayerService>();
-            this.InitializeComponent();
-        }
-        catch (Exception ex)
-        {
-            // Log the actual exception so we can diagnose XAML parse failures
-            var logPath = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ContinuumPlayer", "overlay_init_error.txt");
-            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(logPath)!);
-            System.IO.File.WriteAllText(logPath, $"{DateTime.Now}\n{ex}\n");
-            throw;
-        }
+        _playerService = App.Services.GetRequiredService<PlayerService>();
+        this.InitializeComponent();
     }
 
     // ── Activate / Deactivate (called by MainWindow when visibility toggles) ──

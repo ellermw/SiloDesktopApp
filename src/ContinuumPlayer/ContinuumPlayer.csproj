@@ -17,11 +17,14 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>ContinuumPlayer</RootNamespace>
 
-        <!-- Publishing — disable all optimizations that break XAML runtime type resolution -->
+        <!-- Publishing — force reflection-based JSON serialization in Release/publish builds.
+             Without this, .NET 8 self-contained publish disables reflection for System.Text.Json
+             and all POCO serialization produces empty {} -->
         <PublishTrimmed>false</PublishTrimmed>
         <PublishSingleFile>false</PublishSingleFile>
         <PublishReadyToRun>false</PublishReadyToRun>
         <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+        <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>
@@ -68,6 +71,11 @@
     <ItemGroup>
       <ProjectReference Include="..\ContinuumPlayer.Core\ContinuumPlayer.Core.csproj" />
       <ProjectReference Include="..\ContinuumPlayer.Player\ContinuumPlayer.Player.csproj" />
+    </ItemGroup>
+
+    <!-- Prevent the ILC/trimmer from stripping model types needed for JSON serialization -->
+    <ItemGroup>
+      <TrimmerRootAssembly Include="ContinuumPlayer.Core" />
     </ItemGroup>
 
     <!-- 
