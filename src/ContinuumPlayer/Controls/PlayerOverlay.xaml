@@ -12,7 +12,7 @@
     Tapped="Overlay_Tapped"
     IsTabStop="True">
 
-    <Grid>
+    <Grid Background="Black">
         <!-- Video frame rendered by mpv SW render into WriteableBitmap -->
         <Image x:Name="VideoFrame"
                Stretch="Uniform"
@@ -20,7 +20,7 @@
                VerticalAlignment="Center" />
 
         <!-- Loading overlay (opaque, covers video during loading) -->
-        <Grid x:Name="LoadingOverlay" Background="#101722">
+        <Grid x:Name="LoadingOverlay" Background="#101722" Visibility="Collapsed">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
                 <ProgressRing IsActive="True" Width="48" Height="48" />
                 <TextBlock Text="Preparing playback..." Foreground="White" FontSize="16" HorizontalAlignment="Center" />

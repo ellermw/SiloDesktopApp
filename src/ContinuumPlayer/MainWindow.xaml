@@ -227,7 +227,8 @@
         </NavigationView>
 
         <!-- Layer 2: Full-window player overlay (above nav, initially hidden) -->
-        <controls:PlayerOverlay x:Name="PlayerOverlayControl" Visibility="Collapsed" />
+        <controls:PlayerOverlay x:Name="PlayerOverlayControl" Visibility="Collapsed"
+                                 HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
 
         <!-- Layer 3: Mini player bar (bottom-docked, initially hidden) -->
         <controls:MiniPlayerBar x:Name="MiniPlayerBarControl"

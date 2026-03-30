@@ -190,39 +190,39 @@ public sealed partial class MainWindow : Window
 
     private void OnPlayerStateChanged(PlayerState state)
     {
-        DispatcherQueue.TryEnqueue(() =>
+        // Must run synchronously — PlayAsync calls SetState(Expanded) then immediately
+        // loads the file. If we defer via TryEnqueue, Activate() runs too late and
+        // initial frames are dropped. All state transitions originate from the UI thread.
+        switch (state)
         {
-            switch (state)
-            {
-                case PlayerState.Idle:
-                    PlayerOverlayControl.Visibility = Visibility.Collapsed;
-                    PlayerOverlayControl.Deactivate();
-                    MiniPlayerBarControl.Visibility = Visibility.Collapsed;
-                    MiniPlayerBarControl.Deactivate();
-                    if (_navInitialized) NavView.IsPaneVisible = true;
-                    NavView.Margin = new Thickness(0);
-                    break;
+            case PlayerState.Idle:
+                PlayerOverlayControl.Visibility = Visibility.Collapsed;
+                PlayerOverlayControl.Deactivate();
+                MiniPlayerBarControl.Visibility = Visibility.Collapsed;
+                MiniPlayerBarControl.Deactivate();
+                if (_navInitialized) NavView.IsPaneVisible = true;
+                NavView.Margin = new Thickness(0);
+                break;
 
-                case PlayerState.Expanded:
-                case PlayerState.Fullscreen:
-                    MiniPlayerBarControl.Deactivate();
-                    MiniPlayerBarControl.Visibility = Visibility.Collapsed;
-                    NavView.IsPaneVisible = false;
-                    NavView.Margin = new Thickness(0);
-                    PlayerOverlayControl.Visibility = Visibility.Visible;
-                    PlayerOverlayControl.Activate();
-                    break;
+            case PlayerState.Expanded:
+            case PlayerState.Fullscreen:
+                MiniPlayerBarControl.Deactivate();
+                MiniPlayerBarControl.Visibility = Visibility.Collapsed;
+                NavView.IsPaneVisible = false;
+                NavView.Margin = new Thickness(0);
+                PlayerOverlayControl.Visibility = Visibility.Visible;
+                PlayerOverlayControl.Activate();
+                break;
 
-                case PlayerState.Minimized:
-                    PlayerOverlayControl.Deactivate();
-                    PlayerOverlayControl.Visibility = Visibility.Collapsed;
-                    if (_navInitialized) NavView.IsPaneVisible = true;
-                    NavView.Margin = new Thickness(0, 0, 0, 64);
-                    MiniPlayerBarControl.Visibility = Visibility.Visible;
-                    MiniPlayerBarControl.Activate();
-                    break;
-            }
-        });
+            case PlayerState.Minimized:
+                PlayerOverlayControl.Deactivate();
+                PlayerOverlayControl.Visibility = Visibility.Collapsed;
+                if (_navInitialized) NavView.IsPaneVisible = true;
+                NavView.Margin = new Thickness(0, 0, 0, 64);
+                MiniPlayerBarControl.Visibility = Visibility.Visible;
+                MiniPlayerBarControl.Activate();
+                break;
+        }
     }
 
     public void NavigateToHome()
