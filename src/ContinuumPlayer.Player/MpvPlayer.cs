@@ -135,6 +135,10 @@ public sealed class MpvPlayer : IDisposable
         SetOption("cache-pause-wait", "10");             // Wait for 10 seconds of data before resuming (high-bitrate needs more runway)
         SetOption("stream-buffer-size", "16MiB");        // 16MB stream read buffer (4K remux at 40+ Mbps needs large reads)
 
+        // === Network resilience ===
+        SetOption("network-timeout", "60");              // 60s timeout before giving up on a connection
+        SetOption("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
+
         // === Seeking performance ===
         SetOption("hr-seek-framedrop", "yes");           // Drop frames during seek for speed
         SetOption("hr-seek", "yes");                     // Exact seek (not keyframe-only)
