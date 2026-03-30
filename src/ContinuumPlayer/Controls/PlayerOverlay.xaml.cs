@@ -30,8 +30,8 @@ public sealed partial class PlayerOverlay : UserControl
 
     public PlayerOverlay()
     {
-        this.InitializeComponent();
         _playerService = App.Services.GetRequiredService<PlayerService>();
+        this.InitializeComponent();
     }
 
     // ── Activate / Deactivate (called by MainWindow when visibility toggles) ──
@@ -407,7 +407,7 @@ public sealed partial class PlayerOverlay : UserControl
 
     private void VolumeSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        if (_playerService.Mpv == null) return;
+        if (_playerService?.Mpv == null) return;
 
         _playerService.Mpv.SetVolume(e.NewValue);
         if (_isMuted && e.NewValue > 0)
