@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using ContinuumPlayer.Core.Models;
 
 namespace ContinuumPlayer.Core.Api;
@@ -15,7 +16,8 @@ public class ContinuumApiClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver()
     };
 
     private readonly HttpClient _http;

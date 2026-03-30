@@ -17,9 +17,11 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>ContinuumPlayer</RootNamespace>
 
-        <!-- Publishing -->
+        <!-- Publishing — disable all optimizations that break XAML runtime type resolution -->
         <PublishTrimmed>false</PublishTrimmed>
         <PublishSingleFile>false</PublishSingleFile>
+        <PublishReadyToRun>false</PublishReadyToRun>
+        <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
 
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>
