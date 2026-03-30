@@ -6,7 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Height="80">
+    Height="100">
 
     <Border Background="{StaticResource CardBackgroundBrush}"
             BorderBrush="{StaticResource SidebarBorderBrush}"
@@ -21,7 +21,7 @@
             </Grid.ColumnDefinitions>
 
             <!-- Live video thumbnail with expand overlay -->
-            <Grid Grid.Column="0" Width="112" Height="63" Margin="0,8"
+            <Grid Grid.Column="0" Width="142" Height="80" Margin="0,10"
                   Tapped="VideoThumbnail_Tapped" Background="Black" CornerRadius="6">
                 <Image x:Name="MiniVideoFrame" Stretch="Uniform" />
                 <!-- Expand chevron overlay -->
