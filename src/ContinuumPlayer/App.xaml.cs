@@ -106,6 +106,9 @@ public partial class App : Application
         // Navigation
         services.AddSingleton<NavigationService>();
 
+        // Player service (owns mpv lifecycle, not tied to page navigation)
+        services.AddSingleton<PlayerService>();
+
         // ViewModels
         services.AddTransient<ServerSelectViewModel>();
         services.AddTransient<LoginViewModel>();
@@ -120,7 +123,6 @@ public partial class App : Application
         services.AddTransient<HistoryViewModel>();
         services.AddTransient<RecommendationsViewModel>();
         services.AddTransient<SettingsViewModel>();
-        services.AddTransient<PlayerViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminDashboardViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminActivityViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminUsersViewModel>();
