@@ -45,8 +45,8 @@ Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\app.ico"; Tasks: desktopicon
 
 [Run]
-; Install Windows App SDK runtime silently before launching
-Filename: "{tmp}\windowsappruntimeinstall-x64.exe"; Parameters: "--quiet"; StatusMsg: "Installing Windows App SDK runtime..."; Flags: waituntilterminated runhidden
+; Install Windows App SDK runtime (--quiet suppresses UI, --force skips if already installed)
+Filename: "{tmp}\windowsappruntimeinstall-x64.exe"; Parameters: "--quiet --force"; StatusMsg: "Installing Windows App SDK runtime (this may take a moment)..."; Flags: waituntilterminated
 
 ; Launch app after install
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
