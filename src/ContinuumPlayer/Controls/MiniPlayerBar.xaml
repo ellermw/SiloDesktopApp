@@ -40,8 +40,8 @@
                 <TextBlock x:Name="SubtitleText" FontSize="11"
                            Foreground="{StaticResource SecondaryTextBrush}"
                            TextTrimming="CharacterEllipsis" MaxLines="1" />
-                <Slider x:Name="SeekSlider" Minimum="0" Maximum="1" Height="24"
-                        Margin="0,0,0,-4" ValueChanged="SeekSlider_ValueChanged" />
+                <Slider x:Name="SeekSlider" Minimum="0" Maximum="1" Height="28"
+                        Margin="0,0,0,0" ValueChanged="SeekSlider_ValueChanged" />
             </StackPanel>
 
             <!-- Transport controls -->
