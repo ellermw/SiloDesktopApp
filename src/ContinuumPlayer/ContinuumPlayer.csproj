@@ -17,6 +17,10 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>ContinuumPlayer</RootNamespace>
 
+        <!-- Publishing -->
+        <PublishTrimmed>false</PublishTrimmed>
+        <PublishSingleFile>false</PublishSingleFile>
+
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>
         <UseRidGraph>true</UseRidGraph>
