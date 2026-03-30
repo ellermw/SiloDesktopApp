@@ -37,3 +37,8 @@ dist/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Installer
+installer/deps/
+installer/output/
+installer/publish/
