@@ -6,12 +6,12 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Height="64">
+    Height="80">
 
     <Border Background="{StaticResource CardBackgroundBrush}"
             BorderBrush="{StaticResource SidebarBorderBrush}"
             BorderThickness="0,1,0,0">
-        <Grid ColumnSpacing="12" Padding="8,0">
+        <Grid ColumnSpacing="12" Padding="12,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />  <!-- Video thumbnail -->
                 <ColumnDefinition Width="*" />      <!-- Title + progress -->
@@ -21,8 +21,8 @@
             </Grid.ColumnDefinitions>
 
             <!-- Live video thumbnail with expand overlay -->
-            <Grid Grid.Column="0" Width="90" Height="50" Margin="0,7"
-                  Tapped="VideoThumbnail_Tapped" Background="Black" CornerRadius="4">
+            <Grid Grid.Column="0" Width="112" Height="63" Margin="0,8"
+                  Tapped="VideoThumbnail_Tapped" Background="Black" CornerRadius="6">
                 <Image x:Name="MiniVideoFrame" Stretch="Uniform" />
                 <!-- Expand chevron overlay -->
                 <Border Background="#88000000" CornerRadius="4"

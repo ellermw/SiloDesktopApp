@@ -52,17 +52,22 @@ public sealed partial class MiniPlayerBar : UserControl
         _active = true;
 
         // Tell mpv to render at mini resolution
-        _playerService.Mpv?.UpdateRenderSize(160, 90);
+        _playerService.Mpv?.UpdateRenderSize(224, 126);
 
         // Subscribe to frames
         _playerService.FrameReady += OnFrameReady;
         _playerService.PositionChanged += OnPositionChanged;
         _playerService.PauseChanged += OnPauseChanged;
 
+        // Sync volume/mute state from PlayerService (shared with overlay)
+        VolumeSlider.Value = _playerService.Volume;
+        _isMuted = _playerService.IsMuted;
+
         // Update display
         TitleText.Text = _playerService.Title;
         SubtitleText.Text = _playerService.Subtitle ?? "";
         UpdatePlayPauseIcon();
+        UpdateVolumeIcon();
 
         // Start UI timer for seek bar
         _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
@@ -195,17 +200,20 @@ public sealed partial class MiniPlayerBar : UserControl
         if (_playerService.Mpv == null) return;
         _isMuted = !_playerService.Mpv.GetMute();
         _playerService.Mpv.SetMute(_isMuted);
+        _playerService.IsMuted = _isMuted;
         UpdateVolumeIcon();
     }
 
     private void VolumeSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        if (_playerService.Mpv == null) return;
+        if (_playerService?.Mpv == null) return;
         _playerService.Mpv.SetVolume(e.NewValue);
+        _playerService.Volume = e.NewValue;
         if (_isMuted && e.NewValue > 0)
         {
             _isMuted = false;
             _playerService.Mpv.SetMute(false);
+            _playerService.IsMuted = false;
         }
         UpdateVolumeIcon();
     }

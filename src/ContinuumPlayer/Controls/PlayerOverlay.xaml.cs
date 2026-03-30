@@ -67,6 +67,11 @@ public sealed partial class PlayerOverlay : UserControl
             LoadingOverlay.Visibility = Visibility.Collapsed;
         }
 
+        // Sync volume/mute from shared state
+        VolumeSlider.Value = _playerService.Volume;
+        _isMuted = _playerService.IsMuted;
+        UpdateVolumeIcon();
+
         // Update title
         TitleText.Text = _playerService.Title;
 
@@ -375,6 +380,7 @@ public sealed partial class PlayerOverlay : UserControl
 
         _isMuted = !(_playerService.Mpv.GetMute());
         _playerService.Mpv.SetMute(_isMuted);
+        _playerService.IsMuted = _isMuted;
         UpdateVolumeIcon();
     }
 
@@ -410,10 +416,12 @@ public sealed partial class PlayerOverlay : UserControl
         if (_playerService?.Mpv == null) return;
 
         _playerService.Mpv.SetVolume(e.NewValue);
+        _playerService.Volume = e.NewValue;
         if (_isMuted && e.NewValue > 0)
         {
             _isMuted = false;
             _playerService.Mpv.SetMute(false);
+            _playerService.IsMuted = false;
         }
         UpdateVolumeIcon();
     }

@@ -40,6 +40,8 @@ public class PlayerService : IDisposable
     public string? ErrorMessage { get; private set; }
     public string PlayMethod { get; private set; } = "";
     public string Resolution { get; private set; } = "";
+    public double Volume { get; set; } = 100;
+    public bool IsMuted { get; set; }
 
     public MpvPlayer? Mpv => _mpv;
     public PlaybackManager? Manager => _playbackManager;
