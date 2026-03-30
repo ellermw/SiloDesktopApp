@@ -237,8 +237,8 @@ public sealed partial class HistoryPage : Page
     {
         if (sender is Button btn && btn.Tag is string contentId)
         {
-            var nav = App.Services.GetRequiredService<NavigationService>();
-            nav.Navigate<PlayerPage>(contentId);
+            var playerService = App.Services.GetRequiredService<Services.PlayerService>();
+            _ = playerService.PlayAsync(contentId);
         }
     }
 

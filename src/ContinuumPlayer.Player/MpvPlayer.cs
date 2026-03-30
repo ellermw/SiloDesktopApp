@@ -7,7 +7,7 @@ namespace ContinuumPlayer.Player;
 /// <summary>
 /// High-level wrapper around libmpv that uses the software render API (MPV_RENDER_API_TYPE_SW).
 /// mpv decodes video (optionally using d3d11va-copy for hardware decode) and renders each frame
-/// into a caller-provided byte buffer. The caller (PlayerPage) copies that buffer into a
+/// into a caller-provided byte buffer. The caller (PlayerService) copies that buffer into a
 /// WriteableBitmap displayed in a XAML Image element.
 ///
 /// This completely decouples mpv from WinUI 3's D3D11 compositor, eliminating the thread

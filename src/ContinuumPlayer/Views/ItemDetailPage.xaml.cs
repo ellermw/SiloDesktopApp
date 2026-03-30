@@ -381,8 +381,8 @@ public sealed partial class ItemDetailPage : Page
 
     private void NavigateToPlayer(string contentId, bool fromStart = false)
     {
-        var nav = App.Services.GetRequiredService<NavigationService>();
-        nav.Navigate<PlayerPage>(fromStart ? $"{contentId}|fromstart" : contentId);
+        var playerService = App.Services.GetRequiredService<Services.PlayerService>();
+        _ = playerService.PlayAsync(contentId, fromStart: fromStart);
     }
 
     // ===== Watch Detail & Play Button =====
