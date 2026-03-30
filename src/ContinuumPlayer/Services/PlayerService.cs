@@ -127,7 +127,8 @@ public class PlayerService : IDisposable
         GetMonitorInfoW(monitor, ref mi);
 
         SetWindowLongPtrW(hwnd, GWL_STYLE, _savedStyle & ~WS_OVERLAPPEDWINDOW);
-        SetWindowPos(hwnd, IntPtr.Zero,
+        // HWND_TOPMOST (-1) puts the window above the taskbar
+        SetWindowPos(hwnd, (IntPtr)(-1),
             mi.rcMonitor.Left, mi.rcMonitor.Top,
             mi.rcMonitor.Right - mi.rcMonitor.Left,
             mi.rcMonitor.Bottom - mi.rcMonitor.Top,
@@ -144,11 +145,12 @@ public class PlayerService : IDisposable
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(mw);
 
         SetWindowLongPtrW(hwnd, GWL_STYLE, _savedStyle);
-        SetWindowPos(hwnd, IntPtr.Zero,
+        // HWND_NOTOPMOST (-2) drops back below the taskbar
+        SetWindowPos(hwnd, (IntPtr)(-2),
             _savedRect.Left, _savedRect.Top,
             _savedRect.Right - _savedRect.Left,
             _savedRect.Bottom - _savedRect.Top,
-            SWP_NOACTIVATE | SWP_NOZORDER);
+            SWP_NOACTIVATE);
 
         SetState(PlayerState.Expanded);
     }
