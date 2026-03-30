@@ -35,10 +35,15 @@ public sealed partial class MiniPlayerBar : UserControl
         _playerService = App.Services.GetRequiredService<PlayerService>();
         this.InitializeComponent();
 
-        // Hover effect on video thumbnail
-        var thumbGrid = (Grid)MiniVideoFrame.Parent;
-        thumbGrid.PointerEntered += (_, _) => ExpandOverlay.Opacity = 1;
-        thumbGrid.PointerExited += (_, _) => ExpandOverlay.Opacity = 0;
+        // Hover effect on video thumbnail (deferred until Loaded because Parent is null during init)
+        this.Loaded += (_, _) =>
+        {
+            if (MiniVideoFrame.Parent is Grid thumbGrid)
+            {
+                thumbGrid.PointerEntered += (_, _) => ExpandOverlay.Opacity = 1;
+                thumbGrid.PointerExited += (_, _) => ExpandOverlay.Opacity = 0;
+            }
+        };
     }
 
     public void Activate()
