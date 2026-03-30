@@ -11,7 +11,7 @@ AppId={{B8E2F4A1-3C5D-4E6F-9A1B-2D3E4F5A6B7C}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={commonpf32}\{#MyAppName}
+DefaultDirName={commonpf64}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=output
@@ -42,7 +42,7 @@ Source: "deps\windowsappruntimeinstall-x64.exe"; DestDir: "{tmp}"; Flags: delete
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\app.ico"; Tasks: desktopicon
 
 [Run]
 ; Install Windows App SDK runtime silently before launching
