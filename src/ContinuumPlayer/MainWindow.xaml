@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:ContinuumPlayer.Controls"
     mc:Ignorable="d"
     Title="Continuum">
 
@@ -224,5 +225,13 @@
 
             <Frame x:Name="ContentFrame" />
         </NavigationView>
+
+        <!-- Layer 2: Full-window player overlay (above nav, initially hidden) -->
+        <controls:PlayerOverlay x:Name="PlayerOverlayControl" Visibility="Collapsed" />
+
+        <!-- Layer 3: Mini player bar (bottom-docked, initially hidden) -->
+        <controls:MiniPlayerBar x:Name="MiniPlayerBarControl"
+                                 Visibility="Collapsed"
+                                 VerticalAlignment="Bottom" />
     </Grid>
 </Window>

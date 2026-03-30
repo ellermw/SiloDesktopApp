@@ -4,6 +4,7 @@ using ContinuumPlayer.Core.Models;
 using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Helpers;
+using ContinuumPlayer.Services;
 using ContinuumPlayer.ViewModels;
 using ContinuumPlayer.Views;
 
@@ -49,6 +50,10 @@ public sealed partial class MainWindow : Window
 
         // Hide the nav view initially -- it shows only after login
         NavView.IsPaneVisible = false;
+
+        // Listen for player state changes
+        var playerService = App.Services.GetRequiredService<PlayerService>();
+        playerService.StateChanged += OnPlayerStateChanged;
     }
 
     private async void NavView_Loaded(object sender, RoutedEventArgs e)
@@ -181,6 +186,43 @@ public sealed partial class MainWindow : Window
     public void RestoreMainPane()
     {
         NavView.IsPaneVisible = true;
+    }
+
+    private void OnPlayerStateChanged(PlayerState state)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            switch (state)
+            {
+                case PlayerState.Idle:
+                    PlayerOverlayControl.Visibility = Visibility.Collapsed;
+                    PlayerOverlayControl.Deactivate();
+                    MiniPlayerBarControl.Visibility = Visibility.Collapsed;
+                    MiniPlayerBarControl.Deactivate();
+                    if (_navInitialized) NavView.IsPaneVisible = true;
+                    NavView.Margin = new Thickness(0);
+                    break;
+
+                case PlayerState.Expanded:
+                case PlayerState.Fullscreen:
+                    MiniPlayerBarControl.Deactivate();
+                    MiniPlayerBarControl.Visibility = Visibility.Collapsed;
+                    NavView.IsPaneVisible = false;
+                    NavView.Margin = new Thickness(0);
+                    PlayerOverlayControl.Visibility = Visibility.Visible;
+                    PlayerOverlayControl.Activate();
+                    break;
+
+                case PlayerState.Minimized:
+                    PlayerOverlayControl.Deactivate();
+                    PlayerOverlayControl.Visibility = Visibility.Collapsed;
+                    if (_navInitialized) NavView.IsPaneVisible = true;
+                    NavView.Margin = new Thickness(0, 0, 0, 64);
+                    MiniPlayerBarControl.Visibility = Visibility.Visible;
+                    MiniPlayerBarControl.Activate();
+                    break;
+            }
+        });
     }
 
     public void NavigateToHome()
