@@ -130,10 +130,19 @@ public class PlaybackManager : IDisposable
             {
                 await _playbackApi.ReportProgressAsync(_sessionId, _lastReportedPosition, _isPaused);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // Progress report failed -- non-fatal but the server will reap
-                // the session after ~45s without progress if this persists.
+                // Log progress failures so we can diagnose session reaping
+                try
+                {
+                    var logPath = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "ContinuumPlayer", "progress_error.txt");
+                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(logPath)!);
+                    System.IO.File.AppendAllText(logPath,
+                        $"{DateTime.Now} | session={_sessionId} pos={_lastReportedPosition:F1} paused={_isPaused} err={ex.Message}\n");
+                }
+                catch { }
             }
             finally
             {

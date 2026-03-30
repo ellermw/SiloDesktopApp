@@ -279,6 +279,7 @@ public class PlayerService : IDisposable
             // Load and play
             _mpv.LoadFile(streamUrl, session.PlayMethod == "transcode" ? null : authHeader);
             _mpv.Play();
+            IsPaused = false; // Ensure progress reports don't say paused before mpv fires PauseChanged
 
             IsLoading = false;
         }
