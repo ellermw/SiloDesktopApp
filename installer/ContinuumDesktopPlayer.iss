@@ -1,0 +1,55 @@
+; installer/ContinuumDesktopPlayer.iss
+; Inno Setup script for Continuum Desktop Player
+
+#define MyAppName "Continuum Desktop Player"
+#define MyAppVersion "0.0.2"
+#define MyAppPublisher "Continuum"
+#define MyAppExeName "ContinuumPlayer.exe"
+
+[Setup]
+AppId={{B8E2F4A1-3C5D-4E6F-9A1B-2D3E4F5A6B7C}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+DefaultDirName={commonpf32}\{#MyAppName}
+DefaultGroupName={#MyAppName}
+AllowNoIcons=yes
+OutputDir=output
+OutputBaseFilename=ContinuumDesktopPlayer-Setup
+SetupIconFile=..\src\ContinuumPlayer\Assets\app.ico
+UninstallDisplayIcon={app}\Assets\app.ico
+Compression=lzma2/ultra64
+SolidCompression=yes
+WizardStyle=modern
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+PrivilegesRequired=admin
+DisableProgramGroupPage=yes
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional options:"; Flags: checkedonce
+
+[Files]
+; Main application files from publish output
+Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+; Windows App SDK runtime installer
+Source: "deps\windowsappruntimeinstall-x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+
+[Icons]
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
+Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+
+[Run]
+; Install Windows App SDK runtime silently before launching
+Filename: "{tmp}\windowsappruntimeinstall-x64.exe"; Parameters: "--quiet"; StatusMsg: "Installing Windows App SDK runtime..."; Flags: waituntilterminated runhidden
+
+; Launch app after install
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}"
