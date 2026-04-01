@@ -20,7 +20,7 @@
                VerticalAlignment="Center" />
 
         <!-- Loading overlay (opaque, covers video during loading) -->
-        <Grid x:Name="LoadingOverlay" Background="#101722" Visibility="Collapsed">
+        <Grid x:Name="LoadingOverlay" Background="{StaticResource AppBackgroundBrush}" Visibility="Collapsed">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
                 <ProgressRing IsActive="True" Width="48" Height="48" />
                 <TextBlock Text="Preparing playback..." Foreground="White" FontSize="16" HorizontalAlignment="Center" />
@@ -28,10 +28,10 @@
         </Grid>
 
         <!-- Error overlay -->
-        <Grid x:Name="ErrorOverlay" Background="#101722" Visibility="Collapsed">
+        <Grid x:Name="ErrorOverlay" Background="{StaticResource AppBackgroundBrush}" Visibility="Collapsed">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" MaxWidth="500">
-                <FontIcon Glyph="&#xE783;" FontSize="48" Foreground="#EF6B73" />
-                <TextBlock x:Name="ErrorText" Foreground="#EF6B73" FontSize="16" TextWrapping="Wrap" TextAlignment="Center" HorizontalAlignment="Center" />
+                <FontIcon Glyph="&#xE783;" FontSize="48" Foreground="{StaticResource ErrorBrush}" />
+                <TextBlock x:Name="ErrorText" Foreground="{StaticResource ErrorBrush}" FontSize="16" TextWrapping="Wrap" TextAlignment="Center" HorizontalAlignment="Center" />
                 <Button Content="Close" HorizontalAlignment="Center" Click="ClosePlayer_Click" Padding="20,10" />
             </StackPanel>
         </Grid>
@@ -50,12 +50,12 @@
         <Border x:Name="StatsOverlay" Visibility="Collapsed" Background="#CC000000"
             CornerRadius="8" Padding="16" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16">
             <StackPanel Spacing="4">
-                <TextBlock Text="Video Stats" Foreground="#78AEFC" FontSize="13" FontWeight="SemiBold" />
+                <TextBlock Text="Video Stats" Foreground="{StaticResource AccentBrush}" FontSize="13" FontWeight="SemiBold" />
                 <TextBlock x:Name="StatsResolution" Foreground="White" FontSize="12" FontFamily="Consolas" />
                 <TextBlock x:Name="StatsCodec" Foreground="White" FontSize="12" FontFamily="Consolas" />
                 <TextBlock x:Name="StatsPlayMethod" Foreground="White" FontSize="12" FontFamily="Consolas" />
                 <TextBlock x:Name="StatsBitrate" Foreground="White" FontSize="12" FontFamily="Consolas" />
-                <TextBlock x:Name="StatsHdr" Foreground="#78AEFC" FontSize="12" FontFamily="Consolas" />
+                <TextBlock x:Name="StatsHdr" Foreground="{StaticResource AccentBrush}" FontSize="12" FontFamily="Consolas" />
                 <TextBlock x:Name="StatsPosition" Foreground="White" FontSize="12" FontFamily="Consolas" />
                 <TextBlock x:Name="StatsSession" Foreground="#666666" FontSize="11" FontFamily="Consolas" />
             </StackPanel>

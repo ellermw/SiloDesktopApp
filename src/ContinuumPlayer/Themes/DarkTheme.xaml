@@ -164,40 +164,47 @@
 
     <!-- ===== Text Styles ===== -->
     <Style x:Key="DisplayTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeDisplay}" />
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
         <Setter Property="FontWeight" Value="Bold" />
     </Style>
 
     <Style x:Key="HeaderTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeHeader}" />
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
         <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
 
     <Style x:Key="TitleTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeTitle}" />
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
         <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
 
     <Style x:Key="SubtitleTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeSubtitle}" />
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
         <Setter Property="FontWeight" Value="Normal" />
     </Style>
 
     <Style x:Key="BodyTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
     </Style>
 
     <Style x:Key="SecondaryTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
         <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
     </Style>
 
     <Style x:Key="CaptionTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeCaption}" />
         <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
     </Style>
@@ -208,6 +215,7 @@
         <Setter Property="Foreground" Value="{StaticResource AccentForegroundBrush}" />
         <Setter Property="CornerRadius" Value="{StaticResource MediumCornerRadius}" />
         <Setter Property="Padding" Value="16,10" />
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="BorderThickness" Value="0" />
@@ -218,6 +226,7 @@
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
         <Setter Property="CornerRadius" Value="{StaticResource MediumCornerRadius}" />
         <Setter Property="Padding" Value="16,10" />
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
@@ -228,6 +237,7 @@
         <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
         <Setter Property="CornerRadius" Value="{StaticResource MediumCornerRadius}" />
         <Setter Property="Padding" Value="8,6" />
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
         <Setter Property="BorderThickness" Value="0" />
     </Style>
@@ -297,6 +307,7 @@
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
         <Setter Property="CornerRadius" Value="{StaticResource MediumCornerRadius}" />
         <Setter Property="Padding" Value="16,8" />
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
@@ -304,6 +315,7 @@
 
     <!-- ===== Section Header Style (sidebar) ===== -->
     <Style x:Key="SectionHeaderTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeSectionHeader}" />
         <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
         <Setter Property="FontWeight" Value="SemiBold" />
