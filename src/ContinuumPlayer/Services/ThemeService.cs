@@ -6,6 +6,7 @@ namespace ContinuumPlayer.Services;
 
 public class ThemeColors
 {
+    // ===== Existing properties =====
     public string Background { get; set; } = "";
     public string Foreground { get; set; } = "";
     public string Card { get; set; } = "";
@@ -22,11 +23,45 @@ public class ThemeColors
     public string SurfaceRaised { get; set; } = "";
     public string Destructive { get; set; } = "";
     public string Accent { get; set; } = "";
+
+    // ===== New semantic color tokens =====
+    public string Popover { get; set; } = "";
+    public string PopoverForeground { get; set; } = "";
+    public string CardForeground { get; set; } = "";
+    public string AccentForeground { get; set; } = "";
+    public string DestructiveForeground { get; set; } = "";
+    public string Muted { get; set; } = "";
+    public string Ring { get; set; } = "";
+    public string Chart1 { get; set; } = "";
+    public string Chart2 { get; set; } = "";
+    public string Chart3 { get; set; } = "";
+    public string Chart4 { get; set; } = "";
+    public string Chart5 { get; set; } = "";
+    public string SidebarForeground { get; set; } = "";
+    public string SidebarPrimary { get; set; } = "";
+    public string SidebarPrimaryForeground { get; set; } = "";
+    public string SidebarAccent { get; set; } = "";
+    public string SidebarAccentForeground { get; set; } = "";
+    public string SidebarBorder { get; set; } = "";
+    public string SidebarRing { get; set; } = "";
+
+    // ===== Font properties =====
+    public string FontFamily { get; set; } = "Outfit";
+    public string DisplayFontFamily { get; set; } = "Outfit";
 }
 
 public class ThemeService
 {
     private readonly SettingsService _settingsService;
+
+    /// <summary>Maps font family name to the ms-appx font URI for WinUI 3.</summary>
+    private static readonly Dictionary<string, string> FontUris = new()
+    {
+        ["Outfit"] = "ms-appx:///Assets/Fonts/Outfit-VariableFont_wght.ttf#Outfit",
+        ["Manrope"] = "ms-appx:///Assets/Fonts/Manrope-VariableFont_wght.ttf#Manrope",
+        ["Sora"] = "ms-appx:///Assets/Fonts/Sora-VariableFont_wght.ttf#Sora",
+        ["Urbanist"] = "ms-appx:///Assets/Fonts/Urbanist-VariableFont_wght.ttf#Urbanist",
+    };
 
     private static readonly Dictionary<string, ThemeColors> Themes = new()
     {
@@ -48,6 +83,29 @@ public class ThemeService
             SurfaceRaised = "#3B3B50",
             Destructive = "#F38BA8",
             Accent = "#45475A",
+            // New tokens
+            Popover = "#1E1E2E",
+            PopoverForeground = "#CDD6F4",
+            CardForeground = "#CDD6F4",
+            AccentForeground = "#CDD6F4",
+            DestructiveForeground = "#1E1E2E",
+            Muted = "#313244",
+            Ring = "#CBA6F7",
+            Chart1 = "#CBA6F7",
+            Chart2 = "#89B4FA",
+            Chart3 = "#A6E3A1",
+            Chart4 = "#FAB387",
+            Chart5 = "#F5C2E7",
+            SidebarForeground = "#CDD6F4",
+            SidebarPrimary = "#CBA6F7",
+            SidebarPrimaryForeground = "#1E1E2E",
+            SidebarAccent = "#45475A",
+            SidebarAccentForeground = "#CDD6F4",
+            SidebarBorder = "#45475A",
+            SidebarRing = "#CBA6F7",
+            // Fonts
+            FontFamily = "Outfit",
+            DisplayFontFamily = "Outfit",
         },
         ["gruvbox"] = new ThemeColors
         {
@@ -67,6 +125,29 @@ public class ThemeService
             SurfaceRaised = "#5A524C",
             Destructive = "#FB4934",
             Accent = "#504945",
+            // New tokens
+            Popover = "#282828",
+            PopoverForeground = "#EBDBB2",
+            CardForeground = "#EBDBB2",
+            AccentForeground = "#EBDBB2",
+            DestructiveForeground = "#EBDBB2",
+            Muted = "#3C3836",
+            Ring = "#FABD2F",
+            Chart1 = "#FABD2F",
+            Chart2 = "#B8BB26",
+            Chart3 = "#83A598",
+            Chart4 = "#FE8019",
+            Chart5 = "#D3869B",
+            SidebarForeground = "#EBDBB2",
+            SidebarPrimary = "#FABD2F",
+            SidebarPrimaryForeground = "#282828",
+            SidebarAccent = "#504945",
+            SidebarAccentForeground = "#EBDBB2",
+            SidebarBorder = "#504945",
+            SidebarRing = "#FABD2F",
+            // Fonts
+            FontFamily = "Manrope",
+            DisplayFontFamily = "Manrope",
         },
         ["void-space"] = new ThemeColors
         {
@@ -86,6 +167,29 @@ public class ThemeService
             SurfaceRaised = "#272D36",
             Destructive = "#F85149",
             Accent = "#21262D",
+            // New tokens
+            Popover = "#0D1117",
+            PopoverForeground = "#C9D1D9",
+            CardForeground = "#C9D1D9",
+            AccentForeground = "#C9D1D9",
+            DestructiveForeground = "#0D1117",
+            Muted = "#161B22",
+            Ring = "#58A6FF",
+            Chart1 = "#58A6FF",
+            Chart2 = "#79C0FF",
+            Chart3 = "#56D364",
+            Chart4 = "#F78166",
+            Chart5 = "#D2A8FF",
+            SidebarForeground = "#C9D1D9",
+            SidebarPrimary = "#58A6FF",
+            SidebarPrimaryForeground = "#0D1117",
+            SidebarAccent = "#21262D",
+            SidebarAccentForeground = "#C9D1D9",
+            SidebarBorder = "#30363D",
+            SidebarRing = "#58A6FF",
+            // Fonts
+            FontFamily = "Manrope",
+            DisplayFontFamily = "Manrope",
         },
         ["charcoal-studio"] = new ThemeColors
         {
@@ -105,6 +209,29 @@ public class ThemeService
             SurfaceRaised = "#424244",
             Destructive = "#FF375F",
             Accent = "#38383A",
+            // New tokens
+            Popover = "#1C1C1E",
+            PopoverForeground = "#F2F2F7",
+            CardForeground = "#F2F2F7",
+            AccentForeground = "#F2F2F7",
+            DestructiveForeground = "#FFFFFF",
+            Muted = "#2C2C2E",
+            Ring = "#0A84FF",
+            Chart1 = "#0A84FF",
+            Chart2 = "#5E5CE6",
+            Chart3 = "#30D158",
+            Chart4 = "#FF9F0A",
+            Chart5 = "#BF5AF2",
+            SidebarForeground = "#F2F2F7",
+            SidebarPrimary = "#0A84FF",
+            SidebarPrimaryForeground = "#FFFFFF",
+            SidebarAccent = "#38383A",
+            SidebarAccentForeground = "#F2F2F7",
+            SidebarBorder = "#38383A",
+            SidebarRing = "#0A84FF",
+            // Fonts
+            FontFamily = "Outfit",
+            DisplayFontFamily = "Outfit",
         },
         ["graphite-pro"] = new ThemeColors
         {
@@ -124,6 +251,29 @@ public class ThemeService
             SurfaceRaised = "#48484E",
             Destructive = "#EF4444",
             Accent = "#3F3F46",
+            // New tokens
+            Popover = "#18181B",
+            PopoverForeground = "#FAFAFA",
+            CardForeground = "#FAFAFA",
+            AccentForeground = "#FAFAFA",
+            DestructiveForeground = "#FAFAFA",
+            Muted = "#27272A",
+            Ring = "#A855F7",
+            Chart1 = "#A855F7",
+            Chart2 = "#EC4899",
+            Chart3 = "#14B8A6",
+            Chart4 = "#F97316",
+            Chart5 = "#06B6D4",
+            SidebarForeground = "#FAFAFA",
+            SidebarPrimary = "#A855F7",
+            SidebarPrimaryForeground = "#18181B",
+            SidebarAccent = "#3F3F46",
+            SidebarAccentForeground = "#FAFAFA",
+            SidebarBorder = "#3F3F46",
+            SidebarRing = "#A855F7",
+            // Fonts
+            FontFamily = "Sora",
+            DisplayFontFamily = "Sora",
         },
         ["obsidian-depth"] = new ThemeColors
         {
@@ -143,6 +293,29 @@ public class ThemeService
             SurfaceRaised = "#303030",
             Destructive = "#FF6B6B",
             Accent = "#262626",
+            // New tokens
+            Popover = "#0F0F0F",
+            PopoverForeground = "#F5F5F5",
+            CardForeground = "#F5F5F5",
+            AccentForeground = "#F5F5F5",
+            DestructiveForeground = "#0F0F0F",
+            Muted = "#1A1A1A",
+            Ring = "#00D4AA",
+            Chart1 = "#00D4AA",
+            Chart2 = "#00A3CC",
+            Chart3 = "#4ADE80",
+            Chart4 = "#FB923C",
+            Chart5 = "#FF6B9D",
+            SidebarForeground = "#F5F5F5",
+            SidebarPrimary = "#00D4AA",
+            SidebarPrimaryForeground = "#0F0F0F",
+            SidebarAccent = "#262626",
+            SidebarAccentForeground = "#F5F5F5",
+            SidebarBorder = "#2A2A2A",
+            SidebarRing = "#00D4AA",
+            // Fonts
+            FontFamily = "Urbanist",
+            DisplayFontFamily = "Urbanist",
         },
         ["midnight-cinema"] = new ThemeColors
         {
@@ -162,6 +335,29 @@ public class ThemeService
             SurfaceRaised = "#28282E",
             Destructive = "#EF4444",
             Accent = "#232328",
+            // New tokens
+            Popover = "#18181C",
+            PopoverForeground = "#E8E8EC",
+            CardForeground = "#E8E8EC",
+            AccentForeground = "#E8E8EC",
+            DestructiveForeground = "#FFFFFF",
+            Muted = "#1C1C20",
+            Ring = "#E8E8EC",
+            Chart1 = "#8B9CF7",
+            Chart2 = "#7EC8E3",
+            Chart3 = "#81C995",
+            Chart4 = "#E8A87C",
+            Chart5 = "#C78DBD",
+            SidebarForeground = "#E8E8EC",
+            SidebarPrimary = "#E8E8EC",
+            SidebarPrimaryForeground = "#0F0F12",
+            SidebarAccent = "#1C1C20",
+            SidebarAccentForeground = "#E8E8EC",
+            SidebarBorder = "#232328",
+            SidebarRing = "#E8E8EC",
+            // Fonts
+            FontFamily = "Outfit",
+            DisplayFontFamily = "Outfit",
         },
         ["cinema-light"] = new ThemeColors
         {
@@ -181,6 +377,29 @@ public class ThemeService
             SurfaceRaised = "#FFFFFF",
             Destructive = "#DC2626",
             Accent = "#E8E8EC",
+            // New tokens
+            Popover = "#FFFFFF",
+            PopoverForeground = "#1A1A1E",
+            CardForeground = "#1A1A1E",
+            AccentForeground = "#1A1A1E",
+            DestructiveForeground = "#FFFFFF",
+            Muted = "#EBEBEF",
+            Ring = "#1A1A1E",
+            Chart1 = "#6366F1",
+            Chart2 = "#0EA5E9",
+            Chart3 = "#22C55E",
+            Chart4 = "#F59E0B",
+            Chart5 = "#A855F7",
+            SidebarForeground = "#1A1A1E",
+            SidebarPrimary = "#1A1A1E",
+            SidebarPrimaryForeground = "#F4F4F6",
+            SidebarAccent = "#DFDFE5",
+            SidebarAccentForeground = "#1A1A1E",
+            SidebarBorder = "#D0D0D8",
+            SidebarRing = "#1A1A1E",
+            // Fonts
+            FontFamily = "Outfit",
+            DisplayFontFamily = "Outfit",
         },
         ["cobalt-studio"] = new ThemeColors
         {
@@ -200,6 +419,29 @@ public class ThemeService
             SurfaceRaised = "#223245",
             Destructive = "#EF6B73",
             Accent = "#203043",
+            // New tokens
+            Popover = "#121A25",
+            PopoverForeground = "#F4F8FF",
+            CardForeground = "#F4F8FF",
+            AccentForeground = "#F4F8FF",
+            DestructiveForeground = "#FFFFFF",
+            Muted = "#151E2B",
+            Ring = "#78AEFC",
+            Chart1 = "#78AEFC",
+            Chart2 = "#87D2FF",
+            Chart3 = "#6EC7BA",
+            Chart4 = "#B9C7FF",
+            Chart5 = "#F18D8D",
+            SidebarForeground = "#F4F8FF",
+            SidebarPrimary = "#78AEFC",
+            SidebarPrimaryForeground = "#0F1722",
+            SidebarAccent = "#172231",
+            SidebarAccentForeground = "#F4F8FF",
+            SidebarBorder = "#1F2A39",
+            SidebarRing = "#78AEFC",
+            // Fonts
+            FontFamily = "Outfit",
+            DisplayFontFamily = "Outfit",
         },
         ["oxblood-noir"] = new ThemeColors
         {
@@ -219,6 +461,29 @@ public class ThemeService
             SurfaceRaised = "#34262C",
             Destructive = "#F08080",
             Accent = "#322228",
+            // New tokens
+            Popover = "#1B1417",
+            PopoverForeground = "#F8F2F3",
+            CardForeground = "#F8F2F3",
+            AccentForeground = "#F8F2F3",
+            DestructiveForeground = "#FFFFFF",
+            Muted = "#20181B",
+            Ring = "#D16A78",
+            Chart1 = "#D16A78",
+            Chart2 = "#F08E7A",
+            Chart3 = "#C8A0B8",
+            Chart4 = "#8AA0C6",
+            Chart5 = "#E1B86E",
+            SidebarForeground = "#F8F2F3",
+            SidebarPrimary = "#D16A78",
+            SidebarPrimaryForeground = "#180F12",
+            SidebarAccent = "#21161A",
+            SidebarAccentForeground = "#F8F2F3",
+            SidebarBorder = "#2C1D23",
+            SidebarRing = "#D16A78",
+            // Fonts
+            FontFamily = "Outfit",
+            DisplayFontFamily = "Outfit",
         },
         ["ember-slate"] = new ThemeColors
         {
@@ -238,6 +503,29 @@ public class ThemeService
             SurfaceRaised = "#31282C",
             Destructive = "#FF8B7D",
             Accent = "#30282B",
+            // New tokens
+            Popover = "#181516",
+            PopoverForeground = "#F7F3F2",
+            CardForeground = "#F7F3F2",
+            AccentForeground = "#F7F3F2",
+            DestructiveForeground = "#FFFFFF",
+            Muted = "#1D191B",
+            Ring = "#F07B62",
+            Chart1 = "#F07B62",
+            Chart2 = "#F0A162",
+            Chart3 = "#D4B078",
+            Chart4 = "#8DB6C9",
+            Chart5 = "#D497AC",
+            SidebarForeground = "#F7F3F2",
+            SidebarPrimary = "#F07B62",
+            SidebarPrimaryForeground = "#1A1110",
+            SidebarAccent = "#201A1C",
+            SidebarAccentForeground = "#F7F3F2",
+            SidebarBorder = "#2B2326",
+            SidebarRing = "#F07B62",
+            // Fonts
+            FontFamily = "Urbanist",
+            DisplayFontFamily = "Urbanist",
         },
         ["evergreen-studio"] = new ThemeColors
         {
@@ -257,6 +545,29 @@ public class ThemeService
             SurfaceRaised = "#263732",
             Destructive = "#F07A7A",
             Accent = "#20322D",
+            // New tokens
+            Popover = "#131B19",
+            PopoverForeground = "#F2F8F5",
+            CardForeground = "#F2F8F5",
+            AccentForeground = "#F2F8F5",
+            DestructiveForeground = "#FFFFFF",
+            Muted = "#16201D",
+            Ring = "#5BC39D",
+            Chart1 = "#5BC39D",
+            Chart2 = "#7DD8BD",
+            Chart3 = "#7EB7A4",
+            Chart4 = "#88A9CF",
+            Chart5 = "#E0B66B",
+            SidebarForeground = "#F2F8F5",
+            SidebarPrimary = "#5BC39D",
+            SidebarPrimaryForeground = "#0D1513",
+            SidebarAccent = "#16221E",
+            SidebarAccentForeground = "#F2F8F5",
+            SidebarBorder = "#1D2F2A",
+            SidebarRing = "#5BC39D",
+            // Fonts
+            FontFamily = "Outfit",
+            DisplayFontFamily = "Outfit",
         },
         ["verdant-ink"] = new ThemeColors
         {
@@ -276,6 +587,29 @@ public class ThemeService
             SurfaceRaised = "#22352F",
             Destructive = "#F18989",
             Accent = "#1D312B",
+            // New tokens
+            Popover = "#101916",
+            PopoverForeground = "#F3F9F7",
+            CardForeground = "#F3F9F7",
+            AccentForeground = "#F3F9F7",
+            DestructiveForeground = "#FFFFFF",
+            Muted = "#121D1A",
+            Ring = "#86D4B6",
+            Chart1 = "#86D4B6",
+            Chart2 = "#6FC7C4",
+            Chart3 = "#9FDC8D",
+            Chart4 = "#8EB0E8",
+            Chart5 = "#F0B36B",
+            SidebarForeground = "#F3F9F7",
+            SidebarPrimary = "#86D4B6",
+            SidebarPrimaryForeground = "#0D1513",
+            SidebarAccent = "#14211D",
+            SidebarAccentForeground = "#F3F9F7",
+            SidebarBorder = "#1C302A",
+            SidebarRing = "#86D4B6",
+            // Fonts
+            FontFamily = "Urbanist",
+            DisplayFontFamily = "Urbanist",
         },
     };
 
@@ -334,6 +668,8 @@ public class ThemeService
 
         var res = Application.Current.Resources;
 
+        // ===== Existing brush/color updates =====
+
         // Backgrounds
         UpdateBrush(res, "AppBackgroundBrush", colors.Background);
         UpdateBrush(res, "SidebarBackgroundBrush", colors.Sidebar);
@@ -345,8 +681,8 @@ public class ThemeService
         UpdateBrush(res, "InputBrush", colors.Input);
         UpdateBrush(res, "SecondaryBackgroundBrush", colors.Secondary);
         UpdateBrush(res, "AccentBackgroundBrush", colors.Accent);
-        UpdateBrush(res, "SidebarAccentBrush", colors.Accent);
-        UpdateBrush(res, "SidebarBorderBrush", colors.Border);
+        UpdateBrush(res, "SidebarAccentBrush", colors.SidebarAccent);
+        UpdateBrush(res, "SidebarBorderBrush", colors.SidebarBorder);
 
         // Text
         UpdateBrush(res, "PrimaryTextBrush", colors.Foreground);
@@ -380,6 +716,65 @@ public class ThemeService
         UpdateColor(res, "AccentColor", colors.Primary);
         UpdateColor(res, "AccentForegroundColor", colors.PrimaryForeground);
         UpdateColor(res, "ErrorColor", colors.Destructive);
+
+        // ===== New semantic token colors and brushes =====
+
+        // Popover
+        UpdateColor(res, "PopoverColor", colors.Popover);
+        UpdateColor(res, "PopoverForegroundColor", colors.PopoverForeground);
+        UpdateBrush(res, "PopoverBrush", colors.Popover);
+        UpdateBrush(res, "PopoverForegroundBrush", colors.PopoverForeground);
+
+        // Card foreground
+        UpdateColor(res, "CardForegroundColor", colors.CardForeground);
+        UpdateBrush(res, "CardForegroundBrush", colors.CardForeground);
+
+        // Accent foreground (theme-level, not primary button)
+        UpdateColor(res, "ThemeAccentForegroundColor", colors.AccentForeground);
+        UpdateBrush(res, "ThemeAccentForegroundBrush", colors.AccentForeground);
+
+        // Destructive foreground
+        UpdateColor(res, "DestructiveForegroundColor", colors.DestructiveForeground);
+        UpdateBrush(res, "DestructiveForegroundBrush", colors.DestructiveForeground);
+
+        // Muted
+        UpdateColor(res, "MutedColor", colors.Muted);
+        UpdateBrush(res, "MutedBrush", colors.Muted);
+
+        // Ring
+        UpdateColor(res, "RingColor", colors.Ring);
+        UpdateBrush(res, "RingBrush", colors.Ring);
+
+        // Chart colors
+        UpdateColor(res, "Chart1Color", colors.Chart1);
+        UpdateColor(res, "Chart2Color", colors.Chart2);
+        UpdateColor(res, "Chart3Color", colors.Chart3);
+        UpdateColor(res, "Chart4Color", colors.Chart4);
+        UpdateColor(res, "Chart5Color", colors.Chart5);
+        UpdateBrush(res, "Chart1Brush", colors.Chart1);
+        UpdateBrush(res, "Chart2Brush", colors.Chart2);
+        UpdateBrush(res, "Chart3Brush", colors.Chart3);
+        UpdateBrush(res, "Chart4Brush", colors.Chart4);
+        UpdateBrush(res, "Chart5Brush", colors.Chart5);
+
+        // Sidebar tokens (new dedicated sidebar colors)
+        UpdateColor(res, "SidebarForegroundColor", colors.SidebarForeground);
+        UpdateColor(res, "SidebarPrimaryColor", colors.SidebarPrimary);
+        UpdateColor(res, "SidebarPrimaryForegroundColor", colors.SidebarPrimaryForeground);
+        UpdateColor(res, "SidebarAccentColor", colors.SidebarAccent);
+        UpdateColor(res, "SidebarAccentForegroundColor", colors.SidebarAccentForeground);
+        UpdateColor(res, "SidebarBorderColor", colors.SidebarBorder);
+        UpdateColor(res, "SidebarRingColor", colors.SidebarRing);
+        UpdateBrush(res, "SidebarForegroundBrush", colors.SidebarForeground);
+        UpdateBrush(res, "SidebarPrimaryBrush", colors.SidebarPrimary);
+        UpdateBrush(res, "SidebarPrimaryForegroundBrush", colors.SidebarPrimaryForeground);
+        // SidebarAccentBrush and SidebarBorderBrush already updated in existing section above
+        UpdateBrush(res, "SidebarAccentForegroundBrush", colors.SidebarAccentForeground);
+        UpdateBrush(res, "SidebarRingBrush", colors.SidebarRing);
+
+        // ===== Font switching =====
+        UpdateFontFamily(res, "ThemeFontFamily", colors.FontFamily);
+        UpdateFontFamily(res, "ThemeDisplayFontFamily", colors.DisplayFontFamily);
     }
 
     private static void UpdateBrush(ResourceDictionary res, string key, string hex)
@@ -421,6 +816,26 @@ public class ThemeService
             if (merged.ContainsKey(key))
             {
                 merged[key] = color;
+                return;
+            }
+        }
+    }
+
+    private static void UpdateFontFamily(ResourceDictionary res, string key, string fontName)
+    {
+        var uri = FontUris.TryGetValue(fontName, out var u) ? u : fontName;
+        var fontFamily = new FontFamily(uri);
+
+        if (res.ContainsKey(key))
+        {
+            res[key] = fontFamily;
+            return;
+        }
+        foreach (var merged in res.MergedDictionaries)
+        {
+            if (merged.ContainsKey(key))
+            {
+                merged[key] = fontFamily;
                 return;
             }
         }
