@@ -302,7 +302,10 @@ public class PlayerService : IDisposable
             // Load and play
             _mpv.LoadFile(streamUrl, session.PlayMethod == "transcode" ? null : authHeader);
             _mpv.Play();
-            IsPaused = false; // Ensure progress reports don't say paused before mpv fires PauseChanged
+            IsPaused = false;
+
+            // Tell custom OSC the play method
+            _mpv.SendScriptMessage("osc-set-play-method", session.PlayMethod ?? "direct");
 
             IsLoading = false;
         }

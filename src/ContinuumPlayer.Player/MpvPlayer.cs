@@ -283,34 +283,17 @@ public sealed class MpvPlayer : IDisposable
         // Set the target window handle
         SetOption("wid", windowHandle.ToString());
 
-        // Disable built-in OSC — osc-modern replaces it
+        // Disable built-in OSC — our custom continuum-osc.lua handles everything
         SetOption("osc", "no");
         SetOption("osd-level", "1");
-        SetOption("osd-duration", "2000");
-        SetOption("osd-on-seek", "msg-bar");
-        SetOption("cursor-autohide", "1000");
 
-        // Load mpv-osc-modern + Material Design Iconic Font
+        // Load Continuum's custom OSC
         var exeDir = Path.GetDirectoryName(System.Environment.ProcessPath) ?? "";
-        var oscPath = Path.Combine(exeDir, "libs", "mpv", "scripts", "osc-modern.lua");
+        var oscPath = Path.Combine(exeDir, "libs", "mpv", "scripts", "continuum-osc.lua");
         if (!File.Exists(oscPath))
-            oscPath = Path.Combine(exeDir, "..", "..", "..", "..", "libs", "mpv", "scripts", "osc-modern.lua");
+            oscPath = Path.Combine(exeDir, "..", "..", "..", "..", "libs", "mpv", "scripts", "continuum-osc.lua");
         if (File.Exists(oscPath))
             SetOption("scripts", oscPath);
-
-        // Point mpv to the fonts directory for Material Design Iconic Font
-        // OSC uses ASS rendering (subtitle system), so sub-fonts-dir is needed
-        var fontsDir = Path.Combine(exeDir, "libs", "mpv", "fonts");
-        if (!Directory.Exists(fontsDir))
-            fontsDir = Path.Combine(exeDir, "..", "..", "..", "..", "libs", "mpv", "fonts");
-        if (Directory.Exists(fontsDir))
-        {
-            SetOption("sub-fonts-dir", fontsDir);
-            SetOption("osd-fonts-dir", fontsDir);
-        }
-
-        // OSC options — larger scale, show on any mouse movement
-        SetOption("script-opts", "osc-scalewindowed=1.5,osc-scalefullscreen=1.5,osc-hidetimeout=2000,osc-showwindowed=yes,osc-showfullscreen=yes,osc-minmousemove=0,osc-visibility=auto");
 
         // Enable mpv's input handling (keyboard + mouse forwarded from WndProc)
         SetOption("input-default-bindings", "yes");
@@ -638,6 +621,16 @@ public sealed class MpvPlayer : IDisposable
     {
         if (_mpvHandle == IntPtr.Zero) return;
         Command("keyup", keyName);
+    }
+
+    /// <summary>Sends a script message to loaded Lua scripts.</summary>
+    public void SendScriptMessage(params string[] args)
+    {
+        if (_mpvHandle == IntPtr.Zero) return;
+        var fullArgs = new string[args.Length + 1];
+        fullArgs[0] = "script-message";
+        Array.Copy(args, 0, fullArgs, 1, args.Length);
+        Command(fullArgs);
     }
 
     /// <summary>Shows text on mpv's OSD.</summary>

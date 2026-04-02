@@ -235,39 +235,32 @@ public sealed class MpvVideoWindow : IDisposable
         int loWord(IntPtr lp) => (short)(lp.ToInt64() & 0xFFFF);
         int hiWord(IntPtr lp) => (short)((lp.ToInt64() >> 16) & 0xFFFF);
 
-        // Forward mouse events to mpv's input system (OSC needs these)
+        // Forward mouse events to mpv — both raw input (for mpv bindings)
+        // and script messages (for continuum-osc.lua)
         if (msg == WM_MOUSEMOVE)
         {
-            _mpv?.SendMousePos(loWord(lParam), hiWord(lParam));
+            int x = loWord(lParam), y = hiWord(lParam);
+            _mpv?.SendMousePos(x, y);
         }
         else if (msg == WM_LBUTTONDOWN)
         {
-            // Update position + send key down for drag (seek bar dragging)
-            _mpv?.SendMousePos(loWord(lParam), hiWord(lParam));
+            int x = loWord(lParam), y = hiWord(lParam);
+            _mpv?.SendMousePos(x, y);
             _mpv?.SendKeydown("MBTN_LEFT");
         }
         else if (msg == WM_LBUTTONUP)
         {
-            _mpv?.SendMousePos(loWord(lParam), hiWord(lParam));
+            int x = loWord(lParam), y = hiWord(lParam);
+            _mpv?.SendMousePos(x, y);
             _mpv?.SendKeyup("MBTN_LEFT");
         }
         else if (msg == WM_LBUTTONDBLCLK)
         {
             _mpv?.SendKeypress("MBTN_LEFT_DBL");
         }
-        else if (msg == WM_RBUTTONDOWN)
-        {
-            _mpv?.SendMousePos(loWord(lParam), hiWord(lParam));
-            _mpv?.SendKeydown("MBTN_RIGHT");
-        }
         else if (msg == WM_RBUTTONUP)
         {
-            _mpv?.SendMousePos(loWord(lParam), hiWord(lParam));
-            _mpv?.SendKeyup("MBTN_RIGHT");
-        }
-        else if (msg == WM_MBUTTONUP)
-        {
-            _mpv?.SendKeypress("MBTN_MID");
+            _mpv?.SendKeypress("MBTN_RIGHT");
         }
         else if (msg == WM_MOUSEWHEEL)
         {
