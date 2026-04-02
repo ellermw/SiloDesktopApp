@@ -299,36 +299,60 @@ public class PlayerService : IDisposable
 
                 _videoHost = new MpvVideoWindow();
                 _videoHost.Create(parentHwnd);
-                _videoHost.MinimizeRequested += () =>
+                _videoHost.EscapeRequested += () =>
                 {
-                    // Escape = minimize to mini bar (audio keeps playing)
-                    Minimize();
+                    // Escape: exit fullscreen first, then exit playback
+                    if (State == PlayerState.Fullscreen)
+                        ExitFullscreen();
+                    else
+                    {
+                        _videoHost?.Hide();
+                        _ = CloseAsync();
+                    }
                 };
+                _videoHost.MinimizeRequested += () => Minimize();
                 _videoHost.CloseRequested += () =>
                 {
-                    // Q = close completely
                     _videoHost?.Hide();
                     _ = CloseAsync();
                 };
                 _videoHost.InfoToggleRequested += TogglePlaybackInfo;
-                _videoHost.TogglePauseRequested += () => _mpv?.TogglePause();
+                _videoHost.TogglePauseRequested += () =>
+                {
+                    _mpv?.TogglePause();
+                    // Show pause/play status on OSD
+                    _mpv?.ShowOsdText(IsPaused ? "⏸ Paused" : "▶ Playing", 1500);
+                };
                 _videoHost.ToggleFullscreenRequested += ToggleFullscreen;
                 _videoHost.ToggleMuteRequested += () =>
                 {
                     if (_mpv == null) return;
-                    _mpv.SetMute(!_mpv.GetMute());
+                    var newMute = !_mpv.GetMute();
+                    _mpv.SetMute(newMute);
+                    _mpv.ShowOsdText(newMute ? "🔇 Muted" : "🔊 Unmuted", 1500);
                 };
                 _videoHost.SeekRelativeRequested += (seconds) =>
                 {
                     if (_mpv == null) return;
                     var newPos = Math.Max(0, _mpv.Position + seconds);
                     _mpv.Seek(newPos);
+                    // mpv shows seek bar via osd-on-seek=msg-bar
                 };
                 _videoHost.VolumeChangeRequested += (delta) =>
                 {
                     if (_mpv == null) return;
                     var current = _mpv.GetPropertyDouble("volume");
-                    _mpv.SetVolume(Math.Clamp(current + delta, 0, 100));
+                    var newVol = Math.Clamp(current + delta, 0, 100);
+                    _mpv.SetVolume(newVol);
+                    _mpv.ShowOsdText($"Volume: {(int)newVol}%", 1500);
+                };
+                _videoHost.MouseActivityDetected += () =>
+                {
+                    // Show OSD progress on mouse movement
+                    if (_mpv == null || Duration <= 0) return;
+                    var pos = FormatTime(Position);
+                    var dur = FormatTime(Duration);
+                    _mpv.ShowOsdText($"{pos} / {dur}", 3000);
                 };
 
                 _mpv = new MpvPlayer();
