@@ -32,11 +32,16 @@ public sealed partial class AdminShellPage : Page
         _navItems.Add((NavSections,        NavSectionsBar,        NavSectionsIcon,        NavSectionsText));
         _navItems.Add((NavUsers,           NavUsersBar,           NavUsersIcon,           NavUsersText));
         _navItems.Add((NavPlaybackHistory, NavPlaybackHistoryBar, NavPlaybackHistoryIcon, NavPlaybackHistoryText));
-        _navItems.Add((NavScheduledTasks,  NavScheduledTasksBar,  NavScheduledTasksIcon,  NavScheduledTasksText));
-        _navItems.Add((NavNodes,           NavNodesBar,           NavNodesIcon,           NavNodesText));
-        _navItems.Add((NavSettings,        NavSettingsBar,        NavSettingsIcon,        NavSettingsText));
-        _navItems.Add((NavRecommendations, NavRecommendationsBar, NavRecommendationsIcon, NavRecommendationsText));
-        _navItems.Add((NavApiKeys,         NavApiKeysBar,         NavApiKeysIcon,         NavApiKeysText));
+        _navItems.Add((NavScheduledTasks,      NavScheduledTasksBar,      NavScheduledTasksIcon,      NavScheduledTasksText));
+        _navItems.Add((NavNodes,               NavNodesBar,               NavNodesIcon,               NavNodesText));
+        _navItems.Add((NavPlugins,             NavPluginsBar,             NavPluginsIcon,             NavPluginsText));
+        _navItems.Add((NavProviders,           NavProvidersBar,           NavProvidersIcon,           NavProvidersText));
+        _navItems.Add((NavInviteCodes,         NavInviteCodesBar,         NavInviteCodesIcon,         NavInviteCodesText));
+        _navItems.Add((NavMaintenance,         NavMaintenanceBar,         NavMaintenanceIcon,         NavMaintenanceText));
+        _navItems.Add((NavSubtitleProviders,   NavSubtitleProvidersBar,   NavSubtitleProvidersIcon,   NavSubtitleProvidersText));
+        _navItems.Add((NavSettings,            NavSettingsBar,            NavSettingsIcon,            NavSettingsText));
+        _navItems.Add((NavRecommendations,     NavRecommendationsBar,     NavRecommendationsIcon,     NavRecommendationsText));
+        _navItems.Add((NavApiKeys,             NavApiKeysBar,             NavApiKeysIcon,             NavApiKeysText));
 
         // Navigate to Dashboard on load
         SetActiveNavItem(NavDashboard);
@@ -141,6 +146,36 @@ public sealed partial class AdminShellPage : Page
     {
         SetActiveNavItem(NavApiKeys);
         AdminContentFrame.Navigate(typeof(AdminApiKeysPage));
+    }
+
+    private void NavPlugins_Click(object sender, RoutedEventArgs e)
+    {
+        SetActiveNavItem(NavPlugins);
+        AdminContentFrame.Navigate(typeof(AdminPluginsPage));
+    }
+
+    private void NavProviders_Click(object sender, RoutedEventArgs e)
+    {
+        SetActiveNavItem(NavProviders);
+        AdminContentFrame.Navigate(typeof(AdminProvidersPage));
+    }
+
+    private void NavInviteCodes_Click(object sender, RoutedEventArgs e)
+    {
+        SetActiveNavItem(NavInviteCodes);
+        AdminContentFrame.Navigate(typeof(AdminInviteCodesPage));
+    }
+
+    private void NavMaintenance_Click(object sender, RoutedEventArgs e)
+    {
+        SetActiveNavItem(NavMaintenance);
+        AdminContentFrame.Navigate(typeof(AdminMaintenancePage));
+    }
+
+    private void NavSubtitleProviders_Click(object sender, RoutedEventArgs e)
+    {
+        SetActiveNavItem(NavSubtitleProviders);
+        AdminContentFrame.Navigate(typeof(AdminSubtitleProvidersPage));
     }
 
     private void BackToApp_Click(object sender, RoutedEventArgs e)

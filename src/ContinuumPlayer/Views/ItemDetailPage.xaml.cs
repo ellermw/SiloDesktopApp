@@ -135,6 +135,11 @@ public sealed partial class ItemDetailPage : Page
         UpdateWatchlistButton();
         UpdateStarRating();
 
+        // Show Match button for admin users
+        var authService = App.Services.GetRequiredService<AuthService>();
+        MatchButton.Visibility = authService.CurrentUser?.Role == "admin"
+            ? Visibility.Visible : Visibility.Collapsed;
+
         // Load backdrop
         _imageCts?.Cancel();
         _imageCts = new CancellationTokenSource();
@@ -366,6 +371,47 @@ public sealed partial class ItemDetailPage : Page
         catch
         {
             // Download request failure is non-fatal
+        }
+    }
+
+    // ===== Match (admin) =====
+
+    private async void MatchButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = ViewModel.Item;
+        if (item == null) return;
+
+        var dialog = new MatchItemDialog(item.ContentId)
+        {
+            XamlRoot = this.XamlRoot
+        };
+
+        // Pre-fill search with current title
+        // Dialog SearchBox is accessible via name
+        dialog.Loaded += (_, _) =>
+        {
+            // Find the search box by traversing the visual tree (it's named SearchBox in the dialog)
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary && dialog.SelectedCandidate != null)
+        {
+            try
+            {
+                var adminApi = App.Services.GetRequiredService<AdminApi>();
+                await adminApi.MatchApplyAsync(item.ContentId, new Core.Models.Admin.ItemMatchApplyRequest
+                {
+                    ProviderIds = dialog.SelectedCandidate.ProviderIds
+                });
+
+                // Refresh the item detail
+                await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+                UpdateUI();
+            }
+            catch
+            {
+                // Match apply failure is non-fatal
+            }
         }
     }
 

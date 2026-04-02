@@ -78,6 +78,18 @@ public partial class AdminTaskDetailViewModel : ObservableObject
         catch (Exception ex) { ErrorMessage = ex.Message; }
     }
 
+    // ===== Update Triggers =====
+
+    public async System.Threading.Tasks.Task UpdateTriggersAsync(string taskKey, List<TriggerConfig> triggers)
+    {
+        try
+        {
+            await _adminApi.UpdateTaskTriggersAsync(taskKey, triggers);
+            await LoadAsync(taskKey);
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
+    }
+
     // ===== Helpers =====
 
     public bool IsRunning => TaskDetail?.State == "running" || TaskDetail?.State == "cancelling";

@@ -351,7 +351,7 @@ public sealed partial class AdminActivityPage : Page
         }
     }
 
-    private static FrameworkElement BuildStreamRow(AdminSession session, int index)
+    private FrameworkElement BuildStreamRow(AdminSession session, int index)
     {
         // Even rows transparent, odd rows bg-surface/20. Hover state via background.
         // Web: border-border/30 border-b, even="" odd="bg-surface/20"
@@ -540,14 +540,101 @@ public sealed partial class AdminActivityPage : Page
         };
         Grid.SetColumn(timeBlock, 5);
 
+        // Col 6: Session controls — pause/resume/stop/message
+        var controlPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        var capturedSession = session;
+        var adminApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AdminApi>();
+
+        // Pause/Resume toggle
+        bool isPaused = session.IsPaused;
+        var pauseBtn = MakeSmallIconButton(isPaused ? "\uE768" : "\uE769", isPaused ? "Resume" : "Pause");
+        pauseBtn.Click += async (_, _) =>
+        {
+            pauseBtn.IsEnabled = false;
+            try
+            {
+                if (isPaused)
+                    await adminApi.ResumeSessionAsync(capturedSession.SessionId);
+                else
+                    await adminApi.PauseSessionAsync(capturedSession.SessionId);
+                await ViewModel.LoadCommand.ExecuteAsync(null);
+            }
+            catch { }
+            pauseBtn.IsEnabled = true;
+        };
+        controlPanel.Children.Add(pauseBtn);
+
+        // Stop
+        var stopBtn = MakeSmallIconButton("\uE71A", "Stop");
+        stopBtn.Click += async (_, _) =>
+        {
+            stopBtn.IsEnabled = false;
+            try
+            {
+                await adminApi.StopSessionAsync(capturedSession.SessionId);
+                await ViewModel.LoadCommand.ExecuteAsync(null);
+            }
+            catch { }
+            stopBtn.IsEnabled = true;
+        };
+        controlPanel.Children.Add(stopBtn);
+
+        // Message
+        var msgBtn = MakeSmallIconButton("\uE8BD", "Send message");
+        msgBtn.Click += async (_, _) =>
+        {
+            var msgBox = new TextBox { PlaceholderText = "Message to display", CornerRadius = new CornerRadius(8), FontSize = 13 };
+            var dlg = new ContentDialog
+            {
+                Title = "Send Message",
+                PrimaryButtonText = "Send",
+                CloseButtonText = "Cancel",
+                XamlRoot = this.XamlRoot,
+                Content = msgBox,
+                DefaultButton = ContentDialogButton.Primary
+            };
+            if (await dlg.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(msgBox.Text))
+            {
+                try { await adminApi.MessageSessionAsync(capturedSession.SessionId, msgBox.Text.Trim()); }
+                catch { }
+            }
+        };
+        controlPanel.Children.Add(msgBtn);
+
+        Grid.SetColumn(controlPanel, 5); // Share with time column
+
+        // Wrap time and controls vertically
+        var timeControlStack = new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+        timeControlStack.Children.Add(timeBlock);
+        timeControlStack.Children.Add(controlPanel);
+        Grid.SetColumn(timeControlStack, 5);
+
         row.Children.Add(userCol);
         row.Children.Add(streamStack);
         row.Children.Add(videoStack);
         row.Children.Add(audioStack);
         row.Children.Add(nodeStack);
-        row.Children.Add(timeBlock);
+        row.Children.Add(timeControlStack);
 
         return row;
+    }
+
+    private static Button MakeSmallIconButton(string glyph, string tooltip)
+    {
+        var btn = new Button
+        {
+            Width = 24, Height = 24, Padding = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(4),
+            Content = new FontIcon
+            {
+                Glyph = glyph, FontSize = 10,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+            }
+        };
+        ToolTipService.SetToolTip(btn, tooltip);
+        return btn;
     }
 
     /// <summary>

@@ -740,7 +740,26 @@ public sealed partial class AdminUserDetailPage : Page
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
         {
-            // TODO: Implement impersonation via API
+            try
+            {
+                var adminApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AdminApi>();
+                var impResult = await adminApi.ImpersonateUserAsync(ViewModel.User.Id);
+
+                // Store impersonation token and navigate back
+                var authService = App.Services.GetRequiredService<ContinuumPlayer.Core.Services.AuthService>();
+                if (impResult.AccessToken != null)
+                {
+                    var apiClient = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.ContinuumApiClient>();
+                    apiClient.SetAccessToken(impResult.AccessToken);
+                }
+
+                if (App.MainWindowInstance != null)
+                {
+                    App.MainWindowInstance.RestoreMainPane();
+                    App.MainWindowInstance.NavigateToHome();
+                }
+            }
+            catch { }
         }
     }
 

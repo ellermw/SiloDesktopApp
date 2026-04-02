@@ -23,7 +23,7 @@ public sealed partial class AdminTaskDetailPage : Page
 
         BackButton.Click   += (_, _) => GoBack();
         RetryButton.Click  += async (_, _) => await LoadAsync();
-        EditScheduleButton.Click += (_, _) => { /* Schedule editing not implemented */ };
+        EditScheduleButton.Click += async (_, _) => await OpenEditScheduleDialogAsync();
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -444,6 +444,140 @@ public sealed partial class AdminTaskDetailPage : Page
         int minutes    = (int)(seconds / 60);
         int remainSec  = (int)Math.Round(seconds % 60);
         return $"{minutes}m {remainSec}s";
+    }
+
+    // ===== Edit Schedule Dialog =====
+
+    private async Task OpenEditScheduleDialogAsync()
+    {
+        var task = ViewModel.TaskDetail;
+        if (task == null) return;
+
+        // Build form with current triggers + add button
+        var triggersPanel = new StackPanel { Spacing = 8, Width = 420 };
+
+        var triggerList = new List<TriggerConfig>(task.Triggers);
+
+        void RebuildTriggerEditor()
+        {
+            triggersPanel.Children.Clear();
+
+            for (int i = 0; i < triggerList.Count; i++)
+            {
+                var idx = i;
+                var t = triggerList[i];
+
+                var card = new Border
+                {
+                    Background = new SolidColorBrush(Color.FromArgb(20, 128, 128, 128)),
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(12, 8, 12, 8)
+                };
+
+                var cardGrid = new Grid { ColumnSpacing = 8 };
+                cardGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                cardGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                var desc = new TextBlock
+                {
+                    Text = DescribeTrigger(t),
+                    FontSize = 13,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextWrapping = TextWrapping.Wrap
+                };
+                Grid.SetColumn(desc, 0);
+                cardGrid.Children.Add(desc);
+
+                var removeBtn = new Button
+                {
+                    Width = 24, Height = 24, Padding = new Thickness(0),
+                    Background = new SolidColorBrush(Colors.Transparent),
+                    BorderThickness = new Thickness(0),
+                    CornerRadius = new CornerRadius(4),
+                    Content = new FontIcon { Glyph = "\uE711", FontSize = 10,
+                        Foreground = new SolidColorBrush(Color.FromArgb(255, 220, 90, 90)) },
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                removeBtn.Click += (_, _) => { triggerList.RemoveAt(idx); RebuildTriggerEditor(); };
+                Grid.SetColumn(removeBtn, 1);
+                cardGrid.Children.Add(removeBtn);
+
+                card.Child = cardGrid;
+                triggersPanel.Children.Add(card);
+            }
+
+            // Add trigger section
+            var typeCombo = new ComboBox { FontSize = 13, CornerRadius = new CornerRadius(8), Width = 140 };
+            typeCombo.Items.Add(new ComboBoxItem { Content = "Interval", Tag = "interval" });
+            typeCombo.Items.Add(new ComboBoxItem { Content = "Daily", Tag = "daily" });
+            typeCombo.Items.Add(new ComboBoxItem { Content = "Weekly", Tag = "weekly" });
+            typeCombo.Items.Add(new ComboBoxItem { Content = "On Startup", Tag = "startup" });
+            typeCombo.SelectedIndex = 0;
+
+            var valueBox = new TextBox { PlaceholderText = "e.g. 3600000 (ms)", FontSize = 13, CornerRadius = new CornerRadius(8), Width = 140 };
+            var timeBox = new TextBox { PlaceholderText = "HH:MM (e.g. 03:00)", FontSize = 13, CornerRadius = new CornerRadius(8), Width = 140 };
+
+            var addBtn = new Button
+            {
+                Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
+                Padding = new Thickness(10, 6, 10, 6),
+                FontSize = 13
+            };
+            addBtn.Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 4,
+                Children =
+                {
+                    new FontIcon { Glyph = "\uE710", FontSize = 10 },
+                    new TextBlock { Text = "Add" }
+                }
+            };
+            addBtn.Click += (_, _) =>
+            {
+                var selectedType = (typeCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "interval";
+                var newTrigger = new TriggerConfig { Type = selectedType };
+
+                if (selectedType == "interval" && long.TryParse(valueBox.Text, out var ms))
+                    newTrigger.IntervalMs = ms;
+                else if (selectedType == "daily")
+                    newTrigger.TimeOfDay = string.IsNullOrWhiteSpace(timeBox.Text) ? "00:00" : timeBox.Text.Trim();
+                else if (selectedType == "weekly")
+                    newTrigger.TimeOfDay = string.IsNullOrWhiteSpace(timeBox.Text) ? "00:00" : timeBox.Text.Trim();
+
+                triggerList.Add(newTrigger);
+                RebuildTriggerEditor();
+            };
+
+            var addRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 8, 0, 0) };
+            addRow.Children.Add(typeCombo);
+            addRow.Children.Add(valueBox);
+            addRow.Children.Add(timeBox);
+            addRow.Children.Add(addBtn);
+            triggersPanel.Children.Add(addRow);
+        }
+
+        RebuildTriggerEditor();
+
+        var dialog = new ContentDialog
+        {
+            Title = "Edit Schedule",
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot,
+            Content = triggersPanel,
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        try
+        {
+            await ViewModel.UpdateTriggersAsync(_taskKey, triggerList);
+            await LoadAsync();
+        }
+        catch { }
     }
 
     // ===== Navigation =====
