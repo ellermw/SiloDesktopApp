@@ -84,7 +84,7 @@ public sealed partial class PlayerOverlay : UserControl
         UpdatePlaybackInfo();
 
         // Cap render size at 1080p
-        _playerService.Mpv?.UpdateRenderSize(1280, 720);
+        _playerService.Mpv?.UpdateRenderSize(1920, 1080);
 
         // Start UI update timer (250ms)
         _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -152,20 +152,12 @@ public sealed partial class PlayerOverlay : UserControl
     private int _snapW, _snapH, _snapStride;
     private volatile bool _snapReady;
     private volatile bool _uiBusy;
-    private long _lastFrameTicks;
 
     private void OnFrameReady(byte[] buffer, int width, int height, int stride)
     {
-        // Skip if UI thread is still processing previous frame
+        // Skip if UI thread is still processing previous frame — natural backpressure
         if (_uiBusy) return;
 
-        // 30fps cap: prevent UI thread saturation from frame copies
-        var now = System.Diagnostics.Stopwatch.GetTimestamp();
-        var freq = System.Diagnostics.Stopwatch.Frequency;
-        if (now - _lastFrameTicks < freq / 30) return;
-        _lastFrameTicks = now;
-
-        // Immediate copy on render thread into our own buffer
         int size = stride * height;
         if (_snapBuffer == null || _snapBuffer.Length < size)
             _snapBuffer = new byte[size];
@@ -186,8 +178,7 @@ public sealed partial class PlayerOverlay : UserControl
 
         try
         {
-            int w = _snapW, h = _snapH, srcStride = _snapStride;
-            int dstStride = w * 4;
+            int w = _snapW, h = _snapH, stride = _snapStride;
 
             if (_frameBitmap == null || _frameBitmap.PixelWidth != w || _frameBitmap.PixelHeight != h)
             {
@@ -195,24 +186,11 @@ public sealed partial class PlayerOverlay : UserControl
                 VideoFrame.Source = _frameBitmap;
             }
 
-            // Copy frame data into WriteableBitmap pixel buffer
-            var pixelBuffer = _frameBitmap.PixelBuffer;
-
-            if (srcStride == dstStride)
-            {
-                int copyLen = Math.Min(dstStride * h, (int)pixelBuffer.Length);
-                System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions
-                    .CopyTo(_snapBuffer!, 0, pixelBuffer, 0, copyLen);
-            }
-            else
-            {
-                int rowBytes = Math.Min(srcStride, dstStride);
-                for (int y = 0; y < h; y++)
-                {
-                    System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions
-                        .CopyTo(_snapBuffer!, y * srcStride, pixelBuffer, (uint)(y * dstStride), rowBytes);
-                }
-            }
+            // Native pointer copy — bypasses managed IBuffer overhead entirely
+            var access = (IBufferByteAccess)_frameBitmap.PixelBuffer;
+            access.Buffer(out IntPtr dstPtr);
+            int copyLen = Math.Min(stride * h, (int)_frameBitmap.PixelBuffer.Length);
+            System.Runtime.InteropServices.Marshal.Copy(_snapBuffer!, 0, dstPtr, copyLen);
 
             _frameBitmap.Invalidate();
         }

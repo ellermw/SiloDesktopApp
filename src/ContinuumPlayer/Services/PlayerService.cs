@@ -266,7 +266,7 @@ public class PlayerService : IDisposable
             if (_mpv == null)
             {
                 _mpv = new MpvPlayer();
-                _mpv.Initialize(1280, 720); // 720p render, XAML upscales — reduces per-frame buffer from 8.3MB to 3.7MB
+                _mpv.Initialize(1920, 1080); // 1080p render — full quality
                 WireMpvEvents();
             }
 
