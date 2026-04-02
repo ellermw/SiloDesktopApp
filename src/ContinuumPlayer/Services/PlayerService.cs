@@ -266,7 +266,7 @@ public class PlayerService : IDisposable
             if (_mpv == null)
             {
                 _mpv = new MpvPlayer();
-                _mpv.Initialize(1920, 1080);
+                _mpv.Initialize(3840, 2160); // Native 4K — never downscale
                 WireMpvEvents();
             }
 

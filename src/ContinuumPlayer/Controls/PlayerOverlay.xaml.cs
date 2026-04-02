@@ -85,7 +85,7 @@ public sealed partial class PlayerOverlay : UserControl
         UpdatePlaybackInfo();
 
         // Cap render size at 1080p
-        _playerService.Mpv?.UpdateRenderSize(1920, 1080);
+        _playerService.Mpv?.UpdateRenderSize(3840, 2160); // Native 4K — never downscale
 
         // Start UI update timer (250ms)
         _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
