@@ -317,7 +317,7 @@ public sealed partial class MainWindow : Window
                     _navigationService.Navigate<HistoryPage>();
                     break;
                 case "Collections":
-                    _navigationService.Navigate<PlaceholderPage>(tag);
+                    _navigationService.Navigate<CollectionsPage>();
                     break;
             }
         }
