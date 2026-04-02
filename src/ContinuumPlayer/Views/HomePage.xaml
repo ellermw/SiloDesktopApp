@@ -28,7 +28,7 @@
             Padding="16,10,8,10"
             CornerRadius="12"
             Background="{StaticResource SurfaceBrush}"
-            BorderBrush="{StaticResource CardBorderBrush}"
+            BorderBrush="{StaticResource BorderBrush}"
             BorderThickness="1"
             Canvas.ZIndex="100">
             <StackPanel Orientation="Horizontal" Spacing="12">
