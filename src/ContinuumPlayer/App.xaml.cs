@@ -131,6 +131,7 @@ public partial class App : Application
         services.AddTransient<WatchlistViewModel>();
         services.AddTransient<HistoryViewModel>();
         services.AddTransient<RecommendationsViewModel>();
+        services.AddTransient<PersonDetailViewModel>();
         services.AddTransient<SettingsViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminDashboardViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminActivityViewModel>();

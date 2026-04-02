@@ -1,9 +1,13 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
+using ContinuumPlayer.Core.Models.Admin;
 using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Home;
+using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Controls;
+using ContinuumPlayer.Helpers;
 using ContinuumPlayer.ViewModels;
 
 namespace ContinuumPlayer.Views;
@@ -13,6 +17,7 @@ public sealed partial class LibraryPage : Page
     public LibraryViewModel ViewModel { get; }
     private bool _suppressFilterEvents;
     private bool _recommendedLoaded;
+    private bool _collectionsLoaded;
     private bool _orderAsc = true;
     private DispatcherTimer? _yearDebounceTimer;
 
@@ -20,7 +25,7 @@ public sealed partial class LibraryPage : Page
     {
         ViewModel = App.Services.GetRequiredService<LibraryViewModel>();
         this.InitializeComponent();
-        Helpers.SmoothScrollHelper.Attach(ContentScrollViewer);
+        SmoothScrollHelper.Attach(ContentScrollViewer);
 
         PosterRepeater.ItemsSource = ViewModel.Items;
 
@@ -33,6 +38,18 @@ public sealed partial class LibraryPage : Page
 
         ViewModel.ContentRatings.CollectionChanged += (_, _) =>
             DispatcherQueue.TryEnqueue(() => UpdateContentRatingCombo());
+
+        ViewModel.Studios.CollectionChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(() => UpdateStudioCombo());
+
+        ViewModel.Countries.CollectionChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(() => UpdateCountryCombo());
+
+        ViewModel.Resolutions.CollectionChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(() => UpdateResolutionCombo());
+
+        ViewModel.AudioLanguages.CollectionChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(() => UpdateAudioLangCombo());
 
         ViewModel.PropertyChanged += (_, args) =>
         {
@@ -56,6 +73,10 @@ public sealed partial class LibraryPage : Page
             SortComboBox.SelectedIndex = 0;
             GenreComboBox.SelectedIndex = -1;
             ContentRatingComboBox.SelectedIndex = -1;
+            StudioComboBox.SelectedIndex = -1;
+            CountryComboBox.SelectedIndex = -1;
+            ResolutionComboBox.SelectedIndex = -1;
+            AudioLangComboBox.SelectedIndex = -1;
             YearMinBox.Text = "";
             YearMaxBox.Text = "";
             _orderAsc = true;
@@ -64,10 +85,16 @@ public sealed partial class LibraryPage : Page
             ViewModel.SelectedOrder = "asc";
             ViewModel.SelectedGenre = null;
             ViewModel.SelectedContentRating = null;
+            ViewModel.SelectedStudio = null;
+            ViewModel.SelectedCountry = null;
+            ViewModel.SelectedResolution = null;
+            ViewModel.SelectedAudioLanguage = null;
             ViewModel.SelectedYearMin = null;
             ViewModel.SelectedYearMax = null;
             _suppressFilterEvents = false;
             _recommendedLoaded = false;
+            _collectionsLoaded = false;
+            ActiveFiltersBar.Visibility = Visibility.Collapsed;
 
             // Show Recommended panel by default
             ShowTab("Recommended");
@@ -251,6 +278,9 @@ public sealed partial class LibraryPage : Page
 
         if (tag == "Recommended" && !_recommendedLoaded)
             await LoadRecommendationsAsync();
+
+        if (tag == "Collections" && !_collectionsLoaded)
+            await LoadCollectionsAsync();
     }
 
     private async Task LoadRecommendationsAsync()
@@ -296,5 +326,437 @@ public sealed partial class LibraryPage : Page
             RecommendedError.Text = $"Failed to load recommendations: {ex.Message}";
             RecommendedError.Visibility = Visibility.Visible;
         }
+    }
+
+    // ===== Collections Tab =====
+
+    private async Task LoadCollectionsAsync()
+    {
+        _collectionsLoaded = true;
+        CollectionsLoading.IsActive = true;
+        CollectionsLoading.Visibility = Visibility.Visible;
+
+        await ViewModel.LoadCollectionsCommand.ExecuteAsync(null);
+
+        CollectionsLoading.IsActive = false;
+        CollectionsLoading.Visibility = Visibility.Collapsed;
+
+        BuildCollectionCards();
+    }
+
+    private void BuildCollectionCards()
+    {
+        var collections = ViewModel.Collections;
+
+        if (collections.Count == 0)
+        {
+            CollectionsEmptyCard.Visibility = Visibility.Visible;
+            CollectionsRepeater.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        CollectionsEmptyCard.Visibility = Visibility.Collapsed;
+        CollectionsRepeater.Visibility = Visibility.Visible;
+
+        // Build a wrapped grid of collection cards
+        CollectionsRepeater.ItemsSource = null;
+
+        var cardElements = new List<FrameworkElement>();
+        foreach (var c in collections)
+        {
+            cardElements.Add(CreateCollectionCard(c));
+        }
+
+        // Replace the repeater content with a simple panel
+        var wrapPanel = new StackPanel();
+        var currentRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
+        int cardsPerRow = 5;
+        int count = 0;
+
+        foreach (var card in cardElements)
+        {
+            currentRow.Children.Add(card);
+            count++;
+            if (count % cardsPerRow == 0)
+            {
+                wrapPanel.Children.Add(currentRow);
+                currentRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16, Margin = new Thickness(0, 16, 0, 0) };
+            }
+        }
+
+        if (currentRow.Children.Count > 0)
+            wrapPanel.Children.Add(currentRow);
+
+        // Replace the empty card with our content
+        var parent = (StackPanel)CollectionsRepeater.Parent!;
+        int idx = parent.Children.IndexOf(CollectionsRepeater);
+        if (idx >= 0)
+        {
+            // Remove old dynamic panels if any
+            for (int i = parent.Children.Count - 1; i >= 0; i--)
+            {
+                if (parent.Children[i] is StackPanel sp && sp.Name == null && sp != parent && sp.Tag is "CollectionGrid")
+                    parent.Children.RemoveAt(i);
+            }
+
+            wrapPanel.Tag = "CollectionGrid";
+            parent.Children.Insert(idx + 1, wrapPanel);
+        }
+    }
+
+    private Border CreateCollectionCard(LibraryCollection collection)
+    {
+        // Poster area
+        var posterBorder = new Border
+        {
+            Width = 180,
+            Height = 200,
+            CornerRadius = new CornerRadius(8),
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"]
+        };
+
+        var posterPlaceholder = new FontIcon
+        {
+            Glyph = "\uE8F1",
+            FontSize = 32,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        posterBorder.Child = posterPlaceholder;
+
+        if (!string.IsNullOrEmpty(collection.PosterUrl))
+        {
+            _ = LoadCollectionPosterAsync(posterBorder, collection);
+        }
+
+        // Type badge overlay
+        var typeBadge = new Border
+        {
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBackgroundBrush"],
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 2, 6, 2),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(6, 6, 0, 0),
+            Child = new TextBlock
+            {
+                Text = collection.CollectionType.ToUpperInvariant(),
+                FontSize = 10,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"]
+            }
+        };
+
+        var posterGrid = new Grid { Width = 180, Height = 200 };
+        posterGrid.Children.Add(posterBorder);
+        posterGrid.Children.Add(typeBadge);
+
+        // Title
+        var titleText = new TextBlock
+        {
+            Text = collection.Title,
+            FontSize = 14,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 1,
+            Margin = new Thickness(2, 8, 2, 0)
+        };
+
+        // Item count
+        var countText = new TextBlock
+        {
+            Text = $"{collection.ItemCount} {(collection.ItemCount == 1 ? "item" : "items")}",
+            FontSize = 11,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
+            Margin = new Thickness(2, 2, 2, 0)
+        };
+
+        var content = new StackPanel
+        {
+            Width = 180,
+            Children = { posterGrid, titleText, countText }
+        };
+
+        var card = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(4),
+            Child = content,
+            Tag = collection
+        };
+
+        card.PointerEntered += (s, _) =>
+        {
+            if (s is Border b)
+                b.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceHoverBrush"];
+        };
+        card.PointerExited += (s, _) =>
+        {
+            if (s is Border b)
+                b.Background = null;
+        };
+
+        // Click navigates to catalog filtered by collection
+        card.Tapped += (s, _) =>
+        {
+            // For now, we navigate to the library tab with a collection filter
+            // This could be expanded to a dedicated collection page
+        };
+
+        return card;
+    }
+
+    private async Task LoadCollectionPosterAsync(Border posterBorder, LibraryCollection collection)
+    {
+        try
+        {
+            var imageService = App.Services.GetRequiredService<ImageService>();
+            var httpClient = App.Services.GetRequiredService<HttpClient>();
+
+            var bytes = await imageService.GetImageAsync(
+                collection.Id, "collection_poster", collection.PosterUrl!, httpClient, CancellationToken.None);
+
+            if (bytes == null) return;
+
+            var bitmapImage = new BitmapImage
+            {
+                DecodePixelWidth = 200,
+                DecodePixelType = DecodePixelType.Logical
+            };
+            using var stream = new MemoryStream(bytes);
+            await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
+
+            posterBorder.Child = new Image
+            {
+                Source = bitmapImage,
+                Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill
+            };
+        }
+        catch { }
+    }
+
+    // ===== Enhanced Filters =====
+
+    private void UpdateStudioCombo()
+    {
+        _suppressFilterEvents = true;
+        StudioComboBox.Items.Clear();
+        StudioComboBox.Items.Add(new ComboBoxItem { Content = "All Studios", Tag = "" });
+        foreach (var studio in ViewModel.Studios)
+        {
+            if (!string.IsNullOrEmpty(studio))
+                StudioComboBox.Items.Add(new ComboBoxItem { Content = studio, Tag = studio });
+        }
+        StudioComboBox.SelectedIndex = 0;
+        _suppressFilterEvents = false;
+    }
+
+    private void UpdateCountryCombo()
+    {
+        _suppressFilterEvents = true;
+        CountryComboBox.Items.Clear();
+        CountryComboBox.Items.Add(new ComboBoxItem { Content = "All Countries", Tag = "" });
+        foreach (var country in ViewModel.Countries)
+        {
+            if (!string.IsNullOrEmpty(country))
+                CountryComboBox.Items.Add(new ComboBoxItem { Content = country, Tag = country });
+        }
+        CountryComboBox.SelectedIndex = 0;
+        _suppressFilterEvents = false;
+    }
+
+    private void UpdateResolutionCombo()
+    {
+        _suppressFilterEvents = true;
+        ResolutionComboBox.Items.Clear();
+        ResolutionComboBox.Items.Add(new ComboBoxItem { Content = "All Quality", Tag = "" });
+        foreach (var res in ViewModel.Resolutions)
+        {
+            if (!string.IsNullOrEmpty(res))
+                ResolutionComboBox.Items.Add(new ComboBoxItem { Content = res, Tag = res });
+        }
+        ResolutionComboBox.SelectedIndex = 0;
+        _suppressFilterEvents = false;
+    }
+
+    private void UpdateAudioLangCombo()
+    {
+        _suppressFilterEvents = true;
+        AudioLangComboBox.Items.Clear();
+        AudioLangComboBox.Items.Add(new ComboBoxItem { Content = "All Audio", Tag = "" });
+        foreach (var lang in ViewModel.AudioLanguages)
+        {
+            if (!string.IsNullOrEmpty(lang))
+                AudioLangComboBox.Items.Add(new ComboBoxItem { Content = lang, Tag = lang });
+        }
+        AudioLangComboBox.SelectedIndex = 0;
+        _suppressFilterEvents = false;
+    }
+
+    private async void StudioComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressFilterEvents) return;
+        if (StudioComboBox.SelectedItem is ComboBoxItem item && item.Tag is string studio)
+        {
+            ViewModel.SelectedStudio = string.IsNullOrEmpty(studio) ? null : studio;
+            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+            await FillViewportAsync();
+            UpdateActiveFilterBadges();
+        }
+    }
+
+    private async void CountryComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressFilterEvents) return;
+        if (CountryComboBox.SelectedItem is ComboBoxItem item && item.Tag is string country)
+        {
+            ViewModel.SelectedCountry = string.IsNullOrEmpty(country) ? null : country;
+            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+            await FillViewportAsync();
+            UpdateActiveFilterBadges();
+        }
+    }
+
+    private async void ResolutionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressFilterEvents) return;
+        if (ResolutionComboBox.SelectedItem is ComboBoxItem item && item.Tag is string res)
+        {
+            ViewModel.SelectedResolution = string.IsNullOrEmpty(res) ? null : res;
+            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+            await FillViewportAsync();
+            UpdateActiveFilterBadges();
+        }
+    }
+
+    private async void AudioLangComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressFilterEvents) return;
+        if (AudioLangComboBox.SelectedItem is ComboBoxItem item && item.Tag is string lang)
+        {
+            ViewModel.SelectedAudioLanguage = string.IsNullOrEmpty(lang) ? null : lang;
+            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+            await FillViewportAsync();
+            UpdateActiveFilterBadges();
+        }
+    }
+
+    private void UpdateActiveFilterBadges()
+    {
+        FilterBadgesPanel.Children.Clear();
+
+        var filters = new List<(string Label, string Value, Action ClearAction)>();
+
+        if (!string.IsNullOrEmpty(ViewModel.SelectedGenre))
+            filters.Add(("Genre", ViewModel.SelectedGenre, () => { ViewModel.SelectedGenre = null; GenreComboBox.SelectedIndex = 0; }));
+        if (!string.IsNullOrEmpty(ViewModel.SelectedContentRating))
+            filters.Add(("Rating", ViewModel.SelectedContentRating, () => { ViewModel.SelectedContentRating = null; ContentRatingComboBox.SelectedIndex = 0; }));
+        if (!string.IsNullOrEmpty(ViewModel.SelectedStudio))
+            filters.Add(("Studio", ViewModel.SelectedStudio, () => { ViewModel.SelectedStudio = null; StudioComboBox.SelectedIndex = 0; }));
+        if (!string.IsNullOrEmpty(ViewModel.SelectedCountry))
+            filters.Add(("Country", ViewModel.SelectedCountry, () => { ViewModel.SelectedCountry = null; CountryComboBox.SelectedIndex = 0; }));
+        if (!string.IsNullOrEmpty(ViewModel.SelectedResolution))
+            filters.Add(("Quality", ViewModel.SelectedResolution, () => { ViewModel.SelectedResolution = null; ResolutionComboBox.SelectedIndex = 0; }));
+        if (!string.IsNullOrEmpty(ViewModel.SelectedAudioLanguage))
+            filters.Add(("Audio", ViewModel.SelectedAudioLanguage, () => { ViewModel.SelectedAudioLanguage = null; AudioLangComboBox.SelectedIndex = 0; }));
+        if (!string.IsNullOrEmpty(ViewModel.SelectedYearMin))
+            filters.Add(("Year From", ViewModel.SelectedYearMin, () => { ViewModel.SelectedYearMin = null; YearMinBox.Text = ""; }));
+        if (!string.IsNullOrEmpty(ViewModel.SelectedYearMax))
+            filters.Add(("Year To", ViewModel.SelectedYearMax, () => { ViewModel.SelectedYearMax = null; YearMaxBox.Text = ""; }));
+
+        if (filters.Count == 0)
+        {
+            ActiveFiltersBar.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        ActiveFiltersBar.Visibility = Visibility.Visible;
+        ClearAllFiltersButton.Visibility = filters.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+
+        foreach (var (label, value, clearAction) in filters)
+        {
+            var badge = CreateFilterBadge(label, value, clearAction);
+            FilterBadgesPanel.Children.Add(badge);
+        }
+    }
+
+    private Border CreateFilterBadge(string label, string value, Action clearAction)
+    {
+        var closeBtn = new Button
+        {
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(2),
+            MinWidth = 0,
+            MinHeight = 0,
+            Content = new FontIcon
+            {
+                Glyph = "\uE711",
+                FontSize = 10,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
+            }
+        };
+        closeBtn.Click += async (_, _) =>
+        {
+            _suppressFilterEvents = true;
+            clearAction();
+            _suppressFilterEvents = false;
+            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+            await FillViewportAsync();
+            UpdateActiveFilterBadges();
+        };
+
+        var content = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = $"{label}: {value}",
+                    FontSize = 12,
+                    Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
+                    VerticalAlignment = VerticalAlignment.Center
+                },
+                closeBtn
+            }
+        };
+
+        return new Border
+        {
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(10, 4, 6, 4),
+            Child = content
+        };
+    }
+
+    private async void ClearAllFilters_Click(object sender, RoutedEventArgs e)
+    {
+        _suppressFilterEvents = true;
+        ViewModel.SelectedGenre = null;
+        ViewModel.SelectedContentRating = null;
+        ViewModel.SelectedStudio = null;
+        ViewModel.SelectedCountry = null;
+        ViewModel.SelectedResolution = null;
+        ViewModel.SelectedAudioLanguage = null;
+        ViewModel.SelectedYearMin = null;
+        ViewModel.SelectedYearMax = null;
+        GenreComboBox.SelectedIndex = 0;
+        ContentRatingComboBox.SelectedIndex = 0;
+        StudioComboBox.SelectedIndex = 0;
+        CountryComboBox.SelectedIndex = 0;
+        ResolutionComboBox.SelectedIndex = 0;
+        AudioLangComboBox.SelectedIndex = 0;
+        YearMinBox.Text = "";
+        YearMaxBox.Text = "";
+        _suppressFilterEvents = false;
+
+        ActiveFiltersBar.Visibility = Visibility.Collapsed;
+
+        await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+        await FillViewportAsync();
     }
 }

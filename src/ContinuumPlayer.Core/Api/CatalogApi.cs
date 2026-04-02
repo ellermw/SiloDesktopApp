@@ -16,6 +16,8 @@ public class CatalogApi(ContinuumApiClient client)
         int libraryId,
         string? sort = null, string? order = null,
         string? genre = null, string? studio = null, string? contentRating = null,
+        string? country = null, string? resolution = null, string? audioLanguage = null,
+        string? yearMin = null, string? yearMax = null,
         string? q = null, int limit = 40, int offset = 0,
         CancellationToken ct = default)
     {
@@ -25,6 +27,11 @@ public class CatalogApi(ContinuumApiClient client)
         if (genre != null) query += $"&genre={Uri.EscapeDataString(genre)}";
         if (studio != null) query += $"&studio={Uri.EscapeDataString(studio)}";
         if (contentRating != null) query += $"&content_rating={Uri.EscapeDataString(contentRating)}";
+        if (country != null) query += $"&country={Uri.EscapeDataString(country)}";
+        if (resolution != null) query += $"&resolution={Uri.EscapeDataString(resolution)}";
+        if (audioLanguage != null) query += $"&audio_language={Uri.EscapeDataString(audioLanguage)}";
+        if (yearMin != null) query += $"&year_min={Uri.EscapeDataString(yearMin)}";
+        if (yearMax != null) query += $"&year_max={Uri.EscapeDataString(yearMax)}";
         if (q != null) query += $"&q={Uri.EscapeDataString(q)}";
         return client.GetAsync<CatalogResponse>(query, ct);
     }
@@ -177,6 +184,16 @@ public class CatalogApi(ContinuumApiClient client)
 
     public Task DeleteAudioPrefsAsync(string seriesId, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/audio-prefs/{Uri.EscapeDataString(seriesId)}", ct);
+
+    // ===== Person Filmography =====
+
+    public Task<CatalogResponse> GetPersonFilmographyAsync(int personId, string? type = null, int limit = 60, int offset = 0, CancellationToken ct = default)
+    {
+        var query = $"/api/v1/catalog?source=person&person_id={personId}&limit={limit}&offset={offset}&sort=year&order=desc";
+        if (!string.IsNullOrEmpty(type) && type != "all")
+            query += $"&type={Uri.EscapeDataString(type)}";
+        return client.GetAsync<CatalogResponse>(query, ct);
+    }
 
     // ===== Sync =====
 

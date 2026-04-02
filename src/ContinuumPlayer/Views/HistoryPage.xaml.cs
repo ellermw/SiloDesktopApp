@@ -27,22 +27,74 @@ public sealed partial class HistoryPage : Page
         BuildCards();
     }
 
+    private async void Tab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not string tab) return;
+
+        // Update tab styles
+        InProgressTab.Style = tab == "in_progress"
+            ? (Style)Resources["HistoryTabActiveStyle"]
+            : (Style)Resources["HistoryTabStyle"];
+        AllHistoryTab.Style = tab == "all"
+            ? (Style)Resources["HistoryTabActiveStyle"]
+            : (Style)Resources["HistoryTabStyle"];
+
+        // Update subtitle
+        SubtitleText.Text = tab == "in_progress"
+            ? "Pick up where you left off."
+            : "Everything you've watched.";
+
+        await ViewModel.SwitchTabCommand.ExecuteAsync(tab);
+        BuildCards();
+    }
+
+    private async void HistoryScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (ViewModel.SelectedTab != "all") return;
+
+        var offset = HistoryScrollViewer.VerticalOffset;
+        var scrollable = HistoryScrollViewer.ScrollableHeight;
+
+        if (scrollable > 0 && offset >= scrollable - 500 && ViewModel.HasMore && !ViewModel.IsLoading)
+        {
+            LoadMoreRing.IsActive = true;
+            LoadMoreRing.Visibility = Visibility.Visible;
+
+            await ViewModel.LoadMoreCommand.ExecuteAsync(null);
+            BuildCards();
+
+            LoadMoreRing.IsActive = false;
+            LoadMoreRing.Visibility = Visibility.Collapsed;
+        }
+    }
+
     private void BuildCards()
     {
         HistoryCardsPanel.Children.Clear();
 
         int count = ViewModel.Items.Count;
         bool hasItems = count > 0 && !ViewModel.IsLoading;
+        bool isInProgress = ViewModel.SelectedTab == "in_progress";
 
         EmptyState.Visibility = count == 0 && !ViewModel.IsLoading
             ? Visibility.Visible : Visibility.Collapsed;
+
+        if (count == 0 && !ViewModel.IsLoading)
+        {
+            EmptyTitle.Text = isInProgress ? "Nothing in progress" : "No watch history";
+            EmptySubtitle.Text = isInProgress
+                ? "Start watching something and it will appear here so you can pick up where you left off."
+                : "Your complete watch history will appear here after you finish watching something.";
+        }
 
         CountPanel.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
 
         if (hasItems)
         {
-            ItemCountText.Text = count.ToString();
-            ItemCountLabel.Text = count == 1 ? "title" : "titles";
+            int displayCount = ViewModel.SelectedTab == "all" ? ViewModel.TotalCount : count;
+            CountLabel.Text = isInProgress ? "IN PROGRESS" : "WATCHED";
+            ItemCountText.Text = displayCount.ToString();
+            ItemCountLabel.Text = displayCount == 1 ? "title" : "titles";
         }
 
         foreach (var item in ViewModel.Items)
@@ -53,6 +105,8 @@ public sealed partial class HistoryPage : Page
 
     private Border CreateHistoryCard(HistoryDisplayItem item)
     {
+        bool isHistoryTab = ViewModel.SelectedTab == "all";
+
         // Poster thumbnail (2:3 aspect, 80x120)
         var posterBorder = new Border
         {
@@ -96,6 +150,30 @@ public sealed partial class HistoryPage : Page
             posterGrid.Children.Add(progressBar);
         }
 
+        // Completion badge overlay
+        if (item.Completed)
+        {
+            var completedBadge = new Border
+            {
+                Width = 24,
+                Height = 24,
+                CornerRadius = new CornerRadius(12),
+                Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"],
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 4, 4, 0),
+                Child = new FontIcon
+                {
+                    Glyph = "\uE73E",
+                    FontSize = 12,
+                    Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentForegroundBrush"],
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            };
+            posterGrid.Children.Add(completedBadge);
+        }
+
         // Play button overlay centered on poster
         var playOverlay = new Border
         {
@@ -127,13 +205,52 @@ public sealed partial class HistoryPage : Page
             MaxLines = 1
         };
 
-        // Year
+        // Year + type row
+        var metaParts = new List<string>();
+        if (item.Year > 0) metaParts.Add(item.Year.ToString());
+        if (!string.IsNullOrEmpty(item.Type)) metaParts.Add(item.Type == "series" ? "Series" : "Movie");
+
         var yearText = new TextBlock
         {
-            Text = item.Year > 0 ? item.Year.ToString() : "",
+            Text = string.Join(" \u00B7 ", metaParts),
             Style = (Style)Application.Current.Resources["CaptionTextStyle"],
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"]
         };
+
+        // Status + timestamp row
+        var statusPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+
+        // Status badge
+        var statusBadge = new Border
+        {
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 2, 6, 2),
+            Background = item.Completed
+                ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBackgroundBrush"]
+                : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"],
+            Child = new TextBlock
+            {
+                Text = item.StatusText,
+                FontSize = 11,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = item.Completed
+                    ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"]
+                    : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
+            }
+        };
+        statusPanel.Children.Add(statusBadge);
+
+        // Timestamp
+        if (!string.IsNullOrEmpty(item.TimestampDisplay))
+        {
+            statusPanel.Children.Add(new TextBlock
+            {
+                Text = item.TimestampDisplay,
+                FontSize = 11,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
+                VerticalAlignment = VerticalAlignment.Center
+            });
+        }
 
         // Progress text: "1:23:45 / 2:00:00"
         var progressText = new TextBlock
@@ -143,26 +260,30 @@ public sealed partial class HistoryPage : Page
             Margin = new Thickness(0, 2, 0, 0)
         };
 
-        // Wide progress bar below text
-        var wideProgressBar = new ProgressBar
-        {
-            Value = item.ProgressPercent,
-            Maximum = 100,
-            Height = 3,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"],
-            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"],
-            Margin = new Thickness(0, 6, 0, 0)
-        };
-
-        var textContent = new StackPanel
+        // Wide progress bar below text (only for non-completed items)
+        var textChildren = new StackPanel
         {
             Spacing = 2,
             VerticalAlignment = VerticalAlignment.Center,
-            Children = { titleText, yearText, progressText, wideProgressBar }
+            Children = { titleText, yearText, statusPanel, progressText }
         };
 
-        // Resume button on right
-        var resumeButton = new Button
+        if (!item.Completed && item.ProgressPercent > 0)
+        {
+            var wideProgressBar = new ProgressBar
+            {
+                Value = item.ProgressPercent,
+                Maximum = 100,
+                Height = 3,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"],
+                Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"],
+                Margin = new Thickness(0, 6, 0, 0)
+            };
+            textChildren.Children.Add(wideProgressBar);
+        }
+
+        // Resume/Play button on right
+        var actionButton = new Button
         {
             Style = (Style)Application.Current.Resources["AccentButtonStyle"],
             CornerRadius = new CornerRadius(20),
@@ -171,36 +292,36 @@ public sealed partial class HistoryPage : Page
             Tag = item.ContentId
         };
 
-        var resumeContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        resumeContent.Children.Add(new FontIcon
+        var actionContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        actionContent.Children.Add(new FontIcon
         {
             Glyph = "\uE768",
             FontSize = 12,
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentForegroundBrush"]
         });
-        resumeContent.Children.Add(new TextBlock
+        actionContent.Children.Add(new TextBlock
         {
-            Text = "Resume",
+            Text = item.Completed ? "Watch Again" : "Resume",
             FontSize = 13,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentForegroundBrush"]
         });
-        resumeButton.Content = resumeContent;
-        resumeButton.Click += ResumeButton_Click;
+        actionButton.Content = actionContent;
+        actionButton.Click += ActionButton_Click;
 
-        // Row grid: [poster 80] [text *] [resume auto]
+        // Row grid: [poster 80] [text *] [button auto]
         var rowGrid = new Grid { ColumnSpacing = 16 };
         rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
         rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         Grid.SetColumn(posterGrid, 0);
-        Grid.SetColumn(textContent, 1);
-        Grid.SetColumn(resumeButton, 2);
+        Grid.SetColumn(textChildren, 1);
+        Grid.SetColumn(actionButton, 2);
 
         rowGrid.Children.Add(posterGrid);
-        rowGrid.Children.Add(textContent);
-        rowGrid.Children.Add(resumeButton);
+        rowGrid.Children.Add(textChildren);
+        rowGrid.Children.Add(actionButton);
 
         var card = new Border
         {
@@ -233,7 +354,7 @@ public sealed partial class HistoryPage : Page
         return card;
     }
 
-    private void ResumeButton_Click(object sender, RoutedEventArgs e)
+    private void ActionButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is string contentId)
         {

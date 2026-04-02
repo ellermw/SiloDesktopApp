@@ -15,6 +15,31 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
+
+        <!-- Tab button styles -->
+        <Style x:Key="HistoryTabStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="16,10,16,10" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="MinWidth" Value="0" />
+        </Style>
+
+        <Style x:Key="HistoryTabActiveStyle" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource AccentBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="16,10,16,10" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="MinWidth" Value="0" />
+        </Style>
     </Page.Resources>
 
     <Grid>
@@ -23,7 +48,7 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Header: large title + subtitle + item count panel -->
+        <!-- Header: large title + subtitle + tabs + item count panel -->
         <Grid Grid.Row="0" Margin="40,24,40,20">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
@@ -31,12 +56,37 @@
             </Grid.ColumnDefinitions>
 
             <StackPanel Grid.Column="0" Spacing="6">
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                    <TextBlock
+                        Text="Watch History"
+                        FontSize="{StaticResource FontSizeDisplayLarge}"
+                        FontWeight="Bold"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        VerticalAlignment="Center" />
+
+                    <!-- Tab pills -->
+                    <Border
+                        CornerRadius="20"
+                        Padding="4"
+                        VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <Button
+                                x:Name="InProgressTab"
+                                Content="In Progress"
+                                Style="{StaticResource HistoryTabActiveStyle}"
+                                Click="Tab_Click"
+                                Tag="in_progress" />
+                            <Button
+                                x:Name="AllHistoryTab"
+                                Content="All History"
+                                Style="{StaticResource HistoryTabStyle}"
+                                Click="Tab_Click"
+                                Tag="all" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
                 <TextBlock
-                    Text="Continue Watching"
-                    FontSize="{StaticResource FontSizeDisplayLarge}"
-                    FontWeight="Bold"
-                    Foreground="{StaticResource PrimaryTextBrush}" />
-                <TextBlock
+                    x:Name="SubtitleText"
                     Text="Pick up where you left off."
                     FontSize="14"
                     Foreground="{StaticResource SecondaryTextBrush}" />
@@ -53,6 +103,7 @@
                 Visibility="Collapsed">
                 <StackPanel HorizontalAlignment="Right">
                     <TextBlock
+                        x:Name="CountLabel"
                         Text="IN PROGRESS"
                         FontSize="10"
                         FontWeight="SemiBold"
@@ -91,10 +142,25 @@
             HorizontalAlignment="Center"
             VerticalAlignment="Center" />
 
-        <!-- Content: poster-card rows -->
-        <ScrollViewer Grid.Row="1" Padding="40,0,40,24"
-                      Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
-            <StackPanel x:Name="HistoryCardsPanel" Spacing="10" />
+        <!-- Content: history cards with infinite scroll -->
+        <ScrollViewer
+            x:Name="HistoryScrollViewer"
+            Grid.Row="1"
+            Padding="40,0,40,24"
+            ViewChanged="HistoryScrollViewer_ViewChanged"
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
+            <StackPanel>
+                <StackPanel x:Name="HistoryCardsPanel" Spacing="10" />
+
+                <!-- Loading more indicator -->
+                <ProgressRing
+                    x:Name="LoadMoreRing"
+                    IsActive="False"
+                    HorizontalAlignment="Center"
+                    Width="32" Height="32"
+                    Margin="0,16,0,16"
+                    Visibility="Collapsed" />
+            </StackPanel>
         </ScrollViewer>
 
         <!-- Empty state -->
@@ -112,12 +178,14 @@
                 Foreground="{StaticResource SecondaryTextBrush}"
                 HorizontalAlignment="Center" />
             <TextBlock
+                x:Name="EmptyTitle"
                 Text="Nothing in progress"
                 FontSize="{StaticResource FontSizeTitle}"
                 FontWeight="SemiBold"
                 Foreground="{StaticResource PrimaryTextBrush}"
                 HorizontalAlignment="Center" />
             <TextBlock
+                x:Name="EmptySubtitle"
                 Text="Start watching something and it will appear here so you can pick up where you left off."
                 FontSize="14"
                 Foreground="{StaticResource SecondaryTextBrush}"

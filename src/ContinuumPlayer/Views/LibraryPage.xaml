@@ -88,6 +88,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -202,6 +203,38 @@
                     InputScope="Number" />
             </StackPanel>
 
+            <!-- Studio filter -->
+            <ComboBox
+                x:Name="StudioComboBox"
+                Style="{StaticResource PillComboBoxStyle}"
+                Width="150"
+                SelectionChanged="StudioComboBox_SelectionChanged"
+                PlaceholderText="All Studios" />
+
+            <!-- Country filter -->
+            <ComboBox
+                x:Name="CountryComboBox"
+                Style="{StaticResource PillComboBoxStyle}"
+                Width="140"
+                SelectionChanged="CountryComboBox_SelectionChanged"
+                PlaceholderText="All Countries" />
+
+            <!-- Resolution filter -->
+            <ComboBox
+                x:Name="ResolutionComboBox"
+                Style="{StaticResource PillComboBoxStyle}"
+                Width="130"
+                SelectionChanged="ResolutionComboBox_SelectionChanged"
+                PlaceholderText="All Quality" />
+
+            <!-- Audio Language filter -->
+            <ComboBox
+                x:Name="AudioLangComboBox"
+                Style="{StaticResource PillComboBoxStyle}"
+                Width="150"
+                SelectionChanged="AudioLangComboBox_SelectionChanged"
+                PlaceholderText="All Audio" />
+
             <!-- Spacer to push sort to right -->
             <Border HorizontalAlignment="Stretch" Width="0" />
 
@@ -259,10 +292,30 @@
             </Border>
         </StackPanel>
 
+        <!-- Active filter badges -->
+        <StackPanel
+            x:Name="ActiveFiltersBar"
+            Grid.Row="2"
+            Orientation="Horizontal"
+            Spacing="6"
+            Margin="40,0,40,12"
+            Visibility="Collapsed">
+            <StackPanel x:Name="FilterBadgesPanel" Orientation="Horizontal" Spacing="6" />
+            <Button
+                x:Name="ClearAllFiltersButton"
+                Style="{StaticResource GhostButtonStyle}"
+                Content="Clear All"
+                FontSize="12"
+                Foreground="{StaticResource AccentBrush}"
+                Padding="8,4"
+                Click="ClearAllFilters_Click"
+                Visibility="Collapsed" />
+        </StackPanel>
+
         <!-- Content area with scrollviewer for infinite scroll (Library tab) -->
         <ScrollViewer
             x:Name="ContentScrollViewer"
-            Grid.Row="2"
+            Grid.Row="3"
             ViewChanged="ContentScrollViewer_ViewChanged"
             IsScrollInertiaEnabled="True"
             Padding="40,0,40,24"
@@ -310,7 +363,7 @@
         <!-- Recommended tab content (web: space-y-10 py-2 sm:space-y-12) -->
         <ScrollViewer
             x:Name="RecommendedPanel"
-            Grid.Row="2"
+            Grid.Row="3"
             Padding="0,0,0,24">
             <StackPanel x:Name="RecommendedSectionsPanel" Spacing="8">
                 <ProgressRing
@@ -331,7 +384,7 @@
         <!-- Collections tab (web: shows grid of collection poster cards or empty state) -->
         <ScrollViewer
             x:Name="CollectionsPanel"
-            Grid.Row="2"
+            Grid.Row="3"
             Padding="40,0,40,24"
             Visibility="Collapsed">
             <StackPanel Spacing="24">

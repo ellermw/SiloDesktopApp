@@ -683,7 +683,33 @@ public sealed partial class ItemDetailPage : Page
                 });
             }
 
+            // Make cast card clickable if PersonId is available
+            if (member.PersonId is > 0)
+            {
+                card.Tag = member.PersonId;
+                card.Tapped += CastCard_Tapped;
+                card.PointerEntered += (s, _) =>
+                {
+                    if (s is FrameworkElement fe)
+                        fe.Opacity = 0.7;
+                };
+                card.PointerExited += (s, _) =>
+                {
+                    if (s is FrameworkElement fe)
+                        fe.Opacity = 1.0;
+                };
+            }
+
             CastPanel.Children.Add(card);
+        }
+    }
+
+    private void CastCard_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.Tag is int personId && personId > 0)
+        {
+            var nav = App.Services.GetRequiredService<NavigationService>();
+            nav.Navigate<PersonDetailPage>(personId);
         }
     }
 

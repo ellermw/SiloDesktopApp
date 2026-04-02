@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ContinuumPlayer.Core.Api;
+using ContinuumPlayer.Core.Models.Admin;
 using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Models.Home;
 
@@ -60,10 +61,60 @@ public partial class LibraryViewModel : ObservableObject
     private int _offset;
     private const int PageSize = 100;
 
+    // Enhanced filter properties
+    [ObservableProperty]
+    private string? _selectedStudio;
+
+    [ObservableProperty]
+    private string? _selectedCountry;
+
+    [ObservableProperty]
+    private string? _selectedResolution;
+
+    [ObservableProperty]
+    private string? _selectedAudioLanguage;
+
     // Filter options loaded from server
     public ObservableCollection<string> Genres { get; } = [];
     public ObservableCollection<string> ContentRatings { get; } = [];
+    public ObservableCollection<string> Studios { get; } = [];
+    public ObservableCollection<string> Countries { get; } = [];
+    public ObservableCollection<string> Resolutions { get; } = [];
+    public ObservableCollection<string> AudioLanguages { get; } = [];
     public ObservableCollection<string> SortOptions { get; } = ["title", "year", "rating_imdb", "created_at", "added_at"];
+
+    // Collections
+    public ObservableCollection<LibraryCollection> Collections { get; } = [];
+
+    [ObservableProperty]
+    private bool _isCollectionsLoading;
+
+    [ObservableProperty]
+    private bool _collectionsLoaded;
+
+    [RelayCommand]
+    private async Task LoadCollectionsAsync()
+    {
+        if (Library == null || IsCollectionsLoading) return;
+
+        IsCollectionsLoading = true;
+        try
+        {
+            var response = await _catalogApi.GetLibraryCollectionsAsync(Library.Id);
+            Collections.Clear();
+            foreach (var c in response.Collections)
+                Collections.Add(c);
+            CollectionsLoaded = true;
+        }
+        catch
+        {
+            // Collections load failure is non-fatal
+        }
+        finally
+        {
+            IsCollectionsLoading = false;
+        }
+    }
 
     [RelayCommand]
     private async Task LoadAsync()
@@ -221,7 +272,13 @@ public partial class LibraryViewModel : ObservableObject
                 sort: SelectedSort,
                 order: SelectedOrder,
                 genre: SelectedGenre,
+                studio: SelectedStudio,
                 contentRating: SelectedContentRating,
+                country: SelectedCountry,
+                resolution: SelectedResolution,
+                audioLanguage: SelectedAudioLanguage,
+                yearMin: SelectedYearMin,
+                yearMax: SelectedYearMax,
                 limit: PageSize,
                 offset: _offset);
 
@@ -257,16 +314,32 @@ public partial class LibraryViewModel : ObservableObject
             Genres.Clear();
             Genres.Add(""); // All genres
             foreach (var genre in filters.Genres)
-            {
                 Genres.Add(genre);
-            }
 
             ContentRatings.Clear();
             ContentRatings.Add(""); // All ratings
             foreach (var rating in filters.ContentRatings)
-            {
                 ContentRatings.Add(rating);
-            }
+
+            Studios.Clear();
+            Studios.Add(""); // All studios
+            foreach (var studio in filters.Studios)
+                Studios.Add(studio);
+
+            Countries.Clear();
+            Countries.Add(""); // All countries
+            foreach (var country in filters.Countries)
+                Countries.Add(country);
+
+            Resolutions.Clear();
+            Resolutions.Add(""); // All resolutions
+            foreach (var res in filters.Resolutions)
+                Resolutions.Add(res);
+
+            AudioLanguages.Clear();
+            AudioLanguages.Add(""); // All audio languages
+            foreach (var lang in filters.AudioLanguages)
+                AudioLanguages.Add(lang);
         }
         catch
         {

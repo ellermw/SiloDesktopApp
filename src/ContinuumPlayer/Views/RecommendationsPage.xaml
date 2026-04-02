@@ -91,13 +91,38 @@
             HorizontalAlignment="Center"
             VerticalAlignment="Center" />
 
-        <!-- Recommendation rows -->
+        <!-- All recommendation sections -->
         <ScrollViewer
             Grid.Row="1"
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
-            <StackPanel
-                x:Name="RowsPanel"
-                Padding="40,0,40,24" />
+            <StackPanel x:Name="AllSectionsPanel" Spacing="8">
+
+                <!-- Hero "For You" section: larger poster cards -->
+                <StackPanel x:Name="HeroSection" Visibility="Collapsed" Margin="40,0,40,16">
+                    <TextBlock
+                        Text="Top Picks For You"
+                        FontSize="{StaticResource FontSizeTitle}"
+                        FontWeight="SemiBold"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        Margin="0,0,0,12" />
+                    <ScrollViewer
+                        HorizontalScrollBarVisibility="Hidden"
+                        VerticalScrollBarVisibility="Disabled"
+                        HorizontalScrollMode="Enabled"
+                        VerticalScrollMode="Disabled">
+                        <StackPanel x:Name="HeroItemsPanel" Orientation="Horizontal" Spacing="16" />
+                    </ScrollViewer>
+                </StackPanel>
+
+                <!-- Popular section -->
+                <StackPanel x:Name="PopularSectionPanel" Visibility="Collapsed" />
+
+                <!-- For You rows -->
+                <StackPanel x:Name="RowsPanel" />
+
+                <!-- Recently Added section -->
+                <StackPanel x:Name="RecentlyAddedSectionPanel" Visibility="Collapsed" Margin="0,0,0,24" />
+            </StackPanel>
         </ScrollViewer>
 
         <!-- Empty state -->
