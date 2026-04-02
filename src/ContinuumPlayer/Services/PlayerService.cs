@@ -299,6 +299,12 @@ public class PlayerService : IDisposable
 
                 _videoHost = new MpvVideoWindow();
                 _videoHost.Create(parentHwnd);
+                _videoHost.CloseRequested += () =>
+                {
+                    // Escape pressed in playback window — close player
+                    _videoHost?.Hide();
+                    _ = CloseAsync();
+                };
 
                 _mpv = new MpvPlayer();
                 _mpv.InitializeWithWindow(_videoHost.Hwnd);

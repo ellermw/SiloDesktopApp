@@ -32,6 +32,8 @@ public sealed class MpvVideoWindow : IDisposable
     private static readonly IntPtr HWND_TOPMOST = new(-1);
     private static readonly IntPtr HWND_NOTOPMOST = new(-2);
 
+    public event Action? CloseRequested;
+
     // Win32 imports
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern ushort RegisterClassExW(ref WNDCLASSEX lpwcx);
@@ -63,6 +65,14 @@ public sealed class MpvVideoWindow : IDisposable
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    private static extern IntPtr LoadCursorW(IntPtr hInstance, IntPtr lpCursorName);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetCursor(IntPtr hCursor);
+
+    private static readonly IntPtr IDC_ARROW = new(32512);
+
     private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -93,7 +103,7 @@ public sealed class MpvVideoWindow : IDisposable
 
         if (!_classRegistered)
         {
-            WndProcDelegate wndProc = WndProc;
+            WndProcDelegate wndProc = WndProcInstance;
             _wndProcHandle = GCHandle.Alloc(wndProc);
 
             var wc = new WNDCLASSEX
@@ -102,6 +112,7 @@ public sealed class MpvVideoWindow : IDisposable
                 style = 0,
                 lpfnWndProc = Marshal.GetFunctionPointerForDelegate(wndProc),
                 hInstance = GetModuleHandleW(null),
+                hCursor = LoadCursorW(IntPtr.Zero, IDC_ARROW), // Normal arrow cursor
                 hbrBackground = IntPtr.Zero, // Black background (mpv will paint over)
                 lpszClassName = ClassName
             };
@@ -154,8 +165,22 @@ public sealed class MpvVideoWindow : IDisposable
             SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
-    private static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+    private IntPtr WndProcInstance(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
+        const uint WM_KEYDOWN = 0x0100;
+        const uint WM_SYSKEYDOWN = 0x0104;
+        const int VK_ESCAPE = 0x1B;
+
+        if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN)
+        {
+            int vk = (int)wParam & 0xFF;
+            if (vk == VK_ESCAPE)
+            {
+                CloseRequested?.Invoke();
+                return IntPtr.Zero;
+            }
+        }
+
         return DefWindowProcW(hWnd, msg, wParam, lParam);
     }
 
