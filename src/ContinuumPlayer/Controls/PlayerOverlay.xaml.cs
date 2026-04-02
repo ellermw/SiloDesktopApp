@@ -19,7 +19,7 @@ interface IBufferByteAccess
 public sealed partial class PlayerOverlay : UserControl
 {
     private readonly PlayerService _playerService;
-    private Microsoft.UI.Xaml.Media.Imaging.WriteableBitmap? _frameBitmap;
+    private Microsoft.UI.Xaml.Media.Imaging.SoftwareBitmapSource? _bitmapSource;
 
     private bool _statsVisible;
     private bool _suppressSeek;
@@ -85,7 +85,7 @@ public sealed partial class PlayerOverlay : UserControl
         UpdatePlaybackInfo();
 
         // Cap render size at 1080p
-        _playerService.Mpv?.UpdateRenderSize(960, 540);
+        _playerService.Mpv?.UpdateRenderSize(1920, 1080);
 
         // Start UI update timer (250ms)
         _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -153,13 +153,9 @@ public sealed partial class PlayerOverlay : UserControl
     private int _snapW, _snapH, _snapStride;
     private volatile bool _snapReady;
     private volatile bool _uiBusy;
-    private long _lastPresentTicks;
-    private double[] _frameTimes = new double[60];
-    private int _frameTimeIdx;
 
     private void OnFrameReady(byte[] buffer, int width, int height, int stride)
     {
-        // Skip if UI thread is still processing previous frame — natural backpressure
         if (_uiBusy) return;
 
         int size = stride * height;
@@ -171,10 +167,10 @@ public sealed partial class PlayerOverlay : UserControl
         _snapStride = stride;
         _snapReady = true;
 
-        DispatcherQueue?.TryEnqueue(PresentFrame);
+        DispatcherQueue?.TryEnqueue(PresentFrameAsync);
     }
 
-    private void PresentFrame()
+    private async void PresentFrameAsync()
     {
         if (!_isActive || !_snapReady || _snapBuffer == null) return;
         _uiBusy = true;
@@ -183,43 +179,24 @@ public sealed partial class PlayerOverlay : UserControl
         try
         {
             int w = _snapW, h = _snapH, stride = _snapStride;
+            int copyLen = stride * h;
 
-            if (_frameBitmap == null || _frameBitmap.PixelWidth != w || _frameBitmap.PixelHeight != h)
+            // Create SoftwareBitmap and copy frame data into it
+            var bitmap = new Windows.Graphics.Imaging.SoftwareBitmap(
+                Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8, w, h,
+                Windows.Graphics.Imaging.BitmapAlphaMode.Ignore);
+            bitmap.CopyFromBuffer(_snapBuffer.AsBuffer());
+
+            // Ensure source exists
+            if (_bitmapSource == null)
             {
-                _frameBitmap = new Microsoft.UI.Xaml.Media.Imaging.WriteableBitmap(w, h);
-                VideoFrame.Source = _frameBitmap;
+                _bitmapSource = new Microsoft.UI.Xaml.Media.Imaging.SoftwareBitmapSource();
+                VideoFrame.Source = _bitmapSource;
             }
 
-            int copyLen = Math.Min(stride * h, (int)_frameBitmap.PixelBuffer.Length);
-            using (var stream = _frameBitmap.PixelBuffer.AsStream())
-            {
-                stream.Write(_snapBuffer!, 0, copyLen);
-            }
-            _frameBitmap.Invalidate();
-
-            // Log frame timing for diagnostics
-            var now = System.Diagnostics.Stopwatch.GetTimestamp();
-            if (_lastPresentTicks > 0)
-            {
-                var elapsed = (now - _lastPresentTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-                _frameTimes[_frameTimeIdx % 60] = elapsed;
-                _frameTimeIdx++;
-                if (_frameTimeIdx % 120 == 0) // Log every 120 frames
-                {
-                    var avg = _frameTimes.Where(t => t > 0).DefaultIfEmpty(0).Average();
-                    var fps = avg > 0 ? 1000.0 / avg : 0;
-                    try
-                    {
-                        var logPath = System.IO.Path.Combine(
-                            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                            "ContinuumPlayer", "frame_perf.txt");
-                        System.IO.File.AppendAllText(logPath,
-                            $"[{DateTime.Now:HH:mm:ss}] avg={avg:F1}ms fps={fps:F1} size={w}x{h} bytes={copyLen}\n");
-                    }
-                    catch { }
-                }
-            }
-            _lastPresentTicks = now;
+            // SetBitmapAsync does the GPU upload on a background thread — doesn't block UI
+            await _bitmapSource.SetBitmapAsync(bitmap);
+            bitmap.Dispose();
         }
         finally
         {
