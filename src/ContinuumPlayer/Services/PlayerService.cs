@@ -175,6 +175,19 @@ public class PlayerService : IDisposable
 
     public async Task PlayAsync(string contentId, bool fromStart = false, int? fileId = null)
     {
+        // Stop any existing session first (prevents HTTP 400 from server)
+        if (_playbackManager != null)
+        {
+            try
+            {
+                _mpv?.Stop();
+                await _playbackManager.StopSessionAsync();
+            }
+            catch { }
+            _playbackManager.Dispose();
+            _playbackManager = null;
+        }
+
         ErrorMessage = null;
         IsLoading = true;
         ContentId = contentId;

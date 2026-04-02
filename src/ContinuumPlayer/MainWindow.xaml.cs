@@ -211,10 +211,12 @@ public sealed partial class MainWindow : Window
             case PlayerState.Fullscreen:
                 MiniPlayerBarControl.Deactivate();
                 MiniPlayerBarControl.Visibility = Visibility.Collapsed;
+                // Don't show XAML PlayerOverlay — video renders in native popup window
+                // with custom Lua OSC controls
+                PlayerOverlayControl.Visibility = Visibility.Collapsed;
+                PlayerOverlayControl.Deactivate();
                 NavView.IsPaneVisible = false;
                 NavView.Margin = new Thickness(0);
-                PlayerOverlayControl.Visibility = Visibility.Visible;
-                PlayerOverlayControl.Activate();
                 break;
 
             case PlayerState.Minimized:

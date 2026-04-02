@@ -35,15 +35,7 @@ public sealed partial class MiniPlayerBar : UserControl
         _playerService = App.Services.GetRequiredService<PlayerService>();
         this.InitializeComponent();
 
-        // Hover effect on video thumbnail (deferred until Loaded because Parent is null during init)
-        this.Loaded += (_, _) =>
-        {
-            if (MiniVideoFrame.Parent is Grid thumbGrid)
-            {
-                thumbGrid.PointerEntered += (_, _) => ExpandOverlay.Opacity = 1;
-                thumbGrid.PointerExited += (_, _) => ExpandOverlay.Opacity = 0;
-            }
-        };
+        // No hover effect needed — expand button is always visible
     }
 
     public void Activate()
@@ -115,7 +107,7 @@ public sealed partial class MiniPlayerBar : UserControl
             if (_miniBitmap == null || _miniBitmap.PixelWidth != w || _miniBitmap.PixelHeight != h)
             {
                 _miniBitmap = new WriteableBitmap(w, h);
-                MiniVideoFrame.Source = _miniBitmap;
+                // MiniVideoFrame removed — no video thumbnail with GPU rendering
             }
 
             var pixelBuffer = _miniBitmap.PixelBuffer;

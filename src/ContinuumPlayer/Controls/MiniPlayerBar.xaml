@@ -20,16 +20,14 @@
                 <ColumnDefinition Width="Auto" />   <!-- Close -->
             </Grid.ColumnDefinitions>
 
-            <!-- Live video thumbnail with expand overlay -->
-            <Grid Grid.Column="0" Width="142" Height="80" Margin="0,10"
-                  Tapped="VideoThumbnail_Tapped" Background="Black" CornerRadius="6">
-                <Image x:Name="MiniVideoFrame" Stretch="Uniform" />
-                <!-- Expand chevron overlay -->
-                <Border Background="#88000000" CornerRadius="4"
-                        HorizontalAlignment="Center" VerticalAlignment="Center"
-                        Padding="6,2" Opacity="0" x:Name="ExpandOverlay">
-                    <FontIcon Glyph="&#xE70E;" FontSize="12" Foreground="White" />
-                </Border>
+            <!-- Expand button — click to return to full playback -->
+            <Grid Grid.Column="0" Width="100" Height="80" Margin="0,10"
+                  Tapped="VideoThumbnail_Tapped" Background="{StaticResource SurfaceBrush}" CornerRadius="6">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
+                    <FontIcon Glyph="&#xE740;" FontSize="22" Foreground="{StaticResource AccentBrush}" />
+                    <TextBlock Text="Expand" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
             </Grid>
 
             <!-- Title + thin seek bar -->
