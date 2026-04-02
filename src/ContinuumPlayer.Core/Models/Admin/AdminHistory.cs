@@ -18,3 +18,10 @@ public class AdminPlaybackHistoryItem
     public double? DurationSeconds { get; set; }
     public bool Completed { get; set; }
 }
+
+public class AdminPlaybackHistoryResponse
+{
+    public List<AdminPlaybackHistoryItem> Items { get; set; } = [];
+    public int Total { get; set; }
+    public bool HasMore { get; set; }
+}

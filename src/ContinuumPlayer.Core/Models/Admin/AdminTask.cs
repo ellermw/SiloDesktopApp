@@ -34,3 +34,13 @@ public class ExecutionResult
     public Dictionary<string, object>? ResultData { get; set; }
     public long DurationMs { get; set; }
 }
+
+public class TasksResponse
+{
+    public List<TaskInfo> Tasks { get; set; } = [];
+}
+
+public class ExecutionHistoryResponse
+{
+    public List<ExecutionResult> Executions { get; set; } = [];
+}
