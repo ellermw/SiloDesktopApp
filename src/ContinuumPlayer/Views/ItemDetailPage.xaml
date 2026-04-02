@@ -143,13 +143,20 @@
                             <TextBlock x:Name="RuntimeText" Foreground="{StaticResource SecondaryTextBrush}" FontSize="15" VerticalAlignment="Center" />
                         </StackPanel>
 
-                        <!-- Scores: IMDb / RT inline with metadata -->
+                        <!-- Scores: IMDb / TMDB / RT inline with metadata -->
                         <StackPanel x:Name="ScoresPanel" Orientation="Horizontal" Spacing="16" Visibility="Collapsed" VerticalAlignment="Center">
                             <TextBlock Text=" · " Foreground="{StaticResource TertiaryTextBrush}" FontSize="15" VerticalAlignment="Center" />
-                            <!-- IMDb / TMDB score -->
+                            <!-- IMDb score -->
                             <StackPanel x:Name="ImdbScorePanel" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
-                                <FontIcon Glyph="&#xE735;" FontSize="13" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="IMDb" FontSize="12" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" />
                                 <TextBlock x:Name="ImdbScoreText" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="/10" FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
+                            </StackPanel>
+
+                            <!-- TMDB score -->
+                            <StackPanel x:Name="TmdbScorePanel" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
+                                <FontIcon Glyph="&#xE735;" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                                <TextBlock x:Name="TmdbScoreText" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
                                 <TextBlock Text="/10" FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
                             </StackPanel>
 
@@ -348,6 +355,48 @@
                         Visibility="Collapsed">
                         <StackPanel x:Name="CastPanel" Orientation="Horizontal" Spacing="16" />
                     </ScrollViewer>
+
+                    <!-- Crew section (directors + writers) -->
+                    <StackPanel x:Name="CrewSection" Visibility="Collapsed" Spacing="4" Margin="0,8,0,0">
+                        <StackPanel x:Name="DirectorsPanel" Orientation="Horizontal" Spacing="0" Visibility="Collapsed">
+                            <TextBlock Text="Directed by  " FontSize="13" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
+                            <StackPanel x:Name="DirectorNamesPanel" Orientation="Horizontal" Spacing="0" />
+                        </StackPanel>
+                        <StackPanel x:Name="WritersPanel" Orientation="Horizontal" Spacing="0" Visibility="Collapsed">
+                            <TextBlock Text="Written by  " FontSize="13" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
+                            <StackPanel x:Name="WriterNamesPanel" Orientation="Horizontal" Spacing="0" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Studios row -->
+                    <TextBlock
+                        x:Name="StudiosText"
+                        FontSize="13"
+                        Foreground="{StaticResource TertiaryTextBrush}"
+                        TextWrapping="Wrap"
+                        MaxWidth="800"
+                        HorizontalAlignment="Left"
+                        Visibility="Collapsed" />
+
+                    <!-- Networks row (series only) -->
+                    <TextBlock
+                        x:Name="NetworksText"
+                        FontSize="13"
+                        Foreground="{StaticResource TertiaryTextBrush}"
+                        TextWrapping="Wrap"
+                        MaxWidth="800"
+                        HorizontalAlignment="Left"
+                        Visibility="Collapsed" />
+
+                    <!-- Countries row -->
+                    <TextBlock
+                        x:Name="CountriesText"
+                        FontSize="13"
+                        Foreground="{StaticResource TertiaryTextBrush}"
+                        TextWrapping="Wrap"
+                        MaxWidth="800"
+                        HorizontalAlignment="Left"
+                        Visibility="Collapsed" />
 
                     <!-- Subtitles section (downloaded subs for the current file) -->
                     <StackPanel x:Name="SubtitlesSection" Visibility="Collapsed" Spacing="8" Margin="0,12,0,0">

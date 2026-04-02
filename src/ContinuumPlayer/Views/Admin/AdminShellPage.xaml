@@ -146,7 +146,7 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
                                     <FontIcon
                                         x:Name="NavActivityIcon"
-                                        Glyph="&#xEA62;"
+                                        Glyph="&#xE716;"
                                         FontSize="16"
                                         Foreground="{StaticResource SecondaryTextBrush}" />
                                     <TextBlock
@@ -269,7 +269,7 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
                                     <FontIcon
                                         x:Name="NavCollectionsIcon"
-                                        Glyph="&#xE8A8;"
+                                        Glyph="&#xECA5;"
                                         FontSize="16"
                                         Foreground="{StaticResource SecondaryTextBrush}" />
                                     <TextBlock
@@ -308,7 +308,7 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
                                     <FontIcon
                                         x:Name="NavSectionsIcon"
-                                        Glyph="&#xE80A;"
+                                        Glyph="&#xE8A9;"
                                         FontSize="16"
                                         Foreground="{StaticResource SecondaryTextBrush}" />
                                     <TextBlock
@@ -353,7 +353,7 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
                                     <FontIcon
                                         x:Name="NavUsersIcon"
-                                        Glyph="&#xE716;"
+                                        Glyph="&#xE77B;"
                                         FontSize="16"
                                         Foreground="{StaticResource SecondaryTextBrush}" />
                                     <TextBlock
@@ -437,7 +437,7 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
                                     <FontIcon
                                         x:Name="NavScheduledTasksIcon"
-                                        Glyph="&#xE787;"
+                                        Glyph="&#xE823;"
                                         FontSize="16"
                                         Foreground="{StaticResource SecondaryTextBrush}" />
                                     <TextBlock
@@ -476,129 +476,12 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
                                     <FontIcon
                                         x:Name="NavNodesIcon"
-                                        Glyph="&#xE770;"
+                                        Glyph="&#xE774;"
                                         FontSize="16"
                                         Foreground="{StaticResource SecondaryTextBrush}" />
                                     <TextBlock
                                         x:Name="NavNodesText"
                                         Text="Nodes"
-                                        Foreground="{StaticResource SecondaryTextBrush}"
-                                        VerticalAlignment="Center"
-                                        FontSize="13"
-                                        FontWeight="Medium" />
-                                </StackPanel>
-                            </Grid>
-                        </Button>
-
-                        <Button
-                            x:Name="NavPlugins"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            HorizontalAlignment="Stretch"
-                            HorizontalContentAlignment="Left"
-                            Padding="16,10"
-                            Margin="4,1"
-                            CornerRadius="12"
-                            Click="NavPlugins_Click">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="3" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <Border
-                                    x:Name="NavPluginsBar"
-                                    Grid.Column="0"
-                                    Width="3" CornerRadius="2"
-                                    Background="{StaticResource AccentBrush}"
-                                    Margin="0,0,10,0"
-                                    Visibility="Collapsed" />
-                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
-                                    <FontIcon
-                                        x:Name="NavPluginsIcon"
-                                        Glyph="&#xEA86;"
-                                        FontSize="16"
-                                        Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBlock
-                                        x:Name="NavPluginsText"
-                                        Text="Plugins"
-                                        Foreground="{StaticResource SecondaryTextBrush}"
-                                        VerticalAlignment="Center"
-                                        FontSize="13"
-                                        FontWeight="Medium" />
-                                </StackPanel>
-                            </Grid>
-                        </Button>
-
-                        <Button
-                            x:Name="NavProviders"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            HorizontalAlignment="Stretch"
-                            HorizontalContentAlignment="Left"
-                            Padding="16,10"
-                            Margin="4,1"
-                            CornerRadius="12"
-                            Click="NavProviders_Click">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="3" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <Border
-                                    x:Name="NavProvidersBar"
-                                    Grid.Column="0"
-                                    Width="3" CornerRadius="2"
-                                    Background="{StaticResource AccentBrush}"
-                                    Margin="0,0,10,0"
-                                    Visibility="Collapsed" />
-                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
-                                    <FontIcon
-                                        x:Name="NavProvidersIcon"
-                                        Glyph="&#xE774;"
-                                        FontSize="16"
-                                        Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBlock
-                                        x:Name="NavProvidersText"
-                                        Text="Providers"
-                                        Foreground="{StaticResource SecondaryTextBrush}"
-                                        VerticalAlignment="Center"
-                                        FontSize="13"
-                                        FontWeight="Medium" />
-                                </StackPanel>
-                            </Grid>
-                        </Button>
-
-                        <Button
-                            x:Name="NavInviteCodes"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            HorizontalAlignment="Stretch"
-                            HorizontalContentAlignment="Left"
-                            Padding="16,10"
-                            Margin="4,1"
-                            CornerRadius="12"
-                            Click="NavInviteCodes_Click">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="3" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <Border
-                                    x:Name="NavInviteCodesBar"
-                                    Grid.Column="0"
-                                    Width="3" CornerRadius="2"
-                                    Background="{StaticResource AccentBrush}"
-                                    Margin="0,0,10,0"
-                                    Visibility="Collapsed" />
-                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
-                                    <FontIcon
-                                        x:Name="NavInviteCodesIcon"
-                                        Glyph="&#xE8C9;"
-                                        FontSize="16"
-                                        Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBlock
-                                        x:Name="NavInviteCodesText"
-                                        Text="Invite Codes"
                                         Foreground="{StaticResource SecondaryTextBrush}"
                                         VerticalAlignment="Center"
                                         FontSize="13"
@@ -647,7 +530,7 @@
                         </Button>
 
                         <Button
-                            x:Name="NavSubtitleProviders"
+                            x:Name="NavPlugins"
                             Background="Transparent"
                             BorderThickness="0"
                             HorizontalAlignment="Stretch"
@@ -655,14 +538,14 @@
                             Padding="16,10"
                             Margin="4,1"
                             CornerRadius="12"
-                            Click="NavSubtitleProviders_Click">
+                            Click="NavPlugins_Click">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="3" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Border
-                                    x:Name="NavSubtitleProvidersBar"
+                                    x:Name="NavPluginsBar"
                                     Grid.Column="0"
                                     Width="3" CornerRadius="2"
                                     Background="{StaticResource AccentBrush}"
@@ -670,13 +553,13 @@
                                     Visibility="Collapsed" />
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
                                     <FontIcon
-                                        x:Name="NavSubtitleProvidersIcon"
-                                        Glyph="&#xED1E;"
+                                        x:Name="NavPluginsIcon"
+                                        Glyph="&#xE74C;"
                                         FontSize="16"
                                         Foreground="{StaticResource SecondaryTextBrush}" />
                                     <TextBlock
-                                        x:Name="NavSubtitleProvidersText"
-                                        Text="Subtitles"
+                                        x:Name="NavPluginsText"
+                                        Text="Plugins"
                                         Foreground="{StaticResource SecondaryTextBrush}"
                                         VerticalAlignment="Center"
                                         FontSize="13"
@@ -749,7 +632,7 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
                                     <FontIcon
                                         x:Name="NavRecommendationsIcon"
-                                        Glyph="&#xE735;"
+                                        Glyph="&#xE8E1;"
                                         FontSize="16"
                                         Foreground="{StaticResource SecondaryTextBrush}" />
                                     <TextBlock

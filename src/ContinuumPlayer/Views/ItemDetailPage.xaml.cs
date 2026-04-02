@@ -147,6 +147,42 @@ public sealed partial class ItemDetailPage : Page
 
         // Build cast
         BuildCast(item.Cast);
+
+        // Build crew (directors + writers)
+        BuildCrew(item.Crew);
+
+        // Studios
+        if (item.Studios.Count > 0)
+        {
+            StudiosText.Text = "Studios:  " + string.Join(", ", item.Studios);
+            StudiosText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            StudiosText.Visibility = Visibility.Collapsed;
+        }
+
+        // Networks (series only)
+        if (item.Networks.Count > 0)
+        {
+            NetworksText.Text = "Networks:  " + string.Join(", ", item.Networks);
+            NetworksText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            NetworksText.Visibility = Visibility.Collapsed;
+        }
+
+        // Countries
+        if (item.Countries.Count > 0)
+        {
+            CountriesText.Text = "Countries:  " + string.Join(", ", item.Countries);
+            CountriesText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            CountriesText.Visibility = Visibility.Collapsed;
+        }
     }
 
     // ===== Scores Row =====
@@ -155,16 +191,28 @@ public sealed partial class ItemDetailPage : Page
     {
         bool hasAnyScore = false;
 
-        // IMDb score (use RatingTmdb as stand-in since we show TMDB rating as the star score)
-        if (item.RatingTmdb != null)
+        // IMDb score
+        if (item.RatingImdb != null)
         {
             ImdbScorePanel.Visibility = Visibility.Visible;
-            ImdbScoreText.Text = $"{item.RatingTmdb:F1}";
+            ImdbScoreText.Text = $"{item.RatingImdb:F1}";
             hasAnyScore = true;
         }
         else
         {
             ImdbScorePanel.Visibility = Visibility.Collapsed;
+        }
+
+        // TMDB score
+        if (item.RatingTmdb != null)
+        {
+            TmdbScorePanel.Visibility = Visibility.Visible;
+            TmdbScoreText.Text = $"{item.RatingTmdb:F1}";
+            hasAnyScore = true;
+        }
+        else
+        {
+            TmdbScorePanel.Visibility = Visibility.Collapsed;
         }
 
         // RT Critic
@@ -915,7 +963,7 @@ public sealed partial class ItemDetailPage : Page
             }
 
             // Make cast card clickable if PersonId is available
-            if (member.PersonId is > 0)
+            if (!string.IsNullOrEmpty(member.PersonId))
             {
                 card.Tag = member.PersonId;
                 card.Tapped += CastCard_Tapped;
@@ -937,7 +985,8 @@ public sealed partial class ItemDetailPage : Page
 
     private void CastCard_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
     {
-        if (sender is FrameworkElement fe && fe.Tag is int personId && personId > 0)
+        if (sender is FrameworkElement fe && fe.Tag is string personIdStr
+            && int.TryParse(personIdStr, out int personId) && personId > 0)
         {
             var nav = App.Services.GetRequiredService<NavigationService>();
             nav.Navigate<PersonDetailPage>(personId);
@@ -972,6 +1021,101 @@ public sealed partial class ItemDetailPage : Page
             photoBorder.Child = image;
         }
         catch { }
+    }
+
+    // ===== Crew Section =====
+
+    private void BuildCrew(List<CrewMember> crew)
+    {
+        DirectorNamesPanel.Children.Clear();
+        WriterNamesPanel.Children.Clear();
+
+        if (crew.Count == 0)
+        {
+            CrewSection.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var directors = crew.Where(c =>
+            c.Job.Equals("Director", StringComparison.OrdinalIgnoreCase)).ToList();
+        var writers = crew.Where(c =>
+            c.Job.Equals("Writer", StringComparison.OrdinalIgnoreCase)
+            || c.Job.Equals("Screenplay", StringComparison.OrdinalIgnoreCase)
+            || c.Job.Equals("Story", StringComparison.OrdinalIgnoreCase)).ToList();
+
+        bool hasDirectors = directors.Count > 0;
+        bool hasWriters = writers.Count > 0;
+
+        if (!hasDirectors && !hasWriters)
+        {
+            CrewSection.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        CrewSection.Visibility = Visibility.Visible;
+
+        if (hasDirectors)
+        {
+            DirectorsPanel.Visibility = Visibility.Visible;
+            BuildCrewNameLinks(DirectorNamesPanel, directors);
+        }
+        else
+        {
+            DirectorsPanel.Visibility = Visibility.Collapsed;
+        }
+
+        if (hasWriters)
+        {
+            WritersPanel.Visibility = Visibility.Visible;
+            BuildCrewNameLinks(WriterNamesPanel, writers);
+        }
+        else
+        {
+            WritersPanel.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void BuildCrewNameLinks(StackPanel panel, List<CrewMember> members)
+    {
+        for (int i = 0; i < members.Count; i++)
+        {
+            var member = members[i];
+
+            var link = new HyperlinkButton
+            {
+                Content = member.Name,
+                Padding = new Thickness(0),
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
+                FontSize = 13
+            };
+
+            if (!string.IsNullOrEmpty(member.PersonId) && int.TryParse(member.PersonId, out int personId) && personId > 0)
+            {
+                var id = personId;
+                link.Click += (_, _) =>
+                {
+                    var nav = App.Services.GetRequiredService<NavigationService>();
+                    nav.Navigate<PersonDetailPage>(id);
+                };
+            }
+            else
+            {
+                link.IsEnabled = false;
+            }
+
+            panel.Children.Add(link);
+
+            if (i < members.Count - 1)
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = ",  ",
+                    FontSize = 13,
+                    Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+            }
+        }
     }
 
     // ===== Series: Season Cards =====

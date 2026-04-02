@@ -24,21 +24,22 @@ public sealed partial class AdminShellPage : Page
     {
         // Register all nav items for batch state management
         _navItems.Clear();
+        // OVERVIEW
         _navItems.Add((NavDashboard,       NavDashboardBar,       NavDashboardIcon,       NavDashboardText));
         _navItems.Add((NavActivity,        NavActivityBar,        NavActivityIcon,        NavActivityText));
         _navItems.Add((NavLogs,            NavLogsBar,            NavLogsIcon,            NavLogsText));
+        // CONTENT
         _navItems.Add((NavLibraries,       NavLibrariesBar,       NavLibrariesIcon,       NavLibrariesText));
         _navItems.Add((NavCollections,     NavCollectionsBar,     NavCollectionsIcon,     NavCollectionsText));
         _navItems.Add((NavSections,        NavSectionsBar,        NavSectionsIcon,        NavSectionsText));
+        // USERS
         _navItems.Add((NavUsers,           NavUsersBar,           NavUsersIcon,           NavUsersText));
         _navItems.Add((NavPlaybackHistory, NavPlaybackHistoryBar, NavPlaybackHistoryIcon, NavPlaybackHistoryText));
+        // SERVER
         _navItems.Add((NavScheduledTasks,      NavScheduledTasksBar,      NavScheduledTasksIcon,      NavScheduledTasksText));
         _navItems.Add((NavNodes,               NavNodesBar,               NavNodesIcon,               NavNodesText));
-        _navItems.Add((NavPlugins,             NavPluginsBar,             NavPluginsIcon,             NavPluginsText));
-        _navItems.Add((NavProviders,           NavProvidersBar,           NavProvidersIcon,           NavProvidersText));
-        _navItems.Add((NavInviteCodes,         NavInviteCodesBar,         NavInviteCodesIcon,         NavInviteCodesText));
         _navItems.Add((NavMaintenance,         NavMaintenanceBar,         NavMaintenanceIcon,         NavMaintenanceText));
-        _navItems.Add((NavSubtitleProviders,   NavSubtitleProvidersBar,   NavSubtitleProvidersIcon,   NavSubtitleProvidersText));
+        _navItems.Add((NavPlugins,             NavPluginsBar,             NavPluginsIcon,             NavPluginsText));
         _navItems.Add((NavSettings,            NavSettingsBar,            NavSettingsIcon,            NavSettingsText));
         _navItems.Add((NavRecommendations,     NavRecommendationsBar,     NavRecommendationsIcon,     NavRecommendationsText));
         _navItems.Add((NavApiKeys,             NavApiKeysBar,             NavApiKeysIcon,             NavApiKeysText));
@@ -154,28 +155,10 @@ public sealed partial class AdminShellPage : Page
         AdminContentFrame.Navigate(typeof(AdminPluginsPage));
     }
 
-    private void NavProviders_Click(object sender, RoutedEventArgs e)
-    {
-        SetActiveNavItem(NavProviders);
-        AdminContentFrame.Navigate(typeof(AdminProvidersPage));
-    }
-
-    private void NavInviteCodes_Click(object sender, RoutedEventArgs e)
-    {
-        SetActiveNavItem(NavInviteCodes);
-        AdminContentFrame.Navigate(typeof(AdminInviteCodesPage));
-    }
-
     private void NavMaintenance_Click(object sender, RoutedEventArgs e)
     {
         SetActiveNavItem(NavMaintenance);
         AdminContentFrame.Navigate(typeof(AdminMaintenancePage));
-    }
-
-    private void NavSubtitleProviders_Click(object sender, RoutedEventArgs e)
-    {
-        SetActiveNavItem(NavSubtitleProviders);
-        AdminContentFrame.Navigate(typeof(AdminSubtitleProvidersPage));
     }
 
     private void BackToApp_Click(object sender, RoutedEventArgs e)
