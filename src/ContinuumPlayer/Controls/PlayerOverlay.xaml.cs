@@ -180,18 +180,11 @@ public sealed partial class PlayerOverlay : UserControl
                 VideoFrame.Source = _frameBitmap;
             }
 
-            // Copy frame data into WriteableBitmap via native pointer for speed
+            // Copy frame data into WriteableBitmap pixel buffer
             var pixelBuffer = _frameBitmap.PixelBuffer;
             int copyLen = Math.Min(dstStride * h, (int)pixelBuffer.Length);
-
-            unsafe
-            {
-                byte* dst = (byte*)((IBufferByteAccess)pixelBuffer).Buffer();
-                fixed (byte* src = _snapBuffer)
-                {
-                    Buffer.MemoryCopy(src, dst, copyLen, copyLen);
-                }
-            }
+            System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions
+                .CopyTo(_snapBuffer!, 0, pixelBuffer, 0, copyLen);
 
             _frameBitmap.Invalidate();
         }
@@ -199,12 +192,6 @@ public sealed partial class PlayerOverlay : UserControl
         {
             _uiBusy = false;
         }
-    }
-
-    [ComImport, Guid("905a0fef-bc53-11df-8c49-001e4fc686da"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IBufferByteAccess
-    {
-        unsafe byte* Buffer();
     }
 
     // ── UI update timer (position, seek bar, play/pause icon, skip markers) ──
