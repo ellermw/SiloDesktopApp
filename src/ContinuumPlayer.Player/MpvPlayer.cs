@@ -552,6 +552,15 @@ public sealed class MpvPlayer : IDisposable
         return false;
     }
 
+    /// <summary>Gets a double property from mpv.</summary>
+    public double GetPropertyDouble(string name)
+    {
+        if (_mpvHandle == IntPtr.Zero) return 0;
+        if (mpv_get_property_double(_mpvHandle, name, MPV_FORMAT_DOUBLE, out double val) == 0)
+            return val;
+        return 0;
+    }
+
     /// <summary>
     /// Adds an external subtitle track.
     /// </summary>

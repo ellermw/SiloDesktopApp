@@ -84,7 +84,7 @@ public sealed partial class PlayerOverlay : UserControl
         UpdatePlaybackInfo();
 
         // Cap render size at 1080p
-        _playerService.Mpv?.UpdateRenderSize(1920, 1080);
+        _playerService.Mpv?.UpdateRenderSize(1280, 720);
 
         // Start UI update timer (250ms)
         _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -152,11 +152,18 @@ public sealed partial class PlayerOverlay : UserControl
     private int _snapW, _snapH, _snapStride;
     private volatile bool _snapReady;
     private volatile bool _uiBusy;
+    private long _lastFrameTicks;
 
     private void OnFrameReady(byte[] buffer, int width, int height, int stride)
     {
         // Skip if UI thread is still processing previous frame
         if (_uiBusy) return;
+
+        // 30fps cap: prevent UI thread saturation from frame copies
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        var freq = System.Diagnostics.Stopwatch.Frequency;
+        if (now - _lastFrameTicks < freq / 30) return;
+        _lastFrameTicks = now;
 
         // Immediate copy on render thread into our own buffer
         int size = stride * height;
@@ -607,7 +614,10 @@ public sealed partial class PlayerOverlay : UserControl
             hdr = codec.Contains("dovi") || codec.Contains("dolby") ? "Dolby Vision" : "HDR10";
         }
         StatsHdr.Text = $"HDR:         {hdr}";
-        StatsPosition.Text = $"Position:    {PlayerService.FormatTime(_playerService.Mpv?.Position ?? 0)} / {PlayerService.FormatTime(_playerService.Mpv?.Duration ?? 0)}";
+        // Live bandwidth from mpv cache speed
+        double bw = 0;
+        try { bw = _playerService.Mpv?.GetPropertyDouble("cache-speed") ?? 0; } catch { }
+        StatsPosition.Text = $"Bandwidth:   {(bw > 0 ? $"{bw / 1_000_000:F1} Mbps" : "N/A")}";
         StatsSession.Text = $"Session:     {_playerService.Manager?.SessionId ?? "?"}";
     }
 

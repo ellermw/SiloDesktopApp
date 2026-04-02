@@ -86,6 +86,11 @@ public static class MpvInterop
         [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
         int format, out long data);
 
+    [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl, EntryPoint = "mpv_get_property")]
+    public static extern int mpv_get_property_double(IntPtr ctx,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        int format, out double data);
+
     [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
     public static extern int mpv_observe_property(IntPtr mpv, ulong reply_userdata,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string name, int format);
