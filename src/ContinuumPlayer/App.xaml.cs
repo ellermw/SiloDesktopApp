@@ -119,6 +119,8 @@ public partial class App : Application
         // ViewModels
         services.AddTransient<ServerSelectViewModel>();
         services.AddTransient<LoginViewModel>();
+        services.AddTransient<SignupViewModel>();
+        services.AddTransient<SetupWizardViewModel>();
         services.AddTransient<ProfileSelectViewModel>();
         services.AddTransient<MainViewModel>();
         services.AddTransient<HomeViewModel>();

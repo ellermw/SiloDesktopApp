@@ -137,6 +137,13 @@
                                 <TextBlock Text="Home Screen" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
+                        <Button x:Name="SessionsTab" Click="Tab_Click" Tag="Sessions"
+                                Style="{StaticResource InactiveTabStyle}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE8EA;" FontSize="16" />
+                                <TextBlock Text="Sessions" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
                 </ScrollViewer>
             </Border>
@@ -678,6 +685,27 @@
                     <Button Content="Reset to Defaults" Style="{StaticResource SecondaryButtonStyle}"
                             Padding="16,8" Click="SubtitleReset_Click" />
                 </StackPanel>
+            </StackPanel>
+
+            <!-- ===== Sessions Panel ===== -->
+            <StackPanel x:Name="SessionsPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Active Sessions" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="View and manage your active login sessions across devices."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <ProgressRing
+                    IsActive="{x:Bind ViewModel.IsLoadingSessions, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.IsLoadingSessions, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                    HorizontalAlignment="Left"
+                    Width="24" Height="24" />
+
+                <!-- Session cards container (built in code-behind) -->
+                <StackPanel x:Name="SessionCardsContainer" Spacing="12" />
             </StackPanel>
 
             <!-- ===== Home Screen Panel ===== -->

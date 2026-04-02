@@ -223,7 +223,21 @@
                 </StackPanel>
             </NavigationView.PaneFooter>
 
-            <Frame x:Name="ContentFrame" />
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- Impersonation banner (hidden by default) -->
+                <controls:ImpersonationBanner
+                    x:Name="ImpersonationBannerControl"
+                    Grid.Row="0"
+                    Visibility="Collapsed"
+                    EndImpersonationRequested="ImpersonationBanner_EndRequested" />
+
+                <Frame x:Name="ContentFrame" Grid.Row="1" />
+            </Grid>
         </NavigationView>
 
         <!-- Layer 2: Full-window player overlay (above nav, initially hidden) -->

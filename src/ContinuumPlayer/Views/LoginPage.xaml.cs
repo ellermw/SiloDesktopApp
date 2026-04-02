@@ -19,7 +19,7 @@ public sealed partial class LoginPage : Page
         ViewModel.LoginSucceeded += OnLoginSucceeded;
     }
 
-    protected override void OnNavigatedTo(NavigationEventArgs e)
+    protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
 
@@ -28,6 +28,9 @@ public sealed partial class LoginPage : Page
             ViewModel.ServerUrl = server.Url;
             ViewModel.ServerName = server.Name;
         }
+
+        // Load auth providers and signup status
+        await ViewModel.LoadAuthInfoCommand.ExecuteAsync(null);
     }
 
     private void OnLoginSucceeded()
@@ -40,6 +43,12 @@ public sealed partial class LoginPage : Page
     {
         var nav = App.Services.GetRequiredService<NavigationService>();
         nav.Navigate<ServerSelectPage>();
+    }
+
+    private void CreateAccountButton_Click(object sender, RoutedEventArgs e)
+    {
+        var nav = App.Services.GetRequiredService<NavigationService>();
+        nav.Navigate<SignupPage>();
     }
 
     private void PasswordBox_PasswordChanged(object sender, RoutedEventArgs e)

@@ -340,4 +340,31 @@ public sealed partial class MainWindow : Window
         HideMainNavigation();
         _navigationService.Navigate<ServerSelectPage>();
     }
+
+    // ===== Impersonation =====
+
+    public void ShowImpersonationBanner(string username)
+    {
+        _viewModel.IsImpersonating = true;
+        _viewModel.ImpersonatedUsername = username;
+        ImpersonationBannerControl.ImpersonatedUsername = username;
+        ImpersonationBannerControl.Visibility = Visibility.Visible;
+    }
+
+    public void HideImpersonationBanner()
+    {
+        _viewModel.IsImpersonating = false;
+        _viewModel.ImpersonatedUsername = "";
+        ImpersonationBannerControl.Visibility = Visibility.Collapsed;
+    }
+
+    private void ImpersonationBanner_EndRequested(object? sender, EventArgs e)
+    {
+        // End impersonation: restore original admin tokens
+        // For now, the simplest approach is to log out and require re-login
+        _authService.Logout();
+        HideImpersonationBanner();
+        HideMainNavigation();
+        _navigationService.Navigate<ServerSelectPage>();
+    }
 }

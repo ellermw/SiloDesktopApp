@@ -215,17 +215,19 @@ public partial class SettingsViewModel : ObservableObject
 {
     private readonly SettingsApi _settingsApi;
     private readonly CatalogApi _catalogApi;
+    private readonly AuthApi _authApi;
     private readonly AuthService _authService;
     private readonly ThemeService _themeService;
     private readonly SettingsService _settingsService;
     private Profile? _profile;
     private bool _suppressSave;
 
-    public SettingsViewModel(SettingsApi settingsApi, CatalogApi catalogApi, AuthService authService,
-        ThemeService themeService, SettingsService settingsService)
+    public SettingsViewModel(SettingsApi settingsApi, CatalogApi catalogApi, AuthApi authApi,
+        AuthService authService, ThemeService themeService, SettingsService settingsService)
     {
         _settingsApi = settingsApi;
         _catalogApi = catalogApi;
+        _authApi = authApi;
         _authService = authService;
         _themeService = themeService;
         _settingsService = settingsService;
@@ -503,5 +505,52 @@ public partial class SettingsViewModel : ObservableObject
     {
         StatusMessage = message;
         ErrorMessage = null;
+    }
+
+    // ===== Auth Sessions =====
+
+    public ObservableCollection<AuthSession> Sessions { get; } = [];
+
+    [ObservableProperty]
+    private bool _isLoadingSessions;
+
+    [RelayCommand]
+    private async Task LoadSessionsAsync()
+    {
+        if (IsLoadingSessions) return;
+        IsLoadingSessions = true;
+
+        try
+        {
+            var response = await _authApi.GetSessionsAsync();
+            Sessions.Clear();
+            foreach (var session in response.Sessions)
+            {
+                Sessions.Add(session);
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load sessions: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingSessions = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task RevokeSessionAsync(string sessionId)
+    {
+        try
+        {
+            await _authApi.RevokeSessionAsync(sessionId);
+            ShowStatus("Session revoked");
+            await LoadSessionsAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to revoke session: {ex.Message}";
+        }
     }
 }

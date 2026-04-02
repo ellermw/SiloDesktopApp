@@ -123,7 +123,7 @@ public sealed partial class SettingsPage : Page
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
-        var tabs = new[] { AppearanceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab };
+        var tabs = new[] { AppearanceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, SessionsTab };
         foreach (var tab in tabs)
         {
             tab.Style = (Style)Resources["InactiveTabStyle"];
@@ -136,6 +136,12 @@ public sealed partial class SettingsPage : Page
         LibrariesPanel.Visibility = tag == "Libraries" ? Visibility.Visible : Visibility.Collapsed;
         SubtitlesPanel.Visibility = tag == "Subtitles" ? Visibility.Visible : Visibility.Collapsed;
         HomeScreenPanel.Visibility = tag == "HomeScreen" ? Visibility.Visible : Visibility.Collapsed;
+        SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
+
+        if (tag == "Sessions")
+        {
+            _ = LoadSessionsAsync();
+        }
     }
 
     // ===== Theme cards =====
@@ -746,6 +752,136 @@ public sealed partial class SettingsPage : Page
     private void SubtitleBgStyle_Changed(object sender, SelectionChangedEventArgs e) { }
     private void SubtitleSave_Click(object sender, RoutedEventArgs e) { }
     private void SubtitleReset_Click(object sender, RoutedEventArgs e) { }
+
+    // ===== Sessions =====
+    private async Task LoadSessionsAsync()
+    {
+        await ViewModel.LoadSessionsCommand.ExecuteAsync(null);
+        RebuildSessionCards();
+    }
+
+    private void RebuildSessionCards()
+    {
+        SessionCardsContainer.Children.Clear();
+
+        if (ViewModel.Sessions.Count == 0)
+        {
+            SessionCardsContainer.Children.Add(new TextBlock
+            {
+                Text = "No active sessions found.",
+                Style = (Style)Application.Current.Resources["SecondaryTextStyle"],
+                Margin = new Thickness(0, 8, 0, 0),
+            });
+            return;
+        }
+
+        foreach (var session in ViewModel.Sessions)
+        {
+            SessionCardsContainer.Children.Add(BuildSessionCard(session));
+        }
+    }
+
+    private Border BuildSessionCard(ContinuumPlayer.Core.Models.Auth.AuthSession session)
+    {
+        var card = new Border
+        {
+            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
+            CornerRadius = new CornerRadius(16),
+            Padding = new Thickness(20, 16, 20, 16),
+            BorderBrush = session.IsCurrent
+                ? (Brush)Application.Current.Resources["AccentBrush"]
+                : (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+        };
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        // Left: session info
+        var infoStack = new StackPanel { Spacing = 4 };
+
+        var nameRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        nameRow.Children.Add(new FontIcon
+        {
+            Glyph = "\uE7F7",
+            FontSize = 16,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        nameRow.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrEmpty(session.DeviceName) ? "Unknown Device" : session.DeviceName,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        if (session.IsCurrent)
+        {
+            var currentBadge = new Border
+            {
+                Background = (Brush)Application.Current.Resources["AccentBrush"],
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(8, 2, 8, 2),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            currentBadge.Child = new TextBlock
+            {
+                Text = "Current",
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (Brush)Application.Current.Resources["AccentForegroundBrush"],
+            };
+            nameRow.Children.Add(currentBadge);
+        }
+
+        infoStack.Children.Add(nameRow);
+
+        // IP and date
+        var detailsText = $"IP: {session.IpAddress}";
+        if (!string.IsNullOrEmpty(session.CreatedAt))
+        {
+            if (DateTime.TryParse(session.CreatedAt, out var created))
+                detailsText += $"  |  Created: {created.ToLocalTime():g}";
+            else
+                detailsText += $"  |  Created: {session.CreatedAt}";
+        }
+
+        infoStack.Children.Add(new TextBlock
+        {
+            Text = detailsText,
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+
+        Grid.SetColumn(infoStack, 0);
+        grid.Children.Add(infoStack);
+
+        // Right: revoke button (not for current session)
+        if (!session.IsCurrent)
+        {
+            var revokeButton = new Button
+            {
+                Content = "Revoke",
+                Style = (Style)Application.Current.Resources["SecondaryButtonStyle"],
+                Padding = new Thickness(12, 6, 12, 6),
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            revokeButton.Click += async (_, _) =>
+            {
+                await ViewModel.RevokeSessionCommand.ExecuteAsync(session.Id);
+                RebuildSessionCards();
+            };
+            Grid.SetColumn(revokeButton, 1);
+            grid.Children.Add(revokeButton);
+        }
+
+        card.Child = grid;
+        return card;
+    }
 
     // ===== Helper =====
     private static Windows.UI.Color ColorFromHex(string hex)

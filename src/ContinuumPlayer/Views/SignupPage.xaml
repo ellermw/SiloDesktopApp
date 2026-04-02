@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Page
-    x:Class="ContinuumPlayer.Views.LoginPage"
+    x:Class="ContinuumPlayer.Views.SignupPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -36,14 +36,13 @@
                             CharacterSpacing="-40" />
 
                         <TextBlock
-                            Text="Sign in with an existing account."
+                            Text="Create a new account."
                             Style="{StaticResource SecondaryTextStyle}"
                             FontSize="14" />
                     </StackPanel>
 
                     <!-- Error message -->
                     <Border
-                        x:Name="ErrorBorder"
                         Background="#2DEF6B73"
                         CornerRadius="8"
                         Padding="12,10"
@@ -68,7 +67,22 @@
                                 x:Name="UsernameBox"
                                 Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 Style="{StaticResource DarkTextBoxStyle}"
-                                PlaceholderText="Enter your username"
+                                PlaceholderText="Choose a username"
+                                KeyDown="InputBox_KeyDown" />
+                        </StackPanel>
+
+                        <!-- Email -->
+                        <StackPanel Spacing="6">
+                            <TextBlock
+                                Text="Email"
+                                FontSize="14"
+                                FontWeight="Medium"
+                                Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBox
+                                x:Name="EmailBox"
+                                Text="{x:Bind ViewModel.Email, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                PlaceholderText="you@example.com"
                                 KeyDown="InputBox_KeyDown" />
                         </StackPanel>
 
@@ -82,18 +96,48 @@
                             <PasswordBox
                                 x:Name="PasswordBox"
                                 Style="{StaticResource DarkPasswordBoxStyle}"
-                                PlaceholderText="Enter your password"
+                                PlaceholderText="Create a password"
                                 PasswordChanged="PasswordBox_PasswordChanged"
                                 KeyDown="InputBox_KeyDown" />
                         </StackPanel>
 
-                        <!-- Sign in button -->
+                        <!-- Confirm Password -->
+                        <StackPanel Spacing="6">
+                            <TextBlock
+                                Text="Confirm Password"
+                                FontSize="14"
+                                FontWeight="Medium"
+                                Foreground="{StaticResource PrimaryTextBrush}" />
+                            <PasswordBox
+                                x:Name="ConfirmPasswordBox"
+                                Style="{StaticResource DarkPasswordBoxStyle}"
+                                PlaceholderText="Re-enter your password"
+                                PasswordChanged="ConfirmPasswordBox_PasswordChanged"
+                                KeyDown="InputBox_KeyDown" />
+                        </StackPanel>
+
+                        <!-- Invite Code -->
+                        <StackPanel Spacing="6">
+                            <TextBlock
+                                Text="Invite Code"
+                                FontSize="14"
+                                FontWeight="Medium"
+                                Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBox
+                                x:Name="InviteCodeBox"
+                                Text="{x:Bind ViewModel.InviteCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                PlaceholderText="Enter invite code (if required)"
+                                KeyDown="InputBox_KeyDown" />
+                        </StackPanel>
+
+                        <!-- Sign up button -->
                         <Button
-                            Content="Sign in"
+                            Content="Create Account"
                             Style="{StaticResource AccentButtonStyle}"
                             HorizontalAlignment="Stretch"
                             Padding="16,12"
-                            Command="{x:Bind ViewModel.LoginCommand}"
+                            Command="{x:Bind ViewModel.SignupCommand}"
                             IsEnabled="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBool}}" />
                     </StackPanel>
 
@@ -103,66 +147,15 @@
                         Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                         HorizontalAlignment="Center"
                         Width="28" Height="28" />
-
-                    <!-- Auth providers section -->
-                    <StackPanel
-                        Spacing="12"
-                        Visibility="{x:Bind ViewModel.HasAuthProviders, Mode=OneWay, Converter={StaticResource BoolToVis}}">
-
-                        <!-- Divider -->
-                        <Grid Margin="0,4,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0" Height="1"
-                                    Background="{StaticResource BorderBrush}"
-                                    VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="or"
-                                       FontSize="13"
-                                       Foreground="{StaticResource SecondaryTextBrush}"
-                                       Margin="12,0" />
-                            <Border Grid.Column="2" Height="1"
-                                    Background="{StaticResource BorderBrush}"
-                                    VerticalAlignment="Center" />
-                        </Grid>
-
-                        <!-- Provider buttons -->
-                        <ItemsControl ItemsSource="{x:Bind ViewModel.AuthProviders, Mode=OneWay}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Spacing="8" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Button
-                                        Content="{Binding DisplayName}"
-                                        Style="{StaticResource OutlineButtonStyle}"
-                                        HorizontalAlignment="Stretch"
-                                        Padding="16,10" />
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-
-                    <!-- Create account link -->
-                    <Button
-                        Content="Create Account"
-                        Style="{StaticResource GhostButtonStyle}"
-                        HorizontalAlignment="Center"
-                        Visibility="{x:Bind ViewModel.IsSignupEnabled, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                        Click="CreateAccountButton_Click" />
                 </StackPanel>
             </Border>
 
-            <!-- Back to server select -->
+            <!-- Back to login link -->
             <Button
-                Content="Back to Servers"
+                Content="Already have an account? Sign in"
                 Style="{StaticResource GhostButtonStyle}"
                 HorizontalAlignment="Center"
-                Click="BackButton_Click" />
+                Click="BackToLoginButton_Click" />
         </StackPanel>
     </Grid>
 </Page>

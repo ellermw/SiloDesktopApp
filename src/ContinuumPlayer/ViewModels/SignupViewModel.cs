@@ -1,4 +1,3 @@
-using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ContinuumPlayer.Core.Api;
@@ -7,13 +6,13 @@ using ContinuumPlayer.Core.Services;
 
 namespace ContinuumPlayer.ViewModels;
 
-public partial class LoginViewModel : ObservableObject
+public partial class SignupViewModel : ObservableObject
 {
     private readonly AuthService _authService;
     private readonly AuthApi _authApi;
     private readonly CredentialStore _credentialStore;
 
-    public LoginViewModel(AuthService authService, AuthApi authApi, CredentialStore credentialStore)
+    public SignupViewModel(AuthService authService, AuthApi authApi, CredentialStore credentialStore)
     {
         _authService = authService;
         _authApi = authApi;
@@ -24,13 +23,25 @@ public partial class LoginViewModel : ObservableObject
     private string _username = "";
 
     [ObservableProperty]
+    private string _email = "";
+
+    [ObservableProperty]
     private string _password = "";
+
+    [ObservableProperty]
+    private string _confirmPassword = "";
+
+    [ObservableProperty]
+    private string _inviteCode = "";
+
+    [ObservableProperty]
+    private bool _isLoading;
 
     [ObservableProperty]
     private string? _errorMessage;
 
     [ObservableProperty]
-    private bool _isLoading;
+    private bool _isSignupEnabled;
 
     [ObservableProperty]
     private string _serverUrl = "";
@@ -38,49 +49,13 @@ public partial class LoginViewModel : ObservableObject
     [ObservableProperty]
     private string _serverName = "";
 
-    // ===== Auth Providers =====
-
-    public ObservableCollection<AuthProvider> AuthProviders { get; } = [];
-
-    [ObservableProperty]
-    private bool _hasAuthProviders;
-
-    [ObservableProperty]
-    private bool _isSignupEnabled;
-
     /// <summary>
-    /// Event raised when login succeeds. The caller should navigate to the profile select page.
+    /// Event raised when signup succeeds. The caller should navigate to the profile select page.
     /// </summary>
-    public event Action? LoginSucceeded;
+    public event Action? SignupSucceeded;
 
     [RelayCommand]
-    private async Task LoadAuthInfoAsync()
-    {
-        // Load auth providers and signup status in parallel
-        var providerTask = LoadAuthProvidersAsync();
-        var signupTask = LoadSignupStatusAsync();
-        await Task.WhenAll(providerTask, signupTask);
-    }
-
-    private async Task LoadAuthProvidersAsync()
-    {
-        try
-        {
-            var response = await _authApi.GetAuthProvidersAsync();
-            AuthProviders.Clear();
-            foreach (var provider in response.Providers)
-            {
-                AuthProviders.Add(provider);
-            }
-            HasAuthProviders = AuthProviders.Count > 0;
-        }
-        catch
-        {
-            HasAuthProviders = false;
-        }
-    }
-
-    private async Task LoadSignupStatusAsync()
+    private async Task CheckSignupStatusAsync()
     {
         try
         {
@@ -94,16 +69,26 @@ public partial class LoginViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private async Task LoginAsync()
+    private async Task SignupAsync()
     {
         if (string.IsNullOrWhiteSpace(Username))
         {
             ErrorMessage = "Username is required.";
             return;
         }
+        if (string.IsNullOrWhiteSpace(Email))
+        {
+            ErrorMessage = "Email is required.";
+            return;
+        }
         if (string.IsNullOrWhiteSpace(Password))
         {
             ErrorMessage = "Password is required.";
+            return;
+        }
+        if (Password != ConfirmPassword)
+        {
+            ErrorMessage = "Passwords do not match.";
             return;
         }
 
@@ -112,20 +97,34 @@ public partial class LoginViewModel : ObservableObject
 
         try
         {
-            var response = await _authService.LoginAsync(Username.Trim(), Password);
+            var request = new SignupRequest
+            {
+                Username = Username.Trim(),
+                Email = Email.Trim(),
+                Password = Password,
+                InviteCode = InviteCode.Trim()
+            };
 
-            // Save tokens to credential store
+            var response = await _authApi.SignupAsync(request);
+
+            // Save tokens
             _credentialStore.SaveCredential(ServerUrl, "access_token", response.AccessToken);
             _credentialStore.SaveCredential(ServerUrl, "refresh_token", response.RefreshToken);
 
-            LoginSucceeded?.Invoke();
+            // Set auth state
+            _authService.SetTokens(response.AccessToken, response.RefreshToken, response.ExpiresIn);
+            _authService.SetCurrentUser(response.User);
+
+            SignupSucceeded?.Invoke();
         }
         catch (ApiException ex)
         {
             ErrorMessage = ex.ErrorCode switch
             {
-                "invalid_credentials" => "Invalid username or password.",
-                "user_disabled" => "This account has been disabled.",
+                "signup_disabled" => "Signup is not currently available.",
+                "invalid_invite_code" => "The invite code is invalid or has expired.",
+                "username_taken" => "This username is already taken.",
+                "email_taken" => "This email is already registered.",
                 _ => ex.Message
             };
         }
