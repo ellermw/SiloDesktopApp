@@ -30,22 +30,42 @@ public sealed partial class SectionRow : UserControl
         }
     }
 
+    private bool _useLandscape;
+
     private void UpdateSection(HomeSectionWithItems section)
     {
         SectionTitle.Text = section.Title;
-        ItemsRepeater.ItemsSource = section.Items;
+
+        _useLandscape = section.SectionType is "continue_watching" or "next_up";
+
+        if (_useLandscape)
+        {
+            PosterScrollViewer.Visibility = Visibility.Collapsed;
+            LandscapeScrollViewer.Visibility = Visibility.Visible;
+            LandscapeRepeater.ItemsSource = section.Items;
+            ItemsRepeater.ItemsSource = null;
+        }
+        else
+        {
+            PosterScrollViewer.Visibility = Visibility.Visible;
+            LandscapeScrollViewer.Visibility = Visibility.Collapsed;
+            ItemsRepeater.ItemsSource = section.Items;
+            LandscapeRepeater.ItemsSource = null;
+        }
     }
+
+    private ScrollViewer ActiveScrollViewer => _useLandscape ? LandscapeScrollViewer : PosterScrollViewer;
 
     private void ScrollLeft_Click(object sender, RoutedEventArgs e)
     {
-        PosterScrollViewer.ChangeView(
-            Math.Max(0, PosterScrollViewer.HorizontalOffset - 500), null, null);
+        ActiveScrollViewer.ChangeView(
+            Math.Max(0, ActiveScrollViewer.HorizontalOffset - 500), null, null);
     }
 
     private void ScrollRight_Click(object sender, RoutedEventArgs e)
     {
-        PosterScrollViewer.ChangeView(
-            PosterScrollViewer.HorizontalOffset + 500, null, null);
+        ActiveScrollViewer.ChangeView(
+            ActiveScrollViewer.HorizontalOffset + 500, null, null);
     }
 
 }

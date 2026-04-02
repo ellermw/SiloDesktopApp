@@ -56,6 +56,7 @@
             HorizontalScrollMode="Disabled"
             VerticalScrollMode="Disabled">
 
+            <!-- Default poster card repeater -->
             <ItemsRepeater x:Name="ItemsRepeater" Margin="48,0,48,0">
                 <ItemsRepeater.Layout>
                     <StackLayout Orientation="Horizontal" Spacing="16" />
@@ -63,6 +64,28 @@
                 <ItemsRepeater.ItemTemplate>
                     <DataTemplate x:DataType="models:MediaItem">
                         <controls:PosterCard MediaItem="{x:Bind}" />
+                    </DataTemplate>
+                </ItemsRepeater.ItemTemplate>
+            </ItemsRepeater>
+        </ScrollViewer>
+
+        <!-- Landscape card repeater for continue_watching / next_up -->
+        <ScrollViewer
+            x:Name="LandscapeScrollViewer"
+            Grid.Row="1"
+            HorizontalScrollBarVisibility="Hidden"
+            VerticalScrollBarVisibility="Disabled"
+            HorizontalScrollMode="Disabled"
+            VerticalScrollMode="Disabled"
+            Visibility="Collapsed">
+
+            <ItemsRepeater x:Name="LandscapeRepeater" Margin="48,0,48,0">
+                <ItemsRepeater.Layout>
+                    <StackLayout Orientation="Horizontal" Spacing="16" />
+                </ItemsRepeater.Layout>
+                <ItemsRepeater.ItemTemplate>
+                    <DataTemplate x:DataType="models:MediaItem">
+                        <controls:LandscapeCard MediaItem="{x:Bind}" />
                     </DataTemplate>
                 </ItemsRepeater.ItemTemplate>
             </ItemsRepeater>

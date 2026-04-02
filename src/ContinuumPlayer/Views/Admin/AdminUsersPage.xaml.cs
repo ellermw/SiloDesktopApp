@@ -12,6 +12,8 @@ namespace ContinuumPlayer.Views.Admin;
 public sealed partial class AdminUsersPage : Page
 {
     public AdminUsersViewModel ViewModel { get; }
+    public AdminInviteCodesViewModel InviteCodesViewModel { get; }
+    private bool _inviteCodesLoaded;
 
     // Playback quality options matching web UI
     private static readonly (string Value, string Label, string Description)[] PlaybackQualityOptions =
@@ -26,6 +28,7 @@ public sealed partial class AdminUsersPage : Page
     public AdminUsersPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminUsersViewModel>();
+        InviteCodesViewModel = App.Services.GetRequiredService<AdminInviteCodesViewModel>();
         this.InitializeComponent();
     }
 
@@ -67,7 +70,7 @@ public sealed partial class AdminUsersPage : Page
         TabInviteCodesText.FontWeight = FontWeights.Normal;
     }
 
-    private void TabInviteCodes_Click(object sender, RoutedEventArgs e)
+    private async void TabInviteCodes_Click(object sender, RoutedEventArgs e)
     {
         UsersTabContent.Visibility = Visibility.Collapsed;
         InviteCodesTabContent.Visibility = Visibility.Visible;
@@ -77,6 +80,21 @@ public sealed partial class AdminUsersPage : Page
         TabInviteCodesText.FontWeight = FontWeights.SemiBold;
         TabUsersText.Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
         TabUsersText.FontWeight = FontWeights.Normal;
+
+        if (!_inviteCodesLoaded)
+        {
+            _inviteCodesLoaded = true;
+            InviteCodesViewModel.InviteCodes.CollectionChanged += (_, _) => ScheduleInviteCodesRebuild();
+            InviteCodesLoading.IsActive = true;
+            InviteCodesLoading.Visibility = Visibility.Visible;
+            try { await InviteCodesViewModel.LoadCommand.ExecuteAsync(null); }
+            catch (Exception ex) { ShowStatus($"Error loading invite codes: {ex.Message}"); }
+            finally
+            {
+                InviteCodesLoading.IsActive = false;
+                InviteCodesLoading.Visibility = Visibility.Collapsed;
+            }
+        }
     }
 
     // ===== Table Builder =====
@@ -946,6 +964,274 @@ public sealed partial class AdminUsersPage : Page
         border.Child = grid;
         return border;
     }
+
+    // ===== Invite Codes =====
+
+    private bool _inviteCodesRebuildPending;
+
+    private void ScheduleInviteCodesRebuild()
+    {
+        if (_inviteCodesRebuildPending) return;
+        _inviteCodesRebuildPending = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _inviteCodesRebuildPending = false;
+            BuildInviteCodeRows();
+        });
+    }
+
+    private void BuildInviteCodeRows()
+    {
+        InviteCodesPanel.Children.Clear();
+
+        if (InviteCodesViewModel.InviteCodes.Count == 0)
+        {
+            InviteCodesEmptyState.Visibility = Visibility.Visible;
+            return;
+        }
+
+        InviteCodesEmptyState.Visibility = Visibility.Collapsed;
+
+        bool first = true;
+        foreach (var code in InviteCodesViewModel.InviteCodes)
+        {
+            if (!first)
+            {
+                InviteCodesPanel.Children.Add(new Border
+                {
+                    BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+                    BorderThickness = new Thickness(0, 1, 0, 0)
+                });
+            }
+            first = false;
+            InviteCodesPanel.Children.Add(BuildInviteCodeRow(code));
+        }
+    }
+
+    private FrameworkElement BuildInviteCodeRow(InviteCode code)
+    {
+        var row = new Grid { Padding = new Thickness(20, 14, 20, 14), ColumnSpacing = 12 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
+
+        // Code (monospace)
+        var codeBorder = new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 2, 6, 2),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        codeBorder.Child = new TextBlock
+        {
+            Text = code.Code,
+            FontSize = 12,
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
+        };
+        Grid.SetColumn(codeBorder, 0);
+        row.Children.Add(codeBorder);
+
+        // Label
+        var label = new TextBlock
+        {
+            Text = code.Label,
+            FontSize = 13,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        Grid.SetColumn(label, 1);
+        row.Children.Add(label);
+
+        // Max uses
+        var maxUses = new TextBlock
+        {
+            Text = code.MaxUses > 0 ? code.MaxUses.ToString() : "\u221E",
+            FontSize = 13,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(maxUses, 2);
+        row.Children.Add(maxUses);
+
+        // Use count
+        var useCount = new TextBlock
+        {
+            Text = code.UseCount.ToString(),
+            FontSize = 13,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(useCount, 3);
+        row.Children.Add(useCount);
+
+        // Status badge
+        Border statusBadge;
+        if (code.Enabled)
+        {
+            statusBadge = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(40, 34, 197, 94)),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(8, 2, 8, 2),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            statusBadge.Child = new TextBlock
+            {
+                Text = "Active",
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromArgb(255, 34, 197, 94))
+            };
+        }
+        else
+        {
+            statusBadge = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(40, 120, 120, 120)),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(8, 2, 8, 2),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            statusBadge.Child = new TextBlock
+            {
+                Text = "Disabled",
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromArgb(255, 160, 160, 160))
+            };
+        }
+        Grid.SetColumn(statusBadge, 4);
+        row.Children.Add(statusBadge);
+
+        // Created date
+        string createdText = "\u2014";
+        if (!string.IsNullOrEmpty(code.CreatedAt) && DateTime.TryParse(code.CreatedAt, out var dt))
+            createdText = dt.ToLocalTime().ToString("d");
+        var created = new TextBlock
+        {
+            Text = createdText,
+            FontSize = 12,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(created, 5);
+        row.Children.Add(created);
+
+        // Actions: toggle + delete
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var capturedCode = code;
+
+        var toggleBtn = MakeGhostIconButton(code.Enabled ? "\uE8FB" : "\uE73E", code.Enabled ? "Disable" : "Enable");
+        toggleBtn.Click += async (_, _) =>
+        {
+            await InviteCodesViewModel.ToggleInviteCodeCommand.ExecuteAsync(capturedCode);
+            ShowStatus(capturedCode.Enabled ? "Code disabled." : "Code enabled.");
+        };
+        actions.Children.Add(toggleBtn);
+
+        var deleteBtn = MakeGhostIconButton("\uE74D", "Delete");
+        deleteBtn.Click += async (_, _) =>
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Delete Invite Code",
+                Content = $"Delete invite code \"{capturedCode.Code}\"?",
+                PrimaryButtonText = "Delete",
+                CloseButtonText = "Cancel",
+                XamlRoot = this.XamlRoot,
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                await InviteCodesViewModel.DeleteInviteCodeCommand.ExecuteAsync(capturedCode.Id);
+                ShowStatus("Invite code deleted.");
+            }
+        };
+        actions.Children.Add(deleteBtn);
+
+        Grid.SetColumn(actions, 6);
+        row.Children.Add(actions);
+
+        return row;
+    }
+
+    private async void CreateInviteCodeButton_Click(object sender, RoutedEventArgs e)
+    {
+        var codeBox = new TextBox
+        {
+            PlaceholderText = "Leave blank to auto-generate",
+            CornerRadius = new CornerRadius(8),
+            FontSize = 13
+        };
+        var labelBox = new TextBox
+        {
+            PlaceholderText = "e.g. Friends & Family",
+            CornerRadius = new CornerRadius(8),
+            FontSize = 13
+        };
+        var maxUsesBox = new NumberBox
+        {
+            Value = 1,
+            Minimum = 0,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+            CornerRadius = new CornerRadius(8),
+            FontSize = 13
+        };
+
+        var form = new StackPanel { Width = 380, Spacing = 16 };
+        AddInviteCodeFormField(form, "Code (optional)", codeBox);
+        AddInviteCodeFormField(form, "Label", labelBox);
+        AddInviteCodeFormField(form, "Max Uses (0 = unlimited)", maxUsesBox);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Create Invite Code",
+            PrimaryButtonText = "Create",
+            CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot,
+            Content = form,
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        await InviteCodesViewModel.CreateInviteCodeAsync(new CreateInviteCodeRequest
+        {
+            Code = string.IsNullOrWhiteSpace(codeBox.Text) ? null : codeBox.Text.Trim(),
+            Label = labelBox.Text.Trim(),
+            MaxUses = double.IsNaN(maxUsesBox.Value) ? 0 : (int)maxUsesBox.Value
+        });
+        ShowStatus("Invite code created.");
+    }
+
+    private static void AddInviteCodeFormField(StackPanel form, string label, FrameworkElement control)
+    {
+        var group = new StackPanel { Spacing = 6 };
+        group.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        group.Children.Add(control);
+        form.Children.Add(group);
+    }
+
+    // ===== Helpers =====
 
     private void ShowStatus(string message)
     {

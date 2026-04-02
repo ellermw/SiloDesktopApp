@@ -31,6 +31,15 @@ public class MediaItem
     public string? LogoUrl { get; set; }
     public OverlaySummary? OverlaySummary { get; set; }
     public UserState? UserState { get; set; }
+    public string? SeriesId { get; set; }
+    public string? SeriesTitle { get; set; }
+    public int? SeasonNumber { get; set; }
+    public int? EpisodeNumber { get; set; }
+    public double? RatingImdb { get; set; }
+    public double? PositionSeconds { get; set; }
+    public double? DurationSeconds { get; set; }
+    public string? ProgressUpdatedAt { get; set; }
+    public string? ItemSource { get; set; }
 }
 public class OverlaySummary
 {

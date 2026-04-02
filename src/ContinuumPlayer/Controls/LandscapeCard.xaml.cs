@@ -9,7 +9,7 @@ using ContinuumPlayer.Views;
 
 namespace ContinuumPlayer.Controls;
 
-public sealed partial class PosterCard : UserControl
+public sealed partial class LandscapeCard : UserControl
 {
     private CancellationTokenSource? _loadCts;
 
@@ -17,7 +17,7 @@ public sealed partial class PosterCard : UserControl
         DependencyProperty.Register(
             nameof(MediaItem),
             typeof(MediaItem),
-            typeof(PosterCard),
+            typeof(LandscapeCard),
             new PropertyMetadata(null, OnMediaItemChanged));
 
     public MediaItem? MediaItem
@@ -26,14 +26,14 @@ public sealed partial class PosterCard : UserControl
         set => SetValue(MediaItemProperty, value);
     }
 
-    public PosterCard()
+    public LandscapeCard()
     {
         this.InitializeComponent();
     }
 
     private static void OnMediaItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
-        if (d is PosterCard card && e.NewValue is MediaItem item)
+        if (d is LandscapeCard card && e.NewValue is MediaItem item)
         {
             card.UpdateContent(item);
         }
@@ -47,72 +47,75 @@ public sealed partial class PosterCard : UserControl
 
         TitleText.Text = item.Title;
 
-        // Build subtitle line: "2024 Series" or "2024" (web: year + type in uppercase)
+        // Build subtitle: "Series Title · S1 E3"
         var parts = new List<string>();
-        if (item.Year > 0) parts.Add(item.Year.ToString());
-        if (item.Type == "series") parts.Add("SERIES");
-        SubtitleText.Text = string.Join("  ", parts);
+        if (!string.IsNullOrEmpty(item.SeriesTitle))
+            parts.Add(item.SeriesTitle);
+        if (item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue)
+            parts.Add($"S{item.SeasonNumber} E{item.EpisodeNumber}");
+        else if (item.EpisodeNumber.HasValue)
+            parts.Add($"E{item.EpisodeNumber}");
 
-        PosterImage.Opacity = 0;
-
-        // Skip thumbhash -- go straight to loading the real image.
-        // Thumbhash decoding on UI thread for hundreds of cards causes jank.
-        ThumbhashImage.Source = null;
-
-        UpdateBadges(item.OverlaySummary);
-
-        // Delay image load slightly so scrolling isn't blocked by hundreds of simultaneous loads
-        _ = LoadPosterAsync(item, ct);
-    }
-
-    private void UpdateBadges(OverlaySummary? overlay)
-    {
-        if (overlay == null ||
-            (string.IsNullOrEmpty(overlay.Resolution) && string.IsNullOrEmpty(overlay.Audio)))
+        if (parts.Count > 0)
         {
-            BadgesPanel.Visibility = Visibility.Collapsed;
-            return;
-        }
-
-        BadgesPanel.Visibility = Visibility.Visible;
-
-        if (!string.IsNullOrEmpty(overlay.Resolution))
-        {
-            ResolutionBadge.Visibility = Visibility.Visible;
-            ResolutionText.Text = overlay.Resolution;
+            SubtitleText.Text = string.Join(" \u00B7 ", parts);
+            SubtitleText.Visibility = Visibility.Visible;
         }
         else
         {
-            ResolutionBadge.Visibility = Visibility.Collapsed;
+            SubtitleText.Visibility = Visibility.Collapsed;
         }
 
-        if (!string.IsNullOrEmpty(overlay.Audio))
+        // Progress bar
+        if (item.PositionSeconds.HasValue && item.DurationSeconds.HasValue && item.DurationSeconds.Value > 0)
         {
-            AudioBadge.Visibility = Visibility.Visible;
-            AudioText.Text = overlay.Audio;
+            double progress = item.PositionSeconds.Value / item.DurationSeconds.Value;
+            progress = Math.Clamp(progress, 0, 1);
+
+            ProgressContainer.Visibility = Visibility.Visible;
+            ProgressFill.Width = 280 * progress;
+
+            // Remaining time
+            double remainingSeconds = item.DurationSeconds.Value - item.PositionSeconds.Value;
+            if (remainingSeconds > 0)
+            {
+                var remaining = TimeSpan.FromSeconds(remainingSeconds);
+                RemainingText.Text = remaining.TotalHours >= 1
+                    ? $"{(int)remaining.TotalHours}h {remaining.Minutes}m left"
+                    : $"{remaining.Minutes}m left";
+                RemainingBadge.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                RemainingBadge.Visibility = Visibility.Collapsed;
+            }
         }
         else
         {
-            AudioBadge.Visibility = Visibility.Collapsed;
+            ProgressContainer.Visibility = Visibility.Collapsed;
+            RemainingBadge.Visibility = Visibility.Collapsed;
         }
+
+        BackdropImage.Opacity = 0;
+
+        _ = LoadImageAsync(item, ct);
     }
 
-    private async Task LoadPosterAsync(MediaItem item, CancellationToken ct)
+    private async Task LoadImageAsync(MediaItem item, CancellationToken ct)
     {
-        var imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
+        // Prefer backdrop, fall back to poster
+        var imageUrl = !string.IsNullOrEmpty(item.BackdropUrl) ? item.BackdropUrl : item.PosterUrl;
         if (string.IsNullOrEmpty(imageUrl)) return;
 
         try
         {
-            // Small delay: if user is scrolling fast, this card will be cancelled
-            // before we start the network request
             await Task.Delay(50, ct);
             if (ct.IsCancellationRequested) return;
 
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
-            var imageType = !string.IsNullOrEmpty(item.PosterUrl) ? "poster" : "backdrop";
+            var imageType = !string.IsNullOrEmpty(item.BackdropUrl) ? "backdrop" : "poster";
             var bytes = await imageService.GetImageAsync(
                 item.ContentId, imageType, imageUrl, httpClient, ct);
 
@@ -120,8 +123,7 @@ public sealed partial class PosterCard : UserControl
 
             var bitmapImage = new BitmapImage
             {
-                // Decode at display size, not full resolution -- huge perf win
-                DecodePixelWidth = 200,
+                DecodePixelWidth = 280,
                 DecodePixelType = DecodePixelType.Logical
             };
             using var stream = new MemoryStream(bytes);
@@ -129,8 +131,8 @@ public sealed partial class PosterCard : UserControl
 
             if (ct.IsCancellationRequested) return;
 
-            PosterImage.Source = bitmapImage;
-            PosterImage.Opacity = 1;
+            BackdropImage.Source = bitmapImage;
+            BackdropImage.Opacity = 1;
         }
         catch (OperationCanceledException) { }
         catch { }
@@ -146,13 +148,13 @@ public sealed partial class PosterCard : UserControl
 
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
     {
-        PosterBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
+        CardBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["SurfaceHoverBrush"];
     }
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
     {
-        PosterBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
+        CardBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["CardBackgroundBrush"];
     }
 }
