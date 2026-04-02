@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
 using ContinuumPlayer.Core.Models.Playback;
@@ -186,11 +187,12 @@ public sealed partial class PlayerOverlay : UserControl
                 VideoFrame.Source = _frameBitmap;
             }
 
-            // Native pointer copy — bypasses managed IBuffer overhead entirely
-            var access = (IBufferByteAccess)_frameBitmap.PixelBuffer;
-            access.Buffer(out IntPtr dstPtr);
+            // Fast copy via Stream — avoids managed IBuffer CopyTo overhead
             int copyLen = Math.Min(stride * h, (int)_frameBitmap.PixelBuffer.Length);
-            System.Runtime.InteropServices.Marshal.Copy(_snapBuffer!, 0, dstPtr, copyLen);
+            using (var stream = _frameBitmap.PixelBuffer.AsStream())
+            {
+                stream.Write(_snapBuffer!, 0, copyLen);
+            }
 
             _frameBitmap.Invalidate();
         }
