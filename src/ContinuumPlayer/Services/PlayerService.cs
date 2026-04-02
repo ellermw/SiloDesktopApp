@@ -1,6 +1,7 @@
 // src/ContinuumPlayer/Services/PlayerService.cs
 using System.Runtime.InteropServices;
 using ContinuumPlayer.Core.Api;
+using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Models.Playback;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Player;
@@ -12,6 +13,7 @@ public enum PlayerState { Idle, Expanded, Fullscreen, Minimized }
 public class PlayerService : IDisposable
 {
     private readonly PlaybackApi _playbackApi;
+    private readonly CatalogApi _catalogApi;
     private readonly AuthService _authService;
     private readonly ContinuumApiClient _apiClient;
 
@@ -19,9 +21,10 @@ public class PlayerService : IDisposable
     private PlaybackManager? _playbackManager;
     private bool _switchingContent;
 
-    public PlayerService(PlaybackApi playbackApi, AuthService authService, ContinuumApiClient apiClient)
+    public PlayerService(PlaybackApi playbackApi, CatalogApi catalogApi, AuthService authService, ContinuumApiClient apiClient)
     {
         _playbackApi = playbackApi;
+        _catalogApi = catalogApi;
         _authService = authService;
         _apiClient = apiClient;
     }
@@ -174,7 +177,7 @@ public class PlayerService : IDisposable
         try
         {
             // Create PlaybackManager for this session
-            _playbackManager = new PlaybackManager(_playbackApi, _authService, _apiClient);
+            _playbackManager = new PlaybackManager(_playbackApi, _catalogApi, _authService, _apiClient);
 
             // Get watch detail
             var watchDetail = await _playbackManager.GetWatchDetailAsync(contentId);
@@ -210,8 +213,23 @@ public class PlayerService : IDisposable
             if (!fromStart && watchDetail.UserData?.PositionSeconds > 0 && watchDetail.UserData.Played != true)
                 startPosition = watchDetail.UserData.PositionSeconds!.Value;
 
+            // Apply audio preference for series episodes
+            int? preferredAudioTrack = null;
+            if (!string.IsNullOrEmpty(watchDetail.SeriesId))
+            {
+                try
+                {
+                    var audioPref = await _catalogApi.GetAudioPrefsAsync(watchDetail.SeriesId);
+                    preferredAudioTrack = audioPref.AudioTrackIndex;
+                }
+                catch
+                {
+                    // No saved preference or fetch failed -- use default
+                }
+            }
+
             // Start server session
-            var session = await _playbackManager.StartSessionAsync(bestVersion.FileId, startPosition, forceStartPosition: fromStart);
+            var session = await _playbackManager.StartSessionAsync(bestVersion.FileId, startPosition, forceStartPosition: fromStart, audioTrackIndex: preferredAudioTrack);
             PlayMethod = session.PlayMethod;
 
             if (!fromStart && session.Position > 0 && startPosition == 0)
@@ -431,6 +449,28 @@ public class PlayerService : IDisposable
         {
             var response = await _playbackApi.ChangeAudioTrackAsync(
                 _playbackManager.SessionId!, trackIndex, currentPos);
+
+            // Save audio preference for series episodes (fire-and-forget)
+            var seriesId = _playbackManager.WatchDetail?.SeriesId;
+            if (!string.IsNullOrEmpty(seriesId))
+            {
+                // Determine audio language from the version's audio tracks
+                var version = Versions.FirstOrDefault(v => v.FileId == _playbackManager.CurrentSession?.MediaFileId);
+                var audioLang = version?.AudioTracks?.ElementAtOrDefault(trackIndex)?.Language;
+
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _catalogApi.SetAudioPrefsAsync(seriesId, new AudioPreference
+                        {
+                            AudioTrackIndex = trackIndex,
+                            AudioLanguage = audioLang
+                        });
+                    }
+                    catch { /* Non-critical */ }
+                });
+            }
 
             var baseUrl = _apiClient.BaseUrl;
             var token = _apiClient.AccessToken;

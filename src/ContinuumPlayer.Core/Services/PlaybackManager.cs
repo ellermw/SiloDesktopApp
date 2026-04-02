@@ -6,6 +6,7 @@ namespace ContinuumPlayer.Core.Services;
 public class PlaybackManager : IDisposable
 {
     private readonly PlaybackApi _playbackApi;
+    private readonly CatalogApi _catalogApi;
     private readonly AuthService _authService;
     private readonly ContinuumApiClient _apiClient;
     private Timer? _progressTimer;
@@ -14,9 +15,10 @@ public class PlaybackManager : IDisposable
     private bool _isPaused;
     private readonly SemaphoreSlim _progressGuard = new(1, 1);
 
-    public PlaybackManager(PlaybackApi playbackApi, AuthService authService, ContinuumApiClient apiClient)
+    public PlaybackManager(PlaybackApi playbackApi, CatalogApi catalogApi, AuthService authService, ContinuumApiClient apiClient)
     {
         _playbackApi = playbackApi;
+        _catalogApi = catalogApi;
         _authService = authService;
         _apiClient = apiClient;
     }
@@ -50,7 +52,7 @@ public class PlaybackManager : IDisposable
         return sorted.First();
     }
 
-    public async Task<PlaybackStartResponse> StartSessionAsync(int fileId, double startPosition = 0, bool forceStartPosition = false, CancellationToken ct = default)
+    public async Task<PlaybackStartResponse> StartSessionAsync(int fileId, double startPosition = 0, bool forceStartPosition = false, int? audioTrackIndex = null, CancellationToken ct = default)
     {
         var request = new PlaybackStartRequest
         {
@@ -59,6 +61,7 @@ public class PlaybackManager : IDisposable
             // Send explicit 0 when forceStartPosition is true (play from start).
             // null means "let server restore saved progress".
             StartPosition = forceStartPosition ? startPosition : (startPosition > 0 ? startPosition : null),
+            AudioTrackIndex = audioTrackIndex,
         };
 
         var response = await _playbackApi.StartPlaybackAsync(request, ct);
@@ -99,6 +102,25 @@ public class PlaybackManager : IDisposable
             _sessionId = null;
             CurrentSession = null;
             StreamUrl = null;
+
+            // Sync progress across devices after stopping
+            _ = SyncProgressAsync();
+        }
+    }
+
+    /// <summary>
+    /// Triggers a cross-device progress sync with the server.
+    /// Called after stopping playback to ensure other devices see updated state.
+    /// </summary>
+    public async Task SyncProgressAsync()
+    {
+        try
+        {
+            await _catalogApi.SyncProgressAsync(new { });
+        }
+        catch
+        {
+            // Sync failure is non-fatal -- progress was already saved by the stop call
         }
     }
 

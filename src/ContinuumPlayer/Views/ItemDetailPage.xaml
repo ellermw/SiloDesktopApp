@@ -288,6 +288,21 @@
                                 <TextBlock x:Name="WatchlistText" Text="Watchlist" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
+
+                        <!-- Download button -->
+                        <Button
+                            x:Name="DownloadButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Click="DownloadButton_Click"
+                            Padding="16,10"
+                            CornerRadius="22"
+                            Visibility="Collapsed">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE896;" FontSize="16"
+                                          Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Download" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
 
                     <!-- Overview -->
@@ -318,6 +333,15 @@
                         Visibility="Collapsed">
                         <StackPanel x:Name="CastPanel" Orientation="Horizontal" Spacing="16" />
                     </ScrollViewer>
+
+                    <!-- Subtitles section (downloaded subs for the current file) -->
+                    <StackPanel x:Name="SubtitlesSection" Visibility="Collapsed" Spacing="8" Margin="0,12,0,0">
+                        <TextBlock
+                            Text="Subtitles"
+                            Style="{StaticResource TitleTextStyle}"
+                            FontSize="18" />
+                        <StackPanel x:Name="SubtitlesList" Spacing="6" />
+                    </StackPanel>
 
                     <!-- Seasons (for series only) -->
                     <StackPanel x:Name="SeasonsSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">

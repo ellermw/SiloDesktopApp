@@ -338,6 +338,183 @@ public sealed partial class ItemDetailPage : Page
         UpdateWatchlistButton();
     }
 
+    // ===== Download =====
+
+    private async void DownloadButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedVersion == null) return;
+
+        try
+        {
+            var downloadsApi = App.Services.GetRequiredService<DownloadsApi>();
+            await downloadsApi.CreateDownloadAsync(new Core.Models.Downloads.DownloadRequest
+            {
+                MediaFileId = _selectedVersion.FileId
+            });
+
+            // Visual feedback: change button text briefly
+            DownloadButton.IsEnabled = false;
+            if (DownloadButton.Content is StackPanel sp && sp.Children.Count > 1
+                && sp.Children[1] is TextBlock tb)
+            {
+                tb.Text = "Requested!";
+                await Task.Delay(2000);
+                tb.Text = "Download";
+            }
+            DownloadButton.IsEnabled = true;
+        }
+        catch
+        {
+            // Download request failure is non-fatal
+        }
+    }
+
+    // ===== Subtitles Section =====
+
+    private async Task LoadSubtitlesSectionAsync(int mediaFileId)
+    {
+        try
+        {
+            var playbackApi = App.Services.GetRequiredService<PlaybackApi>();
+            var response = await playbackApi.GetSubtitlesAsync(mediaFileId);
+
+            if (response.Subtitles.Count == 0)
+            {
+                SubtitlesSection.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            SubtitlesSection.Visibility = Visibility.Visible;
+            SubtitlesList.Children.Clear();
+
+            foreach (var sub in response.Subtitles)
+            {
+                var row = new Grid { Margin = new Thickness(0, 0, 0, 0) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
+
+                // Subtitle info
+                var infoPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+
+                // Language
+                var langName = Services.PlayerService.LanguageCodeToName(sub.Language);
+                infoPanel.Children.Add(new TextBlock
+                {
+                    Text = langName,
+                    FontSize = 13,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+
+                // Codec badge
+                if (!string.IsNullOrEmpty(sub.Codec))
+                {
+                    infoPanel.Children.Add(new Border
+                    {
+                        Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"],
+                        CornerRadius = new CornerRadius(4),
+                        Padding = new Thickness(6, 2, 6, 2),
+                        Child = new TextBlock
+                        {
+                            Text = sub.Codec.ToUpperInvariant(),
+                            FontSize = 11,
+                            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
+                        }
+                    });
+                }
+
+                // Source badge
+                if (!string.IsNullOrEmpty(sub.Source))
+                {
+                    infoPanel.Children.Add(new TextBlock
+                    {
+                        Text = sub.Source,
+                        FontSize = 12,
+                        Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
+                        VerticalAlignment = VerticalAlignment.Center
+                    });
+                }
+
+                // Title
+                if (!string.IsNullOrEmpty(sub.Title))
+                {
+                    infoPanel.Children.Add(new TextBlock
+                    {
+                        Text = sub.Title,
+                        FontSize = 12,
+                        Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
+                        VerticalAlignment = VerticalAlignment.Center,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        MaxWidth = 300
+                    });
+                }
+
+                if (sub.Forced)
+                {
+                    infoPanel.Children.Add(new TextBlock
+                    {
+                        Text = "[Forced]",
+                        FontSize = 12,
+                        Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"],
+                        VerticalAlignment = VerticalAlignment.Center
+                    });
+                }
+
+                Grid.SetColumn(infoPanel, 0);
+                row.Children.Add(infoPanel);
+
+                // Delete button
+                var deleteBtn = new Button
+                {
+                    Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+                    Padding = new Thickness(6, 4, 6, 4),
+                    CornerRadius = new CornerRadius(4),
+                    Tag = sub.Id,
+                    Content = new FontIcon
+                    {
+                        Glyph = "\uE74D",
+                        FontSize = 12,
+                        Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ErrorBrush"]
+                    },
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                deleteBtn.Click += SubtitleDeleteButton_Click;
+                Grid.SetColumn(deleteBtn, 1);
+                row.Children.Add(deleteBtn);
+
+                SubtitlesList.Children.Add(row);
+            }
+        }
+        catch
+        {
+            SubtitlesSection.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private async void SubtitleDeleteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not int subtitleId) return;
+
+        try
+        {
+            var playbackApi = App.Services.GetRequiredService<PlaybackApi>();
+            await playbackApi.DeleteSubtitleAsync(subtitleId);
+
+            // Remove the row from UI
+            var parent = btn.Parent as Grid;
+            if (parent != null)
+                SubtitlesList.Children.Remove(parent);
+
+            if (SubtitlesList.Children.Count == 0)
+                SubtitlesSection.Visibility = Visibility.Collapsed;
+        }
+        catch
+        {
+            // Non-fatal
+        }
+    }
+
     // ===== Navigation =====
 
     private void BackButton_Click(object sender, RoutedEventArgs e)
@@ -395,6 +572,14 @@ public sealed partial class ItemDetailPage : Page
             _watchDetail = await playbackApi.GetWatchDetailAsync(contentId);
             UpdatePlayButton();
             UpdateQualityBadges();
+
+            // Show download button if we have a selected version
+            if (_selectedVersion != null)
+                DownloadButton.Visibility = Visibility.Visible;
+
+            // Load subtitles for the best version
+            if (_selectedVersion != null)
+                _ = LoadSubtitlesSectionAsync(_selectedVersion.FileId);
         }
         catch
         {

@@ -109,6 +109,11 @@
                         <FontIcon Glyph="&#xE81C;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem Content="Downloads" Tag="Downloads">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE896;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
             </NavigationView.MenuItems>
 
             <NavigationView.PaneFooter>

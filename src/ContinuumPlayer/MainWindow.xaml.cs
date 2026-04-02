@@ -319,6 +319,9 @@ public sealed partial class MainWindow : Window
                 case "Collections":
                     _navigationService.Navigate<CollectionsPage>();
                     break;
+                case "Downloads":
+                    _navigationService.Navigate<DownloadsPage>();
+                    break;
             }
         }
         else if (args.InvokedItemContainer is NavigationViewItem libItem && libItem.Tag is Library library)
