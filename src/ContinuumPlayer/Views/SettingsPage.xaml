@@ -11,6 +11,7 @@
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
 
         <!-- Active tab style (pill on surface) -->
@@ -57,7 +58,6 @@
         <StackPanel MaxWidth="768" Margin="48,24,48,48">
 
             <!-- ===== Header ===== -->
-            <!-- Web: page-title text-[clamp(2rem,4vw,3rem)] + page-subtitle -->
             <TextBlock
                 Text="Settings"
                 FontSize="32"
@@ -90,8 +90,7 @@
                     FontSize="13" />
             </StackPanel>
 
-            <!-- ===== Tab Bar (pill style in surface panel) ===== -->
-            <!-- Web: surface-panel-subtle mt-6 rounded-[1.4rem] p-1, tabs rounded-[1rem] px-3 py-2.5 -->
+            <!-- ===== Tab Bar ===== -->
             <Border
                 Background="{StaticResource SurfaceBrush}"
                 CornerRadius="22"
@@ -137,6 +136,20 @@
                                 <TextBlock Text="Home Screen" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
+                        <Button x:Name="ImportTab" Click="Tab_Click" Tag="Import"
+                                Style="{StaticResource InactiveTabStyle}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE8B5;" FontSize="16" />
+                                <TextBlock Text="Import" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="PluginsTab" Click="Tab_Click" Tag="Plugins"
+                                Style="{StaticResource InactiveTabStyle}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xEA86;" FontSize="16" />
+                                <TextBlock Text="Plugins" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
                         <Button x:Name="SessionsTab" Click="Tab_Click" Tag="Sessions"
                                 Style="{StaticResource InactiveTabStyle}">
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -148,9 +161,9 @@
                 </ScrollViewer>
             </Border>
 
-            <!-- ===== Tab Content (web: pt-8 = 32px top spacing) ===== -->
-
+            <!-- ===================================================================== -->
             <!-- ===== Appearance Panel ===== -->
+            <!-- ===================================================================== -->
             <StackPanel x:Name="AppearancePanel" Spacing="24" Margin="0,32,0,0">
 
                 <TextBlock Text="Appearance" FontSize="24" FontWeight="SemiBold"
@@ -206,7 +219,9 @@
                 </Border>
             </StackPanel>
 
+            <!-- ===================================================================== -->
             <!-- ===== Playback Panel ===== -->
+            <!-- ===================================================================== -->
             <StackPanel x:Name="PlaybackPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
 
                 <StackPanel Spacing="12">
@@ -462,7 +477,9 @@
                 </Border>
             </StackPanel>
 
+            <!-- ===================================================================== -->
             <!-- ===== Libraries Panel ===== -->
+            <!-- ===================================================================== -->
             <StackPanel x:Name="LibrariesPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
 
                 <StackPanel Spacing="12">
@@ -477,7 +494,9 @@
                 <StackPanel x:Name="LibraryCardsContainer" Spacing="12" />
             </StackPanel>
 
+            <!-- ===================================================================== -->
             <!-- ===== Subtitles Panel ===== -->
+            <!-- ===================================================================== -->
             <StackPanel x:Name="SubtitlesPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
 
                 <StackPanel Spacing="12">
@@ -505,16 +524,16 @@
                                 </LinearGradientBrush>
                             </Border.Background>
                             <Grid Height="200">
-                                <StackPanel VerticalAlignment="Bottom" HorizontalAlignment="Center"
+                                <StackPanel x:Name="SubtitlePreviewStack" VerticalAlignment="Bottom" HorizontalAlignment="Center"
                                             Margin="0,0,0,24" Spacing="4">
-                                    <Border Background="#CC000000" CornerRadius="4" Padding="12,4"
+                                    <Border x:Name="SubtitlePreviewBg1" Background="#CC000000" CornerRadius="4" Padding="12,4"
                                             HorizontalAlignment="Center">
                                         <TextBlock x:Name="SubtitlePreviewLine1"
                                                    Text="Sample subtitle text"
                                                    FontSize="16" Foreground="White"
                                                    HorizontalAlignment="Center" />
                                     </Border>
-                                    <Border Background="#CC000000" CornerRadius="4" Padding="12,4"
+                                    <Border x:Name="SubtitlePreviewBg2" Background="#CC000000" CornerRadius="4" Padding="12,4"
                                             HorizontalAlignment="Center">
                                         <TextBlock x:Name="SubtitlePreviewLine2"
                                                    Text="with multiple lines"
@@ -573,6 +592,19 @@
 
                         <Border Style="{StaticResource SettingsSeparator}" />
 
+                        <!-- Font color -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Font color" FontSize="14" FontWeight="Medium"
+                                       Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
+                            <StackPanel x:Name="SubtitleColorSwatches" Grid.Column="1" Orientation="Horizontal" Spacing="8" />
+                        </Grid>
+
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
                         <!-- Text outline -->
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -586,7 +618,8 @@
                                 Grid.Column="1"
                                 IsOn="True"
                                 VerticalAlignment="Center"
-                                OnContent="" OffContent="" />
+                                OnContent="" OffContent=""
+                                Toggled="SubtitleOutline_Toggled" />
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -639,7 +672,8 @@
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                                 <Slider x:Name="SubtitleBgOpacitySlider" Width="160"
-                                        Minimum="0" Maximum="100" StepFrequency="5" Value="80" />
+                                        Minimum="0" Maximum="100" StepFrequency="5" Value="80"
+                                        ValueChanged="SubtitleBgOpacity_Changed" />
                                 <TextBlock x:Name="SubtitleBgOpacityLabel" Text="80%"
                                            FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
                                            Width="40" TextAlignment="Right" VerticalAlignment="Center" />
@@ -670,7 +704,8 @@
                                            TextWrapping="Wrap" />
                             </StackPanel>
                             <ComboBox x:Name="SubtitlePositionComboBox" Grid.Column="1" Width="192"
-                                      VerticalAlignment="Center">
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="SubtitlePosition_Changed">
                                 <ComboBoxItem Content="Bottom" Tag="bottom" IsSelected="True" />
                                 <ComboBoxItem Content="Top" Tag="top" />
                             </ComboBox>
@@ -687,28 +722,9 @@
                 </StackPanel>
             </StackPanel>
 
-            <!-- ===== Sessions Panel ===== -->
-            <StackPanel x:Name="SessionsPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
-
-                <StackPanel Spacing="12">
-                    <TextBlock Text="Active Sessions" FontSize="24" FontWeight="SemiBold"
-                               Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="View and manage your active login sessions across devices."
-                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
-                               TextWrapping="Wrap" />
-                </StackPanel>
-
-                <ProgressRing
-                    IsActive="{x:Bind ViewModel.IsLoadingSessions, Mode=OneWay}"
-                    Visibility="{x:Bind ViewModel.IsLoadingSessions, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                    HorizontalAlignment="Left"
-                    Width="24" Height="24" />
-
-                <!-- Session cards container (built in code-behind) -->
-                <StackPanel x:Name="SessionCardsContainer" Spacing="12" />
-            </StackPanel>
-
+            <!-- ===================================================================== -->
             <!-- ===== Home Screen Panel ===== -->
+            <!-- ===================================================================== -->
             <StackPanel x:Name="HomeScreenPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
 
                 <StackPanel Spacing="12">
@@ -753,23 +769,211 @@
                     <StackPanel Spacing="8">
                         <TextBlock Text="Sections" FontSize="16" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Add, reorder, or hide sections. Drag to change order."
+                        <TextBlock Text="Reorder, show, or hide sections. Use the arrows to change order."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                    TextWrapping="Wrap" />
-                        <TextBlock
-                            Text="{x:Bind ViewModel.SectionOverrides, Mode=OneWay}"
-                            FontSize="13"
-                            Foreground="{StaticResource SecondaryTextBrush}"
-                            TextWrapping="Wrap"
-                            Margin="0,8,0,0" />
-                        <TextBlock
-                            Text="Section ordering is managed by the server. Changes made in the web UI are reflected here."
-                            FontSize="12"
-                            Foreground="{StaticResource TertiaryTextBrush}"
-                            TextWrapping="Wrap"
-                            Margin="0,4,0,0" />
+
+                        <ProgressRing
+                            IsActive="{x:Bind ViewModel.IsLoadingHomeSections, Mode=OneWay}"
+                            Visibility="{x:Bind ViewModel.IsLoadingHomeSections, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                            HorizontalAlignment="Left"
+                            Width="24" Height="24" />
+
+                        <!-- Section items (built in code-behind) -->
+                        <StackPanel x:Name="HomeSectionItemsContainer" Spacing="8" />
                     </StackPanel>
                 </Border>
+
+                <!-- Actions -->
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Save" Style="{StaticResource AccentButtonStyle}"
+                            Padding="16,8" Click="HomeSectionsSave_Click" />
+                    <Button Content="Reset to Defaults" Style="{StaticResource SecondaryButtonStyle}"
+                            Padding="16,8" Click="HomeSectionsReset_Click" />
+                </StackPanel>
+            </StackPanel>
+
+            <!-- ===================================================================== -->
+            <!-- ===== Import Panel ===== -->
+            <!-- ===================================================================== -->
+            <StackPanel x:Name="ImportPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+
+                <StackPanel Spacing="12">
+                    <TextBlock Text="History Import" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Import your watch history from another media server to carry your progress over."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <!-- Source type selector -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Source" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Select the media server to import from."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" />
+
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="ImportEmbyBtn" Content="Emby"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Padding="16,8" Click="ImportSource_Click" Tag="emby" />
+                            <Button x:Name="ImportJellyfinBtn" Content="Jellyfin"
+                                    Style="{StaticResource SecondaryButtonStyle}"
+                                    Padding="16,8" Click="ImportSource_Click" Tag="jellyfin" />
+                            <Button x:Name="ImportPlexBtn" Content="Plex"
+                                    Style="{StaticResource SecondaryButtonStyle}"
+                                    Padding="16,8" Click="ImportSource_Click" Tag="plex" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Connection form (Emby) -->
+                <Border x:Name="EmbyConnectionPanel" Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Emby Connect" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Sign in with your Emby Connect credentials to discover servers."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" />
+
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Email" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBox x:Name="EmbyEmailBox" PlaceholderText="user@example.com" Width="360"
+                                     HorizontalAlignment="Left" />
+                        </StackPanel>
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Password" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <PasswordBox x:Name="EmbyPasswordBox" PlaceholderText="Password" Width="360"
+                                         HorizontalAlignment="Left" />
+                        </StackPanel>
+                        <Button Content="Connect" Style="{StaticResource AccentButtonStyle}"
+                                Padding="16,8" Click="EmbyConnect_Click" />
+
+                        <!-- Server list (shown after connect) -->
+                        <StackPanel x:Name="EmbyServerList" Spacing="8" Visibility="Collapsed">
+                            <TextBlock Text="Select a server:" FontSize="13" FontWeight="Medium"
+                                       Foreground="{StaticResource PrimaryTextBrush}" />
+                            <ComboBox x:Name="EmbyServerComboBox" Width="360" HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Connection form (Jellyfin) -->
+                <Border x:Name="JellyfinConnectionPanel" Style="{StaticResource SettingsGroupStyle}" Visibility="Collapsed">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Jellyfin Server" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Enter your Jellyfin server details."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" />
+
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Server URL" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBox x:Name="JellyfinUrlBox" PlaceholderText="https://jellyfin.example.com" Width="360"
+                                     HorizontalAlignment="Left" />
+                        </StackPanel>
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Username" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBox x:Name="JellyfinUsernameBox" PlaceholderText="Username" Width="360"
+                                     HorizontalAlignment="Left" />
+                        </StackPanel>
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Password" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <PasswordBox x:Name="JellyfinPasswordBox" PlaceholderText="Password" Width="360"
+                                         HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Connection form (Plex) -->
+                <Border x:Name="PlexConnectionPanel" Style="{StaticResource SettingsGroupStyle}" Visibility="Collapsed">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Plex" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Sign in with your Plex account to discover servers."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" />
+
+                        <Button Content="Sign in with Plex" Style="{StaticResource AccentButtonStyle}"
+                                Padding="16,8" Click="PlexSignIn_Click" />
+                        <TextBlock x:Name="PlexAuthStatusText" FontSize="13"
+                                   Foreground="{StaticResource SecondaryTextBrush}"
+                                   Text="{x:Bind ViewModel.PlexAuthStatus, Mode=OneWay}" />
+
+                        <!-- Server list (shown after connect) -->
+                        <StackPanel x:Name="PlexServerList" Spacing="8" Visibility="Collapsed">
+                            <TextBlock Text="Select a server:" FontSize="13" FontWeight="Medium"
+                                       Foreground="{StaticResource PrimaryTextBrush}" />
+                            <ComboBox x:Name="PlexServerComboBox" Width="360" HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Start import button -->
+                <Button x:Name="StartImportBtn" Content="Start Import" Style="{StaticResource AccentButtonStyle}"
+                        Padding="16,8" Click="StartImport_Click" />
+
+                <!-- Import runs history -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Import History" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <ProgressRing
+                            IsActive="{x:Bind ViewModel.IsLoadingImportRuns, Mode=OneWay}"
+                            Visibility="{x:Bind ViewModel.IsLoadingImportRuns, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                            HorizontalAlignment="Left"
+                            Width="24" Height="24" />
+                        <StackPanel x:Name="ImportRunsContainer" Spacing="8" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- ===================================================================== -->
+            <!-- ===== Plugins Panel ===== -->
+            <!-- ===================================================================== -->
+            <StackPanel x:Name="PluginsPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Plugin Settings" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Configure user-level settings for installed plugins."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <ProgressRing
+                    IsActive="{x:Bind ViewModel.IsLoadingPlugins, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.IsLoadingPlugins, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                    HorizontalAlignment="Left"
+                    Width="24" Height="24" />
+
+                <!-- Plugin cards (built in code-behind) -->
+                <StackPanel x:Name="PluginCardsContainer" Spacing="12" />
+            </StackPanel>
+
+            <!-- ===================================================================== -->
+            <!-- ===== Sessions Panel ===== -->
+            <!-- ===================================================================== -->
+            <StackPanel x:Name="SessionsPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Active Sessions" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="View and manage your active login sessions across devices."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <ProgressRing
+                    IsActive="{x:Bind ViewModel.IsLoadingSessions, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.IsLoadingSessions, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                    HorizontalAlignment="Left"
+                    Width="24" Height="24" />
+
+                <!-- Session cards container (built in code-behind) -->
+                <StackPanel x:Name="SessionCardsContainer" Spacing="12" />
             </StackPanel>
 
         </StackPanel>

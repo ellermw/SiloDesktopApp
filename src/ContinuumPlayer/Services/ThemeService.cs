@@ -4,6 +4,16 @@ using ContinuumPlayer.Core.Services;
 
 namespace ContinuumPlayer.Services;
 
+/// <summary>Metadata for a single theme used in the settings picker.</summary>
+public record ThemeInfo(
+    string Id,
+    string Label,
+    string Description,
+    string PreviewAccent,
+    string PreviewBackground,
+    bool IsCurated,
+    string FontFamily);
+
 public class ThemeColors
 {
     // ===== Existing properties =====
@@ -631,6 +641,24 @@ public class ThemeService
         ["verdant-ink"] = "Verdant Ink",
     };
 
+    /// <summary>Metadata for each theme used in the picker UI.</summary>
+    private static readonly Dictionary<string, ThemeInfo> ThemeInfos = new()
+    {
+        ["midnight-cinema"] = new("midnight-cinema", "Cinema Dark", "Monochromatic cinema -- content is the color", "#E8E8EC", "#141417", true, "Outfit"),
+        ["cinema-light"] = new("cinema-light", "Cinema Light", "Light monochromatic cinema -- content is the color", "#1A1A1E", "#F4F4F6", true, "Outfit"),
+        ["cobalt-studio"] = new("cobalt-studio", "Cobalt", "Cool blue graphite with crisp contrast", "#78AEFC", "#101722", true, "Outfit"),
+        ["oxblood-noir"] = new("oxblood-noir", "Oxblood", "Deep red-black with restrained luxury warmth", "#D16A78", "#171113", true, "Outfit"),
+        ["evergreen-studio"] = new("evergreen-studio", "Evergreen", "Refined evergreen accents on dense graphite", "#5BC39D", "#101715", true, "Outfit"),
+        ["ember-slate"] = new("ember-slate", "Ember", "Smoked charcoal with ember-red accents", "#F07B62", "#151213", false, "Urbanist"),
+        ["verdant-ink"] = new("verdant-ink", "Verdant Ink", "Cool green-black with softer luminous contrast", "#86D4B6", "#0D1513", false, "Urbanist"),
+        ["catppuccin"] = new("catppuccin", "Catppuccin", "Pastel purple on warm dark blue", "#CBA6F7", "#1E1E2E", false, "Outfit"),
+        ["gruvbox"] = new("gruvbox", "Gruvbox", "Warm retro with golden accent", "#FABD2F", "#282828", false, "Manrope"),
+        ["void-space"] = new("void-space", "Void Space", "Cool blue on deep space black", "#58A6FF", "#0D1117", false, "Manrope"),
+        ["charcoal-studio"] = new("charcoal-studio", "Charcoal", "Apple-inspired blue on dark gray", "#0A84FF", "#1C1C1E", false, "Outfit"),
+        ["graphite-pro"] = new("graphite-pro", "Graphite", "Vibrant purple on zinc", "#A855F7", "#18181B", false, "Sora"),
+        ["obsidian-depth"] = new("obsidian-depth", "Obsidian", "Cyan accent on true dark", "#00D4AA", "#0F0F0F", false, "Urbanist"),
+    };
+
     public ThemeService(SettingsService settingsService)
     {
         _settingsService = settingsService;
@@ -642,6 +670,19 @@ public class ThemeService
 
     public static string GetDisplayName(string themeId)
         => ThemeDisplayNames.TryGetValue(themeId, out var name) ? name : themeId;
+
+    /// <summary>Returns theme metadata for the picker UI. Curated themes are returned first.</summary>
+    public static IReadOnlyList<ThemeInfo> GetAllThemeInfos()
+    {
+        var curated = ThemeInfos.Values.Where(t => t.IsCurated).ToList();
+        var others = ThemeInfos.Values.Where(t => !t.IsCurated).ToList();
+        curated.AddRange(others);
+        return curated;
+    }
+
+    /// <summary>Returns theme metadata for a single theme.</summary>
+    public static ThemeInfo? GetThemeInfo(string themeId)
+        => ThemeInfos.TryGetValue(themeId, out var info) ? info : null;
 
     /// <summary>
     /// Apply the saved theme from local settings on startup (before network).

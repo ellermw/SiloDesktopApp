@@ -4,6 +4,9 @@ using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
+using ContinuumPlayer.Core.Models.HistoryImport;
+using ContinuumPlayer.Core.Models.Home;
+using ContinuumPlayer.Core.Models.Plugins;
 using ContinuumPlayer.Services;
 using ContinuumPlayer.ViewModels;
 
@@ -67,12 +70,27 @@ public sealed partial class SettingsPage : Page
         ("off", "Off"),
     ];
 
+    // Subtitle font color options
+    private static readonly (string Hex, string Label)[] SubtitleColorOptions =
+    [
+        ("#FFFFFF", "White"),
+        ("#FFFF00", "Yellow"),
+        ("#00FF00", "Green"),
+        ("#00FFFF", "Cyan"),
+        ("#5599FF", "Blue"),
+    ];
+
     public SettingsPage()
     {
         ViewModel = App.Services.GetRequiredService<SettingsViewModel>();
         this.InitializeComponent();
 
         ViewModel.LibraryCards.CollectionChanged += LibraryCards_CollectionChanged;
+        ViewModel.HomeSections.CollectionChanged += HomeSections_CollectionChanged;
+        ViewModel.ImportRuns.CollectionChanged += ImportRuns_CollectionChanged;
+        ViewModel.PluginSettingsList.CollectionChanged += PluginSettings_CollectionChanged;
+
+        BuildSubtitleColorSwatches();
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -81,6 +99,7 @@ public sealed partial class SettingsPage : Page
 
         await ViewModel.LoadCommand.ExecuteAsync(null);
         SyncComboBoxes();
+        SyncSubtitleAppearanceControls();
         BuildThemeCards();
         UpdateCurrentThemeDisplay();
     }
@@ -94,11 +113,24 @@ public sealed partial class SettingsPage : Page
         SelectComboBoxByTag(SubtitleModeComboBox, ViewModel.SubtitleMode);
         SelectComboBoxByTag(NextUpModeComboBox, ViewModel.NextUpMode);
 
-        // Spoken language is stored on profile.Language
-        // We'll try to set it from the loaded profile data
-        // For now, select "en" as default if no specific language is set
+        // Spoken language
         SelectComboBoxByTag(SpokenLanguageComboBox, "en");
 
+        _suppressEvents = false;
+    }
+
+    private void SyncSubtitleAppearanceControls()
+    {
+        _suppressEvents = true;
+        SelectComboBoxByTag(SubtitleFontSizeComboBox, ViewModel.SubFontSize);
+        SelectComboBoxByTag(SubtitleFontFamilyComboBox, ViewModel.SubFontFamily);
+        SelectComboBoxByTag(SubtitleBgStyleComboBox, ViewModel.SubBackgroundStyle);
+        SelectComboBoxByTag(SubtitlePositionComboBox, ViewModel.SubPosition);
+        SubtitleOutlineToggle.IsOn = ViewModel.SubOutlineEnabled;
+        SubtitleBgOpacitySlider.Value = ViewModel.SubBackgroundOpacity * 100;
+        SubtitleBgOpacityLabel.Text = $"{(int)(ViewModel.SubBackgroundOpacity * 100)}%";
+        UpdateSubtitleColorSelection();
+        UpdateSubtitlePreview();
         _suppressEvents = false;
     }
 
@@ -123,7 +155,7 @@ public sealed partial class SettingsPage : Page
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
-        var tabs = new[] { AppearanceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, SessionsTab };
+        var tabs = new[] { AppearanceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, ImportTab, PluginsTab, SessionsTab };
         foreach (var tab in tabs)
         {
             tab.Style = (Style)Resources["InactiveTabStyle"];
@@ -136,11 +168,25 @@ public sealed partial class SettingsPage : Page
         LibrariesPanel.Visibility = tag == "Libraries" ? Visibility.Visible : Visibility.Collapsed;
         SubtitlesPanel.Visibility = tag == "Subtitles" ? Visibility.Visible : Visibility.Collapsed;
         HomeScreenPanel.Visibility = tag == "HomeScreen" ? Visibility.Visible : Visibility.Collapsed;
+        ImportPanel.Visibility = tag == "Import" ? Visibility.Visible : Visibility.Collapsed;
+        PluginsPanel.Visibility = tag == "Plugins" ? Visibility.Visible : Visibility.Collapsed;
         SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
 
         if (tag == "Sessions")
         {
             _ = LoadSessionsAsync();
+        }
+        else if (tag == "HomeScreen")
+        {
+            _ = ViewModel.LoadHomeSectionsCommand.ExecuteAsync(null);
+        }
+        else if (tag == "Import")
+        {
+            _ = ViewModel.LoadImportRunsCommand.ExecuteAsync(null);
+        }
+        else if (tag == "Plugins")
+        {
+            _ = ViewModel.LoadPluginSettingsCommand.ExecuteAsync(null);
         }
     }
 
@@ -151,84 +197,42 @@ public sealed partial class SettingsPage : Page
 
         var themeService = App.Services.GetRequiredService<ThemeService>();
         var currentTheme = themeService.CurrentTheme;
+        var allThemes = ThemeService.GetAllThemeInfos();
 
-        // Theme descriptions matching the web UI
-        var themeDescriptions = new Dictionary<string, string>
+        bool addedCuratedHeader = false;
+        bool addedOthersHeader = false;
+
+        foreach (var themeInfo in allThemes)
         {
-            ["midnight-cinema"] = "Monochromatic cinema -- content is the color",
-            ["cinema-light"] = "Light monochromatic cinema -- content is the color",
-            ["cobalt-studio"] = "Cool blue graphite with crisp contrast",
-            ["oxblood-noir"] = "Deep red-black with restrained luxury warmth",
-            ["ember-slate"] = "Smoked charcoal with ember-red accents",
-            ["evergreen-studio"] = "Refined evergreen accents on dense graphite",
-            ["verdant-ink"] = "Cool green-black with softer luminous contrast",
-            ["catppuccin"] = "Pastel purple on warm dark blue",
-            ["gruvbox"] = "Warm retro with golden accent",
-            ["void-space"] = "Cool blue on deep space black",
-            ["charcoal-studio"] = "Apple-inspired blue on dark gray",
-            ["graphite-pro"] = "Vibrant purple on zinc",
-            ["obsidian-depth"] = "Cyan accent on true dark",
-        };
+            // Add group headers
+            if (themeInfo.IsCurated && !addedCuratedHeader)
+            {
+                ThemeCardsContainer.Items.Add(BuildSectionHeader("Featured"));
+                addedCuratedHeader = true;
+            }
+            else if (!themeInfo.IsCurated && !addedOthersHeader)
+            {
+                ThemeCardsContainer.Items.Add(BuildSectionHeader("All Themes"));
+                addedOthersHeader = true;
+            }
 
-        // Theme accent colors for the swatch
-        var themeAccents = new Dictionary<string, string>
-        {
-            ["midnight-cinema"] = "#E8E8EC",
-            ["cinema-light"] = "#1A1A1E",
-            ["cobalt-studio"] = "#78AEFC",
-            ["oxblood-noir"] = "#D16A78",
-            ["ember-slate"] = "#F07B62",
-            ["evergreen-studio"] = "#5BC39D",
-            ["verdant-ink"] = "#86D4B6",
-            ["catppuccin"] = "#CBA6F7",
-            ["gruvbox"] = "#FABD2F",
-            ["void-space"] = "#58A6FF",
-            ["charcoal-studio"] = "#0A84FF",
-            ["graphite-pro"] = "#A855F7",
-            ["obsidian-depth"] = "#00D4AA",
-        };
-
-        // Theme background colors for mini preview
-        var themeBgs = new Dictionary<string, string>
-        {
-            ["midnight-cinema"] = "#141417",
-            ["cinema-light"] = "#F4F4F6",
-            ["cobalt-studio"] = "#101722",
-            ["oxblood-noir"] = "#171113",
-            ["ember-slate"] = "#151213",
-            ["evergreen-studio"] = "#101715",
-            ["verdant-ink"] = "#0D1513",
-            ["catppuccin"] = "#1E1E2E",
-            ["gruvbox"] = "#282828",
-            ["void-space"] = "#0D1117",
-            ["charcoal-studio"] = "#1C1C1E",
-            ["graphite-pro"] = "#18181B",
-            ["obsidian-depth"] = "#0F0F0F",
-        };
-
-        // Build a two-column grid of theme cards
-        var wrapGrid = new VariableSizedWrapGrid
-        {
-            Orientation = Orientation.Horizontal,
-            ItemWidth = 330,
-            ItemHeight = 190,
-            MaximumRowsOrColumns = 2,
-        };
-
-        foreach (var themeId in themeService.AvailableThemeIds)
-        {
-            var isActive = themeId == currentTheme;
-            var displayName = ThemeService.GetDisplayName(themeId);
-            var description = themeDescriptions.GetValueOrDefault(themeId, "");
-            var accentHex = themeAccents.GetValueOrDefault(themeId, "#78AEFC");
-            var bgHex = themeBgs.GetValueOrDefault(themeId, "#101722");
-
-            var card = BuildThemeCard(themeId, displayName, description, accentHex, bgHex, isActive);
+            var isActive = themeInfo.Id == currentTheme;
+            var card = BuildThemeCard(themeInfo.Id, themeInfo.Label, themeInfo.Description,
+                themeInfo.PreviewAccent, themeInfo.PreviewBackground, isActive);
             ThemeCardsContainer.Items.Add(card);
         }
+    }
 
-        // Use a WrapGrid panel template
-        ThemeCardsContainer.ItemsPanel = null; // reset first
+    private static TextBlock BuildSectionHeader(string text)
+    {
+        return new TextBlock
+        {
+            Text = text,
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            Margin = new Thickness(0, 12, 0, 4),
+        };
     }
 
     private Border BuildThemeCard(string themeId, string displayName, string description,
@@ -373,25 +377,9 @@ public sealed partial class SettingsPage : Page
     private void UpdateCurrentThemeDisplay()
     {
         var themeService = App.Services.GetRequiredService<ThemeService>();
-        CurrentThemeName.Text = ThemeService.GetDisplayName(themeService.CurrentTheme);
-
-        var descriptions = new Dictionary<string, string>
-        {
-            ["midnight-cinema"] = "Monochromatic cinema -- content is the color",
-            ["cinema-light"] = "Light monochromatic cinema -- content is the color",
-            ["cobalt-studio"] = "Cool blue graphite with crisp contrast",
-            ["oxblood-noir"] = "Deep red-black with restrained luxury warmth",
-            ["ember-slate"] = "Smoked charcoal with ember-red accents",
-            ["evergreen-studio"] = "Refined evergreen accents on dense graphite",
-            ["verdant-ink"] = "Cool green-black with softer luminous contrast",
-            ["catppuccin"] = "Pastel purple on warm dark blue",
-            ["gruvbox"] = "Warm retro with golden accent",
-            ["void-space"] = "Cool blue on deep space black",
-            ["charcoal-studio"] = "Apple-inspired blue on dark gray",
-            ["graphite-pro"] = "Vibrant purple on zinc",
-            ["obsidian-depth"] = "Cyan accent on true dark",
-        };
-        CurrentThemeDescription.Text = descriptions.GetValueOrDefault(themeService.CurrentTheme, "");
+        var info = ThemeService.GetThemeInfo(themeService.CurrentTheme);
+        CurrentThemeName.Text = info?.Label ?? ThemeService.GetDisplayName(themeService.CurrentTheme);
+        CurrentThemeDescription.Text = info?.Description ?? "";
     }
 
     private void ResetTheme_Click(object sender, RoutedEventArgs e)
@@ -440,7 +428,6 @@ public sealed partial class SettingsPage : Page
 
     private Border BuildLibraryCard(LibraryCardViewModel vm)
     {
-        // Web: surface-panel rounded-[1.5rem] border-0
         var cardBorder = new Border
         {
             Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
@@ -467,7 +454,7 @@ public sealed partial class SettingsPage : Page
             VerticalAlignment = VerticalAlignment.Center,
         });
 
-        // Type badge (web: variant="outline")
+        // Type badge
         var typeBadge = new Border
         {
             BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
@@ -512,7 +499,7 @@ public sealed partial class SettingsPage : Page
         Grid.SetColumn(headerRow, 0);
         headerGrid.Children.Add(headerRow);
 
-        // Visibility toggle (web: "hidden on navigation" label + toggle switch on right)
+        // Visibility toggle
         var togglePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
 
         var visibilityLabel = new TextBlock
@@ -711,8 +698,6 @@ public sealed partial class SettingsPage : Page
 
     private void SpokenLanguageComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        // Spoken language changes are saved via profile update
-        // For now, this is a visual placeholder -- the web UI saves via profile.language
         if (_suppressEvents) return;
     }
 
@@ -747,11 +732,723 @@ public sealed partial class SettingsPage : Page
     }
 
     // ===== Subtitle appearance handlers =====
-    private void SubtitleFontSize_Changed(object sender, SelectionChangedEventArgs e) { }
-    private void SubtitleFontFamily_Changed(object sender, SelectionChangedEventArgs e) { }
-    private void SubtitleBgStyle_Changed(object sender, SelectionChangedEventArgs e) { }
-    private void SubtitleSave_Click(object sender, RoutedEventArgs e) { }
-    private void SubtitleReset_Click(object sender, RoutedEventArgs e) { }
+
+    private void BuildSubtitleColorSwatches()
+    {
+        SubtitleColorSwatches.Children.Clear();
+        foreach (var (hex, label) in SubtitleColorOptions)
+        {
+            var color = ColorFromHex(hex);
+            var swatch = new Border
+            {
+                Width = 28,
+                Height = 28,
+                CornerRadius = new CornerRadius(14),
+                Background = new SolidColorBrush(color),
+                BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x40, 255, 255, 255)),
+                BorderThickness = new Thickness(1),
+                Tag = hex,
+            };
+            ToolTipService.SetToolTip(swatch, label);
+            swatch.Tapped += (_, _) =>
+            {
+                ViewModel.SubFontColor = hex;
+                UpdateSubtitleColorSelection();
+                UpdateSubtitlePreview();
+            };
+            SubtitleColorSwatches.Children.Add(swatch);
+        }
+    }
+
+    private void UpdateSubtitleColorSelection()
+    {
+        foreach (var child in SubtitleColorSwatches.Children)
+        {
+            if (child is Border border && border.Tag is string hex)
+            {
+                var isSelected = hex.Equals(ViewModel.SubFontColor, StringComparison.OrdinalIgnoreCase);
+                border.BorderThickness = new Thickness(isSelected ? 3 : 1);
+                border.BorderBrush = isSelected
+                    ? (Brush)Application.Current.Resources["AccentBrush"]
+                    : new SolidColorBrush(Windows.UI.Color.FromArgb(0x40, 255, 255, 255));
+            }
+        }
+    }
+
+    private void SubtitleFontSize_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents) return;
+        if (SubtitleFontSizeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
+        {
+            ViewModel.SubFontSize = val;
+            UpdateSubtitlePreview();
+        }
+    }
+
+    private void SubtitleFontFamily_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents) return;
+        if (SubtitleFontFamilyComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
+        {
+            ViewModel.SubFontFamily = val;
+            UpdateSubtitlePreview();
+        }
+    }
+
+    private void SubtitleBgStyle_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents) return;
+        if (SubtitleBgStyleComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
+        {
+            ViewModel.SubBackgroundStyle = val;
+            UpdateSubtitlePreview();
+        }
+    }
+
+    private void SubtitleOutline_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressEvents) return;
+        ViewModel.SubOutlineEnabled = SubtitleOutlineToggle.IsOn;
+        UpdateSubtitlePreview();
+    }
+
+    private void SubtitleBgOpacity_Changed(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (_suppressEvents) return;
+        ViewModel.SubBackgroundOpacity = SubtitleBgOpacitySlider.Value / 100.0;
+        SubtitleBgOpacityLabel.Text = $"{(int)SubtitleBgOpacitySlider.Value}%";
+        UpdateSubtitlePreview();
+    }
+
+    private void SubtitlePosition_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents) return;
+        if (SubtitlePositionComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
+        {
+            ViewModel.SubPosition = val;
+            UpdateSubtitlePreview();
+        }
+    }
+
+    private void UpdateSubtitlePreview()
+    {
+        // Font size
+        double fontSize = ViewModel.SubFontSize switch
+        {
+            "small" => 13,
+            "large" => 20,
+            "xlarge" => 26,
+            _ => 16,
+        };
+        SubtitlePreviewLine1.FontSize = fontSize;
+        SubtitlePreviewLine2.FontSize = fontSize;
+
+        // Font color
+        var fontColor = ColorFromHex(ViewModel.SubFontColor);
+        var fontBrush = new SolidColorBrush(fontColor);
+        SubtitlePreviewLine1.Foreground = fontBrush;
+        SubtitlePreviewLine2.Foreground = fontBrush;
+
+        // Font family
+        if (ViewModel.SubFontFamily == "monospace")
+        {
+            var ff = new FontFamily("Consolas");
+            SubtitlePreviewLine1.FontFamily = ff;
+            SubtitlePreviewLine2.FontFamily = ff;
+        }
+        else if (ViewModel.SubFontFamily == "serif")
+        {
+            var ff = new FontFamily("Times New Roman");
+            SubtitlePreviewLine1.FontFamily = ff;
+            SubtitlePreviewLine2.FontFamily = ff;
+        }
+        else
+        {
+            var ff = new FontFamily("Segoe UI");
+            SubtitlePreviewLine1.FontFamily = ff;
+            SubtitlePreviewLine2.FontFamily = ff;
+        }
+
+        // Background
+        if (ViewModel.SubBackgroundStyle == "box")
+        {
+            var bgColor = ColorFromHex(ViewModel.SubBackgroundColor);
+            byte alpha = (byte)(ViewModel.SubBackgroundOpacity * 255);
+            var bgBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(alpha, bgColor.R, bgColor.G, bgColor.B));
+            SubtitlePreviewBg1.Background = bgBrush;
+            SubtitlePreviewBg2.Background = bgBrush;
+        }
+        else if (ViewModel.SubBackgroundStyle == "shadow")
+        {
+            SubtitlePreviewBg1.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x40, 0, 0, 0));
+            SubtitlePreviewBg2.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x40, 0, 0, 0));
+        }
+        else
+        {
+            SubtitlePreviewBg1.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+            SubtitlePreviewBg2.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+        }
+
+        // Position
+        SubtitlePreviewStack.VerticalAlignment = ViewModel.SubPosition == "top"
+            ? VerticalAlignment.Top
+            : VerticalAlignment.Bottom;
+    }
+
+    private void SubtitleSave_Click(object sender, RoutedEventArgs e)
+    {
+        _ = ViewModel.SaveSubtitleAppearanceCommand.ExecuteAsync(null);
+    }
+
+    private void SubtitleReset_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.ResetSubtitleAppearanceCommand.Execute(null);
+        SyncSubtitleAppearanceControls();
+    }
+
+    // ===== Home Screen Section Handlers =====
+
+    private void HomeSections_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        RebuildHomeSectionItems();
+    }
+
+    private void RebuildHomeSectionItems()
+    {
+        HomeSectionItemsContainer.Children.Clear();
+
+        if (ViewModel.HomeSections.Count == 0)
+        {
+            HomeSectionItemsContainer.Children.Add(new TextBlock
+            {
+                Text = "No sections configured.",
+                FontSize = 13,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                Margin = new Thickness(0, 8, 0, 0),
+            });
+            return;
+        }
+
+        foreach (var section in ViewModel.HomeSections)
+        {
+            HomeSectionItemsContainer.Children.Add(BuildHomeSectionRow(section));
+        }
+    }
+
+    private Border BuildHomeSectionRow(SettingsSectionEntry section)
+    {
+        var row = new Border
+        {
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(16, 12, 16, 12),
+        };
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // grip icon
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // title + type
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // actions
+
+        // Grip icon
+        var gripIcon = new FontIcon
+        {
+            Glyph = "\uE700",
+            FontSize = 14,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 12, 0),
+        };
+        Grid.SetColumn(gripIcon, 0);
+        grid.Children.Add(gripIcon);
+
+        // Title + type badge
+        var titleStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        titleStack.Children.Add(new TextBlock
+        {
+            Text = section.Title,
+            FontSize = 14,
+            FontWeight = FontWeights.Medium,
+            Foreground = section.Hidden
+                ? (Brush)Application.Current.Resources["SecondaryTextBrush"]
+                : (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        var typeBadge = new Border
+        {
+            Background = (Brush)Application.Current.Resources["SurfaceHoverBrush"],
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 2, 6, 2),
+        };
+        typeBadge.Child = new TextBlock
+        {
+            Text = section.SectionType,
+            FontSize = 10,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        };
+        titleStack.Children.Add(typeBadge);
+
+        Grid.SetColumn(titleStack, 1);
+        grid.Children.Add(titleStack);
+
+        // Action buttons
+        var actionStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+
+        // Move up
+        var upBtn = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE70E", FontSize = 12 },
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(6),
+        };
+        upBtn.Click += (_, _) =>
+        {
+            ViewModel.MoveSectionUp(section);
+        };
+        actionStack.Children.Add(upBtn);
+
+        // Move down
+        var downBtn = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE70D", FontSize = 12 },
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(6),
+        };
+        downBtn.Click += (_, _) =>
+        {
+            ViewModel.MoveSectionDown(section);
+        };
+        actionStack.Children.Add(downBtn);
+
+        // Visibility toggle
+        var eyeIcon = section.Hidden ? "\uED1A" : "\uE7B3"; // Eye off : Eye
+        var visBtn = new Button
+        {
+            Content = new FontIcon { Glyph = eyeIcon, FontSize = 14 },
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(6),
+        };
+        visBtn.Click += (_, _) =>
+        {
+            ViewModel.ToggleSectionVisibility(section);
+        };
+        actionStack.Children.Add(visBtn);
+
+        // Delete (only custom sections)
+        if (section.IsCustom)
+        {
+            var delBtn = new Button
+            {
+                Content = new FontIcon { Glyph = "\uE74D", FontSize = 14, Foreground = (Brush)Application.Current.Resources["ErrorBrush"] },
+                Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+                Padding = new Thickness(6),
+            };
+            delBtn.Click += (_, _) =>
+            {
+                ViewModel.RemoveSection(section);
+            };
+            actionStack.Children.Add(delBtn);
+        }
+
+        Grid.SetColumn(actionStack, 2);
+        grid.Children.Add(actionStack);
+
+        row.Child = grid;
+        return row;
+    }
+
+    private void HomeSectionsSave_Click(object sender, RoutedEventArgs e)
+    {
+        _ = ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
+    }
+
+    private void HomeSectionsReset_Click(object sender, RoutedEventArgs e)
+    {
+        _ = ViewModel.ResetHomeSectionsCommand.ExecuteAsync(null);
+    }
+
+    // ===== Import Handlers =====
+
+    private void ImportSource_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not string source) return;
+
+        ViewModel.ImportSourceType = source;
+
+        // Update button styles
+        ImportEmbyBtn.Style = source == "emby"
+            ? (Style)Application.Current.Resources["AccentButtonStyle"]
+            : (Style)Application.Current.Resources["SecondaryButtonStyle"];
+        ImportJellyfinBtn.Style = source == "jellyfin"
+            ? (Style)Application.Current.Resources["AccentButtonStyle"]
+            : (Style)Application.Current.Resources["SecondaryButtonStyle"];
+        ImportPlexBtn.Style = source == "plex"
+            ? (Style)Application.Current.Resources["AccentButtonStyle"]
+            : (Style)Application.Current.Resources["SecondaryButtonStyle"];
+
+        // Show/hide connection panels
+        EmbyConnectionPanel.Visibility = source == "emby" ? Visibility.Visible : Visibility.Collapsed;
+        JellyfinConnectionPanel.Visibility = source == "jellyfin" ? Visibility.Visible : Visibility.Collapsed;
+        PlexConnectionPanel.Visibility = source == "plex" ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async void EmbyConnect_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.EmbyEmail = EmbyEmailBox.Text;
+        ViewModel.EmbyPassword = EmbyPasswordBox.Password;
+        await ViewModel.EmbyConnectCommand.ExecuteAsync(null);
+
+        if (ViewModel.EmbyServers.Count > 0)
+        {
+            EmbyServerList.Visibility = Visibility.Visible;
+            EmbyServerComboBox.Items.Clear();
+            foreach (var server in ViewModel.EmbyServers)
+            {
+                EmbyServerComboBox.Items.Add(new ComboBoxItem { Content = server.Name, Tag = server });
+            }
+            if (EmbyServerComboBox.Items.Count > 0)
+                EmbyServerComboBox.SelectedIndex = 0;
+        }
+    }
+
+    private async void PlexSignIn_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.PlexSignInCommand.ExecuteAsync(null);
+
+        if (ViewModel.PlexServers.Count > 0)
+        {
+            PlexServerList.Visibility = Visibility.Visible;
+            PlexServerComboBox.Items.Clear();
+            foreach (var server in ViewModel.PlexServers)
+            {
+                PlexServerComboBox.Items.Add(new ComboBoxItem { Content = server.Name, Tag = server });
+            }
+            if (PlexServerComboBox.Items.Count > 0)
+                PlexServerComboBox.SelectedIndex = 0;
+        }
+    }
+
+    private async void StartImport_Click(object sender, RoutedEventArgs e)
+    {
+        // Set selected server from combo boxes
+        if (ViewModel.ImportSourceType == "emby" && EmbyServerComboBox.SelectedItem is ComboBoxItem embyItem)
+        {
+            ViewModel.SelectedEmbyServer = embyItem.Tag as HistoryImportConnectServer;
+        }
+        else if (ViewModel.ImportSourceType == "jellyfin")
+        {
+            ViewModel.JellyfinUrl = JellyfinUrlBox.Text;
+            ViewModel.JellyfinUsername = JellyfinUsernameBox.Text;
+            ViewModel.JellyfinPassword = JellyfinPasswordBox.Password;
+        }
+        else if (ViewModel.ImportSourceType == "plex" && PlexServerComboBox.SelectedItem is ComboBoxItem plexItem)
+        {
+            ViewModel.SelectedPlexServer = plexItem.Tag as PlexServer;
+        }
+
+        await ViewModel.StartImportCommand.ExecuteAsync(null);
+    }
+
+    private void ImportRuns_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        RebuildImportRunCards();
+    }
+
+    private void RebuildImportRunCards()
+    {
+        ImportRunsContainer.Children.Clear();
+
+        if (ViewModel.ImportRuns.Count == 0)
+        {
+            ImportRunsContainer.Children.Add(new TextBlock
+            {
+                Text = "No import runs yet.",
+                FontSize = 13,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+            return;
+        }
+
+        foreach (var run in ViewModel.ImportRuns)
+        {
+            ImportRunsContainer.Children.Add(BuildImportRunCard(run));
+        }
+    }
+
+    private static Border BuildImportRunCard(HistoryImportRun run)
+    {
+        var card = new Border
+        {
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(16, 12, 16, 12),
+        };
+
+        var stack = new StackPanel { Spacing = 4 };
+
+        // Header: source type + status
+        var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        headerRow.Children.Add(new TextBlock
+        {
+            Text = run.SourceType.ToUpperInvariant(),
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+
+        var statusColor = run.Status switch
+        {
+            "completed" => (Brush)Application.Current.Resources["AccentBrush"],
+            "failed" => (Brush)Application.Current.Resources["ErrorBrush"],
+            _ => (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        };
+
+        var statusBadge = new Border
+        {
+            Background = (Brush)Application.Current.Resources["SurfaceHoverBrush"],
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(8, 2, 8, 2),
+        };
+        statusBadge.Child = new TextBlock
+        {
+            Text = run.Status,
+            FontSize = 11,
+            Foreground = statusColor,
+        };
+        headerRow.Children.Add(statusBadge);
+        stack.Children.Add(headerRow);
+
+        // Stats
+        var statsText = $"Matched: {run.Matched} | Unmatched: {run.Unmatched} | Skipped: {run.Skipped}";
+        stack.Children.Add(new TextBlock
+        {
+            Text = statsText,
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+
+        // Created date
+        if (DateTime.TryParse(run.CreatedAt, out var created))
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = $"Started: {created.ToLocalTime():g}",
+                FontSize = 11,
+                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+            });
+        }
+
+        // Error message if any
+        if (!string.IsNullOrEmpty(run.ErrorMessage))
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = run.ErrorMessage,
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        card.Child = stack;
+        return card;
+    }
+
+    // ===== Plugin Settings Handlers =====
+
+    private void PluginSettings_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        RebuildPluginCards();
+    }
+
+    private void RebuildPluginCards()
+    {
+        PluginCardsContainer.Children.Clear();
+
+        if (ViewModel.PluginSettingsList.Count == 0)
+        {
+            PluginCardsContainer.Children.Add(new TextBlock
+            {
+                Text = "No plugins with user settings installed.",
+                FontSize = 13,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+            return;
+        }
+
+        foreach (var plugin in ViewModel.PluginSettingsList)
+        {
+            PluginCardsContainer.Children.Add(BuildPluginCard(plugin));
+        }
+    }
+
+    private Border BuildPluginCard(PluginSettingsSummary plugin)
+    {
+        var card = new Border
+        {
+            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
+            CornerRadius = new CornerRadius(22),
+            Padding = new Thickness(24, 20, 24, 20),
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+        };
+
+        var stack = new StackPanel { Spacing = 16 };
+
+        // Header: plugin ID + version
+        var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        headerRow.Children.Add(new TextBlock
+        {
+            Text = plugin.PluginId,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+        headerRow.Children.Add(new Border
+        {
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 2, 6, 2),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = $"v{plugin.Version}",
+                FontSize = 11,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            },
+        });
+        stack.Children.Add(headerRow);
+
+        // Get current values for this plugin
+        ViewModel.PluginSettingsValues.TryGetValue(plugin.Id, out var currentValues);
+        currentValues ??= new Dictionary<string, string>();
+
+        // Dynamic form fields based on UserConfigSchema
+        foreach (var schema in plugin.UserConfigSchema)
+        {
+            if (schema.AdminForm?.Fields == null) continue;
+
+            foreach (var field in schema.AdminForm.Fields)
+            {
+                var fieldStack = new StackPanel { Spacing = 4 };
+
+                // Label
+                fieldStack.Children.Add(new TextBlock
+                {
+                    Text = field.Label,
+                    FontSize = 13,
+                    FontWeight = FontWeights.Medium,
+                    Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+                });
+
+                if (!string.IsNullOrEmpty(field.Description))
+                {
+                    fieldStack.Children.Add(new TextBlock
+                    {
+                        Text = field.Description,
+                        FontSize = 12,
+                        Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                        TextWrapping = TextWrapping.Wrap,
+                    });
+                }
+
+                currentValues.TryGetValue(field.Key, out var currentVal);
+
+                switch (field.Control.ToUpperInvariant())
+                {
+                    case "SELECT" when field.Options != null:
+                    {
+                        var combo = new ComboBox { Width = 300 };
+                        foreach (var opt in field.Options)
+                        {
+                            var comboItem = new ComboBoxItem { Content = opt.Label, Tag = opt.Value };
+                            combo.Items.Add(comboItem);
+                            if (opt.Value == currentVal)
+                                combo.SelectedItem = comboItem;
+                        }
+                        var capturedKey = field.Key;
+                        var capturedId = plugin.Id;
+                        combo.SelectionChanged += (_, _) =>
+                        {
+                            if (combo.SelectedItem is ComboBoxItem selItem && selItem.Tag is string val)
+                            {
+                                if (ViewModel.PluginSettingsValues.TryGetValue(capturedId, out var vals))
+                                    vals[capturedKey] = val;
+                            }
+                        };
+                        fieldStack.Children.Add(combo);
+                        break;
+                    }
+                    case "TOGGLE":
+                    {
+                        var toggle = new ToggleSwitch
+                        {
+                            IsOn = currentVal == "true",
+                            OnContent = "",
+                            OffContent = "",
+                        };
+                        var capturedKey = field.Key;
+                        var capturedId = plugin.Id;
+                        toggle.Toggled += (_, _) =>
+                        {
+                            if (ViewModel.PluginSettingsValues.TryGetValue(capturedId, out var vals))
+                                vals[capturedKey] = toggle.IsOn ? "true" : "false";
+                        };
+                        fieldStack.Children.Add(toggle);
+                        break;
+                    }
+                    default: // TEXT, TEXTAREA
+                    {
+                        var textBox = new TextBox
+                        {
+                            Text = currentVal ?? "",
+                            PlaceholderText = field.Placeholder ?? "",
+                            Width = 360,
+                            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
+                        };
+                        if (field.Secret)
+                        {
+                            // Use PasswordBox-like styling
+                        }
+                        if (field.Multiline)
+                        {
+                            textBox.AcceptsReturn = true;
+                            textBox.TextWrapping = TextWrapping.Wrap;
+                            textBox.MinHeight = 80;
+                        }
+                        var capturedKey = field.Key;
+                        var capturedId = plugin.Id;
+                        textBox.TextChanged += (_, _) =>
+                        {
+                            if (ViewModel.PluginSettingsValues.TryGetValue(capturedId, out var vals))
+                                vals[capturedKey] = textBox.Text;
+                        };
+                        fieldStack.Children.Add(textBox);
+                        break;
+                    }
+                }
+
+                stack.Children.Add(fieldStack);
+            }
+        }
+
+        // Save button
+        var saveBtn = new Button
+        {
+            Content = "Save",
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+            Padding = new Thickness(16, 8, 16, 8),
+        };
+        var pluginId = plugin.Id;
+        saveBtn.Click += async (_, _) =>
+        {
+            await ViewModel.SavePluginSettingsCommand.ExecuteAsync(pluginId);
+        };
+        stack.Children.Add(saveBtn);
+
+        card.Child = stack;
+        return card;
+    }
 
     // ===== Sessions =====
     private async Task LoadSessionsAsync()

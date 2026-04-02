@@ -4,6 +4,9 @@ using CommunityToolkit.Mvvm.Input;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Auth;
 using ContinuumPlayer.Core.Models.Catalog;
+using ContinuumPlayer.Core.Models.HistoryImport;
+using ContinuumPlayer.Core.Models.Home;
+using ContinuumPlayer.Core.Models.Plugins;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Services;
 
@@ -216,6 +219,7 @@ public partial class SettingsViewModel : ObservableObject
     private readonly SettingsApi _settingsApi;
     private readonly CatalogApi _catalogApi;
     private readonly AuthApi _authApi;
+    private readonly HistoryImportApi _historyImportApi;
     private readonly AuthService _authService;
     private readonly ThemeService _themeService;
     private readonly SettingsService _settingsService;
@@ -223,11 +227,13 @@ public partial class SettingsViewModel : ObservableObject
     private bool _suppressSave;
 
     public SettingsViewModel(SettingsApi settingsApi, CatalogApi catalogApi, AuthApi authApi,
+        HistoryImportApi historyImportApi,
         AuthService authService, ThemeService themeService, SettingsService settingsService)
     {
         _settingsApi = settingsApi;
         _catalogApi = catalogApi;
         _authApi = authApi;
+        _historyImportApi = historyImportApi;
         _authService = authService;
         _themeService = themeService;
         _settingsService = settingsService;
@@ -551,6 +557,425 @@ public partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             ErrorMessage = $"Failed to revoke session: {ex.Message}";
+        }
+    }
+
+    // ===== Subtitle Appearance =====
+
+    [ObservableProperty]
+    private string _subFontFamily = "default";
+
+    [ObservableProperty]
+    private string _subFontSize = "medium";
+
+    [ObservableProperty]
+    private string _subFontColor = "#FFFFFF";
+
+    [ObservableProperty]
+    private bool _subOutlineEnabled = true;
+
+    [ObservableProperty]
+    private string _subBackgroundStyle = "box";
+
+    [ObservableProperty]
+    private double _subBackgroundOpacity = 0.8;
+
+    [ObservableProperty]
+    private string _subBackgroundColor = "#000000";
+
+    [ObservableProperty]
+    private string _subPosition = "bottom";
+
+    [RelayCommand]
+    private async Task SaveSubtitleAppearanceAsync()
+    {
+        try
+        {
+            var settings = new Dictionary<string, object>
+            {
+                ["font_family"] = SubFontFamily,
+                ["font_size"] = SubFontSize,
+                ["font_color"] = SubFontColor,
+                ["outline_enabled"] = SubOutlineEnabled,
+                ["background_style"] = SubBackgroundStyle,
+                ["background_opacity"] = SubBackgroundOpacity,
+                ["background_color"] = SubBackgroundColor,
+                ["position"] = SubPosition,
+            };
+            await _settingsApi.PutSettingAsync("subtitle_appearance", System.Text.Json.JsonSerializer.Serialize(settings));
+            ShowStatus("Subtitle appearance saved");
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to save subtitle appearance: {ex.Message}"; }
+    }
+
+    [RelayCommand]
+    private void ResetSubtitleAppearance()
+    {
+        SubFontFamily = "default";
+        SubFontSize = "medium";
+        SubFontColor = "#FFFFFF";
+        SubOutlineEnabled = true;
+        SubBackgroundStyle = "box";
+        SubBackgroundOpacity = 0.8;
+        SubBackgroundColor = "#000000";
+        SubPosition = "bottom";
+        _ = SaveSubtitleAppearanceAsync();
+    }
+
+    // ===== Home Screen Sections =====
+
+    public ObservableCollection<SettingsSectionEntry> HomeSections { get; } = [];
+
+    [ObservableProperty]
+    private string _selectedScope = "home";
+
+    [ObservableProperty]
+    private bool _isLoadingHomeSections;
+
+    [RelayCommand]
+    private async Task LoadHomeSectionsAsync()
+    {
+        if (IsLoadingHomeSections) return;
+        IsLoadingHomeSections = true;
+        try
+        {
+            var response = await _settingsApi.GetProfileSectionSettingsAsync();
+            HomeSections.Clear();
+            foreach (var section in response.Sections.OrderBy(s => s.Position))
+            {
+                HomeSections.Add(section);
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load home sections: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingHomeSections = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SaveHomeSectionsAsync()
+    {
+        try
+        {
+            var overrides = HomeSections.Select((s, i) => new SectionOverride
+            {
+                SectionId = s.Id,
+                Position = i,
+                Hidden = s.Hidden,
+                Title = s.Title,
+            }).ToList();
+
+            await _settingsApi.UpdateProfileSectionsAsync(new SaveOverridesRequest
+            {
+                Scope = SelectedScope == "home" ? "home" : "library",
+                LibraryId = SelectedScope == "home" ? null : SelectedScope,
+                Overrides = overrides,
+            });
+            ShowStatus("Home sections saved");
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to save home sections: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task ResetHomeSectionsAsync()
+    {
+        try
+        {
+            await _settingsApi.ResetProfileSectionsAsync();
+            ShowStatus("Home sections reset to defaults");
+            await LoadHomeSectionsAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to reset home sections: {ex.Message}";
+        }
+    }
+
+    public void ToggleSectionVisibility(SettingsSectionEntry section)
+    {
+        section.Hidden = !section.Hidden;
+        // Trigger a change notification
+        var idx = HomeSections.IndexOf(section);
+        if (idx >= 0)
+        {
+            HomeSections.RemoveAt(idx);
+            HomeSections.Insert(idx, section);
+        }
+    }
+
+    public void MoveSectionUp(SettingsSectionEntry section)
+    {
+        var idx = HomeSections.IndexOf(section);
+        if (idx > 0)
+        {
+            HomeSections.Move(idx, idx - 1);
+        }
+    }
+
+    public void MoveSectionDown(SettingsSectionEntry section)
+    {
+        var idx = HomeSections.IndexOf(section);
+        if (idx >= 0 && idx < HomeSections.Count - 1)
+        {
+            HomeSections.Move(idx, idx + 1);
+        }
+    }
+
+    public void RemoveSection(SettingsSectionEntry section)
+    {
+        HomeSections.Remove(section);
+    }
+
+    // ===== History Import =====
+
+    [ObservableProperty]
+    private string _importSourceType = "emby";
+
+    [ObservableProperty]
+    private string _embyEmail = "";
+
+    [ObservableProperty]
+    private string _embyPassword = "";
+
+    [ObservableProperty]
+    private string? _embyConnectSessionId;
+
+    public ObservableCollection<HistoryImportConnectServer> EmbyServers { get; } = [];
+
+    [ObservableProperty]
+    private HistoryImportConnectServer? _selectedEmbyServer;
+
+    [ObservableProperty]
+    private string _jellyfinUrl = "";
+
+    [ObservableProperty]
+    private string _jellyfinUsername = "";
+
+    [ObservableProperty]
+    private string _jellyfinPassword = "";
+
+    [ObservableProperty]
+    private string _plexAuthStatus = "";
+
+    [ObservableProperty]
+    private string? _plexSessionId;
+
+    public ObservableCollection<PlexServer> PlexServers { get; } = [];
+
+    [ObservableProperty]
+    private PlexServer? _selectedPlexServer;
+
+    public ObservableCollection<HistoryImportRun> ImportRuns { get; } = [];
+
+    [ObservableProperty]
+    private bool _isImporting;
+
+    [ObservableProperty]
+    private bool _isLoadingImportRuns;
+
+    [RelayCommand]
+    private async Task EmbyConnectAsync()
+    {
+        try
+        {
+            var response = await _historyImportApi.EmbyConnectLoginAsync(new EmbyConnectLoginRequest
+            {
+                Username = EmbyEmail,
+                Password = EmbyPassword,
+            });
+            EmbyConnectSessionId = response.ConnectSessionId;
+            EmbyServers.Clear();
+            foreach (var server in response.Servers)
+                EmbyServers.Add(server);
+            ShowStatus($"Found {response.Servers.Count} Emby server(s)");
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Emby Connect failed: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task PlexSignInAsync()
+    {
+        try
+        {
+            PlexAuthStatus = "Requesting PIN...";
+            var pinResponse = await _historyImportApi.PlexAuthPinAsync();
+            PlexSessionId = pinResponse.SessionId;
+            PlexAuthStatus = $"Open browser to sign in. PIN: {pinResponse.PinCode}";
+
+            // Open auth URL in browser
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(pinResponse.AuthUrl) { UseShellExecute = true }); }
+            catch { /* Browser launch failed, user can copy the URL */ }
+
+            // Poll for authentication
+            for (int i = 0; i < 60; i++)
+            {
+                await Task.Delay(2000);
+                var checkResponse = await _historyImportApi.PlexAuthCheckAsync(new PlexCheckRequest { SessionId = pinResponse.SessionId });
+                if (checkResponse.Authenticated)
+                {
+                    PlexAuthStatus = "Authenticated";
+                    PlexServers.Clear();
+                    if (checkResponse.Servers != null)
+                        foreach (var server in checkResponse.Servers)
+                            PlexServers.Add(server);
+                    ShowStatus($"Found {PlexServers.Count} Plex server(s)");
+                    return;
+                }
+            }
+            PlexAuthStatus = "Timed out waiting for authentication";
+        }
+        catch (Exception ex)
+        {
+            PlexAuthStatus = "Failed";
+            ErrorMessage = $"Plex sign-in failed: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task StartImportAsync()
+    {
+        if (IsImporting) return;
+        IsImporting = true;
+        try
+        {
+            var profileId = _authService.SelectedProfileId;
+            if (string.IsNullOrEmpty(profileId))
+            {
+                ErrorMessage = "No profile selected";
+                return;
+            }
+
+            var request = new CreateHistoryImportRunRequest
+            {
+                ProfileId = profileId,
+                Source = ImportSourceType,
+            };
+
+            switch (ImportSourceType)
+            {
+                case "emby":
+                    request.ConnectSessionId = EmbyConnectSessionId;
+                    request.ServerId = SelectedEmbyServer?.ServerId;
+                    break;
+                case "jellyfin":
+                    request.JellyfinBaseUrl = JellyfinUrl;
+                    request.JellyfinUsername = JellyfinUsername;
+                    request.JellyfinPassword = JellyfinPassword;
+                    break;
+                case "plex":
+                    request.PlexSessionId = PlexSessionId;
+                    request.PlexServerId = SelectedPlexServer?.ClientIdentifier;
+                    break;
+            }
+
+            var run = await _historyImportApi.CreateImportRunAsync(request);
+            ShowStatus($"Import started: {run.Status}");
+            await LoadImportRunsAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to start import: {ex.Message}";
+        }
+        finally
+        {
+            IsImporting = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task LoadImportRunsAsync()
+    {
+        if (IsLoadingImportRuns) return;
+        IsLoadingImportRuns = true;
+        try
+        {
+            var response = await _historyImportApi.GetImportRunsAsync();
+            ImportRuns.Clear();
+            foreach (var run in response.Runs.OrderByDescending(r => r.CreatedAt))
+                ImportRuns.Add(run);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load import runs: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingImportRuns = false;
+        }
+    }
+
+    // ===== Plugin Settings =====
+
+    public ObservableCollection<PluginSettingsSummary> PluginSettingsList { get; } = [];
+
+    /// <summary>Maps installation ID to current values for editing.</summary>
+    public Dictionary<int, Dictionary<string, string>> PluginSettingsValues { get; } = new();
+
+    [ObservableProperty]
+    private bool _isLoadingPlugins;
+
+    [RelayCommand]
+    private async Task LoadPluginSettingsAsync()
+    {
+        if (IsLoadingPlugins) return;
+        IsLoadingPlugins = true;
+        try
+        {
+            var response = await _settingsApi.GetPluginSettingsListAsync();
+            PluginSettingsList.Clear();
+            PluginSettingsValues.Clear();
+            foreach (var installation in response.Installations)
+            {
+                if (installation.UserConfigSchema.Count > 0)
+                {
+                    PluginSettingsList.Add(installation);
+                    // Load existing values
+                    try
+                    {
+                        var detail = await _settingsApi.GetPluginSettingsAsync(installation.Id);
+                        PluginSettingsValues[installation.Id] = new Dictionary<string, string>(detail.Values);
+                    }
+                    catch
+                    {
+                        PluginSettingsValues[installation.Id] = new Dictionary<string, string>();
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load plugin settings: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingPlugins = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SavePluginSettingsAsync(int installationId)
+    {
+        try
+        {
+            if (PluginSettingsValues.TryGetValue(installationId, out var values))
+            {
+                await _settingsApi.UpdatePluginSettingsAsync(installationId, new UpdatePluginSettingsRequest { Values = values });
+                ShowStatus("Plugin settings saved");
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to save plugin settings: {ex.Message}";
         }
     }
 }
