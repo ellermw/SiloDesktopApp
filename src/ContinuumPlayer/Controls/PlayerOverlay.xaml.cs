@@ -39,8 +39,7 @@ public sealed partial class PlayerOverlay : UserControl
         if (_isActive) return;
         _isActive = true;
 
-        // Subscribe to frame and playback events
-        _playerService.FrameReady += OnFrameReady;
+        // Subscribe to playback events (video renders natively via mpv popup window)
         _playerService.ContentLoaded += OnContentLoaded;
         _playerService.PlaybackEnded += OnPlaybackEnded;
 
@@ -99,7 +98,6 @@ public sealed partial class PlayerOverlay : UserControl
         _isActive = false;
 
         // Unsubscribe from events
-        _playerService.FrameReady -= OnFrameReady;
         _playerService.ContentLoaded -= OnContentLoaded;
         _playerService.PlaybackEnded -= OnPlaybackEnded;
 

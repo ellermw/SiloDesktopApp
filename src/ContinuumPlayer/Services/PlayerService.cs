@@ -18,7 +18,7 @@ public class PlayerService : IDisposable
     private readonly ContinuumApiClient _apiClient;
 
     private MpvPlayer? _mpv;
-    private MpvVideoHost? _videoHost;
+    private MpvVideoWindow? _videoHost;
     private PlaybackManager? _playbackManager;
     private bool _switchingContent;
 
@@ -55,7 +55,6 @@ public class PlayerService : IDisposable
     // ── Events ───────────────────────────────────────────────────────────
 
     public event Action<PlayerState>? StateChanged;
-    public event Action<byte[], int, int, int>? FrameReady;
     public event Action<double>? PositionChanged;
     public event Action<double>? DurationChanged;
     public event Action<bool>? PauseChanged;
@@ -68,6 +67,12 @@ public class PlayerService : IDisposable
     {
         if (State == newState) return;
         State = newState;
+
+        // Show/hide the native video window
+        if (newState == PlayerState.Expanded || newState == PlayerState.Fullscreen)
+            _videoHost?.Show();
+        else
+            _videoHost?.Hide();
 
         StateChanged?.Invoke(newState);
     }
@@ -289,8 +294,14 @@ public class PlayerService : IDisposable
             // Initialize mpv (lazy — first play only)
             if (_mpv == null)
             {
+                var mainWindow = App.MainWindowInstance;
+                var parentHwnd = WinRT.Interop.WindowNative.GetWindowHandle(mainWindow);
+
+                _videoHost = new MpvVideoWindow();
+                _videoHost.Create(parentHwnd);
+
                 _mpv = new MpvPlayer();
-                _mpv.Initialize(1280, 720);
+                _mpv.InitializeWithWindow(_videoHost.Hwnd);
                 WireMpvEvents();
             }
 
@@ -331,8 +342,6 @@ public class PlayerService : IDisposable
     private void WireMpvEvents()
     {
         if (_mpv == null) return;
-
-        _mpv.FrameReady += (buffer, w, h, stride) => FrameReady?.Invoke(buffer, w, h, stride);
 
         _mpv.PositionChanged += (pos) =>
         {
@@ -539,7 +548,7 @@ public class PlayerService : IDisposable
 
     // ── Window resize ───────────────────────────────────────────────────
 
-    public void HandleWindowResize() { /* No-op: software render doesn't need resize handling */ }
+    public void HandleWindowResize() => _videoHost?.MatchParentPosition();
 
     // ── Close / Dispose ──────────────────────────────────────────────────
 

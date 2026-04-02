@@ -294,16 +294,16 @@ public sealed class MpvPlayer : IDisposable
         SetOption("keep-open", "yes");
         SetOption("idle", "yes");
 
-        // === High-bitrate / 4K remux buffering ===
+        // === High-bitrate / 4K remux buffering (70+ Mbps, buffer 600s ahead) ===
         SetOption("cache", "yes");
         SetOption("ytdl", "no");
-        SetOption("demuxer-max-bytes", "800MiB");
-        SetOption("demuxer-max-back-bytes", "200MiB");
-        SetOption("demuxer-readahead-secs", "300");
-        SetOption("cache-secs", "300");                  // Keep 5 minutes cached
+        SetOption("demuxer-max-bytes", "6GiB");          // 6GB forward buffer (~600s at 70Mbps)
+        SetOption("demuxer-max-back-bytes", "512MiB");   // 512MB backward buffer for seeks
+        SetOption("demuxer-readahead-secs", "600");      // Read ahead 10 minutes
+        SetOption("cache-secs", "600");                  // Keep 10 minutes cached
         SetOption("cache-pause-initial", "yes");         // Pause until cache has enough data
-        SetOption("cache-pause-wait", "10");             // Wait for 10 seconds of data before resuming
-        SetOption("stream-buffer-size", "16MiB");        // 16MB stream read buffer (4K remux needs large reads)
+        SetOption("cache-pause-wait", "15");             // Wait for 15s of data before resuming
+        SetOption("stream-buffer-size", "32MiB");        // 32MB stream read buffer (70+ Mbps needs large reads)
 
         // === Network resilience ===
         SetOption("network-timeout", "60");
