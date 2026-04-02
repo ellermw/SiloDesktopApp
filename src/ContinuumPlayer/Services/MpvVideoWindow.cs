@@ -70,6 +70,12 @@ public sealed class MpvVideoWindow : IDisposable
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
+    private static extern IntPtr SetCapture(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
@@ -247,6 +253,7 @@ public sealed class MpvVideoWindow : IDisposable
         else if (msg == WM_LBUTTONDOWN)
         {
             int x = loWord(lParam), y = hiWord(lParam);
+            SetCapture(hWnd); // Capture mouse so we get WM_LBUTTONUP even outside window
             _mpv?.SendMousePos(x, y);
             _mpv?.SendScriptMessage("osc-mouse-move", x.ToString(), y.ToString());
             _mpv?.SendScriptMessage("osc-mouse-down", x.ToString(), y.ToString());
@@ -254,6 +261,7 @@ public sealed class MpvVideoWindow : IDisposable
         }
         else if (msg == WM_LBUTTONUP)
         {
+            ReleaseCapture();
             int x = loWord(lParam), y = hiWord(lParam);
             _mpv?.SendMousePos(x, y);
             _mpv?.SendScriptMessage("osc-mouse-up", x.ToString(), y.ToString());

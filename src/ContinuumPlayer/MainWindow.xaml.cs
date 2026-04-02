@@ -193,9 +193,13 @@ public sealed partial class MainWindow : Window
 
     private void OnPlayerStateChanged(PlayerState state)
     {
-        // Must run synchronously — PlayAsync calls SetState(Expanded) then immediately
-        // loads the file. If we defer via TryEnqueue, Activate() runs too late and
-        // initial frames are dropped. All state transitions originate from the UI thread.
+        // Ensure XAML updates run on the UI thread
+        if (!DispatcherQueue.HasThreadAccess)
+        {
+            DispatcherQueue.TryEnqueue(() => OnPlayerStateChanged(state));
+            return;
+        }
+
         switch (state)
         {
             case PlayerState.Idle:

@@ -98,6 +98,7 @@ local state = {
     idle            = true,
     track_list      = {},
     media_title     = "",
+    sub_track       = 0,       -- current subtitle track ID (0 = none)
     filename        = "",
     video_params    = nil,
     video_codec     = "",
@@ -560,20 +561,20 @@ local function draw_fullscreen_icon(ass, cx, cy, size, color, alpha, master_alph
         draw_rect(ass, cx + s - corner_len, cy + s - t, cx + s, cy + s, color, alpha, master_alpha)
         draw_rect(ass, cx + s - t, cy + s - corner_len, cx + s, cy + s, color, alpha, master_alpha)
     else
-        -- Collapse: corners pointing inward
-        local inner = s * 0.3
-        -- Top-left corner (bracket facing top-left at inner position)
-        draw_rect(ass, cx - inner, cy - inner, cx - inner + corner_len, cy - inner + t, color, alpha, master_alpha)
-        draw_rect(ass, cx - inner, cy - inner, cx - inner + t, cy - inner + corner_len, color, alpha, master_alpha)
-        -- Top-right
-        draw_rect(ass, cx + inner - corner_len, cy - inner, cx + inner, cy - inner + t, color, alpha, master_alpha)
-        draw_rect(ass, cx + inner - t, cy - inner, cx + inner, cy - inner + corner_len, color, alpha, master_alpha)
-        -- Bottom-left
-        draw_rect(ass, cx - inner, cy + inner - t, cx - inner + corner_len, cy + inner, color, alpha, master_alpha)
-        draw_rect(ass, cx - inner, cy + inner - corner_len, cx - inner + t, cy + inner, color, alpha, master_alpha)
-        -- Bottom-right
-        draw_rect(ass, cx + inner - corner_len, cy + inner - t, cx + inner, cy + inner, color, alpha, master_alpha)
-        draw_rect(ass, cx + inner - t, cy + inner - corner_len, cx + inner, cy + inner, color, alpha, master_alpha)
+        -- Collapse: elbows near center, arms extend outward toward corners
+        local g = s * 0.35  -- gap from center for elbow positions
+        -- Top-left: elbow at (cx-g, cy-g), arms extend left and up
+        draw_rect(ass, cx - g - corner_len, cy - g, cx - g, cy - g + t, color, alpha, master_alpha)
+        draw_rect(ass, cx - g, cy - g - corner_len, cx - g + t, cy - g, color, alpha, master_alpha)
+        -- Top-right: elbow at (cx+g, cy-g), arms extend right and up
+        draw_rect(ass, cx + g, cy - g, cx + g + corner_len, cy - g + t, color, alpha, master_alpha)
+        draw_rect(ass, cx + g - t, cy - g - corner_len, cx + g, cy - g, color, alpha, master_alpha)
+        -- Bottom-left: elbow at (cx-g, cy+g), arms extend left and down
+        draw_rect(ass, cx - g - corner_len, cy + g - t, cx - g, cy + g, color, alpha, master_alpha)
+        draw_rect(ass, cx - g, cy + g, cx - g + t, cy + g + corner_len, color, alpha, master_alpha)
+        -- Bottom-right: elbow at (cx+g, cy+g), arms extend right and down
+        draw_rect(ass, cx + g, cy + g - t, cx + g + corner_len, cy + g, color, alpha, master_alpha)
+        draw_rect(ass, cx + g - t, cy + g, cx + g, cy + g + corner_len, color, alpha, master_alpha)
     end
 end
 
@@ -665,15 +666,6 @@ local function compute_layout()
     }
     x_cursor = x_cursor + config.small_button_size + 14
 
-    -- Current time text
-    local time_text_width = 70
-    if state.duration >= 3600 then time_text_width = 85 end
-    L.time_current = {
-        x = x_cursor, y = controls_y,
-        w = time_text_width, h = 20
-    }
-    x_cursor = x_cursor + time_text_width + 4
-
     -- Right-side buttons (work backwards from right edge)
     local rx_cursor = W - config.bar_padding_x
 
@@ -716,15 +708,27 @@ local function compute_layout()
     }
     rx_cursor = rx_cursor - 10
 
-    -- Total time text
-    rx_cursor = rx_cursor - time_text_width
-    L.time_total = {
-        x = rx_cursor, y = controls_y,
-        w = time_text_width, h = 20
+    -- Stats info button ("i")
+    rx_cursor = rx_cursor - config.small_button_size
+    L.btn_stats = {
+        x = rx_cursor, y = controls_y - config.small_button_size / 2,
+        w = config.small_button_size, h = config.small_button_size,
+        cx = rx_cursor + config.small_button_size / 2,
+        cy = controls_y
     }
-    rx_cursor = rx_cursor - 4
+    rx_cursor = rx_cursor - 6
 
-    -- Seek bar (fills remaining space between current time and total time)
+    -- Subtitle CC button
+    rx_cursor = rx_cursor - config.small_button_size
+    L.btn_cc = {
+        x = rx_cursor, y = controls_y - config.small_button_size / 2,
+        w = config.small_button_size, h = config.small_button_size,
+        cx = rx_cursor + config.small_button_size / 2,
+        cy = controls_y
+    }
+    rx_cursor = rx_cursor - 10
+
+    -- Seek bar (fills remaining space between skip buttons and right-side buttons)
     local seek_x1 = x_cursor
     local seek_x2 = rx_cursor
     L.seek_bar = {
@@ -733,6 +737,13 @@ local function compute_layout()
         draw_y = seek_y,
         x1 = seek_x1,
         x2 = seek_x2
+    }
+
+    -- Centered time display above seek bar
+    local seek_center_x = (seek_x1 + seek_x2) / 2
+    L.time_center = {
+        x = seek_center_x,
+        y = seek_y - 10,  -- 10px above seek bar track
     }
 
     -- Hit test area for the entire bar (includes gradient for generous hover detection)
@@ -892,15 +903,33 @@ local function render_osc()
     local bsf = L.btn_skip_fwd
     draw_skip_fwd_icon(ass, bsf.cx, bsf.cy, config.small_button_size * 0.7, config.text_color, "00", ma)
 
-    -- 7. Current time
-    local tc = L.time_current
-    draw_text(ass, tc.x, tc.y, format_time(state.time_pos),
-        config.font_size_time, config.text_color, "00", ma, 4, nil, false)
+    -- 7. Centered time display above seek bar ("10:34 / 1:27:03")
+    local tc = L.time_center
+    local time_str = format_time(state.time_pos) .. " / " .. format_time(state.duration)
+    draw_text(ass, tc.x, tc.y, time_str,
+        config.font_size_time, config.dim_text_color, "00", ma, 2, nil, false)
 
-    -- 8. Total time
-    local tt = L.time_total
-    draw_text(ass, tt.x + tt.w, tt.y, format_time(state.duration),
-        config.font_size_time, config.dim_text_color, "00", ma, 6, nil, false)
+    -- 8. CC (subtitle) button
+    local bcc = L.btn_cc
+    local cc_color = config.dim_text_color
+    local cc_alpha = config.dim_text_alpha
+    if state.sub_track > 0 then
+        cc_color = config.accent_color
+        cc_alpha = "00"
+    end
+    draw_text(ass, bcc.cx, bcc.cy, "CC",
+        config.font_size_small_btn * 0.75, cc_color, cc_alpha, ma, 5, nil, true)
+
+    -- 8b. Stats info button ("i")
+    local bst = L.btn_stats
+    local stats_color = config.dim_text_color
+    local stats_alpha = config.dim_text_alpha
+    if state.stats_visible then
+        stats_color = config.accent_color
+        stats_alpha = "00"
+    end
+    draw_text(ass, bst.cx, bst.cy, "i",
+        config.font_size_small_btn, stats_color, stats_alpha, ma, 5, nil, true)
 
     -- 9. Volume icon
     local bv = L.btn_volume
@@ -1241,6 +1270,12 @@ local function handle_mouse_move()
     end
 end
 
+-- Toggle stats (defined here so handle_mouse_down can reference it)
+local function toggle_stats()
+    state.stats_visible = not state.stats_visible
+    render_stats()
+end
+
 local function handle_mouse_down()
     local mx = state.mouse_x
     local my = state.mouse_y
@@ -1292,6 +1327,18 @@ local function handle_mouse_down()
         return
     end
 
+    -- Check CC (subtitle cycle) — left click cycles forward
+    if L.btn_cc and point_in_rect(mx, my, L.btn_cc) then
+        mp.commandv("cycle", "sub")
+        return
+    end
+
+    -- Check stats toggle
+    if L.btn_stats and point_in_rect(mx, my, L.btn_stats) then
+        toggle_stats()
+        return
+    end
+
     -- Check volume icon (toggle mute)
     if L.btn_volume and point_in_rect(mx, my, L.btn_volume) then
         mp.commandv("cycle", "mute")
@@ -1307,6 +1354,22 @@ local function handle_mouse_down()
     -- Check exit
     if L.btn_exit and point_in_rect(mx, my, L.btn_exit) then
         mp.commandv("quit")
+        return
+    end
+end
+
+local function handle_mouse_down_right()
+    local mx = state.mouse_x
+    local my = state.mouse_y
+
+    if state.current_alpha < 0.1 then return end
+
+    compute_layout()
+    local L = state.layout
+
+    -- Right-click on CC button: cycle subtitle backward
+    if L.btn_cc and point_in_rect(mx, my, L.btn_cc) then
+        mp.commandv("cycle", "sub", "down")
         return
     end
 end
@@ -1362,12 +1425,6 @@ local function handle_wheel_down()
         mp.commandv("add", "volume", "-2")
     end
     show_osc()
-end
-
--- Toggle stats
-local function toggle_stats()
-    state.stats_visible = not state.stats_visible
-    render_stats()
 end
 
 -- Double-click for fullscreen (track timing of clicks)
@@ -1446,6 +1503,10 @@ local function observe_properties()
         state.track_list = val or {}
     end)
 
+    mp.observe_property("current-tracks/sub/id", "number", function(_, val)
+        state.sub_track = val or 0
+    end)
+
     mp.observe_property("osd-dimensions", "native", function(_, val)
         if val then
             if val.w and val.w > 0 then state.osd_width = val.w end
@@ -1466,6 +1527,12 @@ local function setup_key_bindings()
     mp.add_key_binding("mbtn_left", "continuum-osc-mbtn-left", function()
         handle_mouse_move()  -- update position first
         handle_mouse_down()
+    end)
+
+    -- Right-click (for CC subtitle cycle backward)
+    mp.add_key_binding("mbtn_right", "continuum-osc-mbtn-right", function()
+        handle_mouse_move()  -- update position first
+        handle_mouse_down_right()
     end)
 
     mp.add_key_binding("mbtn_left_dbl", "continuum-osc-mbtn-left-dbl", function()
@@ -1546,6 +1613,12 @@ local function setup_script_messages()
         state.mouse_x = tonumber(x) or state.mouse_x
         state.mouse_y = tonumber(y) or state.mouse_y
         handle_mouse_down()
+    end)
+
+    mp.register_script_message("osc-mouse-down-right", function(x, y)
+        state.mouse_x = tonumber(x) or state.mouse_x
+        state.mouse_y = tonumber(y) or state.mouse_y
+        handle_mouse_down_right()
     end)
 
     mp.register_script_message("osc-mouse-up", function(x, y)
