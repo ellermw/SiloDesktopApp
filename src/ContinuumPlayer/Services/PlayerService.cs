@@ -186,6 +186,8 @@ public class PlayerService : IDisposable
             catch { }
             _playbackManager.Dispose();
             _playbackManager = null;
+            // Give server time to process the session stop
+            await Task.Delay(500);
         }
 
         ErrorMessage = null;
@@ -197,8 +199,17 @@ public class PlayerService : IDisposable
             // Create PlaybackManager for this session
             _playbackManager = new PlaybackManager(_playbackApi, _catalogApi, _authService, _apiClient);
 
-            // Get watch detail
-            var watchDetail = await _playbackManager.GetWatchDetailAsync(contentId);
+            // Get watch detail (retry once if server hasn't processed previous session stop)
+            WatchDetailResponse watchDetail;
+            try
+            {
+                watchDetail = await _playbackManager.GetWatchDetailAsync(contentId);
+            }
+            catch (ApiException ex) when (ex.StatusCode == 400)
+            {
+                await Task.Delay(1000);
+                watchDetail = await _playbackManager.GetWatchDetailAsync(contentId);
+            }
 
             // Build title
             if (watchDetail.SeasonNumber.HasValue && watchDetail.EpisodeNumber.HasValue)

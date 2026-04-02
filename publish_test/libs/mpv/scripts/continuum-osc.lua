@@ -59,8 +59,8 @@ local config = {
     font_size_small_btn = 20,
 
     -- Button dimensions
-    button_size         = 36,
-    small_button_size   = 28,
+    button_size         = 48,
+    small_button_size   = 40,
 }
 
 --------------------------------------------------------------------------------
@@ -434,7 +434,7 @@ local function draw_skip_back_icon(ass, cx, cy, size, color, alpha, master_alpha
         math.floor(cx + s + 2), math.floor(cy + s)
     ))
     -- "10" label
-    draw_text(ass, cx, cy + size * 0.55, "10", math.floor(size * 0.32), color, alpha, master_alpha, 8)
+    draw_text(ass, cx, cy + size * 0.55, "10", math.floor(size * 0.45), color, alpha, master_alpha, 8)
 end
 
 -- Skip forward icon (two right-pointing triangles + "30" text)
@@ -464,7 +464,7 @@ local function draw_skip_fwd_icon(ass, cx, cy, size, color, alpha, master_alpha)
         math.floor(cx - 1), math.floor(cy + s)
     ))
     -- "30" label
-    draw_text(ass, cx, cy + size * 0.55, "30", math.floor(size * 0.32), color, alpha, master_alpha, 8)
+    draw_text(ass, cx, cy + size * 0.55, "30", math.floor(size * 0.45), color, alpha, master_alpha, 8)
 end
 
 -- Volume icon (speaker shape)
@@ -541,9 +541,9 @@ end
 -- Fullscreen icon (four corner brackets)
 local function draw_fullscreen_icon(ass, cx, cy, size, color, alpha, master_alpha, is_fullscreen)
     local a = blend_alpha(alpha, master_alpha)
-    local s = size * 0.38
-    local t = size * 0.07  -- line thickness
-    local corner_len = s * 0.55
+    local s = size * 0.4
+    local t = math.max(size * 0.1, 3)  -- line thickness, minimum 3px
+    local corner_len = s * 0.6
 
     if not is_fullscreen then
         -- Expand: corners pointing outward
