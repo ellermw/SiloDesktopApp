@@ -355,61 +355,64 @@ public class PlayerService : IDisposable
 
         var currentPos = _mpv.Position;
         _switchingContent = true;
-        _mpv.Stop();
-        IsLoading = true;
+        // Don't call _mpv.Stop() — let current stream keep playing while we set up the new one
 
         try
         {
-            try { await _playbackManager.StopSessionAsync(); }
-            catch { }
+            // Run ALL network calls on background thread so UI never blocks
+            var result = await Task.Run(async () =>
+            {
+                try { await _playbackManager.StopSessionAsync(); } catch { }
+                var session = await _playbackManager.StartSessionAsync(version.FileId, currentPos);
+                var streamUrl = _playbackManager.StreamUrl ?? "";
 
-            var session = await _playbackManager.StartSessionAsync(version.FileId, currentPos);
-            PlayMethod = session.PlayMethod;
+                if (session.PlayMethod == "transcode")
+                {
+                    try
+                    {
+                        var transcodeResponse = await _playbackApi.StartTranscodeAsync(new TranscodeStartRequest
+                        {
+                            SessionId = session.SessionId,
+                            SeekSeconds = currentPos,
+                            TargetResolution = version.Resolution,
+                            TargetCodecVideo = "h264",
+                            TargetCodecAudio = "aac",
+                            TargetBitrateKbps = 8000,
+                            SegmentDuration = 2,
+                            SubtitleTrackIndex = -1,
+                            SubtitleBurnIn = false
+                        });
+                        var baseUrl = _apiClient.BaseUrl;
+                        var manifestPath = transcodeResponse.ManifestUrl;
+                        if (!manifestPath.StartsWith("http") && !manifestPath.StartsWith("/api/v1"))
+                            manifestPath = "/api/v1" + manifestPath;
+                        streamUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
+                        currentPos = transcodeResponse.PlayerStartSeconds;
+                    }
+                    catch (Exception ex) { LogToFile("player_transcode_error.txt", ex.ToString()); }
+                }
+
+                return (session, streamUrl, currentPos);
+            });
+
+            PlayMethod = result.session.PlayMethod;
             Resolution = version.Resolution;
 
-            var streamUrl = _playbackManager.StreamUrl;
-            if (string.IsNullOrEmpty(streamUrl))
+            if (string.IsNullOrEmpty(result.streamUrl))
             {
                 ErrorMessage = "No stream URL for selected version.";
-                IsLoading = false;
                 _switchingContent = false;
                 return;
             }
 
-            if (session.PlayMethod == "transcode")
-            {
-                try
-                {
-                    var transcodeResponse = await _playbackApi.StartTranscodeAsync(new TranscodeStartRequest
-                    {
-                        SessionId = session.SessionId,
-                        SeekSeconds = currentPos,
-                        TargetResolution = version.Resolution,
-                        TargetCodecVideo = "h264",
-                        TargetCodecAudio = "aac",
-                        TargetBitrateKbps = 8000,
-                        SegmentDuration = 2,
-                        SubtitleTrackIndex = -1,
-                        SubtitleBurnIn = false
-                    });
-
-                    var baseUrl = _apiClient.BaseUrl;
-                    var manifestPath = transcodeResponse.ManifestUrl;
-                    if (!manifestPath.StartsWith("http") && !manifestPath.StartsWith("/api/v1"))
-                        manifestPath = "/api/v1" + manifestPath;
-                    streamUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
-                    currentPos = transcodeResponse.PlayerStartSeconds;
-                }
-                catch (Exception ex) { LogToFile("player_transcode_error.txt", ex.ToString()); }
-            }
-
             var token = _apiClient.AccessToken;
             var authHeader = token != null ? $"Bearer {token}" : null;
-            if (session.PlayMethod != "transcode" && token != null)
-                streamUrl += (streamUrl.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
+            var finalUrl = result.streamUrl;
+            if (result.session.PlayMethod != "transcode" && token != null)
+                finalUrl += (finalUrl.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
 
-            _resumePosition = currentPos;
-            _mpv.LoadFile(streamUrl, session.PlayMethod == "transcode" ? null : authHeader);
+            _resumePosition = result.currentPos;
+            _mpv.LoadFile(finalUrl, result.session.PlayMethod == "transcode" ? null : authHeader);
             _mpv.Play();
             LoadSubtitles();
             _switchingContent = false;
@@ -417,7 +420,6 @@ public class PlayerService : IDisposable
         catch (Exception ex)
         {
             _switchingContent = false;
-            IsLoading = false;
             LogToFile("player_quality_switch_error.txt", ex.ToString());
             ErrorMessage = $"Failed to switch quality: {ex.Message}";
         }

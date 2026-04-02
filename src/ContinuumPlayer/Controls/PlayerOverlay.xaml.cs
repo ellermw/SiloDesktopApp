@@ -154,6 +154,10 @@ public sealed partial class PlayerOverlay : UserControl
     private volatile bool _snapReady;
     private volatile bool _uiBusy;
 
+    // Double-buffered SoftwareBitmaps to avoid per-frame allocation (33MB at 4K)
+    private Windows.Graphics.Imaging.SoftwareBitmap?[] _swBitmaps = new Windows.Graphics.Imaging.SoftwareBitmap?[2];
+    private int _swIdx;
+
     private void OnFrameReady(byte[] buffer, int width, int height, int stride)
     {
         if (_uiBusy) return;
@@ -179,12 +183,19 @@ public sealed partial class PlayerOverlay : UserControl
         try
         {
             int w = _snapW, h = _snapH, stride = _snapStride;
-            int copyLen = stride * h;
 
-            // Create SoftwareBitmap and copy frame data into it
-            var bitmap = new Windows.Graphics.Imaging.SoftwareBitmap(
-                Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8, w, h,
-                Windows.Graphics.Imaging.BitmapAlphaMode.Ignore);
+            // Reuse SoftwareBitmap from double buffer (avoids 33MB allocation per frame at 4K)
+            var idx = _swIdx;
+            _swIdx = 1 - _swIdx; // flip
+            var bitmap = _swBitmaps[idx];
+            if (bitmap == null || bitmap.PixelWidth != w || bitmap.PixelHeight != h)
+            {
+                bitmap?.Dispose();
+                bitmap = new Windows.Graphics.Imaging.SoftwareBitmap(
+                    Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8, w, h,
+                    Windows.Graphics.Imaging.BitmapAlphaMode.Ignore);
+                _swBitmaps[idx] = bitmap;
+            }
             bitmap.CopyFromBuffer(_snapBuffer.AsBuffer());
 
             // Ensure source exists
@@ -194,9 +205,8 @@ public sealed partial class PlayerOverlay : UserControl
                 VideoFrame.Source = _bitmapSource;
             }
 
-            // SetBitmapAsync does the GPU upload on a background thread — doesn't block UI
+            // Async GPU upload — UI thread stays responsive
             await _bitmapSource.SetBitmapAsync(bitmap);
-            bitmap.Dispose();
         }
         finally
         {
