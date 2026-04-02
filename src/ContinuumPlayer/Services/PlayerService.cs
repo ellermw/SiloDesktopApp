@@ -18,6 +18,7 @@ public class PlayerService : IDisposable
     private readonly ContinuumApiClient _apiClient;
 
     private MpvPlayer? _mpv;
+    private MpvVideoHost? _videoHost;
     private PlaybackManager? _playbackManager;
     private bool _switchingContent;
 
@@ -59,7 +60,6 @@ public class PlayerService : IDisposable
     public event Action<bool>? PauseChanged;
     public event Action? PlaybackEnded;
     public event Action? ContentLoaded; // fired when file is loaded and decoding starts
-    public event Action<byte[], int, int, int>? FrameReady;
 
     // ── State transitions ────────────────────────────────────────────────
 
@@ -67,6 +67,13 @@ public class PlayerService : IDisposable
     {
         if (State == newState) return;
         State = newState;
+
+        // Show/hide the native video child window based on state
+        if (newState == PlayerState.Expanded || newState == PlayerState.Fullscreen)
+            _videoHost?.Show();
+        else
+            _videoHost?.Hide();
+
         StateChanged?.Invoke(newState);
     }
 
@@ -287,8 +294,14 @@ public class PlayerService : IDisposable
             // Initialize mpv (lazy — first play only)
             if (_mpv == null)
             {
+                var mainWindow = App.MainWindowInstance;
+                var parentHwnd = WinRT.Interop.WindowNative.GetWindowHandle(mainWindow);
+
+                _videoHost = new MpvVideoHost();
+                _videoHost.Create(parentHwnd);
+
                 _mpv = new MpvPlayer();
-                _mpv.Initialize(1280, 720); // 720p software render — XAML upscales; keeps UI thread responsive for 4K content
+                _mpv.InitializeWithWindow(_videoHost.Hwnd);  // GPU render into child HWND
                 WireMpvEvents();
             }
 
@@ -329,8 +342,6 @@ public class PlayerService : IDisposable
     private void WireMpvEvents()
     {
         if (_mpv == null) return;
-
-        _mpv.FrameReady += (buffer, w, h, stride) => FrameReady?.Invoke(buffer, w, h, stride);
 
         _mpv.PositionChanged += (pos) =>
         {
@@ -386,7 +397,6 @@ public class PlayerService : IDisposable
 
         var currentPos = _mpv.Position;
         _switchingContent = true;
-        _mpv.Stop();
         IsLoading = true;
 
         try
@@ -534,6 +544,10 @@ public class PlayerService : IDisposable
         }
     }
 
+    // ── Window resize ───────────────────────────────────────────────────
+
+    public void HandleWindowResize() => _videoHost?.Resize();
+
     // ── Close / Dispose ──────────────────────────────────────────────────
 
     public async Task CloseAsync()
@@ -574,6 +588,8 @@ public class PlayerService : IDisposable
         }
         _mpv?.Dispose();
         _mpv = null;
+        _videoHost?.Dispose();
+        _videoHost = null;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

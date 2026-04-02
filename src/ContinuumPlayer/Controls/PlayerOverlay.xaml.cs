@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
 using ContinuumPlayer.Core.Models.Playback;
@@ -6,19 +5,9 @@ using ContinuumPlayer.Services;
 
 namespace ContinuumPlayer.Controls;
 
-/// <summary>COM interface to get raw byte pointer from IBuffer (bypasses slow managed CopyTo).</summary>
-[ComImport]
-[Guid("905a0fef-bc53-11df-8c49-001e4fc686da")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IBufferByteAccess
-{
-    void Buffer(out IntPtr buffer);
-}
-
 public sealed partial class PlayerOverlay : UserControl
 {
     private readonly PlayerService _playerService;
-    private Microsoft.UI.Xaml.Media.Imaging.WriteableBitmap? _frameBitmap;
 
     private bool _statsVisible;
     private bool _suppressSeek;
@@ -40,9 +29,6 @@ public sealed partial class PlayerOverlay : UserControl
     {
         if (_isActive) return;
         _isActive = true;
-
-        // Subscribe to software-rendered frame events
-        _playerService.FrameReady += OnFrameReady;
 
         // Subscribe to content/playback events
         _playerService.ContentLoaded += OnContentLoaded;
@@ -103,7 +89,6 @@ public sealed partial class PlayerOverlay : UserControl
         _isActive = false;
 
         // Unsubscribe from events
-        _playerService.FrameReady -= OnFrameReady;
         _playerService.ContentLoaded -= OnContentLoaded;
         _playerService.PlaybackEnded -= OnPlaybackEnded;
 
@@ -141,83 +126,6 @@ public sealed partial class PlayerOverlay : UserControl
             if (!_isActive) return;
             _playerService.Minimize();
         });
-    }
-
-    // ── Frame rendering (double buffer + native memcpy) ──────────────────
-
-    private byte[]? _snapBuffer;
-    private int _snapW, _snapH, _snapStride;
-    private volatile bool _snapReady;
-    private volatile bool _uiBusy;
-    private long _lastFrameTicks;
-    private const long FrameIntervalTicks = 333333; // ~30fps cap (33.3ms in 100ns ticks)
-
-    private void OnFrameReady(byte[] buffer, int width, int height, int stride)
-    {
-        // Skip if UI thread is still processing previous frame
-        if (_uiBusy) return;
-
-        // Frame rate cap: skip frames if too fast (prevents UI thread saturation)
-        var now = System.Diagnostics.Stopwatch.GetTimestamp();
-        if (now - _lastFrameTicks < FrameIntervalTicks * (System.Diagnostics.Stopwatch.Frequency / 10_000_000))
-            return;
-        _lastFrameTicks = now;
-
-        // Immediate copy on render thread into our own buffer
-        int size = stride * height;
-        if (_snapBuffer == null || _snapBuffer.Length < size)
-            _snapBuffer = new byte[size];
-        System.Buffer.BlockCopy(buffer, 0, _snapBuffer, 0, size);
-        _snapW = width;
-        _snapH = height;
-        _snapStride = stride;
-        _snapReady = true;
-
-        DispatcherQueue?.TryEnqueue(PresentFrame);
-    }
-
-    private void PresentFrame()
-    {
-        if (!_isActive || !_snapReady || _snapBuffer == null) return;
-        _uiBusy = true;
-        _snapReady = false;
-
-        try
-        {
-            int w = _snapW, h = _snapH, srcStride = _snapStride;
-            int dstStride = w * 4;
-
-            if (_frameBitmap == null || _frameBitmap.PixelWidth != w || _frameBitmap.PixelHeight != h)
-            {
-                _frameBitmap = new Microsoft.UI.Xaml.Media.Imaging.WriteableBitmap(w, h);
-                VideoFrame.Source = _frameBitmap;
-            }
-
-            // Copy frame data into WriteableBitmap pixel buffer
-            var pixelBuffer = _frameBitmap.PixelBuffer;
-
-            if (srcStride == dstStride)
-            {
-                int copyLen = Math.Min(dstStride * h, (int)pixelBuffer.Length);
-                System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions
-                    .CopyTo(_snapBuffer!, 0, pixelBuffer, 0, copyLen);
-            }
-            else
-            {
-                int rowBytes = Math.Min(srcStride, dstStride);
-                for (int y = 0; y < h; y++)
-                {
-                    System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions
-                        .CopyTo(_snapBuffer!, y * srcStride, pixelBuffer, (uint)(y * dstStride), rowBytes);
-                }
-            }
-
-            _frameBitmap.Invalidate();
-        }
-        finally
-        {
-            _uiBusy = false;
-        }
     }
 
     // ── UI update timer (position, seek bar, play/pause icon, skip markers) ──
