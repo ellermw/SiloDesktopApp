@@ -152,8 +152,13 @@ public sealed class MpvPlayer : IDisposable
 
         // === Video — preserve full quality ===
         SetOption("video-sync", "audio");                // Sync video to audio (standard, low latency)
-        SetOption("framedrop", "vo");                    // Drop at VO level if display can't keep up
-        SetOption("correct-downscaling", "yes");         // High quality scaling when display < source
+        SetOption("framedrop", "decoder+vo");              // Drop frames at decoder and VO level if display can't keep up
+        SetOption("correct-downscaling", "no");          // Disable expensive correct downscaling for SW render performance
+        SetOption("scale", "bilinear");                  // Fast bilinear scaler (negligible quality loss on desktop displays)
+        SetOption("dscale", "bilinear");                 // Fast downscaler
+        SetOption("cscale", "bilinear");                 // Fast chroma scaler
+        SetOption("video-latency-hacks", "yes");         // Reduce latency for smoother frame delivery
+        SetOption("interpolation", "no");                // No frame interpolation — reduces CPU load
         SetOption("deband", "no");                       // No debanding — preserve original signal
 
         // vo=libmpv is required when using the render API

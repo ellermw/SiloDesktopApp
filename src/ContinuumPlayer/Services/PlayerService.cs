@@ -279,7 +279,7 @@ public class PlayerService : IDisposable
             if (_mpv == null)
             {
                 _mpv = new MpvPlayer();
-                _mpv.Initialize(1920, 1080); // capped at 1080p render, XAML upscales
+                _mpv.Initialize(1280, 720); // render at 720p, XAML upscales — drastically reduces RAM bandwidth for 4K content
                 WireMpvEvents();
             }
 

@@ -55,6 +55,13 @@ public sealed partial class ItemDetailPage : Page
         if (e.Parameter is string contentId && !string.IsNullOrEmpty(contentId))
         {
             await ViewModel.LoadCommand.ExecuteAsync(contentId);
+
+            // If this is an episode, enrich with series metadata
+            if (ViewModel.Item?.Type == "episode" && !string.IsNullOrEmpty(ViewModel.Item.SeriesId))
+            {
+                await EnrichEpisodeWithSeriesDataAsync(ViewModel.Item.SeriesId);
+            }
+
             UpdateUI();
 
             // Load watch detail for version info and resume position (non-blocking for movies)
@@ -86,17 +93,81 @@ public sealed partial class ItemDetailPage : Page
         }
     }
 
+    private async Task EnrichEpisodeWithSeriesDataAsync(string seriesId)
+    {
+        try
+        {
+            var catalogApi = App.Services.GetRequiredService<CatalogApi>();
+            var series = await catalogApi.GetItemDetailAsync(seriesId);
+            if (series == null) return;
+
+            var episode = ViewModel.Item!;
+
+            // Fill in missing episode data from series
+            if (string.IsNullOrEmpty(episode.BackdropUrl) && !string.IsNullOrEmpty(series.BackdropUrl))
+                episode.BackdropUrl = series.BackdropUrl;
+            if (string.IsNullOrEmpty(episode.PosterUrl) && !string.IsNullOrEmpty(series.PosterUrl))
+                episode.PosterUrl = series.PosterUrl;
+            if ((episode.Cast == null || episode.Cast.Count == 0) && series.Cast?.Count > 0)
+                episode.Cast = series.Cast;
+            if ((episode.Crew == null || episode.Crew.Count == 0) && series.Crew?.Count > 0)
+                episode.Crew = series.Crew;
+            if (episode.Studios.Count == 0 && series.Studios.Count > 0)
+                episode.Studios = series.Studios;
+            if (episode.Networks.Count == 0 && series.Networks.Count > 0)
+                episode.Networks = series.Networks;
+            if (episode.Countries.Count == 0 && series.Countries.Count > 0)
+                episode.Countries = series.Countries;
+            if (episode.Genres.Count == 0 && series.Genres.Count > 0)
+                episode.Genres = series.Genres;
+            if (string.IsNullOrEmpty(episode.ContentRating) && !string.IsNullOrEmpty(series.ContentRating))
+                episode.ContentRating = series.ContentRating;
+        }
+        catch
+        {
+            // Non-critical — episode still shows with its own data
+        }
+    }
+
     private void UpdateUI()
     {
         var item = ViewModel.Item;
         if (item == null) return;
 
-        TitleText.Text = item.Title;
-        TaglineText.Text = item.Tagline ?? "";
-        TaglineText.Visibility = string.IsNullOrEmpty(item.Tagline)
-            ? Visibility.Collapsed : Visibility.Visible;
+        // Episode context: show series title and S##E## above/below episode title
+        if (item.Type == "episode")
+        {
+            // Show series title as a subtitle/breadcrumb
+            if (!string.IsNullOrEmpty(item.SeriesTitle))
+            {
+                TaglineText.Text = item.SeriesTitle;
+                TaglineText.Visibility = Visibility.Visible;
+            }
 
-        YearText.Text = item.Year > 0 ? item.Year.ToString() : "";
+            // Show season/episode info in the year/metadata slot
+            var episodeInfo = "";
+            if (item.SeasonNumber.HasValue) episodeInfo += $"Season {item.SeasonNumber}";
+            if (item.EpisodeNumber.HasValue) episodeInfo += (episodeInfo.Length > 0 ? " \u00B7 " : "") + $"Episode {item.EpisodeNumber}";
+            if (!string.IsNullOrEmpty(episodeInfo))
+            {
+                YearText.Text = episodeInfo;
+            }
+            else
+            {
+                YearText.Text = item.Year > 0 ? item.Year.ToString() : "";
+            }
+
+            TitleText.Text = item.Title;
+        }
+        else
+        {
+            TitleText.Text = item.Title;
+            TaglineText.Text = item.Tagline ?? "";
+            TaglineText.Visibility = string.IsNullOrEmpty(item.Tagline)
+                ? Visibility.Collapsed : Visibility.Visible;
+
+            YearText.Text = item.Year > 0 ? item.Year.ToString() : "";
+        }
 
         // Content rating in pill badge
         if (!string.IsNullOrEmpty(item.ContentRating))
