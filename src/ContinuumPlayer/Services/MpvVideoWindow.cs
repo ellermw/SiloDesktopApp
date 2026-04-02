@@ -195,11 +195,14 @@ public sealed class MpvVideoWindow : IDisposable
         }
         else if (msg == WM_LBUTTONDOWN)
         {
-            _mpv?.SendMouseButton(loWord(lParam), hiWord(lParam), 0, true);
+            // Update position + send key down for drag (seek bar dragging)
+            _mpv?.SendMousePos(loWord(lParam), hiWord(lParam));
+            _mpv?.SendKeydown("MBTN_LEFT");
         }
         else if (msg == WM_LBUTTONUP)
         {
-            _mpv?.SendMouseButton(loWord(lParam), hiWord(lParam), 0, false);
+            _mpv?.SendMousePos(loWord(lParam), hiWord(lParam));
+            _mpv?.SendKeyup("MBTN_LEFT");
         }
         else if (msg == WM_LBUTTONDBLCLK)
         {
@@ -207,11 +210,17 @@ public sealed class MpvVideoWindow : IDisposable
         }
         else if (msg == WM_RBUTTONDOWN)
         {
-            _mpv?.SendMouseButton(loWord(lParam), hiWord(lParam), 2, true);
+            _mpv?.SendMousePos(loWord(lParam), hiWord(lParam));
+            _mpv?.SendKeydown("MBTN_RIGHT");
         }
         else if (msg == WM_RBUTTONUP)
         {
-            _mpv?.SendMouseButton(loWord(lParam), hiWord(lParam), 2, false);
+            _mpv?.SendMousePos(loWord(lParam), hiWord(lParam));
+            _mpv?.SendKeyup("MBTN_RIGHT");
+        }
+        else if (msg == WM_MBUTTONUP)
+        {
+            _mpv?.SendKeypress("MBTN_MID");
         }
         else if (msg == WM_MOUSEWHEEL)
         {
