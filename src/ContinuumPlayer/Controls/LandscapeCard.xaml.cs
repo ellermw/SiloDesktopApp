@@ -143,7 +143,12 @@ public sealed partial class LandscapeCard : UserControl
         if (MediaItem == null) return;
 
         var nav = App.Services.GetRequiredService<NavigationService>();
-        nav.Navigate<ItemDetailPage>(MediaItem.ContentId);
+        // For TV episodes, navigate to the series detail page (which has full cast/crew/poster)
+        // rather than the sparse episode detail
+        var targetId = !string.IsNullOrEmpty(MediaItem.SeriesId)
+            ? MediaItem.SeriesId
+            : MediaItem.ContentId;
+        nav.Navigate<ItemDetailPage>(targetId);
     }
 
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
