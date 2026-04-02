@@ -12,8 +12,12 @@
     Tapped="Overlay_Tapped"
     IsTabStop="True">
 
-    <Grid Background="Transparent">
-        <!-- Video is rendered natively by mpv via child HWND (GPU-accelerated) -->
+    <Grid Background="Black">
+        <!-- Video frame rendered by mpv software render into WriteableBitmap -->
+        <Image x:Name="VideoFrame"
+               Stretch="Uniform"
+               HorizontalAlignment="Center"
+               VerticalAlignment="Center" />
 
         <!-- Loading overlay (opaque, covers video during loading) -->
         <Grid x:Name="LoadingOverlay" Background="{StaticResource AppBackgroundBrush}" Visibility="Collapsed">
