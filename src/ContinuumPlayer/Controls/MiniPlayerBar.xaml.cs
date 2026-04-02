@@ -51,8 +51,8 @@ public sealed partial class MiniPlayerBar : UserControl
         if (_active) return;
         _active = true;
 
-        // With GPU rendering, mpv renders directly to the window — no frame subscriptions needed.
-        // The mini player shows title/metadata and transport controls only (no video thumbnail).
+        // Subscribe to software-rendered frames for the mini video thumbnail
+        _playerService.FrameReady += OnFrameReady;
         _playerService.PositionChanged += OnPositionChanged;
         _playerService.PauseChanged += OnPauseChanged;
 
@@ -77,6 +77,7 @@ public sealed partial class MiniPlayerBar : UserControl
         if (!_active) return;
         _active = false;
 
+        _playerService.FrameReady -= OnFrameReady;
         _playerService.PositionChanged -= OnPositionChanged;
         _playerService.PauseChanged -= OnPauseChanged;
 

@@ -206,6 +206,12 @@ public sealed partial class ItemDetailPage : Page
         UpdateWatchlistButton();
         UpdateStarRating();
 
+        // Set initial play button text from catalog item user data (before watch detail loads)
+        UpdatePlayButtonFromItemData(item);
+
+        // Set initial quality badges from catalog item user data (before watch detail loads)
+        UpdateQualityBadgesFromItemData(item);
+
         // Show Match button for admin users
         var authService = App.Services.GetRequiredService<AuthService>();
         MatchButton.Visibility = authService.CurrentUser?.Role == "admin"
@@ -725,6 +731,80 @@ public sealed partial class ItemDetailPage : Page
     {
         var playerService = App.Services.GetRequiredService<Services.PlayerService>();
         _ = playerService.PlayAsync(contentId, fromStart: fromStart);
+    }
+
+    // ===== Initial Play Button & Quality Badges from Catalog Item Data =====
+
+    /// <summary>
+    /// Sets the play button text to "Resume" if the catalog item has in-progress user data,
+    /// so the user sees the correct state immediately without waiting for watch detail.
+    /// </summary>
+    private void UpdatePlayButtonFromItemData(MediaItemDetail item)
+    {
+        var userData = item.UserData;
+        if (userData == null) return;
+
+        if (userData.PositionSeconds > 0 && !userData.Played)
+        {
+            var ts = TimeSpan.FromSeconds(userData.PositionSeconds);
+            var timeStr = ts.TotalHours >= 1
+                ? $"{(int)ts.TotalHours}:{ts.Minutes:D2}:{ts.Seconds:D2}"
+                : $"{ts.Minutes}:{ts.Seconds:D2}";
+            PlayButtonText.Text = $"Resume from {timeStr}";
+
+            // Show progress bar on the play button
+            if (userData.DurationSeconds > 0)
+            {
+                var fraction = userData.PositionSeconds / userData.DurationSeconds;
+                _playProgressFraction = Math.Min(fraction, 1.0);
+                SplitPlayButton.SizeChanged += OnSplitPlayButtonSizeChanged;
+            }
+
+            // Show the "Play from Start" dropdown
+            VersionDropdownButton.Visibility = Visibility.Visible;
+            VersionSeparator.Visibility = Visibility.Visible;
+            BuildVersionFlyout([], isResuming: true);
+        }
+    }
+
+    /// <summary>
+    /// Shows quality badges from the catalog item's UserData (LastResolution, LastHdr, LastCodecVideo)
+    /// before the watch detail response is available.
+    /// </summary>
+    private void UpdateQualityBadgesFromItemData(MediaItemDetail item)
+    {
+        var userData = item.UserData;
+        if (userData == null) return;
+
+        // Use the last-played version info from the catalog item's user data
+        if (string.IsNullOrEmpty(userData.LastResolution)) return;
+
+        QualityBadgesPanel.Children.Clear();
+
+        // Resolution badge
+        QualityBadgesPanel.Children.Add(CreateQualityBadge(
+            userData.LastResolution,
+            (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeResolutionBrush"]));
+
+        // HDR badge
+        if (userData.LastHdr == true)
+        {
+            QualityBadgesPanel.Children.Add(CreateQualityBadge(
+                "HDR",
+                (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeHdrBrush"]));
+        }
+
+        // Video codec badge
+        if (!string.IsNullOrEmpty(userData.LastCodecVideo))
+        {
+            QualityBadgesPanel.Children.Add(CreateQualityBadge(
+                userData.LastCodecVideo.ToUpperInvariant(),
+                (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeBackgroundBrush"],
+                (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeTextBrush"]));
+        }
+
+        QualityBadgesPanel.Visibility = QualityBadgesPanel.Children.Count > 0
+            ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ===== Watch Detail & Play Button =====

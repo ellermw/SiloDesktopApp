@@ -59,6 +59,7 @@ public class PlayerService : IDisposable
     public event Action<bool>? PauseChanged;
     public event Action? PlaybackEnded;
     public event Action? ContentLoaded; // fired when file is loaded and decoding starts
+    public event Action<byte[], int, int, int>? FrameReady;
 
     // ── State transitions ────────────────────────────────────────────────
 
@@ -278,9 +279,7 @@ public class PlayerService : IDisposable
             if (_mpv == null)
             {
                 _mpv = new MpvPlayer();
-                var mainWindow = App.MainWindowInstance;
-                var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(mainWindow);
-                _mpv.InitializeWithWindow(hwnd);
+                _mpv.Initialize(1920, 1080); // 1080p software render — good balance of quality and performance
                 WireMpvEvents();
             }
 
@@ -320,8 +319,7 @@ public class PlayerService : IDisposable
     {
         if (_mpv == null) return;
 
-        // Note: FrameReady is not wired -- with GPU rendering (vo=gpu + wid),
-        // mpv renders directly to the window surface. No software frame copies.
+        _mpv.FrameReady += (buffer, w, h, stride) => FrameReady?.Invoke(buffer, w, h, stride);
 
         _mpv.PositionChanged += (pos) =>
         {

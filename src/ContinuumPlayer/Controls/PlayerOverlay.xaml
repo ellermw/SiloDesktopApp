@@ -12,15 +12,13 @@
     Tapped="Overlay_Tapped"
     IsTabStop="True">
 
-    <Grid Background="Transparent">
-        <!-- With GPU rendering, mpv renders directly to the window surface via D3D11.
-             XAML composites on top via DirectComposition, so controls appear above video.
-             The VideoFrame Image is no longer needed but kept collapsed for compatibility. -->
+    <Grid Background="Black">
+        <!-- Software render: mpv renders frames to a buffer, copied into this Image via WriteableBitmap -->
         <Image x:Name="VideoFrame"
                Stretch="Uniform"
                HorizontalAlignment="Center"
                VerticalAlignment="Center"
-               Visibility="Collapsed" />
+               Visibility="Visible" />
 
         <!-- Loading overlay (opaque, covers video during loading) -->
         <Grid x:Name="LoadingOverlay" Background="{StaticResource AppBackgroundBrush}" Visibility="Collapsed">
