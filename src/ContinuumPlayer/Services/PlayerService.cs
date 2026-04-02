@@ -208,6 +208,12 @@ public class PlayerService : IDisposable
 
             Resolution = bestVersion.Resolution;
 
+            // Log resume state for debugging
+            LogToFile("player_resume.txt",
+                $"Resume check: contentId={contentId}, fromStart={fromStart}, " +
+                $"watchDetail.UserData?.PositionSeconds={watchDetail.UserData?.PositionSeconds}, " +
+                $"watchDetail.UserData?.Played={watchDetail.UserData?.Played}");
+
             // Determine start position
             double startPosition = 0;
             if (!fromStart && watchDetail.UserData?.PositionSeconds > 0 && watchDetail.UserData.Played != true)
@@ -296,7 +302,8 @@ public class PlayerService : IDisposable
                 streamUrl += (streamUrl.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
 
             // Store resume position — the FileLoaded handler will seek to it
-            _resumePosition = startPosition;
+            lock (_resumeLock) { _resumePosition = startPosition; }
+            LogToFile("player_resume.txt", $"Final _resumePosition={startPosition}, session.Position={session.Position}");
 
             // Load and play
             _mpv.LoadFile(streamUrl, session.PlayMethod == "transcode" ? null : authHeader);
@@ -314,6 +321,7 @@ public class PlayerService : IDisposable
     }
 
     private double _resumePosition;
+    private readonly object _resumeLock = new();
 
     private void WireMpvEvents()
     {
@@ -344,10 +352,17 @@ public class PlayerService : IDisposable
         {
             IsLoading = false;
             ContentLoaded?.Invoke();
-            if (_resumePosition > 0)
+            double pos;
+            lock (_resumeLock)
             {
-                _mpv?.Seek(_resumePosition);
+                pos = _resumePosition;
                 _resumePosition = 0;
+            }
+            LogToFile("player_resume.txt", $"FileLoaded: _resumePosition={pos}");
+            if (pos > 0)
+            {
+                LogToFile("player_resume.txt", $"Seeking to {pos}");
+                _mpv?.Seek(pos);
             }
         };
 
@@ -421,7 +436,7 @@ public class PlayerService : IDisposable
             if (session.PlayMethod != "transcode" && token != null)
                 streamUrl += (streamUrl.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
 
-            _resumePosition = currentPos;
+            lock (_resumeLock) { _resumePosition = currentPos; }
             _mpv.LoadFile(streamUrl, session.PlayMethod == "transcode" ? null : authHeader);
             _mpv.Play();
             LoadSubtitles();
@@ -483,7 +498,7 @@ public class PlayerService : IDisposable
 
             PlayMethod = response.PlayMethod;
 
-            _resumePosition = currentPos;
+            lock (_resumeLock) { _resumePosition = currentPos; }
             var authHeader = token != null ? $"Bearer {token}" : null;
             _mpv.LoadFile(url, authHeader);
             _mpv.Play();
@@ -621,7 +636,7 @@ public class PlayerService : IDisposable
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ContinuumPlayer", fileName);
             Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-            File.WriteAllText(logPath, $"{DateTime.Now}\n{content}\n");
+            File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {content}\n");
         }
         catch { }
     }

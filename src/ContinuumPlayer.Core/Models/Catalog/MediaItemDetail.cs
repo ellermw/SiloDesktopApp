@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using ContinuumPlayer.Core.Models.Home;
+using ContinuumPlayer.Core.Models.Playback;
 
 namespace ContinuumPlayer.Core.Models.Catalog;
 
@@ -44,6 +45,8 @@ public class MediaItemDetail
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
     public bool? IsSpecials { get; set; }
+    public OverlaySummary? OverlaySummary { get; set; }
+    public List<FileVersion> Versions { get; set; } = [];
     [JsonPropertyName("user_data")]
     public ItemDetailUserData? UserData { get; set; }
 }

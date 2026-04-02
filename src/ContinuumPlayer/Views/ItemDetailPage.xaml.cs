@@ -64,12 +64,6 @@ public sealed partial class ItemDetailPage : Page
 
             UpdateUI();
 
-            // Load watch detail for version info and resume position (non-blocking for movies)
-            if (!ViewModel.IsSeries)
-            {
-                _ = LoadWatchDetailAsync(contentId);
-            }
-
             // Load rating (non-blocking)
             _ = ViewModel.LoadRatingCommand.ExecuteAsync(null);
 
@@ -89,6 +83,20 @@ public sealed partial class ItemDetailPage : Page
 
                 BuildSeasonCards();
                 BuildEpisodeRows();
+
+                // For series, find the next episode to play and load its watch detail
+                // so the play button shows "Resume" with quality info
+                var nextEpisode = ViewModel.Episodes.FirstOrDefault(ep => ep.UserData?.Played != true)
+                                  ?? ViewModel.Episodes.FirstOrDefault();
+                if (nextEpisode != null)
+                {
+                    _ = LoadWatchDetailAsync(nextEpisode.ContentId);
+                }
+            }
+            else
+            {
+                // For movies/episodes, load watch detail directly
+                _ = LoadWatchDetailAsync(contentId);
             }
         }
     }
@@ -736,15 +744,40 @@ public sealed partial class ItemDetailPage : Page
     // ===== Initial Play Button & Quality Badges from Catalog Item Data =====
 
     /// <summary>
-    /// Sets the play button text to "Resume" if the catalog item has in-progress user data,
-    /// so the user sees the correct state immediately without waiting for watch detail.
+    /// Sets the play button text using catalog item data (before watch detail loads).
+    /// Shows "Resume from X:XX" if in-progress, and quality like "· 2160p HDR".
     /// </summary>
     private void UpdatePlayButtonFromItemData(MediaItemDetail item)
     {
-        var userData = item.UserData;
-        if (userData == null) return;
+        // Show quality on play button from OverlaySummary or Versions
+        var qualityParts = new List<string>();
+        if (item.OverlaySummary != null && !string.IsNullOrEmpty(item.OverlaySummary.Resolution))
+            qualityParts.Add(item.OverlaySummary.Resolution);
+        if (item.Versions?.Count > 0)
+        {
+            var best = item.Versions.OrderByDescending(v => v.Resolution switch {
+                "2160p" => 4, "1080p" => 3, "720p" => 2, _ => 1
+            }).First();
+            if (qualityParts.Count == 0 && !string.IsNullOrEmpty(best.Resolution))
+                qualityParts.Add(best.Resolution);
+            if (best.Hdr) qualityParts.Add("HDR");
+        }
+        if (qualityParts.Count > 0)
+        {
+            PlayQualityText.Text = $"\u00B7 {string.Join(" ", qualityParts)}";
+            PlayQualityText.Visibility = Visibility.Visible;
+        }
 
-        if (userData.PositionSeconds > 0 && !userData.Played)
+        // Show version dropdown if multiple versions
+        if (item.Versions?.Count > 1)
+        {
+            VersionDropdownButton.Visibility = Visibility.Visible;
+            VersionSeparator.Visibility = Visibility.Visible;
+        }
+
+        // Resume state from user data
+        var userData = item.UserData;
+        if (userData != null && userData.PositionSeconds > 0 && !userData.Played)
         {
             var ts = TimeSpan.FromSeconds(userData.PositionSeconds);
             var timeStr = ts.TotalHours >= 1
@@ -752,7 +785,7 @@ public sealed partial class ItemDetailPage : Page
                 : $"{ts.Minutes}:{ts.Seconds:D2}";
             PlayButtonText.Text = $"Resume from {timeStr}";
 
-            // Show progress bar on the play button
+            // Show progress bar
             if (userData.DurationSeconds > 0)
             {
                 var fraction = userData.PositionSeconds / userData.DurationSeconds;
@@ -760,47 +793,95 @@ public sealed partial class ItemDetailPage : Page
                 SplitPlayButton.SizeChanged += OnSplitPlayButtonSizeChanged;
             }
 
-            // Show the "Play from Start" dropdown
+            // Show "Play from Start" in dropdown
             VersionDropdownButton.Visibility = Visibility.Visible;
             VersionSeparator.Visibility = Visibility.Visible;
-            BuildVersionFlyout([], isResuming: true);
+            BuildVersionFlyout(item.Versions ?? [], isResuming: true);
+        }
+        else if (item.Versions?.Count > 1)
+        {
+            // Multiple versions available — show version picker
+            BuildVersionFlyout(item.Versions, isResuming: false);
         }
     }
 
     /// <summary>
-    /// Shows quality badges from the catalog item's UserData (LastResolution, LastHdr, LastCodecVideo)
+    /// Shows quality badges from the catalog item's OverlaySummary, Versions, or UserData
     /// before the watch detail response is available.
     /// </summary>
     private void UpdateQualityBadgesFromItemData(MediaItemDetail item)
     {
-        var userData = item.UserData;
-        if (userData == null) return;
-
-        // Use the last-played version info from the catalog item's user data
-        if (string.IsNullOrEmpty(userData.LastResolution)) return;
-
         QualityBadgesPanel.Children.Clear();
 
-        // Resolution badge
-        QualityBadgesPanel.Children.Add(CreateQualityBadge(
-            userData.LastResolution,
-            (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeResolutionBrush"]));
-
-        // HDR badge
-        if (userData.LastHdr == true)
+        // Prefer OverlaySummary (available immediately from item detail)
+        if (item.OverlaySummary != null)
         {
-            QualityBadgesPanel.Children.Add(CreateQualityBadge(
-                "HDR",
-                (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeHdrBrush"]));
+            // Resolution badge (e.g., "2160p", "1080p")
+            if (!string.IsNullOrEmpty(item.OverlaySummary.Resolution))
+            {
+                QualityBadgesPanel.Children.Add(CreateQualityBadge(
+                    item.OverlaySummary.Resolution,
+                    (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeResolutionBrush"]));
+            }
+
+            // Audio badge (e.g., "Atmos", "DTS-HD MA")
+            if (!string.IsNullOrEmpty(item.OverlaySummary.Audio))
+            {
+                QualityBadgesPanel.Children.Add(CreateQualityBadge(
+                    item.OverlaySummary.Audio,
+                    (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeBackgroundBrush"],
+                    (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeTextBrush"]));
+            }
         }
 
-        // Video codec badge
-        if (!string.IsNullOrEmpty(userData.LastCodecVideo))
+        // Check Versions for HDR info
+        if (item.Versions?.Count > 0)
         {
-            QualityBadgesPanel.Children.Add(CreateQualityBadge(
-                userData.LastCodecVideo.ToUpperInvariant(),
-                (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeBackgroundBrush"],
-                (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeTextBrush"]));
+            var bestVersion = item.Versions.OrderByDescending(v => v.Resolution switch {
+                "2160p" => 4, "1080p" => 3, "720p" => 2, _ => 1
+            }).First();
+
+            if (bestVersion.Hdr)
+            {
+                QualityBadgesPanel.Children.Add(CreateQualityBadge(
+                    "HDR",
+                    (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeHdrBrush"]));
+            }
+
+            // If no OverlaySummary, fall back to version resolution
+            if (item.OverlaySummary == null && !string.IsNullOrEmpty(bestVersion.Resolution))
+            {
+                QualityBadgesPanel.Children.Insert(0, CreateQualityBadge(
+                    bestVersion.Resolution,
+                    (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeResolutionBrush"]));
+            }
+        }
+
+        // Final fallback: use UserData from last playback
+        if (QualityBadgesPanel.Children.Count == 0)
+        {
+            var userData = item.UserData;
+            if (userData != null && !string.IsNullOrEmpty(userData.LastResolution))
+            {
+                QualityBadgesPanel.Children.Add(CreateQualityBadge(
+                    userData.LastResolution,
+                    (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeResolutionBrush"]));
+
+                if (userData.LastHdr == true)
+                {
+                    QualityBadgesPanel.Children.Add(CreateQualityBadge(
+                        "HDR",
+                        (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeHdrBrush"]));
+                }
+
+                if (!string.IsNullOrEmpty(userData.LastCodecVideo))
+                {
+                    QualityBadgesPanel.Children.Add(CreateQualityBadge(
+                        userData.LastCodecVideo.ToUpperInvariant(),
+                        (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeBackgroundBrush"],
+                        (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeTextBrush"]));
+                }
+            }
         }
 
         QualityBadgesPanel.Visibility = QualityBadgesPanel.Children.Count > 0
@@ -826,9 +907,17 @@ public sealed partial class ItemDetailPage : Page
             if (_selectedVersion != null)
                 _ = LoadSubtitlesSectionAsync(_selectedVersion.FileId);
         }
-        catch
+        catch (Exception ex)
         {
-            // Non-critical: play button will just say "Play" without version info
+            // Log the error so we can debug
+            try
+            {
+                var logPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "ContinuumPlayer", "watch_detail_error.txt");
+                File.AppendAllText(logPath, $"[{DateTime.Now}] LoadWatchDetailAsync failed for contentId={contentId}: {ex}\n\n");
+            }
+            catch { }
         }
     }
 
