@@ -281,14 +281,25 @@ public sealed class MpvPlayer : IDisposable
         // Set the target window handle
         SetOption("wid", windowHandle.ToString());
 
-        // Disable mpv's on-screen controller -- we handle controls in XAML
-        SetOption("osc", "no");
-        SetOption("osd-level", "0");
+        // Enable mpv's on-screen controller (visual controls on mouse hover)
+        SetOption("osc", "yes");
+        SetOption("osd-level", "1");
+        SetOption("osd-duration", "2000");
+        SetOption("osd-on-seek", "msg-bar");
+        SetOption("cursor-autohide", "1000");
 
-        // Disable mpv's keyboard/mouse handling -- we handle input in XAML
-        SetOption("input-default-bindings", "no");
-        SetOption("input-vo-keyboard", "no");
-        SetOption("input-cursor", "no");
+        // Load bundled OSC Lua script (libmpv doesn't include it)
+        var exeDir = Path.GetDirectoryName(System.Environment.ProcessPath) ?? "";
+        var oscPath = Path.Combine(exeDir, "libs", "mpv", "scripts", "osc.lua");
+        if (!File.Exists(oscPath))
+            oscPath = Path.Combine(exeDir, "..", "..", "..", "..", "libs", "mpv", "scripts", "osc.lua");
+        if (File.Exists(oscPath))
+            SetOption("scripts", oscPath);
+
+        // Enable mpv's full input handling (keyboard + mouse for OSC interaction)
+        SetOption("input-default-bindings", "yes");
+        SetOption("input-vo-keyboard", "yes");
+        SetOption("input-cursor", "yes");
 
         // Player behavior
         SetOption("keep-open", "yes");
