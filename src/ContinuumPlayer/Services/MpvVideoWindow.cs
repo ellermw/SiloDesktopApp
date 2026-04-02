@@ -236,22 +236,28 @@ public sealed class MpvVideoWindow : IDisposable
         int hiWord(IntPtr lp) => (short)((lp.ToInt64() >> 16) & 0xFFFF);
 
         // Forward mouse events to mpv — both raw input (for mpv bindings)
-        // and script messages (for continuum-osc.lua)
+        // and script messages (for continuum-osc.lua).
+        // When embedded with wid=, mpv's mouse-pos property doesn't update from
+        // the "mouse" command, so we also send script-messages with coordinates.
         if (msg == WM_MOUSEMOVE)
         {
             int x = loWord(lParam), y = hiWord(lParam);
             _mpv?.SendMousePos(x, y);
+            _mpv?.SendScriptMessage("osc-mouse-move", x.ToString(), y.ToString());
         }
         else if (msg == WM_LBUTTONDOWN)
         {
             int x = loWord(lParam), y = hiWord(lParam);
             _mpv?.SendMousePos(x, y);
+            _mpv?.SendScriptMessage("osc-mouse-move", x.ToString(), y.ToString());
+            _mpv?.SendScriptMessage("osc-mouse-down", x.ToString(), y.ToString());
             _mpv?.SendKeydown("MBTN_LEFT");
         }
         else if (msg == WM_LBUTTONUP)
         {
             int x = loWord(lParam), y = hiWord(lParam);
             _mpv?.SendMousePos(x, y);
+            _mpv?.SendScriptMessage("osc-mouse-up", x.ToString(), y.ToString());
             _mpv?.SendKeyup("MBTN_LEFT");
         }
         else if (msg == WM_LBUTTONDBLCLK)

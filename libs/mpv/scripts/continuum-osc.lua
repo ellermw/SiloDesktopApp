@@ -210,8 +210,10 @@ end
 -- Draw a filled rectangle
 local function draw_rect(ass, x1, y1, x2, y2, color, alpha, master_alpha)
     local a = blend_alpha(alpha, master_alpha)
+    ass:new_event()
+    ass:pos(0, 0)
     ass:append(string.format(
-        "{\\an7\\pos(0,0)\\bord0\\shad0%s%s\\p1}m %d %d l %d %d %d %d %d %d{\\p0}",
+        "{\\an7\\bord0\\shad0%s%s\\p1}m %d %d l %d %d %d %d %d %d{\\p0}",
         ass_color(color), ass_alpha(a),
         math.floor(x1), math.floor(y1),
         math.floor(x2), math.floor(y1),
@@ -227,8 +229,10 @@ local function draw_rounded_rect(ass, x1, y1, x2, y2, r, color, alpha, master_al
     -- Use bezier curves for rounded corners
     local k = 0.5522847498  -- bezier control point factor for circle approximation
     local kr = math.floor(r * k)
+    ass:new_event()
+    ass:pos(0, 0)
     ass:append(string.format(
-        "{\\an7\\pos(0,0)\\bord0\\shad0%s%s\\p1}" ..
+        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
         "m %d %d " ..       -- start at top-left + r
         "l %d %d " ..       -- top edge to top-right - r
         "b %d %d %d %d %d %d " ..  -- top-right corner
@@ -273,8 +277,10 @@ end
 local function draw_circle(ass, cx, cy, r, color, alpha, master_alpha)
     local a = blend_alpha(alpha, master_alpha)
     local k = math.floor(r * 0.5522847498)
+    ass:new_event()
+    ass:pos(0, 0)
     ass:append(string.format(
-        "{\\an7\\pos(0,0)\\bord0\\shad0%s%s\\p1}" ..
+        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
         "m %d %d " ..
         "b %d %d %d %d %d %d " ..
         "b %d %d %d %d %d %d " ..
@@ -311,10 +317,11 @@ local function draw_text(ass, x, y, text, font_size, color, alpha, master_alpha,
     if bold then b_tag = "\\b1" end
     local fn_tag = ""
     if fn ~= "" then fn_tag = "\\fn" .. fn end
+    ass:new_event()
+    ass:pos(math.floor(x), math.floor(y))
     ass:append(string.format(
-        "{\\an%d\\pos(%d,%d)\\bord0\\shad0\\fs%d%s%s%s%s}%s",
+        "{\\an%d\\bord0\\shad0\\fs%d%s%s%s%s}%s",
         an,
-        math.floor(x), math.floor(y),
         font_size,
         fn_tag, b_tag,
         ass_color(color), ass_alpha(a),
@@ -332,10 +339,11 @@ local function draw_text_bordered(ass, x, y, text, font_size, color, alpha, bord
     if bold then b_tag = "\\b1" end
     local fn_tag = ""
     if fn ~= "" then fn_tag = "\\fn" .. fn end
+    ass:new_event()
+    ass:pos(math.floor(x), math.floor(y))
     ass:append(string.format(
-        "{\\an%d\\pos(%d,%d)\\bord1.5\\shad0\\fs%d%s%s%s%s%s%s}%s",
+        "{\\an%d\\bord1.5\\shad0\\fs%d%s%s%s%s%s%s}%s",
         an,
-        math.floor(x), math.floor(y),
         font_size,
         fn_tag, b_tag,
         ass_color(color), ass_alpha(a),
@@ -369,8 +377,10 @@ local function draw_play_icon(ass, cx, cy, size, color, alpha, master_alpha)
     local half = size / 2
     -- Slightly offset to the right for visual centering
     local ox = size * 0.1
+    ass:new_event()
+    ass:pos(0, 0)
     ass:append(string.format(
-        "{\\an7\\pos(0,0)\\bord0\\shad0%s%s\\p1}" ..
+        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
         "m %d %d l %d %d %d %d{\\p0}",
         ass_color(color), ass_alpha(a),
         math.floor(cx - half * 0.7 + ox), math.floor(cy - half),
@@ -402,8 +412,10 @@ local function draw_skip_back_icon(ass, cx, cy, size, color, alpha, master_alpha
     local a = blend_alpha(alpha, master_alpha)
     local s = size * 0.35
     -- Left triangle
+    ass:new_event()
+    ass:pos(0, 0)
     ass:append(string.format(
-        "{\\an7\\pos(0,0)\\bord0\\shad0%s%s\\p1}" ..
+        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
         "m %d %d l %d %d %d %d{\\p0}",
         ass_color(color), ass_alpha(a),
         math.floor(cx + 1), math.floor(cy - s),
@@ -411,8 +423,10 @@ local function draw_skip_back_icon(ass, cx, cy, size, color, alpha, master_alpha
         math.floor(cx + 1), math.floor(cy + s)
     ))
     -- Right triangle
+    ass:new_event()
+    ass:pos(0, 0)
     ass:append(string.format(
-        "{\\an7\\pos(0,0)\\bord0\\shad0%s%s\\p1}" ..
+        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
         "m %d %d l %d %d %d %d{\\p0}",
         ass_color(color), ass_alpha(a),
         math.floor(cx + s + 2), math.floor(cy - s),
@@ -428,8 +442,10 @@ local function draw_skip_fwd_icon(ass, cx, cy, size, color, alpha, master_alpha)
     local a = blend_alpha(alpha, master_alpha)
     local s = size * 0.35
     -- Left triangle
+    ass:new_event()
+    ass:pos(0, 0)
     ass:append(string.format(
-        "{\\an7\\pos(0,0)\\bord0\\shad0%s%s\\p1}" ..
+        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
         "m %d %d l %d %d %d %d{\\p0}",
         ass_color(color), ass_alpha(a),
         math.floor(cx - s - 2), math.floor(cy - s),
@@ -437,8 +453,10 @@ local function draw_skip_fwd_icon(ass, cx, cy, size, color, alpha, master_alpha)
         math.floor(cx - s - 2), math.floor(cy + s)
     ))
     -- Right triangle
+    ass:new_event()
+    ass:pos(0, 0)
     ass:append(string.format(
-        "{\\an7\\pos(0,0)\\bord0\\shad0%s%s\\p1}" ..
+        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
         "m %d %d l %d %d %d %d{\\p0}",
         ass_color(color), ass_alpha(a),
         math.floor(cx - 1), math.floor(cy - s),
@@ -462,8 +480,10 @@ local function draw_volume_icon(ass, cx, cy, size, color, alpha, master_alpha, v
         cx - s * 0.5 + rw, cy + rh / 2,
         color, alpha, master_alpha)
     -- Cone part (triangle)
+    ass:new_event()
+    ass:pos(0, 0)
     ass:append(string.format(
-        "{\\an7\\pos(0,0)\\bord0\\shad0%s%s\\p1}" ..
+        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
         "m %d %d l %d %d %d %d %d %d{\\p0}",
         ass_color(color), ass_alpha(a),
         math.floor(cx - s * 0.5 + rw), math.floor(cy - rh / 2),
@@ -483,8 +503,10 @@ local function draw_volume_icon(ass, cx, cy, size, color, alpha, master_alpha, v
             -- Small arc
             local arc_x = cx + s * 0.3
             local arc_r = s * 0.35
+            ass:new_event()
+            ass:pos(0, 0)
             ass:append(string.format(
-                "{\\an7\\pos(0,0)\\bord%.1f\\shad0%s%s\\1a&HFF&%s\\p1}" ..
+                "{\\an7\\bord%.1f\\shad0%s%s\\1a&HFF&%s\\p1}" ..
                 "m %d %d b %d %d %d %d %d %d{\\p0}",
                 size * 0.08,
                 ass_color(color), "\\3a&H" .. a .. "&",
@@ -499,8 +521,10 @@ local function draw_volume_icon(ass, cx, cy, size, color, alpha, master_alpha, v
             -- Larger arc
             local arc_x = cx + s * 0.3
             local arc_r = s * 0.65
+            ass:new_event()
+            ass:pos(0, 0)
             ass:append(string.format(
-                "{\\an7\\pos(0,0)\\bord%.1f\\shad0%s%s\\1a&HFF&%s\\p1}" ..
+                "{\\an7\\bord%.1f\\shad0%s%s\\1a&HFF&%s\\p1}" ..
                 "m %d %d b %d %d %d %d %d %d{\\p0}",
                 size * 0.08,
                 ass_color(color), "\\3a&H" .. a .. "&",
@@ -560,8 +584,10 @@ local function draw_exit_icon(ass, cx, cy, size, color, alpha, master_alpha)
     local t = size * 0.09
     -- Two rotated rectangles forming X, using ASS drawing
     -- Diagonal 1: top-left to bottom-right
+    ass:new_event()
+    ass:pos(0, 0)
     ass:append(string.format(
-        "{\\an7\\pos(0,0)\\bord0\\shad0%s%s\\p1}" ..
+        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
         "m %d %d l %d %d %d %d %d %d{\\p0}",
         ass_color(color), ass_alpha(a),
         math.floor(cx - s - t), math.floor(cy - s),
@@ -570,8 +596,10 @@ local function draw_exit_icon(ass, cx, cy, size, color, alpha, master_alpha)
         math.floor(cx + s - t), math.floor(cy + s)
     ))
     -- Diagonal 2: top-right to bottom-left
+    ass:new_event()
+    ass:pos(0, 0)
     ass:append(string.format(
-        "{\\an7\\pos(0,0)\\bord0\\shad0%s%s\\p1}" ..
+        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
         "m %d %d l %d %d %d %d %d %d{\\p0}",
         ass_color(color), ass_alpha(a),
         math.floor(cx + s - t), math.floor(cy - s),
@@ -1168,25 +1196,21 @@ end
 --------------------------------------------------------------------------------
 
 local function get_mouse_pos()
-    -- Try to read mouse position from mpv properties
-    local mx = mp.get_property_number("mouse-pos/x")
-    local my = mp.get_property_number("mouse-pos/y")
-    if mx and my then
-        -- Scale from video coords to OSD coords
-        local dim = mp.get_property_native("osd-dimensions")
-        if dim and dim.w and dim.w > 0 then
-            -- mouse-pos is in display coordinates, osd-dimensions gives us the mapping
-            -- Just use the raw values since they should already be in OSD space
-            -- when using create_osd_overlay with matching res
-        end
-        return mx, my
+    -- When embedded with wid=, mp.get_property_number("mouse-pos/x") returns -1.
+    -- Mouse position is tracked via script-message "osc-mouse-move" from the host app,
+    -- or updated by handle_mouse_move() when mpv's mouse_move binding fires.
+    -- Try mp.get_property_native("mouse-pos") which returns a table.
+    local mpos = mp.get_property_native("mouse-pos")
+    if mpos and mpos.x and mpos.y and mpos.x >= 0 and mpos.y >= 0 then
+        return mpos.x, mpos.y
     end
+    -- Fall back to state (set by script-message or previous calls)
     return state.mouse_x, state.mouse_y
 end
 
 local function handle_mouse_move()
     local mx, my = get_mouse_pos()
-    if mx == nil or my == nil then return end
+    if mx == nil or my == nil or mx < 0 or my < 0 then return end
 
     state.mouse_x = mx
     state.mouse_y = my
@@ -1483,10 +1507,38 @@ end
 
 local function setup_script_messages()
     -- Host app can send mouse coordinates explicitly
+    -- This is the primary mouse tracking method when embedded with wid=
     mp.register_script_message("osc-mouse-move", function(x, y)
-        state.mouse_x = tonumber(x) or state.mouse_x
-        state.mouse_y = tonumber(y) or state.mouse_y
-        handle_mouse_move()
+        local mx = tonumber(x)
+        local my = tonumber(y)
+        if not mx or not my then return end
+        state.mouse_x = mx
+        state.mouse_y = my
+
+        -- Show OSC on any mouse movement
+        show_osc()
+
+        -- Check if mouse is over the bar area
+        compute_layout()
+        local L = state.layout
+        if L.bar_hit then
+            state.mouse_in_bar = point_in_rect(mx, my, L.bar_hit)
+        end
+
+        -- Handle seek drag
+        if state.dragging_seek then
+            local sb = L.seek_bar
+            local ratio = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
+            state.seek_drag_pos = ratio
+        end
+
+        -- Handle volume drag
+        if state.dragging_volume then
+            local vb = L.volume_bar
+            local ratio = clamp((mx - vb.x) / vb.w, 0, 1)
+            state.volume_drag_val = ratio * 100
+            mp.commandv("set", "volume", tostring(state.volume_drag_val))
+        end
     end)
 
     -- Host app can send mouse button events
