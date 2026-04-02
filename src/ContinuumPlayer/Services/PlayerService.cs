@@ -503,8 +503,19 @@ public class PlayerService : IDisposable
 
     private void WireVideoWindowEvents()
     {
-        // No WndProc interception — mpv handles all input via its internal child window.
-        // Closing is handled by mpv's quit command (Q key or window close).
+        if (_videoWindow == null) return;
+
+        _videoWindow.EscapeRequested += () =>
+        {
+            if (State == PlayerState.Fullscreen)
+                ExitFullscreen();
+            else
+            {
+                _videoWindow?.Hide();
+                _ = CloseAsync();
+            }
+        };
+        _videoWindow.MinimizeRequested += () => Minimize();
     }
 
     public void HandleWindowResize() => _videoWindow?.MatchParentPosition();

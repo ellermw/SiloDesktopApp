@@ -297,11 +297,18 @@ public sealed class MpvPlayer : IDisposable
             SetOption("scripts", oscPath);
 
         // Point mpv to the fonts directory for Material Design Iconic Font
+        // OSC uses ASS rendering (subtitle system), so sub-fonts-dir is needed
         var fontsDir = Path.Combine(exeDir, "libs", "mpv", "fonts");
         if (!Directory.Exists(fontsDir))
             fontsDir = Path.Combine(exeDir, "..", "..", "..", "..", "libs", "mpv", "fonts");
         if (Directory.Exists(fontsDir))
+        {
+            SetOption("sub-fonts-dir", fontsDir);
             SetOption("osd-fonts-dir", fontsDir);
+        }
+
+        // OSC scale — make controls larger and easier to interact with
+        SetOption("script-opts", "osc-scalewindowed=1.5,osc-scalefullscreen=1.5,osc-hidetimeout=2000,osc-showwindowed=yes,osc-showfullscreen=yes");
 
         // Enable mpv's input handling (keyboard + mouse forwarded from WndProc)
         SetOption("input-default-bindings", "yes");
