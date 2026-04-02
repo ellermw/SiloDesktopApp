@@ -51,11 +51,7 @@ public sealed partial class MiniPlayerBar : UserControl
         if (_active) return;
         _active = true;
 
-        // Tell mpv to render at mini resolution
-        _playerService.Mpv?.UpdateRenderSize(284, 160);
-
-        // Subscribe to frames
-        _playerService.FrameReady += OnFrameReady;
+        // Subscribe to position updates (no video frames — GPU renders to native window)
         _playerService.PositionChanged += OnPositionChanged;
         _playerService.PauseChanged += OnPauseChanged;
 
@@ -80,7 +76,6 @@ public sealed partial class MiniPlayerBar : UserControl
         if (!_active) return;
         _active = false;
 
-        _playerService.FrameReady -= OnFrameReady;
         _playerService.PositionChanged -= OnPositionChanged;
         _playerService.PauseChanged -= OnPauseChanged;
 

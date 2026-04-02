@@ -17,6 +17,7 @@ public class PlayerService : IDisposable
     private readonly ContinuumApiClient _apiClient;
 
     private MpvPlayer? _mpv;
+    private MpvVideoWindow? _videoWindow;
     private PlaybackManager? _playbackManager;
     private bool _switchingContent;
 
@@ -53,7 +54,6 @@ public class PlayerService : IDisposable
     // ── Events ───────────────────────────────────────────────────────────
 
     public event Action<PlayerState>? StateChanged;
-    public event Action<byte[], int, int, int>? FrameReady;
     public event Action<double>? PositionChanged;
     public event Action<double>? DurationChanged;
     public event Action<bool>? PauseChanged;
@@ -66,6 +66,12 @@ public class PlayerService : IDisposable
     {
         if (State == newState) return;
         State = newState;
+
+        if (newState == PlayerState.Expanded || newState == PlayerState.Fullscreen)
+            _videoWindow?.Show();
+        else
+            _videoWindow?.Hide();
+
         StateChanged?.Invoke(newState);
     }
 
@@ -265,8 +271,15 @@ public class PlayerService : IDisposable
             // Initialize mpv (lazy — first play only)
             if (_mpv == null)
             {
+                var mainWindow = App.MainWindowInstance;
+                var parentHwnd = WinRT.Interop.WindowNative.GetWindowHandle(mainWindow);
+
+                _videoWindow = new MpvVideoWindow();
+                _videoWindow.Create(parentHwnd);
+                WireVideoWindowEvents();
+
                 _mpv = new MpvPlayer();
-                _mpv.Initialize(3840, 2160); // Native 4K — never downscale
+                _mpv.InitializeWithWindow(_videoWindow.Hwnd); // vo=gpu, zero CPU, native resolution
                 WireMpvEvents();
             }
 
@@ -306,8 +319,6 @@ public class PlayerService : IDisposable
     {
         if (_mpv == null) return;
 
-        _mpv.FrameReady += (buffer, w, h, stride) => FrameReady?.Invoke(buffer, w, h, stride);
-
         _mpv.PositionChanged += (pos) =>
         {
             Position = pos;
@@ -330,6 +341,7 @@ public class PlayerService : IDisposable
         _mpv.FileLoaded += () =>
         {
             IsLoading = false;
+
             ContentLoaded?.Invoke();
             if (_resumePosition > 0)
             {
@@ -483,6 +495,105 @@ public class PlayerService : IDisposable
         }
     }
 
+    // ── Video window events ────────────────────────────────────────────
+
+    private void WireVideoWindowEvents()
+    {
+        if (_videoWindow == null) return;
+
+        _videoWindow.EscapeRequested += () =>
+        {
+            if (State == PlayerState.Fullscreen)
+                ExitFullscreen();
+            else
+            {
+                _videoWindow?.Hide();
+                _ = CloseAsync();
+            }
+        };
+        _videoWindow.MinimizeRequested += () => Minimize();
+        _videoWindow.CloseRequested += () =>
+        {
+            _videoWindow?.Hide();
+            _ = CloseAsync();
+        };
+        _videoWindow.TogglePauseRequested += () =>
+        {
+            _mpv?.TogglePause();
+            _mpv?.ShowOsdText(IsPaused ? "⏸ Paused" : "▶ Playing", 1500);
+        };
+        _videoWindow.ToggleFullscreenRequested += ToggleFullscreen;
+        _videoWindow.ToggleMuteRequested += () =>
+        {
+            if (_mpv == null) return;
+            var newMute = !_mpv.GetMute();
+            _mpv.SetMute(newMute);
+            _mpv.ShowOsdText(newMute ? "🔇 Muted" : "🔊 Unmuted", 1500);
+        };
+        _videoWindow.SeekRelativeRequested += (seconds) =>
+        {
+            if (_mpv == null) return;
+            _mpv.Seek(Math.Max(0, _mpv.Position + seconds));
+        };
+        _videoWindow.VolumeChangeRequested += (delta) =>
+        {
+            if (_mpv == null) return;
+            var current = _mpv.GetPropertyDouble("volume");
+            var newVol = Math.Clamp(current + delta, 0, 100);
+            _mpv.SetVolume(newVol);
+            _mpv.ShowOsdText($"Volume: {(int)newVol}%", 1500);
+        };
+        _videoWindow.InfoToggleRequested += TogglePlaybackInfo;
+        _videoWindow.MouseActivityDetected += () =>
+        {
+            // Show time and progress bar on mouse movement
+            if (_mpv == null || Duration <= 0) return;
+            var pos = FormatTime(Position);
+            var dur = FormatTime(Duration);
+            var pct = Duration > 0 ? (int)(Position / Duration * 100) : 0;
+            _mpv.ShowOsdText($"{pos} / {dur}  ({pct}%)", 3000);
+        };
+    }
+
+    public void HandleWindowResize() => _videoWindow?.MatchParentPosition();
+
+    // ── Playback info overlay ───────────────────────────────────────────
+
+    private bool _infoVisible;
+
+    private void TogglePlaybackInfo()
+    {
+        if (_mpv == null) return;
+        _infoVisible = !_infoVisible;
+
+        if (_infoVisible)
+        {
+            var lines = new List<string>();
+            lines.Add(!string.IsNullOrEmpty(Subtitle) ? Title : Title);
+            if (!string.IsNullOrEmpty(Subtitle)) lines.Add(Subtitle);
+            lines.Add("");
+            lines.Add($"Method: {PlayMethod?.ToUpperInvariant() ?? "unknown"}");
+            if (!string.IsNullOrEmpty(Resolution)) lines.Add($"Resolution: {Resolution}");
+            var info = _playbackManager?.CurrentSession?.PlaybackInfo;
+            if (info != null)
+            {
+                if (!string.IsNullOrEmpty(info.VideoCodec)) lines.Add($"Video: {info.VideoCodec.ToUpperInvariant()}");
+                if (!string.IsNullOrEmpty(info.AudioCodec)) lines.Add($"Audio: {info.AudioCodec.ToUpperInvariant()}");
+            }
+            try
+            {
+                var bw = _mpv.GetPropertyDouble("cache-speed");
+                if (bw > 0) lines.Add($"Bandwidth: {bw / 1_000_000:F1} Mbps");
+            }
+            catch { }
+            _mpv.ShowOsdText(string.Join("\\n", lines), 86400000);
+        }
+        else
+        {
+            _mpv.ShowOsdText("", 0);
+        }
+    }
+
     // ── Close / Dispose ──────────────────────────────────────────────────
 
     public async Task CloseAsync()
@@ -515,6 +626,8 @@ public class PlayerService : IDisposable
 
     public void Dispose()
     {
+        _videoWindow?.Dispose();
+        _videoWindow = null;
         if (State != PlayerState.Idle)
         {
             if (State == PlayerState.Fullscreen)

@@ -55,7 +55,8 @@ public sealed partial class MainWindow : Window
         var playerService = App.Services.GetRequiredService<PlayerService>();
         playerService.StateChanged += OnPlayerStateChanged;
 
-        // (no-op: software rendering doesn't need resize handling)
+        // Keep native video window matched to main window size
+        this.SizeChanged += (_, _) => playerService.HandleWindowResize();
     }
 
     private async void NavView_Loaded(object sender, RoutedEventArgs e)

@@ -42,10 +42,7 @@ public sealed partial class PlayerOverlay : UserControl
         if (_isActive) return;
         _isActive = true;
 
-        // Subscribe to frame rendering
-        _playerService.FrameReady += OnFrameReady;
-
-        // Subscribe to content/playback events
+        // Subscribe to content/playback events (video renders via native GPU window)
         _playerService.ContentLoaded += OnContentLoaded;
         _playerService.PlaybackEnded += OnPlaybackEnded;
 
@@ -85,7 +82,7 @@ public sealed partial class PlayerOverlay : UserControl
         UpdatePlaybackInfo();
 
         // Cap render size at 1080p
-        _playerService.Mpv?.UpdateRenderSize(3840, 2160); // Native 4K — never downscale
+        // Render size is set dynamically in FileLoaded to match video's native resolution
 
         // Start UI update timer (250ms)
         _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -107,7 +104,6 @@ public sealed partial class PlayerOverlay : UserControl
         _isActive = false;
 
         // Unsubscribe from events
-        _playerService.FrameReady -= OnFrameReady;
         _playerService.ContentLoaded -= OnContentLoaded;
         _playerService.PlaybackEnded -= OnPlaybackEnded;
 
@@ -157,6 +153,9 @@ public sealed partial class PlayerOverlay : UserControl
     // Double-buffered SoftwareBitmaps to avoid per-frame allocation (33MB at 4K)
     private Windows.Graphics.Imaging.SoftwareBitmap?[] _swBitmaps = new Windows.Graphics.Imaging.SoftwareBitmap?[2];
     private int _swIdx;
+    private long _lastPresentTicks;
+    private double[] _frameTimes = new double[60];
+    private int _frameTimeIdx;
 
     private void OnFrameReady(byte[] buffer, int width, int height, int stride)
     {
@@ -183,10 +182,11 @@ public sealed partial class PlayerOverlay : UserControl
         try
         {
             int w = _snapW, h = _snapH, stride = _snapStride;
+            var t0 = System.Diagnostics.Stopwatch.GetTimestamp();
 
-            // Reuse SoftwareBitmap from double buffer (avoids 33MB allocation per frame at 4K)
+            // Reuse SoftwareBitmap from double buffer
             var idx = _swIdx;
-            _swIdx = 1 - _swIdx; // flip
+            _swIdx = 1 - _swIdx;
             var bitmap = _swBitmaps[idx];
             if (bitmap == null || bitmap.PixelWidth != w || bitmap.PixelHeight != h)
             {
@@ -197,16 +197,40 @@ public sealed partial class PlayerOverlay : UserControl
                 _swBitmaps[idx] = bitmap;
             }
             bitmap.CopyFromBuffer(_snapBuffer.AsBuffer());
+            var t1 = System.Diagnostics.Stopwatch.GetTimestamp();
 
-            // Ensure source exists
             if (_bitmapSource == null)
             {
                 _bitmapSource = new Microsoft.UI.Xaml.Media.Imaging.SoftwareBitmapSource();
                 VideoFrame.Source = _bitmapSource;
             }
 
-            // Async GPU upload — UI thread stays responsive
             await _bitmapSource.SetBitmapAsync(bitmap);
+            var t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+
+            // Per-stage timing diagnostics
+            var freq = (double)System.Diagnostics.Stopwatch.Frequency;
+            var copyMs = (t1 - t0) * 1000.0 / freq;
+            var uploadMs = (t2 - t1) * 1000.0 / freq;
+            var totalMs = (t2 - t0) * 1000.0 / freq;
+
+            _frameTimeIdx++;
+            if (_frameTimeIdx % 60 == 0)
+            {
+                double sinceLastFrame = 0;
+                if (_lastPresentTicks > 0)
+                    sinceLastFrame = (t0 - _lastPresentTicks) * 1000.0 / freq;
+                try
+                {
+                    var logPath = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "ContinuumPlayer", "frame_perf.txt");
+                    System.IO.File.AppendAllText(logPath,
+                        $"[{DateTime.Now:HH:mm:ss}] copy={copyMs:F1}ms upload={uploadMs:F1}ms total={totalMs:F1}ms gap={sinceLastFrame:F1}ms size={w}x{h}\n");
+                }
+                catch { }
+            }
+            _lastPresentTicks = t2;
         }
         finally
         {

@@ -111,8 +111,8 @@ public sealed class MpvPlayer : IDisposable
         if (_mpvHandle == IntPtr.Zero)
             throw new InvalidOperationException("mpv_create() returned null.");
 
-        // Hardware decode to system memory (GPU decodes at native resolution, copies to RAM)
-        SetOption("hwdec", "d3d11va-copy");
+        // Hardware decode back to auto-copy
+        SetOption("hwdec", "auto-copy");
 
         // Disable mpv's on-screen controller and input — we handle everything in XAML
         SetOption("osc", "no");
@@ -151,10 +151,12 @@ public sealed class MpvPlayer : IDisposable
         SetOption("replaygain", "no");                   // No volume normalization
 
         // === Video — preserve full quality ===
-        SetOption("video-sync", "audio");                // Sync video to audio (standard, low latency)
-        SetOption("framedrop", "vo");                    // Drop at VO level if display can't keep up
-        SetOption("correct-downscaling", "yes");         // High quality scaling when display < source
-        SetOption("deband", "no");                       // No debanding — preserve original signal
+        SetOption("video-sync", "audio");
+        SetOption("framedrop", "vo");
+        SetOption("correct-downscaling", "yes");
+        SetOption("deband", "no");
+
+
 
         // vo=libmpv is required when using the render API
         SetOption("vo", "libmpv");
@@ -567,6 +569,13 @@ public sealed class MpvPlayer : IDisposable
     /// <param name="url">URL or file path of the subtitle file.</param>
     /// <param name="title">Optional display title.</param>
     /// <param name="lang">Optional language code.</param>
+    /// <summary>Shows text on mpv's OSD.</summary>
+    public void ShowOsdText(string text, int durationMs = 5000)
+    {
+        ThrowIfNotInitialized();
+        Command("show-text", text, durationMs.ToString());
+    }
+
     public void AddSubtitle(string url, string? title = null, string? lang = null)
     {
         ThrowIfNotInitialized();
