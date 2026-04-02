@@ -648,16 +648,17 @@ public class PlayerService : IDisposable
         if (State == PlayerState.Fullscreen)
             ExitFullscreen();
 
-        // Report final position before stopping, so resume works on next play
+        // Send final progress report to server before stopping, so resume works
         if (_mpv != null && _playbackManager != null)
         {
             var finalPos = _mpv.Position;
-            if (finalPos > 0)
+            if (finalPos > 0 && _playbackManager.SessionId != null)
             {
-                try { _playbackManager.UpdatePosition(finalPos, true); }
+                try
+                {
+                    await _playbackApi.ReportProgressAsync(_playbackManager.SessionId, finalPos, true);
+                }
                 catch { }
-                // Give the server a moment to persist the position
-                await Task.Delay(200);
             }
         }
 
