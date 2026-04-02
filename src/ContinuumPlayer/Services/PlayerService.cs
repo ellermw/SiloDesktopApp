@@ -301,9 +301,12 @@ public class PlayerService : IDisposable
                 _videoHost.Create(parentHwnd);
                 _videoHost.CloseRequested += () =>
                 {
-                    // Escape pressed in playback window — close player
                     _videoHost?.Hide();
                     _ = CloseAsync();
+                };
+                _videoHost.InfoToggleRequested += () =>
+                {
+                    TogglePlaybackInfo();
                 };
 
                 _mpv = new MpvPlayer();
@@ -556,12 +559,107 @@ public class PlayerService : IDisposable
 
     public void HandleWindowResize() => _videoHost?.MatchParentPosition();
 
+    // ── Playback info overlay ───────────────────────────────────────────
+
+    private bool _infoVisible;
+
+    private void TogglePlaybackInfo()
+    {
+        if (_mpv == null) return;
+        _infoVisible = !_infoVisible;
+
+        if (_infoVisible)
+        {
+            ShowPlaybackInfo();
+        }
+        else
+        {
+            _mpv.ShowOsdText("", 0); // Clear OSD
+        }
+    }
+
+    private void ShowPlaybackInfo()
+    {
+        if (_mpv == null || _playbackManager?.CurrentSession == null) return;
+
+        var session = _playbackManager.CurrentSession;
+        var lines = new List<string>();
+
+        // Title info
+        if (!string.IsNullOrEmpty(Subtitle))
+            lines.Add($"{Title}");
+        else
+            lines.Add(Title);
+        if (!string.IsNullOrEmpty(Subtitle))
+            lines.Add(Subtitle);
+
+        lines.Add(""); // blank line
+
+        // Playback method and quality
+        lines.Add($"Method: {PlayMethod?.ToUpperInvariant() ?? "unknown"}");
+        if (!string.IsNullOrEmpty(Resolution))
+            lines.Add($"Resolution: {Resolution}");
+
+        // Codec info from session
+        var info = session.PlaybackInfo;
+        if (info != null)
+        {
+            if (!string.IsNullOrEmpty(info.VideoCodec))
+                lines.Add($"Video: {info.VideoCodec.ToUpperInvariant()}");
+            if (!string.IsNullOrEmpty(info.AudioCodec))
+                lines.Add($"Audio: {info.AudioCodec.ToUpperInvariant()}");
+        }
+
+        // HDR detection from mpv properties
+        try
+        {
+            var hdr = _mpv.GetProperty("video-params/primaries");
+            if (!string.IsNullOrEmpty(hdr) && hdr != "bt.709")
+                lines.Add($"HDR: {hdr}");
+        }
+        catch { }
+
+        // Bitrate from mpv
+        try
+        {
+            var vBitrate = _mpv.GetPropertyDouble("video-bitrate");
+            if (vBitrate > 0)
+                lines.Add($"Bitrate: {vBitrate / 1_000_000:F1} Mbps");
+        }
+        catch { }
+
+        // Network speed from mpv cache
+        try
+        {
+            var speed = _mpv.GetPropertyDouble("cache-speed");
+            if (speed > 0)
+                lines.Add($"Bandwidth: {speed / 1_000_000:F1} Mbps");
+        }
+        catch { }
+
+        var text = string.Join("\\n", lines);
+        _mpv.ShowOsdText(text, 86400000); // Show until toggled off
+    }
+
     // ── Close / Dispose ──────────────────────────────────────────────────
 
     public async Task CloseAsync()
     {
         if (State == PlayerState.Fullscreen)
             ExitFullscreen();
+
+        // Report final position before stopping, so resume works on next play
+        if (_mpv != null && _playbackManager != null)
+        {
+            var finalPos = _mpv.Position;
+            if (finalPos > 0)
+            {
+                try { _playbackManager.UpdatePosition(finalPos, true); }
+                catch { }
+                // Give the server a moment to persist the position
+                await Task.Delay(200);
+            }
+        }
 
         _mpv?.Stop();
 

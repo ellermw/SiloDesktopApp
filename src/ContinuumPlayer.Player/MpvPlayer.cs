@@ -282,8 +282,11 @@ public sealed class MpvPlayer : IDisposable
         // Enable mpv's built-in on-screen controller
         SetOption("osc", "yes");
         SetOption("osd-level", "1");
+        SetOption("osd-duration", "3000");               // OSD messages visible for 3 seconds
+        SetOption("osd-on-seek", "msg-bar");             // Show seek bar + position on seek
+        SetOption("cursor-autohide", "1000");            // Hide cursor after 1s inactivity
 
-        // Enable ALL mpv input handling (keyboard + mouse for OSC)
+        // Enable ALL mpv input handling (keyboard + mouse for OSC + stats)
         SetOption("input-default-bindings", "yes");
         SetOption("input-vo-keyboard", "yes");
         SetOption("input-cursor", "yes");
@@ -570,6 +573,31 @@ public sealed class MpvPlayer : IDisposable
         if (mpv_get_property_int(_mpvHandle, "mute", MPV_FORMAT_FLAG, out long val) == 0)
             return val != 0;
         return false;
+    }
+
+    /// <summary>Shows text on mpv's OSD for the specified duration in ms.</summary>
+    public void ShowOsdText(string text, int durationMs = 5000)
+    {
+        ThrowIfNotInitialized();
+        Command("show-text", text, durationMs.ToString());
+    }
+
+    /// <summary>Gets a string property from mpv.</summary>
+    public string? GetProperty(string name)
+    {
+        if (_mpvHandle == IntPtr.Zero) return null;
+        var ptr = mpv_get_property_string(_mpvHandle, name);
+        if (ptr == IntPtr.Zero) return null;
+        return Marshal.PtrToStringUTF8(ptr);
+    }
+
+    /// <summary>Gets a double property from mpv.</summary>
+    public double GetPropertyDouble(string name)
+    {
+        if (_mpvHandle == IntPtr.Zero) return 0;
+        if (mpv_get_property_double(_mpvHandle, name, MPV_FORMAT_DOUBLE, out double val) == 0)
+            return val;
+        return 0;
     }
 
     /// <summary>

@@ -33,6 +33,7 @@ public sealed class MpvVideoWindow : IDisposable
     private static readonly IntPtr HWND_NOTOPMOST = new(-2);
 
     public event Action? CloseRequested;
+    public event Action? InfoToggleRequested;
 
     // Win32 imports
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
@@ -170,6 +171,7 @@ public sealed class MpvVideoWindow : IDisposable
         const uint WM_KEYDOWN = 0x0100;
         const uint WM_SYSKEYDOWN = 0x0104;
         const int VK_ESCAPE = 0x1B;
+        const int VK_I = 0x49;
 
         if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN)
         {
@@ -177,6 +179,11 @@ public sealed class MpvVideoWindow : IDisposable
             if (vk == VK_ESCAPE)
             {
                 CloseRequested?.Invoke();
+                return IntPtr.Zero;
+            }
+            if (vk == VK_I)
+            {
+                InfoToggleRequested?.Invoke();
                 return IntPtr.Zero;
             }
         }
