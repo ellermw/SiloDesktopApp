@@ -174,18 +174,17 @@ public sealed class MpvVideoWindow : IDisposable
     public void EnterFullscreen()
     {
         if (_hwnd == IntPtr.Zero) return;
-        // Save current position for restore
         GetWindowRect(_hwnd, out _savedRect);
-        // Get monitor dimensions
         var monitor = MonitorFromWindow(_hwnd, 2 /*MONITOR_DEFAULTTONEAREST*/);
         var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
         GetMonitorInfoW(monitor, ref mi);
-        // Go fullscreen on the monitor, TOPMOST to cover taskbar
+        // Go fullscreen — TOPMOST + activate to cover taskbar and stay in front
         SetWindowPos(_hwnd, HWND_TOPMOST,
             mi.rcMonitor.Left, mi.rcMonitor.Top,
             mi.rcMonitor.Right - mi.rcMonitor.Left,
             mi.rcMonitor.Bottom - mi.rcMonitor.Top,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            SWP_SHOWWINDOW);
+        SetForegroundWindow(_hwnd);
         _isFullscreen = true;
     }
 
