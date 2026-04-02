@@ -735,10 +735,10 @@ public sealed partial class ItemDetailPage : Page
         NavigateToPlayer(ViewModel.Item.ContentId, fromStart: true);
     }
 
-    private void NavigateToPlayer(string contentId, bool fromStart = false)
+    private void NavigateToPlayer(string contentId, bool fromStart = false, int? fileId = null)
     {
         var playerService = App.Services.GetRequiredService<Services.PlayerService>();
-        _ = playerService.PlayAsync(contentId, fromStart: fromStart);
+        _ = playerService.PlayAsync(contentId, fromStart: fromStart, fileId: fileId);
     }
 
     // ===== Initial Play Button & Quality Badges from Catalog Item Data =====
@@ -1030,15 +1030,25 @@ public sealed partial class ItemDetailPage : Page
                 item.Click += (_, _) =>
                 {
                     _selectedVersion = fileVersion;
-                    var qualityParts = new List<string>();
-                    if (!string.IsNullOrEmpty(fileVersion.Resolution))
-                        qualityParts.Add(fileVersion.Resolution);
-                    if (fileVersion.Hdr)
-                        qualityParts.Add("HDR");
-                    if (qualityParts.Count > 0)
+
+                    // If already playing, switch version mid-playback
+                    var playerService = App.Services.GetRequiredService<Services.PlayerService>();
+                    if (playerService.State != Services.PlayerState.Idle)
                     {
-                        PlayQualityText.Text = $"\u00B7 {string.Join(" ", qualityParts)}";
-                        PlayQualityText.Visibility = Visibility.Visible;
+                        _ = playerService.SwitchVersionAsync(fileVersion);
+                    }
+                    else
+                    {
+                        // Start playback with this specific version
+                        var playContentId = ViewModel.Item?.ContentId;
+                        if (ViewModel.IsSeries && ViewModel.Episodes.Count > 0)
+                        {
+                            var episode = ViewModel.Episodes.FirstOrDefault(ep => ep.UserData?.Played != true)
+                                          ?? ViewModel.Episodes[0];
+                            playContentId = episode.ContentId;
+                        }
+                        if (playContentId != null)
+                            NavigateToPlayer(playContentId, fileId: fileVersion.FileId);
                     }
                 };
                 VersionFlyout.Items.Add(item);

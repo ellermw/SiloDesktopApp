@@ -168,7 +168,7 @@ public class PlayerService : IDisposable
 
     // ── Playback ─────────────────────────────────────────────────────────
 
-    public async Task PlayAsync(string contentId, bool fromStart = false)
+    public async Task PlayAsync(string contentId, bool fromStart = false, int? fileId = null)
     {
         ErrorMessage = null;
         IsLoading = true;
@@ -197,8 +197,11 @@ public class PlayerService : IDisposable
             // Versions
             Versions = watchDetail.Versions.ToList();
 
-            // Select best version
-            var bestVersion = _playbackManager.SelectBestVersion(watchDetail.Versions);
+            // Select version: use specified fileId if provided, otherwise pick best
+            FileVersion? bestVersion = null;
+            if (fileId.HasValue)
+                bestVersion = watchDetail.Versions.FirstOrDefault(v => v.FileId == fileId.Value);
+            bestVersion ??= _playbackManager.SelectBestVersion(watchDetail.Versions);
             if (bestVersion == null)
             {
                 ErrorMessage = "No playable version found.";
@@ -285,7 +288,7 @@ public class PlayerService : IDisposable
             if (_mpv == null)
             {
                 _mpv = new MpvPlayer();
-                _mpv.Initialize(1920, 1080); // 1080p software render — good balance of quality and performance
+                _mpv.Initialize(1280, 720); // 720p software render — XAML upscales; keeps UI thread responsive for 4K content
                 WireMpvEvents();
             }
 

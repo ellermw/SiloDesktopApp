@@ -149,11 +149,19 @@ public sealed partial class PlayerOverlay : UserControl
     private int _snapW, _snapH, _snapStride;
     private volatile bool _snapReady;
     private volatile bool _uiBusy;
+    private long _lastFrameTicks;
+    private const long FrameIntervalTicks = 333333; // ~30fps cap (33.3ms in 100ns ticks)
 
     private void OnFrameReady(byte[] buffer, int width, int height, int stride)
     {
         // Skip if UI thread is still processing previous frame
         if (_uiBusy) return;
+
+        // Frame rate cap: skip frames if too fast (prevents UI thread saturation)
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (now - _lastFrameTicks < FrameIntervalTicks * (System.Diagnostics.Stopwatch.Frequency / 10_000_000))
+            return;
+        _lastFrameTicks = now;
 
         // Immediate copy on render thread into our own buffer
         int size = stride * height;
