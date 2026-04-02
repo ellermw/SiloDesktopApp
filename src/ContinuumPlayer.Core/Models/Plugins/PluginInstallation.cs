@@ -25,11 +25,6 @@ public class PluginInstallation
     public string? UpdatedAt { get; set; }
 }
 
-public class PluginInstallationsResponse
-{
-    public List<PluginInstallation> Installations { get; set; } = [];
-}
-
 public class InstallPluginRequest
 {
     public int? RepositoryId { get; set; }

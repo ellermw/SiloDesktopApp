@@ -13,8 +13,3 @@ public class PluginCatalogEntry
     public List<PluginAsset> Assets { get; set; } = [];
     public Dictionary<string, object>? Metadata { get; set; }
 }
-
-public class PluginCatalogResponse
-{
-    public List<PluginCatalogEntry> Plugins { get; set; } = [];
-}

@@ -6,8 +6,8 @@ public class PluginsApi(ContinuumApiClient client)
 {
     // ===== Repositories =====
 
-    public Task<PluginRepositoriesResponse> GetRepositoriesAsync(CancellationToken ct = default)
-        => client.GetAsync<PluginRepositoriesResponse>("/api/v1/admin/plugins/repositories", ct);
+    public Task<List<PluginRepository>> GetRepositoriesAsync(CancellationToken ct = default)
+        => client.GetAsync<List<PluginRepository>>("/api/v1/admin/plugins/repositories", ct);
 
     public Task<PluginRepository> CreateRepositoryAsync(CreatePluginRepositoryRequest request, CancellationToken ct = default)
         => client.PostAsync<PluginRepository>("/api/v1/admin/plugins/repositories", request, ct);
@@ -23,13 +23,13 @@ public class PluginsApi(ContinuumApiClient client)
 
     // ===== Catalog =====
 
-    public Task<PluginCatalogResponse> GetCatalogAsync(CancellationToken ct = default)
-        => client.GetAsync<PluginCatalogResponse>("/api/v1/admin/plugins/catalog", ct);
+    public Task<List<PluginCatalogEntry>> GetCatalogAsync(CancellationToken ct = default)
+        => client.GetAsync<List<PluginCatalogEntry>>("/api/v1/admin/plugins/catalog", ct);
 
     // ===== Installations =====
 
-    public Task<PluginInstallationsResponse> GetInstallationsAsync(CancellationToken ct = default)
-        => client.GetAsync<PluginInstallationsResponse>("/api/v1/admin/plugins/installations", ct);
+    public Task<List<PluginInstallation>> GetInstallationsAsync(CancellationToken ct = default)
+        => client.GetAsync<List<PluginInstallation>>("/api/v1/admin/plugins/installations", ct);
 
     public Task<PluginInstallation> InstallPluginAsync(InstallPluginRequest request, CancellationToken ct = default)
         => client.PostAsync<PluginInstallation>("/api/v1/admin/plugins/installations", request, ct);

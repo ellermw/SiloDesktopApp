@@ -11,11 +11,6 @@ public class PluginRepository
     public string? UpdatedAt { get; set; }
 }
 
-public class PluginRepositoriesResponse
-{
-    public List<PluginRepository> Repositories { get; set; } = [];
-}
-
 public class CreatePluginRepositoryRequest
 {
     public string Url { get; set; } = "";

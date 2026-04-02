@@ -39,13 +39,13 @@ public partial class AdminPluginsViewModel : ObservableObject
             await Task.WhenAll(installTask, catalogTask, reposTask);
 
             Installations.Clear();
-            foreach (var i in installTask.Result.Installations) Installations.Add(i);
+            foreach (var i in installTask.Result) Installations.Add(i);
 
             CatalogEntries.Clear();
-            foreach (var c in catalogTask.Result.Plugins) CatalogEntries.Add(c);
+            foreach (var c in catalogTask.Result) CatalogEntries.Add(c);
 
             Repositories.Clear();
-            foreach (var r in reposTask.Result.Repositories) Repositories.Add(r);
+            foreach (var r in reposTask.Result) Repositories.Add(r);
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsLoading = false; }
