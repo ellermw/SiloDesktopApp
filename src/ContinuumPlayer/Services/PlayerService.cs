@@ -523,18 +523,26 @@ public class PlayerService : IDisposable
     }
 
     // Called by mpv when fullscreen property changes (from OSC fullscreen button or F key)
+    // Runs on mpv's event thread — dispatch to UI thread for safety
     private void OnMpvFullscreenChanged(bool fullscreen)
     {
         if (_videoWindow == null) return;
-        if (fullscreen)
+        try
         {
-            _videoWindow.EnterFullscreen();
-            SetState(PlayerState.Fullscreen);
+            if (fullscreen)
+            {
+                _videoWindow.EnterFullscreen();
+                State = PlayerState.Fullscreen;
+            }
+            else
+            {
+                _videoWindow.ExitFullscreen();
+                State = PlayerState.Expanded;
+            }
         }
-        else
+        catch (Exception ex)
         {
-            _videoWindow.ExitFullscreen();
-            SetState(PlayerState.Expanded);
+            LogToFile("player_crash.txt", $"Fullscreen toggle failed: {ex}");
         }
     }
 
