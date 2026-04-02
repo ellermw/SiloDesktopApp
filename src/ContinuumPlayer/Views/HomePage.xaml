@@ -18,6 +18,37 @@
     </Page.Resources>
 
     <Grid>
+        <!-- Undo dismissal banner (bottom, overlaid) -->
+        <Border
+            x:Name="UndoBanner"
+            Visibility="Collapsed"
+            VerticalAlignment="Bottom"
+            HorizontalAlignment="Center"
+            Margin="0,0,0,24"
+            Padding="16,10,8,10"
+            CornerRadius="12"
+            Background="{StaticResource SurfaceBrush}"
+            BorderBrush="{StaticResource CardBorderBrush}"
+            BorderThickness="1"
+            Canvas.ZIndex="100">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <TextBlock
+                    x:Name="UndoBannerText"
+                    Text="Item dismissed"
+                    FontSize="13"
+                    Foreground="{StaticResource PrimaryTextBrush}"
+                    VerticalAlignment="Center" />
+                <Button
+                    x:Name="UndoButton"
+                    Content="Undo"
+                    Style="{StaticResource AccentButtonStyle}"
+                    FontSize="12"
+                    Padding="12,6"
+                    CornerRadius="8"
+                    Click="UndoButton_Click" />
+            </StackPanel>
+        </Border>
+
         <!-- Loading indicator -->
         <ProgressRing
             IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"

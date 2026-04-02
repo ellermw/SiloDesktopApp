@@ -87,6 +87,9 @@ public partial class ItemDetailViewModel : ObservableObject
             OnPropertyChanged(nameof(RuntimeDisplay));
             OnPropertyChanged(nameof(GenresDisplay));
             OnPropertyChanged(nameof(RatingDisplay));
+
+            // Check precise favorite/watchlist status from dedicated endpoints (non-blocking)
+            _ = CheckFavoriteWatchlistAsync(contentId);
         }
         catch (Exception ex)
         {
@@ -95,6 +98,22 @@ public partial class ItemDetailViewModel : ObservableObject
         finally
         {
             IsLoading = false;
+        }
+    }
+
+    private async Task CheckFavoriteWatchlistAsync(string contentId)
+    {
+        try
+        {
+            var favTask = _catalogApi.GetFavoriteItemAsync(contentId);
+            var wlTask = _catalogApi.GetWatchlistItemAsync(contentId);
+            await Task.WhenAll(favTask, wlTask);
+            IsFavorite = await favTask;
+            InWatchlist = await wlTask;
+        }
+        catch
+        {
+            // Non-fatal -- fall back to values from item detail
         }
     }
 

@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ContinuumPlayer.Core.Api;
+using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Models.Home;
 
 namespace ContinuumPlayer.ViewModels;
@@ -9,14 +10,17 @@ namespace ContinuumPlayer.ViewModels;
 public partial class SearchViewModel : ObservableObject
 {
     private readonly CatalogApi _catalogApi;
+    private readonly PeopleApi _peopleApi;
     private CancellationTokenSource? _searchCts;
 
-    public SearchViewModel(CatalogApi catalogApi)
+    public SearchViewModel(CatalogApi catalogApi, PeopleApi peopleApi)
     {
         _catalogApi = catalogApi;
+        _peopleApi = peopleApi;
     }
 
     public ObservableCollection<MediaItem> Results { get; } = [];
+    public ObservableCollection<Person> PeopleResults { get; } = [];
 
     [ObservableProperty]
     private string _query = "";
@@ -41,6 +45,7 @@ public partial class SearchViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(Query))
         {
             Results.Clear();
+            PeopleResults.Clear();
             TotalCount = 0;
             return;
         }
@@ -54,9 +59,21 @@ public partial class SearchViewModel : ObservableObject
             await Task.Delay(300, ct);
             if (ct.IsCancellationRequested) return;
 
-            var response = await _catalogApi.SearchAsync(Query, 40, ct);
+            // Search catalog and people in parallel
+            var catalogTask = _catalogApi.SearchAsync(Query, 40, ct);
+            var peopleTask = SearchPeopleAsync(Query, ct);
+
+            await Task.WhenAll(catalogTask, peopleTask);
 
             if (ct.IsCancellationRequested) return;
+
+            var response = await catalogTask;
+
+            // Update people results
+            PeopleResults.Clear();
+            var people = await peopleTask;
+            foreach (var person in people)
+                PeopleResults.Add(person);
 
             // Filter client-side since the server search endpoint may not support text search yet
             Results.Clear();
@@ -71,7 +88,7 @@ public partial class SearchViewModel : ObservableObject
             }
             TotalCount = filtered.Count;
 
-            if (filtered.Count == 0 && response.Items.Count > 0)
+            if (filtered.Count == 0 && PeopleResults.Count == 0 && response.Items.Count > 0)
             {
                 ErrorMessage = "No matches found. Server-side search may need configuration.";
             }
@@ -88,6 +105,20 @@ public partial class SearchViewModel : ObservableObject
         {
             if (!ct.IsCancellationRequested)
                 IsLoading = false;
+        }
+    }
+
+    private async Task<List<Person>> SearchPeopleAsync(string query, CancellationToken ct)
+    {
+        try
+        {
+            var response = await _peopleApi.GetPeopleAsync(query, 10, 0, ct);
+            return response.Items;
+        }
+        catch
+        {
+            // People search failure is non-fatal
+            return [];
         }
     }
 }

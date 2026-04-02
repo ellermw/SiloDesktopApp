@@ -8,6 +8,7 @@
     xmlns:controls="using:ContinuumPlayer.Controls"
     xmlns:converters="using:ContinuumPlayer.Converters"
     xmlns:models="using:ContinuumPlayer.Core.Models.Home"
+    xmlns:catalog="using:ContinuumPlayer.Core.Models.Catalog"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}">
 
@@ -172,6 +173,63 @@
             <!-- Results grid -->
             <ScrollViewer Grid.Row="2" Padding="40,0,40,24">
                 <StackPanel>
+
+                    <!-- People results section -->
+                    <StackPanel x:Name="PeopleSection" Visibility="Collapsed" Margin="0,0,0,24">
+                        <TextBlock
+                            Text="People"
+                            FontSize="{StaticResource FontSizeTitle}"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource PrimaryTextBrush}"
+                            Margin="0,0,0,12" />
+
+                        <ItemsRepeater x:Name="PeopleRepeater">
+                            <ItemsRepeater.Layout>
+                                <StackLayout Orientation="Horizontal" Spacing="16" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate x:DataType="catalog:Person">
+                                    <Button
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        Padding="0"
+                                        CornerRadius="8"
+                                        Click="PersonCard_Click"
+                                        Tag="{x:Bind Id}">
+                                        <StackPanel Width="100" Spacing="6">
+                                            <!-- Photo circle / initials fallback -->
+                                            <Border
+                                                Width="80" Height="80"
+                                                CornerRadius="40"
+                                                Background="{StaticResource CardBackgroundBrush}"
+                                                HorizontalAlignment="Center">
+                                                <TextBlock
+                                                    Text="{x:Bind Name}"
+                                                    FontSize="24"
+                                                    FontWeight="SemiBold"
+                                                    Foreground="{StaticResource SecondaryTextBrush}"
+                                                    HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center"
+                                                    MaxLines="1"
+                                                    TextTrimming="CharacterEllipsis" />
+                                            </Border>
+                                            <!-- Name -->
+                                            <TextBlock
+                                                Text="{x:Bind Name}"
+                                                FontSize="12"
+                                                FontWeight="SemiBold"
+                                                Foreground="{StaticResource PrimaryTextBrush}"
+                                                HorizontalAlignment="Center"
+                                                TextAlignment="Center"
+                                                MaxLines="2"
+                                                TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                    </StackPanel>
+
                     <ItemsRepeater x:Name="ResultsRepeater">
                         <ItemsRepeater.Layout>
                             <UniformGridLayout

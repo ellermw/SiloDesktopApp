@@ -35,6 +35,15 @@ public sealed partial class HomePage : Page
                 _eventsAttached = true;
                 ViewModel.FeaturedSections.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(() => BuildContent());
                 ViewModel.Sections.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(() => BuildContent());
+
+                // Watch for undo banner visibility changes
+                ViewModel.PropertyChanged += (_, args) =>
+                {
+                    if (args.PropertyName == nameof(ViewModel.ShowUndoBanner))
+                    {
+                        DispatcherQueue.TryEnqueue(UpdateUndoBanner);
+                    }
+                };
             }
         }
         catch (Exception ex)
@@ -70,5 +79,25 @@ public sealed partial class HomePage : Page
             if (section.Items.Count == 0) continue;
             SectionsPanel.Children.Add(new SectionRow { Section = section });
         }
+    }
+
+    private void UpdateUndoBanner()
+    {
+        if (ViewModel.ShowUndoBanner)
+        {
+            UndoBannerText.Text = ViewModel.UndoMessage;
+            UndoBanner.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            UndoBanner.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private async void UndoButton_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.UndoDismissalCommand.ExecuteAsync(null);
+        // Rebuild content to restore the item
+        BuildContent();
     }
 }

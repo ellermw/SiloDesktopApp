@@ -12,6 +12,9 @@ public class HomeApi(ContinuumApiClient client)
 
     // ===== Dismissals =====
 
+    public Task DismissItemAsync(string surface, string itemId, object body, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/home/dismissals/{Uri.EscapeDataString(surface)}/{Uri.EscapeDataString(itemId)}", body, ct);
+
     public Task UndoDismissalAsync(string surface, string itemId, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/home/dismissals/{Uri.EscapeDataString(surface)}/{Uri.EscapeDataString(itemId)}", ct);
 }
