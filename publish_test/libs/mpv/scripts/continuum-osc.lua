@@ -1345,9 +1345,10 @@ local function handle_mouse_down()
         return
     end
 
-    -- Check fullscreen
+    -- Check fullscreen — send keypress "f" so the host app handles it
+    -- (mpv's internal fullscreen conflicts with our window management)
     if L.btn_fullscreen and point_in_rect(mx, my, L.btn_fullscreen) then
-        mp.commandv("cycle", "fullscreen")
+        mp.commandv("keypress", "f")
         return
     end
 
@@ -1430,7 +1431,7 @@ end
 -- Double-click for fullscreen (track timing of clicks)
 local last_click_time = 0
 local function handle_mbtn_left_dbl()
-    mp.commandv("cycle", "fullscreen")
+    mp.commandv("keypress", "f")
 end
 
 --------------------------------------------------------------------------------

@@ -34,6 +34,7 @@ public sealed class MpvVideoWindow : IDisposable
 
     public event Action? EscapeRequested;
     public event Action? MinimizeRequested;
+    public event Action? FullscreenToggleRequested;
 
     // Reference to mpv for forwarding input events
     private ContinuumPlayer.Player.MpvPlayer? _mpv;
@@ -287,6 +288,8 @@ public sealed class MpvVideoWindow : IDisposable
             if (vk == 0x1B) { EscapeRequested?.Invoke(); return IntPtr.Zero; }
             // N — minimize
             if (vk == 0x4E) { MinimizeRequested?.Invoke(); return IntPtr.Zero; }
+            // F — fullscreen toggle (handled by us, NOT mpv)
+            if (vk == 0x46) { FullscreenToggleRequested?.Invoke(); return IntPtr.Zero; }
             // Forward all other keys to mpv
             var keyName = VkToMpvKey(vk);
             if (keyName != null) _mpv?.SendKeypress(keyName);

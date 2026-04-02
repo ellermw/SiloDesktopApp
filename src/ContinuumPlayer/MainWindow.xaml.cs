@@ -193,13 +193,19 @@ public sealed partial class MainWindow : Window
 
     private void OnPlayerStateChanged(PlayerState state)
     {
+        var threadId = Environment.CurrentManagedThreadId;
+        var hasAccess = DispatcherQueue.HasThreadAccess;
+        LogState($"OnPlayerStateChanged: state={state} thread={threadId} hasUIAccess={hasAccess}");
+
         // Ensure XAML updates run on the UI thread
-        if (!DispatcherQueue.HasThreadAccess)
+        if (!hasAccess)
         {
+            LogState($"  Dispatching to UI thread...");
             DispatcherQueue.TryEnqueue(() => OnPlayerStateChanged(state));
             return;
         }
 
+        LogState($"  Executing state={state} on UI thread");
         switch (state)
         {
             case PlayerState.Idle:
@@ -209,18 +215,18 @@ public sealed partial class MainWindow : Window
                 MiniPlayerBarControl.Deactivate();
                 if (_navInitialized) NavView.IsPaneVisible = true;
                 NavView.Margin = new Thickness(0);
+                LogState($"  -> Idle: NavView.IsPaneVisible={NavView.IsPaneVisible} _navInitialized={_navInitialized}");
                 break;
 
             case PlayerState.Expanded:
             case PlayerState.Fullscreen:
                 MiniPlayerBarControl.Deactivate();
                 MiniPlayerBarControl.Visibility = Visibility.Collapsed;
-                // Don't show XAML PlayerOverlay — video renders in native popup window
-                // with custom Lua OSC controls
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
                 PlayerOverlayControl.Deactivate();
                 NavView.IsPaneVisible = false;
                 NavView.Margin = new Thickness(0);
+                LogState($"  -> Expanded/Fullscreen: NavView.IsPaneVisible=false");
                 break;
 
             case PlayerState.Minimized:
@@ -232,6 +238,18 @@ public sealed partial class MainWindow : Window
                 MiniPlayerBarControl.Activate();
                 break;
         }
+    }
+
+    private static void LogState(string msg)
+    {
+        try
+        {
+            var logPath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ContinuumPlayer", "state_trace.txt");
+            System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n");
+        }
+        catch { }
     }
 
     public void NavigateToHome()

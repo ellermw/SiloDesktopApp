@@ -64,6 +64,9 @@ public class PlayerService : IDisposable
 
     public void SetState(PlayerState newState)
     {
+        var threadId = Environment.CurrentManagedThreadId;
+        LogToFile("state_trace.txt", $"SetState: {State} -> {newState} (thread={threadId})");
+
         if (State == newState) return;
         State = newState;
 
@@ -72,7 +75,15 @@ public class PlayerService : IDisposable
         else
             _videoWindow?.Hide();
 
-        StateChanged?.Invoke(newState);
+        try
+        {
+            StateChanged?.Invoke(newState);
+            LogToFile("state_trace.txt", $"StateChanged invoked OK for {newState}");
+        }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"StateChanged THREW for {newState}: {ex}");
+        }
     }
 
     public void Minimize()
@@ -306,6 +317,7 @@ public class PlayerService : IDisposable
                 _mpv.InitializeWithWindow(_videoWindow.Hwnd); // vo=gpu, zero CPU, native resolution
                 _videoWindow.SetMpv(_mpv); // Forward mouse/keyboard to mpv for OSC
                 WireMpvEvents();
+
             }
 
             // Set state to Expanded (shows the overlay)
@@ -562,30 +574,32 @@ public class PlayerService : IDisposable
         {
             App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => Minimize());
         };
-    }
-
-    // Called by mpv when fullscreen property changes (from OSC fullscreen button or F key)
-    // Runs on mpv's event thread — dispatch to UI thread for safety
-    private void OnMpvFullscreenChanged(bool fullscreen)
-    {
-        if (_videoWindow == null) return;
-        try
+        _videoWindow.FullscreenToggleRequested += () =>
         {
-            if (fullscreen)
-            {
-                _videoWindow.EnterFullscreen();
-                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Fullscreen));
-            }
-            else
+            if (_videoWindow.IsFullscreen)
             {
                 _videoWindow.ExitFullscreen();
                 App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Expanded));
             }
-        }
-        catch (Exception ex)
-        {
-            LogToFile("player_crash.txt", $"Fullscreen toggle failed: {ex}");
-        }
+            else
+            {
+                _videoWindow.EnterFullscreen();
+                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Fullscreen));
+            }
+        };
+    }
+
+    // Called by mpv when fullscreen property changes (from OSC fullscreen button or F key)
+    // Runs on mpv's event thread — dispatch to UI thread for safety
+    // Ignore fullscreen property changes from mpv — mpv's internal fullscreen
+    // handling conflicts with our window management (it toggles true then
+    // immediately back to false within 137ms). Instead, handle fullscreen
+    // exclusively through our own EnterFullscreen/ExitFullscreen via the
+    // OSC's fullscreen button sending a script-message.
+    private void OnMpvFullscreenChanged(bool fullscreen)
+    {
+        // Intentionally ignored — see comment above.
+        // Fullscreen is handled by osc-toggle-fullscreen script message.
     }
 
     public void HandleWindowResize() => _videoWindow?.MatchParentPosition();
@@ -697,7 +711,7 @@ public class PlayerService : IDisposable
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ContinuumPlayer", fileName);
             Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-            File.WriteAllText(logPath, $"{DateTime.Now}\n{content}\n");
+            File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss.fff}] {content}\n");
         }
         catch { }
     }
