@@ -152,8 +152,8 @@ public sealed class MpvPlayer : IDisposable
 
         // === Video — preserve full quality ===
         SetOption("video-sync", "audio");                // Sync video to audio (standard, low latency)
-        SetOption("framedrop", "vo");                    // Drop frames at VO level if display can't keep up (decoder-level framedrop can cause artifacts)
-        SetOption("correct-downscaling", "yes");         // Correct downscaling for quality
+        SetOption("framedrop", "vo");                    // Drop at VO level if display can't keep up
+        SetOption("correct-downscaling", "yes");         // High quality scaling when display < source
         SetOption("deband", "no");                       // No debanding — preserve original signal
 
         // vo=libmpv is required when using the render API
@@ -279,12 +279,11 @@ public sealed class MpvPlayer : IDisposable
         // Set the target window handle
         SetOption("wid", windowHandle.ToString());
 
-        // Disable mpv's OSC and input — we handle controls ourselves
+        // Disable mpv's on-screen controller -- we handle controls in XAML
         SetOption("osc", "no");
-        SetOption("osd-level", "1");
-        SetOption("osd-duration", "3000");
-        SetOption("osd-on-seek", "msg-bar");
-        SetOption("cursor-autohide", "1000");
+        SetOption("osd-level", "0");
+
+        // Disable mpv's keyboard/mouse handling -- we handle input in XAML
         SetOption("input-default-bindings", "no");
         SetOption("input-vo-keyboard", "no");
         SetOption("input-cursor", "no");
@@ -293,37 +292,17 @@ public sealed class MpvPlayer : IDisposable
         SetOption("keep-open", "yes");
         SetOption("idle", "yes");
 
-        // === High-bitrate / 4K remux buffering (70+ Mbps, buffer 600s ahead) ===
+        // Buffering for ultra high-bitrate content (100+ Mbps 4K remux)
         SetOption("cache", "yes");
         SetOption("ytdl", "no");
-        SetOption("demuxer-max-bytes", "6GiB");          // 6GB forward buffer (~600s at 70Mbps)
-        SetOption("demuxer-max-back-bytes", "512MiB");   // 512MB backward buffer for seeks
-        SetOption("demuxer-readahead-secs", "600");      // Read ahead 10 minutes
-        SetOption("cache-secs", "600");                  // Keep 10 minutes cached
-        SetOption("cache-pause-initial", "yes");         // Pause until cache has enough data
-        SetOption("cache-pause-wait", "15");             // Wait for 15s of data before resuming
-        SetOption("stream-buffer-size", "32MiB");        // 32MB stream read buffer (70+ Mbps needs large reads)
+        SetOption("demuxer-max-bytes", "800MiB");
+        SetOption("demuxer-max-back-bytes", "200MiB");
+        SetOption("demuxer-readahead-secs", "120");
 
-        // === Network resilience ===
-        SetOption("network-timeout", "60");
-        SetOption("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
-
-        // === Seeking performance ===
-        SetOption("hr-seek-framedrop", "yes");
-        SetOption("hr-seek", "yes");
-
-        // === Audio — preserve full quality, no resampling ===
-        SetOption("audio-channels", "auto");
-        SetOption("audio-samplerate", "0");
-        SetOption("audio-pitch-correction", "no");
-        SetOption("ad-lavc-downmix", "no");
-        SetOption("replaygain", "no");
-
-        // === Video — preserve full quality ===
-        SetOption("video-sync", "audio");                // Sync video to audio (stable, no drift)
+        // Performance tuning
+        SetOption("video-sync", "display-resample");
         SetOption("interpolation", "no");
-        SetOption("deband", "no");
-        SetOption("framedrop", "vo");
+        SetOption("hr-seek-framedrop", "yes");
 
         // HDR passthrough if the display supports it
         SetOption("target-colorspace-hint", "yes");
@@ -571,31 +550,6 @@ public sealed class MpvPlayer : IDisposable
         if (mpv_get_property_int(_mpvHandle, "mute", MPV_FORMAT_FLAG, out long val) == 0)
             return val != 0;
         return false;
-    }
-
-    /// <summary>Shows text on mpv's OSD for the specified duration in ms.</summary>
-    public void ShowOsdText(string text, int durationMs = 5000)
-    {
-        ThrowIfNotInitialized();
-        Command("show-text", text, durationMs.ToString());
-    }
-
-    /// <summary>Gets a string property from mpv.</summary>
-    public string? GetProperty(string name)
-    {
-        if (_mpvHandle == IntPtr.Zero) return null;
-        var ptr = mpv_get_property_string(_mpvHandle, name);
-        if (ptr == IntPtr.Zero) return null;
-        return Marshal.PtrToStringUTF8(ptr);
-    }
-
-    /// <summary>Gets a double property from mpv.</summary>
-    public double GetPropertyDouble(string name)
-    {
-        if (_mpvHandle == IntPtr.Zero) return 0;
-        if (mpv_get_property_double(_mpvHandle, name, MPV_FORMAT_DOUBLE, out double val) == 0)
-            return val;
-        return 0;
     }
 
     /// <summary>

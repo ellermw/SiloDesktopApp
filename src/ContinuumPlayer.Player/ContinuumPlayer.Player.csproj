@@ -13,10 +13,6 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>libmpv-2.dll</Link>
     </None>
-    <None Include="..\..\libs\mpv\scripts\osc.lua">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>libs\mpv\scripts\osc.lua</Link>
-    </None>
   </ItemGroup>
 
 </Project>

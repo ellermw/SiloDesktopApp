@@ -1,7 +1,6 @@
 // src/ContinuumPlayer/Services/PlayerService.cs
 using System.Runtime.InteropServices;
 using ContinuumPlayer.Core.Api;
-using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Models.Playback;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Player;
@@ -18,7 +17,6 @@ public class PlayerService : IDisposable
     private readonly ContinuumApiClient _apiClient;
 
     private MpvPlayer? _mpv;
-    private MpvVideoWindow? _videoHost;
     private PlaybackManager? _playbackManager;
     private bool _switchingContent;
 
@@ -55,6 +53,7 @@ public class PlayerService : IDisposable
     // ── Events ───────────────────────────────────────────────────────────
 
     public event Action<PlayerState>? StateChanged;
+    public event Action<byte[], int, int, int>? FrameReady;
     public event Action<double>? PositionChanged;
     public event Action<double>? DurationChanged;
     public event Action<bool>? PauseChanged;
@@ -67,13 +66,6 @@ public class PlayerService : IDisposable
     {
         if (State == newState) return;
         State = newState;
-
-        // Show/hide the native video window
-        if (newState == PlayerState.Expanded || newState == PlayerState.Fullscreen)
-            _videoHost?.Show();
-        else
-            _videoHost?.Hide();
-
         StateChanged?.Invoke(newState);
     }
 
@@ -218,34 +210,13 @@ public class PlayerService : IDisposable
 
             Resolution = bestVersion.Resolution;
 
-            // Log resume state for debugging
-            LogToFile("player_resume.txt",
-                $"Resume check: contentId={contentId}, fromStart={fromStart}, " +
-                $"watchDetail.UserData?.PositionSeconds={watchDetail.UserData?.PositionSeconds}, " +
-                $"watchDetail.UserData?.Played={watchDetail.UserData?.Played}");
-
             // Determine start position
             double startPosition = 0;
             if (!fromStart && watchDetail.UserData?.PositionSeconds > 0 && watchDetail.UserData.Played != true)
                 startPosition = watchDetail.UserData.PositionSeconds!.Value;
 
-            // Apply audio preference for series episodes
-            int? preferredAudioTrack = null;
-            if (!string.IsNullOrEmpty(watchDetail.SeriesId))
-            {
-                try
-                {
-                    var audioPref = await _catalogApi.GetAudioPrefsAsync(watchDetail.SeriesId);
-                    preferredAudioTrack = audioPref.AudioTrackIndex;
-                }
-                catch
-                {
-                    // No saved preference or fetch failed -- use default
-                }
-            }
-
             // Start server session
-            var session = await _playbackManager.StartSessionAsync(bestVersion.FileId, startPosition, forceStartPosition: fromStart, audioTrackIndex: preferredAudioTrack);
+            var session = await _playbackManager.StartSessionAsync(bestVersion.FileId, startPosition, forceStartPosition: fromStart);
             PlayMethod = session.PlayMethod;
 
             if (!fromStart && session.Position > 0 && startPosition == 0)
@@ -294,69 +265,8 @@ public class PlayerService : IDisposable
             // Initialize mpv (lazy — first play only)
             if (_mpv == null)
             {
-                var mainWindow = App.MainWindowInstance;
-                var parentHwnd = WinRT.Interop.WindowNative.GetWindowHandle(mainWindow);
-
-                _videoHost = new MpvVideoWindow();
-                _videoHost.Create(parentHwnd);
-                _videoHost.EscapeRequested += () =>
-                {
-                    // Escape: exit fullscreen first, then exit playback
-                    if (State == PlayerState.Fullscreen)
-                        ExitFullscreen();
-                    else
-                    {
-                        _videoHost?.Hide();
-                        _ = CloseAsync();
-                    }
-                };
-                _videoHost.MinimizeRequested += () => Minimize();
-                _videoHost.CloseRequested += () =>
-                {
-                    _videoHost?.Hide();
-                    _ = CloseAsync();
-                };
-                _videoHost.InfoToggleRequested += TogglePlaybackInfo;
-                _videoHost.TogglePauseRequested += () =>
-                {
-                    _mpv?.TogglePause();
-                    // Show pause/play status on OSD
-                    _mpv?.ShowOsdText(IsPaused ? "⏸ Paused" : "▶ Playing", 1500);
-                };
-                _videoHost.ToggleFullscreenRequested += ToggleFullscreen;
-                _videoHost.ToggleMuteRequested += () =>
-                {
-                    if (_mpv == null) return;
-                    var newMute = !_mpv.GetMute();
-                    _mpv.SetMute(newMute);
-                    _mpv.ShowOsdText(newMute ? "🔇 Muted" : "🔊 Unmuted", 1500);
-                };
-                _videoHost.SeekRelativeRequested += (seconds) =>
-                {
-                    if (_mpv == null) return;
-                    var newPos = Math.Max(0, _mpv.Position + seconds);
-                    _mpv.Seek(newPos);
-                    // mpv shows seek bar via osd-on-seek=msg-bar
-                };
-                _videoHost.VolumeChangeRequested += (delta) =>
-                {
-                    if (_mpv == null) return;
-                    var current = _mpv.GetPropertyDouble("volume");
-                    var newVol = Math.Clamp(current + delta, 0, 100);
-                    _mpv.SetVolume(newVol);
-                    _mpv.ShowOsdText($"Volume: {(int)newVol}%", 1500);
-                };
-                _videoHost.MouseActivityDetected += () =>
-                {
-                    // Show OSD progress on mouse movement
-                    if (_mpv == null || Duration <= 0) return;
-                    var pos = FormatTime(Position);
-                    var dur = FormatTime(Duration);
-                    _mpv.ShowOsdText($"{pos} / {dur}", 3000);
-                };
-
                 _mpv = new MpvPlayer();
-                _mpv.InitializeWithWindow(_videoHost.Hwnd);
+                _mpv.Initialize(1920, 1080); // capped at 1080p render, XAML upscales
                 WireMpvEvents();
             }
 
@@ -373,8 +283,7 @@ public class PlayerService : IDisposable
                 streamUrl += (streamUrl.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
 
             // Store resume position — the FileLoaded handler will seek to it
-            lock (_resumeLock) { _resumePosition = startPosition; }
-            LogToFile("player_resume.txt", $"Final _resumePosition={startPosition}, session.Position={session.Position}");
+            _resumePosition = startPosition;
 
             // Load and play
             _mpv.LoadFile(streamUrl, session.PlayMethod == "transcode" ? null : authHeader);
@@ -392,11 +301,12 @@ public class PlayerService : IDisposable
     }
 
     private double _resumePosition;
-    private readonly object _resumeLock = new();
 
     private void WireMpvEvents()
     {
         if (_mpv == null) return;
+
+        _mpv.FrameReady += (buffer, w, h, stride) => FrameReady?.Invoke(buffer, w, h, stride);
 
         _mpv.PositionChanged += (pos) =>
         {
@@ -421,17 +331,10 @@ public class PlayerService : IDisposable
         {
             IsLoading = false;
             ContentLoaded?.Invoke();
-            double pos;
-            lock (_resumeLock)
+            if (_resumePosition > 0)
             {
-                pos = _resumePosition;
+                _mpv?.Seek(_resumePosition);
                 _resumePosition = 0;
-            }
-            LogToFile("player_resume.txt", $"FileLoaded: _resumePosition={pos}");
-            if (pos > 0)
-            {
-                LogToFile("player_resume.txt", $"Seeking to {pos}");
-                _mpv?.Seek(pos);
             }
         };
 
@@ -452,16 +355,15 @@ public class PlayerService : IDisposable
 
         var currentPos = _mpv.Position;
         _switchingContent = true;
+        _mpv.Stop();
         IsLoading = true;
 
         try
         {
-            // Run network calls off UI thread to prevent unresponsiveness
-            var session = await Task.Run(async () =>
-            {
-                try { await _playbackManager.StopSessionAsync(); } catch { }
-                return await _playbackManager.StartSessionAsync(version.FileId, currentPos);
-            });
+            try { await _playbackManager.StopSessionAsync(); }
+            catch { }
+
+            var session = await _playbackManager.StartSessionAsync(version.FileId, currentPos);
             PlayMethod = session.PlayMethod;
             Resolution = version.Resolution;
 
@@ -506,7 +408,7 @@ public class PlayerService : IDisposable
             if (session.PlayMethod != "transcode" && token != null)
                 streamUrl += (streamUrl.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
 
-            lock (_resumeLock) { _resumePosition = currentPos; }
+            _resumePosition = currentPos;
             _mpv.LoadFile(streamUrl, session.PlayMethod == "transcode" ? null : authHeader);
             _mpv.Play();
             LoadSubtitles();
@@ -535,28 +437,6 @@ public class PlayerService : IDisposable
             var response = await _playbackApi.ChangeAudioTrackAsync(
                 _playbackManager.SessionId!, trackIndex, currentPos);
 
-            // Save audio preference for series episodes (fire-and-forget)
-            var seriesId = _playbackManager.WatchDetail?.SeriesId;
-            if (!string.IsNullOrEmpty(seriesId))
-            {
-                // Determine audio language from the version's audio tracks
-                var version = Versions.FirstOrDefault(v => v.FileId == _playbackManager.CurrentSession?.MediaFileId);
-                var audioLang = version?.AudioTracks?.ElementAtOrDefault(trackIndex)?.Language;
-
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await _catalogApi.SetAudioPrefsAsync(seriesId, new AudioPreference
-                        {
-                            AudioTrackIndex = trackIndex,
-                            AudioLanguage = audioLang
-                        });
-                    }
-                    catch { /* Non-critical */ }
-                });
-            }
-
             var baseUrl = _apiClient.BaseUrl;
             var token = _apiClient.AccessToken;
             var streamPath = response.StreamUrl;
@@ -568,7 +448,7 @@ public class PlayerService : IDisposable
 
             PlayMethod = response.PlayMethod;
 
-            lock (_resumeLock) { _resumePosition = currentPos; }
+            _resumePosition = currentPos;
             var authHeader = token != null ? $"Bearer {token}" : null;
             _mpv.LoadFile(url, authHeader);
             _mpv.Play();
@@ -601,112 +481,12 @@ public class PlayerService : IDisposable
         }
     }
 
-    // ── Window resize ───────────────────────────────────────────────────
-
-    public void HandleWindowResize() => _videoHost?.MatchParentPosition();
-
-    // ── Playback info overlay ───────────────────────────────────────────
-
-    private bool _infoVisible;
-
-    private void TogglePlaybackInfo()
-    {
-        if (_mpv == null) return;
-        _infoVisible = !_infoVisible;
-
-        if (_infoVisible)
-        {
-            ShowPlaybackInfo();
-        }
-        else
-        {
-            _mpv.ShowOsdText("", 0); // Clear OSD
-        }
-    }
-
-    private void ShowPlaybackInfo()
-    {
-        if (_mpv == null || _playbackManager?.CurrentSession == null) return;
-
-        var session = _playbackManager.CurrentSession;
-        var lines = new List<string>();
-
-        // Title info
-        if (!string.IsNullOrEmpty(Subtitle))
-            lines.Add($"{Title}");
-        else
-            lines.Add(Title);
-        if (!string.IsNullOrEmpty(Subtitle))
-            lines.Add(Subtitle);
-
-        lines.Add(""); // blank line
-
-        // Playback method and quality
-        lines.Add($"Method: {PlayMethod?.ToUpperInvariant() ?? "unknown"}");
-        if (!string.IsNullOrEmpty(Resolution))
-            lines.Add($"Resolution: {Resolution}");
-
-        // Codec info from session
-        var info = session.PlaybackInfo;
-        if (info != null)
-        {
-            if (!string.IsNullOrEmpty(info.VideoCodec))
-                lines.Add($"Video: {info.VideoCodec.ToUpperInvariant()}");
-            if (!string.IsNullOrEmpty(info.AudioCodec))
-                lines.Add($"Audio: {info.AudioCodec.ToUpperInvariant()}");
-        }
-
-        // HDR detection from mpv properties
-        try
-        {
-            var hdr = _mpv.GetProperty("video-params/primaries");
-            if (!string.IsNullOrEmpty(hdr) && hdr != "bt.709")
-                lines.Add($"HDR: {hdr}");
-        }
-        catch { }
-
-        // Bitrate from mpv
-        try
-        {
-            var vBitrate = _mpv.GetPropertyDouble("video-bitrate");
-            if (vBitrate > 0)
-                lines.Add($"Bitrate: {vBitrate / 1_000_000:F1} Mbps");
-        }
-        catch { }
-
-        // Network speed from mpv cache
-        try
-        {
-            var speed = _mpv.GetPropertyDouble("cache-speed");
-            if (speed > 0)
-                lines.Add($"Bandwidth: {speed / 1_000_000:F1} Mbps");
-        }
-        catch { }
-
-        var text = string.Join("\\n", lines);
-        _mpv.ShowOsdText(text, 86400000); // Show until toggled off
-    }
-
     // ── Close / Dispose ──────────────────────────────────────────────────
 
     public async Task CloseAsync()
     {
         if (State == PlayerState.Fullscreen)
             ExitFullscreen();
-
-        // Send final progress report to server before stopping, so resume works
-        if (_mpv != null && _playbackManager != null)
-        {
-            var finalPos = _mpv.Position;
-            if (finalPos > 0 && _playbackManager.SessionId != null)
-            {
-                try
-                {
-                    await _playbackApi.ReportProgressAsync(_playbackManager.SessionId, finalPos, true);
-                }
-                catch { }
-            }
-        }
 
         _mpv?.Stop();
 
@@ -741,8 +521,6 @@ public class PlayerService : IDisposable
         }
         _mpv?.Dispose();
         _mpv = null;
-        _videoHost?.Dispose();
-        _videoHost = null;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -808,7 +586,7 @@ public class PlayerService : IDisposable
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ContinuumPlayer", fileName);
             Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-            File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {content}\n");
+            File.WriteAllText(logPath, $"{DateTime.Now}\n{content}\n");
         }
         catch { }
     }
