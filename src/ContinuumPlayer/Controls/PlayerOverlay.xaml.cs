@@ -153,6 +153,9 @@ public sealed partial class PlayerOverlay : UserControl
     private int _snapW, _snapH, _snapStride;
     private volatile bool _snapReady;
     private volatile bool _uiBusy;
+    private long _lastPresentTicks;
+    private double[] _frameTimes = new double[60];
+    private int _frameTimeIdx;
 
     private void OnFrameReady(byte[] buffer, int width, int height, int stride)
     {
@@ -187,14 +190,36 @@ public sealed partial class PlayerOverlay : UserControl
                 VideoFrame.Source = _frameBitmap;
             }
 
-            // Fast copy via Stream — avoids managed IBuffer CopyTo overhead
             int copyLen = Math.Min(stride * h, (int)_frameBitmap.PixelBuffer.Length);
             using (var stream = _frameBitmap.PixelBuffer.AsStream())
             {
                 stream.Write(_snapBuffer!, 0, copyLen);
             }
-
             _frameBitmap.Invalidate();
+
+            // Log frame timing for diagnostics
+            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_lastPresentTicks > 0)
+            {
+                var elapsed = (now - _lastPresentTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                _frameTimes[_frameTimeIdx % 60] = elapsed;
+                _frameTimeIdx++;
+                if (_frameTimeIdx % 120 == 0) // Log every 120 frames
+                {
+                    var avg = _frameTimes.Where(t => t > 0).DefaultIfEmpty(0).Average();
+                    var fps = avg > 0 ? 1000.0 / avg : 0;
+                    try
+                    {
+                        var logPath = System.IO.Path.Combine(
+                            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                            "ContinuumPlayer", "frame_perf.txt");
+                        System.IO.File.AppendAllText(logPath,
+                            $"[{DateTime.Now:HH:mm:ss}] avg={avg:F1}ms fps={fps:F1} size={w}x{h} bytes={copyLen}\n");
+                    }
+                    catch { }
+                }
+            }
+            _lastPresentTicks = now;
         }
         finally
         {
