@@ -23,6 +23,30 @@ public class PlaybackApi(ContinuumApiClient client)
     public Task<ChangeAudioResponse> ChangeAudioTrackAsync(string sessionId, int trackIndex, double position, CancellationToken ct = default)
         => client.PatchAsync<ChangeAudioResponse>($"/api/v1/playback/{sessionId}/audio",
             new { audio_track_index = trackIndex, position }, ct);
+
+    // ===== Subtitles =====
+
+    public Task<SubtitleListResponse> GetSubtitlesAsync(int mediaFileId, CancellationToken ct = default)
+        => client.GetAsync<SubtitleListResponse>($"/api/v1/subtitles/{mediaFileId}", ct);
+
+    public Task DeleteSubtitleAsync(int id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/subtitles/{id}", ct);
+}
+
+public class SubtitleListResponse
+{
+    public List<SubtitleEntry> Subtitles { get; set; } = [];
+}
+
+public class SubtitleEntry
+{
+    public int Id { get; set; }
+    public int MediaFileId { get; set; }
+    public string Language { get; set; } = "";
+    public string? Codec { get; set; }
+    public string? Title { get; set; }
+    public string Source { get; set; } = "";
+    public bool Forced { get; set; }
 }
 
 public class ChangeAudioResponse

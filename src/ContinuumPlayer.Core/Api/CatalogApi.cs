@@ -1,3 +1,4 @@
+using ContinuumPlayer.Core.Models.Admin;
 using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Models.Home;
 
@@ -102,4 +103,83 @@ public class CatalogApi(ContinuumApiClient client)
 
     public Task<SimilarResponse> GetSimilarAsync(string contentId, CancellationToken ct = default)
         => client.GetAsync<SimilarResponse>($"/api/v1/recommendations/similar/{contentId}", ct);
+
+    // ===== Item Versions =====
+
+    public Task<CatalogResponse> GetItemVersionsAsync(string contentId, CancellationToken ct = default)
+        => client.GetAsync<CatalogResponse>($"/api/v1/catalog/items/{Uri.EscapeDataString(contentId)}/versions", ct);
+
+    // ===== Library Collections =====
+
+    public Task<AdminCollectionsResponse> GetLibraryCollectionsAsync(int libraryId, CancellationToken ct = default)
+        => client.GetAsync<AdminCollectionsResponse>($"/api/v1/library/{libraryId}/collections", ct);
+
+    public Task<CatalogResponse> GetLibraryCollectionItemsAsync(int libraryId, string collectionId, CancellationToken ct = default)
+        => client.GetAsync<CatalogResponse>($"/api/v1/library/{libraryId}/collections/{Uri.EscapeDataString(collectionId)}/items", ct);
+
+    // ===== Library Sections =====
+
+    public Task<HomeSectionsResponse> GetLibrarySectionItemsAsync(int libraryId, string sectionId, CancellationToken ct = default)
+        => client.GetAsync<HomeSectionsResponse>($"/api/v1/library/{libraryId}/sections/{Uri.EscapeDataString(sectionId)}/items", ct);
+
+    // ===== History =====
+
+    public Task<HistoryResponse> GetHistoryAsync(int? limit = null, int? offset = null, CancellationToken ct = default)
+    {
+        var path = "/api/v1/history";
+        var queryParts = new List<string>();
+        if (limit.HasValue) queryParts.Add($"limit={limit.Value}");
+        if (offset.HasValue) queryParts.Add($"offset={offset.Value}");
+        if (queryParts.Count > 0) path += "?" + string.Join("&", queryParts);
+        return client.GetAsync<HistoryResponse>(path, ct);
+    }
+
+    // ===== Ratings List =====
+
+    public Task<ItemListResponse> GetRatingsListAsync(CancellationToken ct = default)
+        => client.GetAsync<ItemListResponse>("/api/v1/ratings", ct);
+
+    // ===== Watchlist / Favorites Check =====
+
+    public async Task<bool> GetWatchlistItemAsync(string itemId, CancellationToken ct = default)
+    {
+        try
+        {
+            await client.GetAsync<object>($"/api/v1/watchlist/{Uri.EscapeDataString(itemId)}", ct);
+            return true;
+        }
+        catch (ApiException ex) when (ex.StatusCode == 404)
+        {
+            return false;
+        }
+    }
+
+    public async Task<bool> GetFavoriteItemAsync(string itemId, CancellationToken ct = default)
+    {
+        try
+        {
+            await client.GetAsync<object>($"/api/v1/favorites/{Uri.EscapeDataString(itemId)}", ct);
+            return true;
+        }
+        catch (ApiException ex) when (ex.StatusCode == 404)
+        {
+            return false;
+        }
+    }
+
+    // ===== Audio Preferences =====
+
+    public Task<AudioPreferenceResponse> GetAudioPrefsAsync(string seriesId, CancellationToken ct = default)
+        => client.GetAsync<AudioPreferenceResponse>($"/api/v1/audio-prefs/{Uri.EscapeDataString(seriesId)}", ct);
+
+    public Task SetAudioPrefsAsync(string seriesId, AudioPreference request, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/audio-prefs/{Uri.EscapeDataString(seriesId)}", request, ct);
+
+    public Task DeleteAudioPrefsAsync(string seriesId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/audio-prefs/{Uri.EscapeDataString(seriesId)}", ct);
+
+    // ===== Sync =====
+
+    public Task SyncProgressAsync(object request, CancellationToken ct = default)
+        => client.PostNoContentAsync("/api/v1/sync/progress", request, ct);
 }

@@ -1,5 +1,7 @@
 using ContinuumPlayer.Core.Models.Auth;
 using ContinuumPlayer.Core.Models.Catalog;
+using ContinuumPlayer.Core.Models.Home;
+using ContinuumPlayer.Core.Models.Plugins;
 
 namespace ContinuumPlayer.Core.Api;
 
@@ -38,4 +40,29 @@ public class SettingsApi(ContinuumApiClient client)
 
     public Task DeleteLibraryPlaybackPrefsAsync(int libraryId, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/library-playback-prefs/{libraryId}", ct);
+
+    // ===== Plugin Settings =====
+
+    public Task<PluginSettingsListResponse> GetPluginSettingsListAsync(CancellationToken ct = default)
+        => client.GetAsync<PluginSettingsListResponse>("/api/v1/settings/plugins", ct);
+
+    public Task<PluginSettingsDetailResponse> GetPluginSettingsAsync(int installationId, CancellationToken ct = default)
+        => client.GetAsync<PluginSettingsDetailResponse>($"/api/v1/settings/plugins/{installationId}", ct);
+
+    public Task UpdatePluginSettingsAsync(int installationId, UpdatePluginSettingsRequest request, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/settings/plugins/{installationId}", request, ct);
+
+    // ===== Profile Sections =====
+
+    public Task<SettingsSectionsResponse> GetProfileSectionsAsync(CancellationToken ct = default)
+        => client.GetAsync<SettingsSectionsResponse>("/api/v1/profile/sections", ct);
+
+    public Task UpdateProfileSectionsAsync(SaveOverridesRequest request, CancellationToken ct = default)
+        => client.PutNoContentAsync("/api/v1/profile/sections", request, ct);
+
+    public Task ResetProfileSectionsAsync(CancellationToken ct = default)
+        => client.DeleteAsync("/api/v1/profile/sections/reset", ct);
+
+    public Task<SettingsSectionsResponse> GetProfileSectionSettingsAsync(CancellationToken ct = default)
+        => client.GetAsync<SettingsSectionsResponse>("/api/v1/profile/sections/settings", ct);
 }

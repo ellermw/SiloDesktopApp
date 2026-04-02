@@ -9,4 +9,9 @@ public class HomeApi(ContinuumApiClient client)
 
     public Task<HomeSectionsResponse> GetSectionsAsync(CancellationToken ct = default)
         => client.GetAsync<HomeSectionsResponse>("/api/v1/home/sections", ct);
+
+    // ===== Dismissals =====
+
+    public Task UndoDismissalAsync(string surface, string itemId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/home/dismissals/{Uri.EscapeDataString(surface)}/{Uri.EscapeDataString(itemId)}", ct);
 }

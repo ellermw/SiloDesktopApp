@@ -90,6 +90,13 @@ public partial class App : Application
         services.AddSingleton<SettingsApi>(sp => new SettingsApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddSingleton<PlaybackApi>(sp => new PlaybackApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddSingleton<AdminApi>(sp => new AdminApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<PeopleApi>(sp => new PeopleApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<CollectionsApi>(sp => new CollectionsApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<DownloadsApi>(sp => new DownloadsApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<HistoryImportApi>(sp => new HistoryImportApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<RecommendationsApi>(sp => new RecommendationsApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<ApiKeysApi>(sp => new ApiKeysApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<PluginsApi>(sp => new PluginsApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddTransient<PlaybackManager>();
 
         // Auth service

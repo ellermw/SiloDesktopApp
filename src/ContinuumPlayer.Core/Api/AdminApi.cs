@@ -1,5 +1,7 @@
 using ContinuumPlayer.Core.Models.Admin;
+using ContinuumPlayer.Core.Models.Auth;
 using ContinuumPlayer.Core.Models.Catalog;
+using ContinuumPlayer.Core.Models.HistoryImport;
 
 namespace ContinuumPlayer.Core.Api;
 
@@ -271,4 +273,178 @@ public class AdminApi(ContinuumApiClient client)
 
     public Task RunGenerateRecommendationsAsync(CancellationToken ct = default)
         => client.PostNoContentAsync("/api/v1/admin/recommendations/trigger/recommendations", new { }, ct);
+
+    // ===== User Detail / Impersonation =====
+
+    public Task<AdminUser> GetUserDetailAsync(int id, CancellationToken ct = default)
+        => client.GetAsync<AdminUser>($"/api/v1/admin/users/{id}", ct);
+
+    public Task<ImpersonationResponse> ImpersonateUserAsync(int id, CancellationToken ct = default)
+        => client.PostAsync<ImpersonationResponse>($"/api/v1/admin/users/{id}/impersonate", new { }, ct);
+
+    public Task<List<UserIPEntry>> GetAllIpsAsync(int days = 30, CancellationToken ct = default)
+        => client.GetAsync<List<UserIPEntry>>($"/api/v1/admin/ips?days={days}", ct);
+
+    public Task<List<AdminAPIKey>> GetUserApiKeysAsync(int userId, CancellationToken ct = default)
+        => client.GetAsync<List<AdminAPIKey>>($"/api/v1/admin/users/{userId}/api-keys", ct);
+
+    // ===== Item Matching =====
+
+    public Task<ItemMatchSearchResponse> MatchSearchAsync(string itemId, ItemMatchSearchRequest request, CancellationToken ct = default)
+        => client.PostAsync<ItemMatchSearchResponse>($"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/match/search", request, ct);
+
+    public Task MatchApplyAsync(string itemId, ItemMatchApplyRequest request, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/match/apply", request, ct);
+
+    public Task RefreshItemMetadataAsync(string itemId, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/refresh-metadata", new { }, ct);
+
+    public Task UpdateItemMetadataAsync(string itemId, object request, CancellationToken ct = default)
+        => client.PatchAsync<object>($"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/metadata", request, ct);
+
+    // ===== Catalog Seed =====
+
+    public Task<CatalogSeedExportResult> ExportCatalogAsync(CatalogSeedExportRequest request, CancellationToken ct = default)
+        => client.PostAsync<CatalogSeedExportResult>("/api/v1/admin/catalog/export", request, ct);
+
+    public Task<AdminJob> CreateExportJobAsync(CatalogSeedExportRequest request, CancellationToken ct = default)
+        => client.PostAsync<AdminJob>("/api/v1/admin/catalog/export-jobs", request, ct);
+
+    public Task<AdminJob> PublishExportJobAsync(string id, CancellationToken ct = default)
+        => client.PostAsync<AdminJob>($"/api/v1/admin/catalog/export-jobs/{Uri.EscapeDataString(id)}/publish", new { }, ct);
+
+    public Task<AdminJob> CreateImportJobAsync(CatalogSeedImportRequest request, CancellationToken ct = default)
+        => client.PostAsync<AdminJob>("/api/v1/admin/catalog/import-jobs", request, ct);
+
+    public Task<CatalogSeedImportSourcesResponse> GetCatalogImportSourcesAsync(CancellationToken ct = default)
+        => client.GetAsync<CatalogSeedImportSourcesResponse>("/api/v1/admin/catalog/import-sources", ct);
+
+    public Task<CatalogSeedImportSourcesResponse> GetLocalImportSourcesAsync(CancellationToken ct = default)
+        => client.GetAsync<CatalogSeedImportSourcesResponse>("/api/v1/admin/catalog/local-import-sources", ct);
+
+    public Task<CatalogSeedImportResponse> ImportCatalogAsync(CatalogSeedImportRequest request, CancellationToken ct = default)
+        => client.PostAsync<CatalogSeedImportResponse>("/api/v1/admin/catalog/import", request, ct);
+
+    // ===== Jobs =====
+
+    public Task<AdminJobsResponse> GetJobsAsync(CancellationToken ct = default)
+        => client.GetAsync<AdminJobsResponse>("/api/v1/admin/jobs", ct);
+
+    public Task<AdminJob> GetJobAsync(string id, CancellationToken ct = default)
+        => client.GetAsync<AdminJob>($"/api/v1/admin/jobs/{Uri.EscapeDataString(id)}", ct);
+
+    // ===== Providers =====
+
+    public Task<MetadataProvidersResponse> GetProvidersAsync(CancellationToken ct = default)
+        => client.GetAsync<MetadataProvidersResponse>("/api/v1/admin/providers", ct);
+
+    public Task<MetadataProvider> CreateProviderAsync(CreateProviderRequest request, CancellationToken ct = default)
+        => client.PostAsync<MetadataProvider>("/api/v1/admin/providers", request, ct);
+
+    public Task<MetadataProvider> UpdateProviderAsync(int id, object request, CancellationToken ct = default)
+        => client.PutAsync<MetadataProvider>($"/api/v1/admin/providers/{id}", request, ct);
+
+    public Task DeleteProviderAsync(int id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/providers/{id}", ct);
+
+    public Task<LibraryProviderChainResponse> GetLibraryProvidersAsync(int libraryId, CancellationToken ct = default)
+        => client.GetAsync<LibraryProviderChainResponse>($"/api/v1/admin/libraries/{libraryId}/providers", ct);
+
+    public Task UpdateLibraryProvidersAsync(int libraryId, SetLibraryChainRequest request, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/admin/libraries/{libraryId}/providers", request, ct);
+
+    // ===== Library Extras =====
+
+    public Task SetLibraryPosterAsync(int libraryId, object request, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/admin/libraries/{libraryId}/poster", request, ct);
+
+    public Task DeleteLibraryPosterAsync(int libraryId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/libraries/{libraryId}/poster", ct);
+
+    public Task<StaleMediaIdsResponse> GetStaleIdsAsync(CancellationToken ct = default)
+        => client.GetAsync<StaleMediaIdsResponse>("/api/v1/admin/libraries/stale-ids", ct);
+
+    public Task RematchStaleIdAsync(string contentId, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/admin/libraries/stale-ids/{Uri.EscapeDataString(contentId)}/rematch", new { }, ct);
+
+    public Task<List<UnmatchedLibraryItem>> GetUnmatchedItemsAsync(CancellationToken ct = default)
+        => client.GetAsync<List<UnmatchedLibraryItem>>("/api/v1/admin/libraries/unmatched-items", ct);
+
+    // ===== Invite Codes =====
+
+    public Task<InviteCodesResponse> GetInviteCodesAsync(CancellationToken ct = default)
+        => client.GetAsync<InviteCodesResponse>("/api/v1/admin/invite-codes", ct);
+
+    public Task<InviteCode> CreateInviteCodeAsync(CreateInviteCodeRequest request, CancellationToken ct = default)
+        => client.PostAsync<InviteCode>("/api/v1/admin/invite-codes", request, ct);
+
+    public Task<InviteCode> UpdateInviteCodeAsync(int id, UpdateInviteCodeRequest request, CancellationToken ct = default)
+        => client.PutAsync<InviteCode>($"/api/v1/admin/invite-codes/{id}", request, ct);
+
+    public Task DeleteInviteCodeAsync(int id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/invite-codes/{id}", ct);
+
+    // ===== Subtitle Providers =====
+
+    public Task<SubtitleProvidersResponse> GetSubtitleProvidersAsync(CancellationToken ct = default)
+        => client.GetAsync<SubtitleProvidersResponse>("/api/v1/admin/subtitle-providers", ct);
+
+    public Task UpdateSubtitleProviderAsync(string provider, SubtitleProviderUpdateRequest request, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/admin/subtitle-providers/{Uri.EscapeDataString(provider)}", request, ct);
+
+    public Task<SubtitleProviderTestResponse> TestSubtitleProviderAsync(string provider, CancellationToken ct = default)
+        => client.PostAsync<SubtitleProviderTestResponse>($"/api/v1/admin/subtitle-providers/{Uri.EscapeDataString(provider)}/test", new { }, ct);
+
+    // ===== Collections Admin =====
+
+    public Task<ImportMDBListCollectionResponse> ImportMDBListCollectionAsync(ImportMDBListCollectionRequest request, CancellationToken ct = default)
+        => client.PostAsync<ImportMDBListCollectionResponse>("/api/v1/admin/collections/import/mdblist", request, ct);
+
+    public Task<ImportTMDBCollectionResponse> ImportTMDBCollectionAsync(ImportTMDBCollectionRequest request, CancellationToken ct = default)
+        => client.PostAsync<ImportTMDBCollectionResponse>("/api/v1/admin/collections/import/tmdb", request, ct);
+
+    public Task DeleteCollectionImageAsync(string id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/collections/{Uri.EscapeDataString(id)}/image", ct);
+
+    // ===== History Import Sources (Admin) =====
+
+    public Task<List<HistoryImportSource>> GetHistoryImportSourcesAsync(CancellationToken ct = default)
+        => client.GetAsync<List<HistoryImportSource>>("/api/v1/admin/history-import-sources", ct);
+
+    public Task<HistoryImportSource> CreateHistoryImportSourceAsync(CreateHistoryImportSourceRequest request, CancellationToken ct = default)
+        => client.PostAsync<HistoryImportSource>("/api/v1/admin/history-import-sources", request, ct);
+
+    public Task<HistoryImportSource> UpdateHistoryImportSourceAsync(int id, UpdateHistoryImportSourceRequest request, CancellationToken ct = default)
+        => client.PutAsync<HistoryImportSource>($"/api/v1/admin/history-import-sources/{id}", request, ct);
+
+    public Task DeleteHistoryImportSourceAsync(int id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/history-import-sources/{id}", ct);
+
+    // ===== Node Extras =====
+
+    public Task<List<AdminSession>> GetNodeSessionsAsync(CancellationToken ct = default)
+        => client.GetAsync<List<AdminSession>>("/api/v1/admin/node-sessions", ct);
+
+    public Task ForceReloadNodesAsync(CancellationToken ct = default)
+        => client.PostNoContentAsync("/api/v1/admin/nodes/force-reload", new { }, ct);
+
+    public Task ForceReloadNodeAsync(int id, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/admin/nodes/{id}/force-reload", new { }, ct);
+
+    // ===== Playback Control =====
+
+    public Task PauseSessionAsync(string sessionId, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/pause", new { }, ct);
+
+    public Task ResumeSessionAsync(string sessionId, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/resume", new { }, ct);
+
+    public Task StopSessionAsync(string sessionId, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/stop", new { }, ct);
+
+    public Task TerminateSessionAsync(string sessionId, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/terminate", new { }, ct);
+
+    public Task MessageSessionAsync(string sessionId, string message, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/message", new { message }, ct);
 }
