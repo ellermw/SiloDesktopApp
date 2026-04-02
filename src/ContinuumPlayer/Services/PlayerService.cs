@@ -266,7 +266,7 @@ public class PlayerService : IDisposable
             if (_mpv == null)
             {
                 _mpv = new MpvPlayer();
-                _mpv.Initialize(1920, 1080); // 1080p render — full quality
+                _mpv.Initialize(960, 540); // 540p render — WriteableBitmap.Invalidate() takes ~89ms at 1080p (8.3MB upload), ~22ms at 540p (2.1MB) giving 45fps budget for smooth 24fps playback
                 WireMpvEvents();
             }
 
