@@ -288,15 +288,8 @@ public sealed class MpvPlayer : IDisposable
         SetOption("osd-on-seek", "msg-bar");
         SetOption("cursor-autohide", "1000");
 
-        // Load bundled OSC Lua script (libmpv doesn't include it)
-        var exeDir = Path.GetDirectoryName(System.Environment.ProcessPath) ?? "";
-        var oscPath = Path.Combine(exeDir, "libs", "mpv", "scripts", "osc.lua");
-        if (!File.Exists(oscPath))
-            oscPath = Path.Combine(exeDir, "..", "..", "..", "..", "libs", "mpv", "scripts", "osc.lua");
-        if (File.Exists(oscPath))
-            SetOption("scripts", oscPath);
-
         // Enable mpv's full input handling (keyboard + mouse for OSC interaction)
+        // Built-in osc.lua is included in this mpv build (luajit enabled)
         SetOption("input-default-bindings", "yes");
         SetOption("input-vo-keyboard", "yes");
         SetOption("input-cursor", "yes");

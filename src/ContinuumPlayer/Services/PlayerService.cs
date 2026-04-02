@@ -353,7 +353,10 @@ public class PlayerService : IDisposable
         _mpv.PlaybackEnded += () =>
         {
             if (!_switchingContent)
+            {
+                _videoWindow?.Hide();
                 PlaybackEnded?.Invoke();
+            }
         };
 
         _mpv.Error += (msg) => LogToFile("mpv_error.txt", msg);
@@ -499,19 +502,8 @@ public class PlayerService : IDisposable
 
     private void WireVideoWindowEvents()
     {
-        if (_videoWindow == null) return;
-
-        _videoWindow.EscapeRequested += () =>
-        {
-            if (State == PlayerState.Fullscreen)
-                ExitFullscreen();
-            else
-            {
-                _videoWindow?.Hide();
-                _ = CloseAsync();
-            }
-        };
-        _videoWindow.MinimizeRequested += () => Minimize();
+        // No WndProc interception — mpv handles all input via its internal child window.
+        // Closing is handled by mpv's quit command (Q key or window close).
     }
 
     public void HandleWindowResize() => _videoWindow?.MatchParentPosition();

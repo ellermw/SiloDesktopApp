@@ -169,25 +169,10 @@ public sealed class MpvVideoWindow : IDisposable
 
     private IntPtr WndProcInstance(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
-        const uint WM_KEYDOWN = 0x0100;
-        const uint WM_SYSKEYDOWN = 0x0104;
-
-        // Only intercept our custom keys — mpv handles everything else
-        // (Space, arrows, F, M, Q via its own input bindings + OSC)
-        if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN)
-        {
-            int vk = (int)wParam & 0xFF;
-            if (vk == 0x1B) // Escape
-            {
-                EscapeRequested?.Invoke();
-                return IntPtr.Zero;
-            }
-            if (vk == 0x4E) // N — minimize to mini bar
-            {
-                MinimizeRequested?.Invoke();
-                return IntPtr.Zero;
-            }
-        }
+        // Forward ALL messages to DefWindowProc — let mpv's internal child
+        // window handle input (keyboard, mouse) for OSC controls.
+        // mpv creates a child window inside our popup via wid= and handles
+        // all input there.
 
         return DefWindowProcW(hWnd, msg, wParam, lParam);
     }
