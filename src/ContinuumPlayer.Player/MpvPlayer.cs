@@ -297,17 +297,37 @@ public sealed class MpvPlayer : IDisposable
         SetOption("keep-open", "yes");
         SetOption("idle", "yes");
 
-        // Buffering for ultra high-bitrate content (100+ Mbps 4K remux)
+        // === High-bitrate / 4K remux buffering ===
         SetOption("cache", "yes");
         SetOption("ytdl", "no");
         SetOption("demuxer-max-bytes", "800MiB");
         SetOption("demuxer-max-back-bytes", "200MiB");
-        SetOption("demuxer-readahead-secs", "120");
+        SetOption("demuxer-readahead-secs", "300");
+        SetOption("cache-secs", "300");                  // Keep 5 minutes cached
+        SetOption("cache-pause-initial", "yes");         // Pause until cache has enough data
+        SetOption("cache-pause-wait", "10");             // Wait for 10 seconds of data before resuming
+        SetOption("stream-buffer-size", "16MiB");        // 16MB stream read buffer (4K remux needs large reads)
 
-        // Performance tuning
+        // === Network resilience ===
+        SetOption("network-timeout", "60");
+        SetOption("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
+
+        // === Seeking performance ===
+        SetOption("hr-seek-framedrop", "yes");
+        SetOption("hr-seek", "yes");
+
+        // === Audio — preserve full quality, no resampling ===
+        SetOption("audio-channels", "auto");
+        SetOption("audio-samplerate", "0");
+        SetOption("audio-pitch-correction", "no");
+        SetOption("ad-lavc-downmix", "no");
+        SetOption("replaygain", "no");
+
+        // === Video — preserve full quality ===
         SetOption("video-sync", "display-resample");
         SetOption("interpolation", "no");
-        SetOption("hr-seek-framedrop", "yes");
+        SetOption("deband", "no");
+        SetOption("framedrop", "vo");
 
         // HDR passthrough if the display supports it
         SetOption("target-colorspace-hint", "yes");

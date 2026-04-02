@@ -54,7 +54,6 @@ public class PlayerService : IDisposable
     // ── Events ───────────────────────────────────────────────────────────
 
     public event Action<PlayerState>? StateChanged;
-    public event Action<byte[], int, int, int>? FrameReady;
     public event Action<double>? PositionChanged;
     public event Action<double>? DurationChanged;
     public event Action<bool>? PauseChanged;
@@ -279,7 +278,9 @@ public class PlayerService : IDisposable
             if (_mpv == null)
             {
                 _mpv = new MpvPlayer();
-                _mpv.Initialize(1280, 720); // render at 720p, XAML upscales — drastically reduces RAM bandwidth for 4K content
+                var mainWindow = App.MainWindowInstance;
+                var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(mainWindow);
+                _mpv.InitializeWithWindow(hwnd);
                 WireMpvEvents();
             }
 
@@ -319,7 +320,8 @@ public class PlayerService : IDisposable
     {
         if (_mpv == null) return;
 
-        _mpv.FrameReady += (buffer, w, h, stride) => FrameReady?.Invoke(buffer, w, h, stride);
+        // Note: FrameReady is not wired -- with GPU rendering (vo=gpu + wid),
+        // mpv renders directly to the window surface. No software frame copies.
 
         _mpv.PositionChanged += (pos) =>
         {

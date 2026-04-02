@@ -41,8 +41,7 @@ public sealed partial class PlayerOverlay : UserControl
         if (_isActive) return;
         _isActive = true;
 
-        // Subscribe to frame rendering
-        _playerService.FrameReady += OnFrameReady;
+        // With GPU rendering, mpv renders directly to the window — no FrameReady subscription needed.
 
         // Subscribe to content/playback events
         _playerService.ContentLoaded += OnContentLoaded;
@@ -83,8 +82,7 @@ public sealed partial class PlayerOverlay : UserControl
         // Update playback info display
         UpdatePlaybackInfo();
 
-        // Cap render size at 1080p
-        _playerService.Mpv?.UpdateRenderSize(1920, 1080);
+        // With GPU rendering, mpv handles resolution natively — no render size cap needed.
 
         // Start UI update timer (250ms)
         _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -106,7 +104,6 @@ public sealed partial class PlayerOverlay : UserControl
         _isActive = false;
 
         // Unsubscribe from events
-        _playerService.FrameReady -= OnFrameReady;
         _playerService.ContentLoaded -= OnContentLoaded;
         _playerService.PlaybackEnded -= OnPlaybackEnded;
 

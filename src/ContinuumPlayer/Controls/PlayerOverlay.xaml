@@ -6,18 +6,21 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Background="Black"
+    Background="Transparent"
     KeyDown="Overlay_KeyDown"
     PointerMoved="Overlay_PointerMoved"
     Tapped="Overlay_Tapped"
     IsTabStop="True">
 
-    <Grid Background="Black">
-        <!-- Video frame rendered by mpv SW render into WriteableBitmap -->
+    <Grid Background="Transparent">
+        <!-- With GPU rendering, mpv renders directly to the window surface via D3D11.
+             XAML composites on top via DirectComposition, so controls appear above video.
+             The VideoFrame Image is no longer needed but kept collapsed for compatibility. -->
         <Image x:Name="VideoFrame"
                Stretch="Uniform"
                HorizontalAlignment="Center"
-               VerticalAlignment="Center" />
+               VerticalAlignment="Center"
+               Visibility="Collapsed" />
 
         <!-- Loading overlay (opaque, covers video during loading) -->
         <Grid x:Name="LoadingOverlay" Background="{StaticResource AppBackgroundBrush}" Visibility="Collapsed">

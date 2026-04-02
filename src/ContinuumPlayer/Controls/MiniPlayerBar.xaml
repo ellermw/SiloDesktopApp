@@ -20,15 +20,15 @@
                 <ColumnDefinition Width="Auto" />   <!-- Close -->
             </Grid.ColumnDefinitions>
 
-            <!-- Live video thumbnail with expand overlay -->
+            <!-- Expand button (video thumbnail not available with GPU rendering) -->
             <Grid Grid.Column="0" Width="142" Height="80" Margin="0,10"
-                  Tapped="VideoThumbnail_Tapped" Background="Black" CornerRadius="6">
-                <Image x:Name="MiniVideoFrame" Stretch="Uniform" />
-                <!-- Expand chevron overlay -->
-                <Border Background="#88000000" CornerRadius="4"
+                  Tapped="VideoThumbnail_Tapped" Background="#1A1A2E" CornerRadius="6">
+                <Image x:Name="MiniVideoFrame" Stretch="Uniform" Visibility="Collapsed" />
+                <!-- Expand chevron (always visible since no live thumbnail) -->
+                <Border Background="Transparent" CornerRadius="4"
                         HorizontalAlignment="Center" VerticalAlignment="Center"
-                        Padding="6,2" Opacity="0" x:Name="ExpandOverlay">
-                    <FontIcon Glyph="&#xE70E;" FontSize="12" Foreground="White" />
+                        Padding="6,2" x:Name="ExpandOverlay">
+                    <FontIcon Glyph="&#xE70E;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
                 </Border>
             </Grid>
 
