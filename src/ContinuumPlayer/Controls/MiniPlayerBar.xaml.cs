@@ -18,15 +18,7 @@ public sealed partial class MiniPlayerBar : UserControl
         _playerService = App.Services.GetRequiredService<PlayerService>();
         this.InitializeComponent();
 
-        // Hover effect on expand button (deferred until Loaded because Parent is null during init)
-        this.Loaded += (_, _) =>
-        {
-            if (ExpandOverlay.Parent is Border border && border.Parent is Grid thumbGrid)
-            {
-                thumbGrid.PointerEntered += (_, _) => ExpandOverlay.Opacity = 1;
-                thumbGrid.PointerExited += (_, _) => ExpandOverlay.Opacity = 0;
-            }
-        };
+        // No hover effect needed — expand button is always visible
     }
 
     public void Activate()

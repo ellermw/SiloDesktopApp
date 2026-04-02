@@ -299,14 +299,36 @@ public class PlayerService : IDisposable
 
                 _videoHost = new MpvVideoWindow();
                 _videoHost.Create(parentHwnd);
+                _videoHost.MinimizeRequested += () =>
+                {
+                    // Escape = minimize to mini bar (audio keeps playing)
+                    Minimize();
+                };
                 _videoHost.CloseRequested += () =>
                 {
+                    // Q = close completely
                     _videoHost?.Hide();
                     _ = CloseAsync();
                 };
-                _videoHost.InfoToggleRequested += () =>
+                _videoHost.InfoToggleRequested += TogglePlaybackInfo;
+                _videoHost.TogglePauseRequested += () => _mpv?.TogglePause();
+                _videoHost.ToggleFullscreenRequested += ToggleFullscreen;
+                _videoHost.ToggleMuteRequested += () =>
                 {
-                    TogglePlaybackInfo();
+                    if (_mpv == null) return;
+                    _mpv.SetMute(!_mpv.GetMute());
+                };
+                _videoHost.SeekRelativeRequested += (seconds) =>
+                {
+                    if (_mpv == null) return;
+                    var newPos = Math.Max(0, _mpv.Position + seconds);
+                    _mpv.Seek(newPos);
+                };
+                _videoHost.VolumeChangeRequested += (delta) =>
+                {
+                    if (_mpv == null) return;
+                    var current = _mpv.GetPropertyDouble("volume");
+                    _mpv.SetVolume(Math.Clamp(current + delta, 0, 100));
                 };
 
                 _mpv = new MpvPlayer();

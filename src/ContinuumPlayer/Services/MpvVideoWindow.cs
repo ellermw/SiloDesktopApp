@@ -32,8 +32,14 @@ public sealed class MpvVideoWindow : IDisposable
     private static readonly IntPtr HWND_TOPMOST = new(-1);
     private static readonly IntPtr HWND_NOTOPMOST = new(-2);
 
-    public event Action? CloseRequested;
+    public event Action? MinimizeRequested;  // Escape = minimize to mini bar
+    public event Action? CloseRequested;     // Q = close completely
     public event Action? InfoToggleRequested;
+    public event Action? TogglePauseRequested;
+    public event Action? ToggleFullscreenRequested;
+    public event Action? ToggleMuteRequested;
+    public event Action<double>? SeekRelativeRequested;  // seconds
+    public event Action<int>? VolumeChangeRequested;     // delta
 
     // Win32 imports
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
@@ -170,21 +176,42 @@ public sealed class MpvVideoWindow : IDisposable
     {
         const uint WM_KEYDOWN = 0x0100;
         const uint WM_SYSKEYDOWN = 0x0104;
-        const int VK_ESCAPE = 0x1B;
-        const int VK_I = 0x49;
 
         if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN)
         {
             int vk = (int)wParam & 0xFF;
-            if (vk == VK_ESCAPE)
+            switch (vk)
             {
-                CloseRequested?.Invoke();
-                return IntPtr.Zero;
-            }
-            if (vk == VK_I)
-            {
-                InfoToggleRequested?.Invoke();
-                return IntPtr.Zero;
+                case 0x1B: // Escape — minimize to mini bar
+                    MinimizeRequested?.Invoke();
+                    return IntPtr.Zero;
+                case 0x51: // Q — close completely
+                    CloseRequested?.Invoke();
+                    return IntPtr.Zero;
+                case 0x49: // I — info overlay
+                    InfoToggleRequested?.Invoke();
+                    return IntPtr.Zero;
+                case 0x20: // Space — toggle pause
+                    TogglePauseRequested?.Invoke();
+                    return IntPtr.Zero;
+                case 0x46: // F — toggle fullscreen
+                    ToggleFullscreenRequested?.Invoke();
+                    return IntPtr.Zero;
+                case 0x4D: // M — toggle mute
+                    ToggleMuteRequested?.Invoke();
+                    return IntPtr.Zero;
+                case 0x25: // Left arrow — seek back 5s
+                    SeekRelativeRequested?.Invoke(-5);
+                    return IntPtr.Zero;
+                case 0x27: // Right arrow — seek forward 5s
+                    SeekRelativeRequested?.Invoke(5);
+                    return IntPtr.Zero;
+                case 0x26: // Up arrow — volume up
+                    VolumeChangeRequested?.Invoke(5);
+                    return IntPtr.Zero;
+                case 0x28: // Down arrow — volume down
+                    VolumeChangeRequested?.Invoke(-5);
+                    return IntPtr.Zero;
             }
         }
 
