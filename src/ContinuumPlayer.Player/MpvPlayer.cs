@@ -69,6 +69,7 @@ public sealed class MpvPlayer : IDisposable
 
     /// <summary>Fired when the pause state changes.</summary>
     public event Action<bool>? PauseChanged;
+    public event Action<bool>? FullscreenChanged;
 
     /// <summary>Fired when playback reaches end-of-file or the file ends.</summary>
     public event Action? PlaybackEnded;
@@ -93,6 +94,7 @@ public sealed class MpvPlayer : IDisposable
     private const ulong UD_DURATION    = 2;
     private const ulong UD_PAUSE       = 3;
     private const ulong UD_EOF_REACHED = 4;
+    private const ulong UD_FULLSCREEN  = 5;
 
     // ── Initialization ───────────────────────────────────────────────────
 
@@ -307,8 +309,8 @@ public sealed class MpvPlayer : IDisposable
             SetOption("osd-fonts-dir", fontsDir);
         }
 
-        // OSC scale — make controls larger and easier to interact with
-        SetOption("script-opts", "osc-scalewindowed=1.5,osc-scalefullscreen=1.5,osc-hidetimeout=2000,osc-showwindowed=yes,osc-showfullscreen=yes");
+        // OSC options — larger scale, show on any mouse movement
+        SetOption("script-opts", "osc-scalewindowed=1.5,osc-scalefullscreen=1.5,osc-hidetimeout=2000,osc-showwindowed=yes,osc-showfullscreen=yes,osc-minmousemove=0,osc-visibility=auto");
 
         // Enable mpv's input handling (keyboard + mouse forwarded from WndProc)
         SetOption("input-default-bindings", "yes");
@@ -357,6 +359,7 @@ public sealed class MpvPlayer : IDisposable
         mpv_observe_property(_mpvHandle, UD_DURATION, "duration", MPV_FORMAT_DOUBLE);
         mpv_observe_property(_mpvHandle, UD_PAUSE, "pause", MPV_FORMAT_FLAG);
         mpv_observe_property(_mpvHandle, UD_EOF_REACHED, "eof-reached", MPV_FORMAT_FLAG);
+        mpv_observe_property(_mpvHandle, UD_FULLSCREEN, "fullscreen", MPV_FORMAT_FLAG);
 
         // Start event loop thread
         _eventThread = new Thread(EventLoop)
@@ -807,6 +810,14 @@ public sealed class MpvPlayer : IDisposable
                     int flag = Marshal.PtrToStructure<int>(prop.Data);
                     if (flag != 0)
                         PlaybackEnded?.Invoke();
+                }
+                break;
+
+            case UD_FULLSCREEN:
+                if (prop.Format == MPV_FORMAT_FLAG && prop.Data != IntPtr.Zero)
+                {
+                    int flag = Marshal.PtrToStructure<int>(prop.Data);
+                    FullscreenChanged?.Invoke(flag != 0);
                 }
                 break;
         }

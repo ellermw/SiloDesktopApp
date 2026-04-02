@@ -70,6 +70,21 @@ public sealed class MpvVideoWindow : IDisposable
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool GetMonitorInfoW(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    [DllImport("user32.dll")]
     private static extern IntPtr LoadCursorW(IntPtr hInstance, IntPtr lpCursorName);
 
     [DllImport("user32.dll")]
@@ -149,12 +164,44 @@ public sealed class MpvVideoWindow : IDisposable
     {
         if (_hwnd == IntPtr.Zero) return;
         MatchParentPosition();
+        // Show just above the main window (not TOPMOST — don't cover taskbar)
         ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
-        // Put on top of main window
-        SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+        SetWindowPos(_hwnd, _parentHwnd, 0, 0, 0, 0,
             SWP_NOACTIVATE | 0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/ | SWP_SHOWWINDOW);
         SetForegroundWindow(_hwnd);
     }
+
+    public void EnterFullscreen()
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        // Save current position for restore
+        GetWindowRect(_hwnd, out _savedRect);
+        // Get monitor dimensions
+        var monitor = MonitorFromWindow(_hwnd, 2 /*MONITOR_DEFAULTTONEAREST*/);
+        var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+        GetMonitorInfoW(monitor, ref mi);
+        // Go fullscreen on the monitor, TOPMOST to cover taskbar
+        SetWindowPos(_hwnd, HWND_TOPMOST,
+            mi.rcMonitor.Left, mi.rcMonitor.Top,
+            mi.rcMonitor.Right - mi.rcMonitor.Left,
+            mi.rcMonitor.Bottom - mi.rcMonitor.Top,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        _isFullscreen = true;
+    }
+
+    public void ExitFullscreen()
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        _isFullscreen = false;
+        // Restore to parent window position, remove TOPMOST
+        SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOACTIVATE | 0x0001 | 0x0002);
+        MatchParentPosition();
+    }
+
+    public bool IsFullscreen => _isFullscreen;
+    private bool _isFullscreen;
+    private RECT _savedRect;
 
     public void Hide()
     {

@@ -360,6 +360,7 @@ public class PlayerService : IDisposable
             }
         };
 
+        _mpv.FullscreenChanged += OnMpvFullscreenChanged;
         _mpv.Error += (msg) => LogToFile("mpv_error.txt", msg);
     }
 
@@ -507,15 +508,34 @@ public class PlayerService : IDisposable
 
         _videoWindow.EscapeRequested += () =>
         {
-            if (State == PlayerState.Fullscreen)
-                ExitFullscreen();
+            if (_videoWindow.IsFullscreen)
+            {
+                _videoWindow.ExitFullscreen();
+                SetState(PlayerState.Expanded);
+            }
             else
             {
-                _videoWindow?.Hide();
+                _videoWindow.Hide();
                 _ = CloseAsync();
             }
         };
         _videoWindow.MinimizeRequested += () => Minimize();
+    }
+
+    // Called by mpv when fullscreen property changes (from OSC fullscreen button or F key)
+    private void OnMpvFullscreenChanged(bool fullscreen)
+    {
+        if (_videoWindow == null) return;
+        if (fullscreen)
+        {
+            _videoWindow.EnterFullscreen();
+            SetState(PlayerState.Fullscreen);
+        }
+        else
+        {
+            _videoWindow.ExitFullscreen();
+            SetState(PlayerState.Expanded);
+        }
     }
 
     public void HandleWindowResize() => _videoWindow?.MatchParentPosition();
