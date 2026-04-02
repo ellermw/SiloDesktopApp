@@ -279,16 +279,14 @@ public sealed class MpvPlayer : IDisposable
         // Set the target window handle
         SetOption("wid", windowHandle.ToString());
 
-        // Enable mpv's built-in on-screen controller for native rendering
+        // Enable mpv's built-in on-screen controller
         SetOption("osc", "yes");
         SetOption("osd-level", "1");
 
-        // Allow mpv to handle mouse for OSC interaction
+        // Enable ALL mpv input handling (keyboard + mouse for OSC)
         SetOption("input-default-bindings", "yes");
+        SetOption("input-vo-keyboard", "yes");
         SetOption("input-cursor", "yes");
-
-        // Keep XAML keyboard handling for our overlay
-        SetOption("input-vo-keyboard", "no");
 
         // Player behavior
         SetOption("keep-open", "yes");
@@ -321,7 +319,7 @@ public sealed class MpvPlayer : IDisposable
         SetOption("replaygain", "no");
 
         // === Video — preserve full quality ===
-        SetOption("video-sync", "display-resample");
+        SetOption("video-sync", "audio");                // Sync video to audio (stable, no drift)
         SetOption("interpolation", "no");
         SetOption("deband", "no");
         SetOption("framedrop", "vo");
