@@ -17,6 +17,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>libs\mpv\scripts\osc.lua</Link>
     </None>
+    <None Include="..\..\libs\mpv\scripts\osc-modern.lua">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>libs\mpv\scripts\osc-modern.lua</Link>
+    </None>
   </ItemGroup>
 
 </Project>

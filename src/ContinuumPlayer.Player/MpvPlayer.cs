@@ -281,15 +281,22 @@ public sealed class MpvPlayer : IDisposable
         // Set the target window handle
         SetOption("wid", windowHandle.ToString());
 
-        // Enable mpv's on-screen controller (visual controls on mouse hover)
-        SetOption("osc", "yes");
+        // Disable built-in OSC — we load mpv-osc-modern instead
+        SetOption("osc", "no");
         SetOption("osd-level", "1");
         SetOption("osd-duration", "2000");
         SetOption("osd-on-seek", "msg-bar");
         SetOption("cursor-autohide", "1000");
 
-        // Enable mpv's full input handling (keyboard + mouse for OSC interaction)
-        // Built-in osc.lua is included in this mpv build (luajit enabled)
+        // Load mpv-osc-modern (visual controls on mouse hover)
+        var exeDir = Path.GetDirectoryName(System.Environment.ProcessPath) ?? "";
+        var oscModernPath = Path.Combine(exeDir, "libs", "mpv", "scripts", "osc-modern.lua");
+        if (!File.Exists(oscModernPath))
+            oscModernPath = Path.Combine(exeDir, "..", "..", "..", "..", "libs", "mpv", "scripts", "osc-modern.lua");
+        if (File.Exists(oscModernPath))
+            SetOption("scripts", oscModernPath);
+
+        // Enable mpv's input handling (keyboard + mouse forwarded from WndProc)
         SetOption("input-default-bindings", "yes");
         SetOption("input-vo-keyboard", "yes");
         SetOption("input-cursor", "yes");
@@ -573,6 +580,49 @@ public sealed class MpvPlayer : IDisposable
     /// <param name="url">URL or file path of the subtitle file.</param>
     /// <param name="title">Optional display title.</param>
     /// <param name="lang">Optional language code.</param>
+    /// <summary>Sends a mouse position + button state to mpv's input system.</summary>
+    public void SendMousePos(int x, int y)
+    {
+        if (_mpvHandle == IntPtr.Zero) return;
+        Command("mouse", x.ToString(), y.ToString());
+    }
+
+    /// <summary>Sends a mouse button press/release to mpv's input system.</summary>
+    public void SendMouseButton(int x, int y, int button, bool isDown)
+    {
+        if (_mpvHandle == IntPtr.Zero) return;
+        var action = isDown ? "press" : "release";
+        var btnName = button switch
+        {
+            0 => "MBTN_LEFT",
+            1 => "MBTN_MID",
+            2 => "MBTN_RIGHT",
+            _ => $"MBTN{button}"
+        };
+        Command("mouse", x.ToString(), y.ToString(), button.ToString(), action);
+    }
+
+    /// <summary>Sends a key press to mpv's input system.</summary>
+    public void SendKeypress(string keyName)
+    {
+        if (_mpvHandle == IntPtr.Zero) return;
+        Command("keypress", keyName);
+    }
+
+    /// <summary>Sends a key down to mpv's input system.</summary>
+    public void SendKeydown(string keyName)
+    {
+        if (_mpvHandle == IntPtr.Zero) return;
+        Command("keydown", keyName);
+    }
+
+    /// <summary>Sends a key up to mpv's input system.</summary>
+    public void SendKeyup(string keyName)
+    {
+        if (_mpvHandle == IntPtr.Zero) return;
+        Command("keyup", keyName);
+    }
+
     /// <summary>Shows text on mpv's OSD.</summary>
     public void ShowOsdText(string text, int durationMs = 5000)
     {

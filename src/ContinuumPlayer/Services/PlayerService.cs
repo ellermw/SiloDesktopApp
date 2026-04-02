@@ -280,6 +280,7 @@ public class PlayerService : IDisposable
 
                 _mpv = new MpvPlayer();
                 _mpv.InitializeWithWindow(_videoWindow.Hwnd); // vo=gpu, zero CPU, native resolution
+                _videoWindow.SetMpv(_mpv); // Forward mouse/keyboard to mpv for OSC
                 WireMpvEvents();
             }
 

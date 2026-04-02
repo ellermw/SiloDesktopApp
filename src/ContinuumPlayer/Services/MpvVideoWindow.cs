@@ -32,9 +32,11 @@ public sealed class MpvVideoWindow : IDisposable
     private static readonly IntPtr HWND_TOPMOST = new(-1);
     private static readonly IntPtr HWND_NOTOPMOST = new(-2);
 
-    // Only custom events — mpv handles standard input (Space/arrows/etc) via its own bindings
-    public event Action? EscapeRequested;       // Escape: exit fullscreen or exit playback
-    public event Action? MinimizeRequested;     // N: minimize to mini bar
+    public event Action? EscapeRequested;
+    public event Action? MinimizeRequested;
+
+    // Reference to mpv for forwarding input events
+    private ContinuumPlayer.Player.MpvPlayer? _mpv;
 
     // Win32 imports
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
@@ -98,6 +100,8 @@ public sealed class MpvVideoWindow : IDisposable
     private struct RECT { public int Left, Top, Right, Bottom; }
 
     public IntPtr Hwnd => _hwnd;
+
+    public void SetMpv(ContinuumPlayer.Player.MpvPlayer mpv) => _mpv = mpv;
 
     public void Create(IntPtr parentHwnd)
     {
@@ -169,13 +173,88 @@ public sealed class MpvVideoWindow : IDisposable
 
     private IntPtr WndProcInstance(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
-        // Forward ALL messages to DefWindowProc — let mpv's internal child
-        // window handle input (keyboard, mouse) for OSC controls.
-        // mpv creates a child window inside our popup via wid= and handles
-        // all input there.
+        const uint WM_MOUSEMOVE = 0x0200;
+        const uint WM_LBUTTONDOWN = 0x0201;
+        const uint WM_LBUTTONUP = 0x0202;
+        const uint WM_LBUTTONDBLCLK = 0x0203;
+        const uint WM_RBUTTONDOWN = 0x0204;
+        const uint WM_RBUTTONUP = 0x0205;
+        const uint WM_MBUTTONDOWN = 0x0207;
+        const uint WM_MBUTTONUP = 0x0208;
+        const uint WM_MOUSEWHEEL = 0x020A;
+        const uint WM_KEYDOWN = 0x0100;
+        const uint WM_KEYUP = 0x0101;
+
+        int loWord(IntPtr lp) => (short)(lp.ToInt64() & 0xFFFF);
+        int hiWord(IntPtr lp) => (short)((lp.ToInt64() >> 16) & 0xFFFF);
+
+        // Forward mouse events to mpv's input system (OSC needs these)
+        if (msg == WM_MOUSEMOVE)
+        {
+            _mpv?.SendMousePos(loWord(lParam), hiWord(lParam));
+        }
+        else if (msg == WM_LBUTTONDOWN)
+        {
+            _mpv?.SendMouseButton(loWord(lParam), hiWord(lParam), 0, true);
+        }
+        else if (msg == WM_LBUTTONUP)
+        {
+            _mpv?.SendMouseButton(loWord(lParam), hiWord(lParam), 0, false);
+        }
+        else if (msg == WM_LBUTTONDBLCLK)
+        {
+            _mpv?.SendKeypress("MBTN_LEFT_DBL");
+        }
+        else if (msg == WM_RBUTTONDOWN)
+        {
+            _mpv?.SendMouseButton(loWord(lParam), hiWord(lParam), 2, true);
+        }
+        else if (msg == WM_RBUTTONUP)
+        {
+            _mpv?.SendMouseButton(loWord(lParam), hiWord(lParam), 2, false);
+        }
+        else if (msg == WM_MOUSEWHEEL)
+        {
+            int delta = hiWord(wParam);
+            _mpv?.SendKeypress(delta > 0 ? "WHEEL_UP" : "WHEEL_DOWN");
+        }
+        else if (msg == WM_KEYDOWN)
+        {
+            int vk = (int)wParam & 0xFF;
+            // Escape — our custom handling
+            if (vk == 0x1B) { EscapeRequested?.Invoke(); return IntPtr.Zero; }
+            // N — minimize
+            if (vk == 0x4E) { MinimizeRequested?.Invoke(); return IntPtr.Zero; }
+            // Forward all other keys to mpv
+            var keyName = VkToMpvKey(vk);
+            if (keyName != null) _mpv?.SendKeypress(keyName);
+        }
 
         return DefWindowProcW(hWnd, msg, wParam, lParam);
     }
+
+    private static string? VkToMpvKey(int vk) => vk switch
+    {
+        0x20 => "SPACE",
+        0x25 => "LEFT",
+        0x26 => "UP",
+        0x27 => "RIGHT",
+        0x28 => "DOWN",
+        0x0D => "ENTER",
+        0x09 => "TAB",
+        0x08 => "BS",
+        0x2E => "DEL",
+        0x24 => "HOME",
+        0x23 => "END",
+        0x21 => "PGUP",
+        0x22 => "PGDWN",
+        0x70 => "F1", 0x71 => "F2", 0x72 => "F3", 0x73 => "F4",
+        0x74 => "F5", 0x75 => "F6", 0x76 => "F7", 0x77 => "F8",
+        0x78 => "F9", 0x79 => "F10", 0x7A => "F11", 0x7B => "F12",
+        >= 0x41 and <= 0x5A => ((char)vk).ToString().ToLower(), // A-Z
+        >= 0x30 and <= 0x39 => ((char)vk).ToString(), // 0-9
+        _ => null
+    };
 
     public void Dispose()
     {
