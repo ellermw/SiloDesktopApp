@@ -21,6 +21,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>libs\mpv\scripts\osc-modern.lua</Link>
     </None>
+    <None Include="..\..\libs\mpv\fonts\material-design-iconic-font.ttf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>libs\mpv\fonts\material-design-iconic-font.ttf</Link>
+    </None>
   </ItemGroup>
 
 </Project>

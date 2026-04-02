@@ -281,20 +281,27 @@ public sealed class MpvPlayer : IDisposable
         // Set the target window handle
         SetOption("wid", windowHandle.ToString());
 
-        // Disable built-in OSC — we load mpv-osc-modern instead
+        // Disable built-in OSC — osc-modern replaces it
         SetOption("osc", "no");
         SetOption("osd-level", "1");
         SetOption("osd-duration", "2000");
         SetOption("osd-on-seek", "msg-bar");
         SetOption("cursor-autohide", "1000");
 
-        // Load mpv-osc-modern (visual controls on mouse hover)
+        // Load mpv-osc-modern + Material Design Iconic Font
         var exeDir = Path.GetDirectoryName(System.Environment.ProcessPath) ?? "";
-        var oscModernPath = Path.Combine(exeDir, "libs", "mpv", "scripts", "osc-modern.lua");
-        if (!File.Exists(oscModernPath))
-            oscModernPath = Path.Combine(exeDir, "..", "..", "..", "..", "libs", "mpv", "scripts", "osc-modern.lua");
-        if (File.Exists(oscModernPath))
-            SetOption("scripts", oscModernPath);
+        var oscPath = Path.Combine(exeDir, "libs", "mpv", "scripts", "osc-modern.lua");
+        if (!File.Exists(oscPath))
+            oscPath = Path.Combine(exeDir, "..", "..", "..", "..", "libs", "mpv", "scripts", "osc-modern.lua");
+        if (File.Exists(oscPath))
+            SetOption("scripts", oscPath);
+
+        // Point mpv to the fonts directory for Material Design Iconic Font
+        var fontsDir = Path.Combine(exeDir, "libs", "mpv", "fonts");
+        if (!Directory.Exists(fontsDir))
+            fontsDir = Path.Combine(exeDir, "..", "..", "..", "..", "libs", "mpv", "fonts");
+        if (Directory.Exists(fontsDir))
+            SetOption("osd-fonts-dir", fontsDir);
 
         // Enable mpv's input handling (keyboard + mouse forwarded from WndProc)
         SetOption("input-default-bindings", "yes");
