@@ -112,8 +112,7 @@ public partial class SearchViewModel : ObservableObject
     {
         try
         {
-            var response = await _peopleApi.GetPeopleAsync(query, 10, 0, ct);
-            return response.Items;
+            return await _peopleApi.GetPeopleAsync(query, 10, 0, ct);
         }
         catch
         {

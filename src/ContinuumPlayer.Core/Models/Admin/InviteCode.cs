@@ -13,11 +13,6 @@ public class InviteCode
     public string UpdatedAt { get; set; } = "";
 }
 
-public class InviteCodesResponse
-{
-    public List<InviteCode> InviteCodes { get; set; } = [];
-}
-
 public class CreateInviteCodeRequest
 {
     public string? Code { get; set; }

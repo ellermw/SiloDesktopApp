@@ -80,9 +80,9 @@ public partial class ItemDetailViewModel : ObservableObject
         try
         {
             Item = await _catalogApi.GetItemDetailAsync(contentId);
-            IsFavorite = Item?.UserState?.IsFavorite ?? false;
-            InWatchlist = Item?.UserState?.InWatchlist ?? false;
-            IsWatched = Item?.UserState?.Played ?? false;
+            IsFavorite = false;
+            InWatchlist = false;
+            IsWatched = Item?.UserData?.Played ?? false;
             IsSeries = Item?.Type == "series";
             OnPropertyChanged(nameof(RuntimeDisplay));
             OnPropertyChanged(nameof(GenresDisplay));

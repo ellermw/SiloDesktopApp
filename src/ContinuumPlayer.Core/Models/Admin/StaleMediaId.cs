@@ -14,7 +14,5 @@ public class StaleMediaId
     public string LastSeenAt { get; set; } = "";
 }
 
-public class StaleMediaIdsResponse
-{
-    public List<StaleMediaId> Items { get; set; } = [];
-}
+// NOTE: GET /admin/libraries/stale-ids returns a bare JSON array, not a wrapper object.
+// Deserialized directly as List<StaleMediaId> in AdminApi.

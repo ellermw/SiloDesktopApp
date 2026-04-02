@@ -30,9 +30,9 @@ public partial class AdminProvidersViewModel : ObservableObject
         ErrorMessage = null;
         try
         {
-            var response = await _adminApi.GetProvidersAsync();
+            var providers = await _adminApi.GetProvidersAsync();
             Providers.Clear();
-            foreach (var p in response.Providers) Providers.Add(p);
+            foreach (var p in providers) Providers.Add(p);
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsLoading = false; }

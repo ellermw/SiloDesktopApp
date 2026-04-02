@@ -19,9 +19,5 @@ public class AdminPlaybackHistoryItem
     public bool Completed { get; set; }
 }
 
-public class AdminPlaybackHistoryResponse
-{
-    public List<AdminPlaybackHistoryItem> Items { get; set; } = [];
-    public int Total { get; set; }
-    public bool HasMore { get; set; }
-}
+// NOTE: GET /admin/playback-history returns a bare JSON array, not a wrapper object.
+// Deserialized directly as List<AdminPlaybackHistoryItem> in AdminApi.

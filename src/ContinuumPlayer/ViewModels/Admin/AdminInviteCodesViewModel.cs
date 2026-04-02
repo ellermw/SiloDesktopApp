@@ -30,9 +30,9 @@ public partial class AdminInviteCodesViewModel : ObservableObject
         ErrorMessage = null;
         try
         {
-            var response = await _adminApi.GetInviteCodesAsync();
+            var codes = await _adminApi.GetInviteCodesAsync();
             InviteCodes.Clear();
-            foreach (var c in response.InviteCodes) InviteCodes.Add(c);
+            foreach (var c in codes) InviteCodes.Add(c);
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsLoading = false; }

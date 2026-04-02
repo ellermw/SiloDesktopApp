@@ -11,10 +11,8 @@ public class MetadataProvider
     public string UpdatedAt { get; set; } = "";
 }
 
-public class MetadataProvidersResponse
-{
-    public List<MetadataProvider> Providers { get; set; } = [];
-}
+// NOTE: GET /admin/providers returns a bare JSON array, not a wrapper object.
+// Deserialized directly as List<MetadataProvider> in AdminApi.
 
 public class CreateProviderRequest
 {

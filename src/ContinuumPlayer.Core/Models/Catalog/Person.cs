@@ -17,8 +17,5 @@ public class Person
     public string? PlexGuid { get; set; }
 }
 
-public class PeopleResponse
-{
-    public List<Person> Items { get; set; } = [];
-    public int Total { get; set; }
-}
+// NOTE: GET /people returns a bare JSON array of Person objects, not a wrapper object.
+// Deserialized directly as List<Person> in PeopleApi.

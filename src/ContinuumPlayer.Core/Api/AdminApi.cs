@@ -335,8 +335,8 @@ public class AdminApi(ContinuumApiClient client)
 
     // ===== Providers =====
 
-    public Task<MetadataProvidersResponse> GetProvidersAsync(CancellationToken ct = default)
-        => client.GetAsync<MetadataProvidersResponse>("/api/v1/admin/providers", ct);
+    public Task<List<MetadataProvider>> GetProvidersAsync(CancellationToken ct = default)
+        => client.GetAsync<List<MetadataProvider>>("/api/v1/admin/providers", ct);
 
     public Task<MetadataProvider> CreateProviderAsync(CreateProviderRequest request, CancellationToken ct = default)
         => client.PostAsync<MetadataProvider>("/api/v1/admin/providers", request, ct);
@@ -361,8 +361,8 @@ public class AdminApi(ContinuumApiClient client)
     public Task DeleteLibraryPosterAsync(int libraryId, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/admin/libraries/{libraryId}/poster", ct);
 
-    public Task<StaleMediaIdsResponse> GetStaleIdsAsync(CancellationToken ct = default)
-        => client.GetAsync<StaleMediaIdsResponse>("/api/v1/admin/libraries/stale-ids", ct);
+    public Task<List<StaleMediaId>> GetStaleIdsAsync(CancellationToken ct = default)
+        => client.GetAsync<List<StaleMediaId>>("/api/v1/admin/libraries/stale-ids", ct);
 
     public Task RematchStaleIdAsync(string contentId, CancellationToken ct = default)
         => client.PostNoContentAsync($"/api/v1/admin/libraries/stale-ids/{Uri.EscapeDataString(contentId)}/rematch", new { }, ct);
@@ -372,8 +372,8 @@ public class AdminApi(ContinuumApiClient client)
 
     // ===== Invite Codes =====
 
-    public Task<InviteCodesResponse> GetInviteCodesAsync(CancellationToken ct = default)
-        => client.GetAsync<InviteCodesResponse>("/api/v1/admin/invite-codes", ct);
+    public Task<List<InviteCode>> GetInviteCodesAsync(CancellationToken ct = default)
+        => client.GetAsync<List<InviteCode>>("/api/v1/admin/invite-codes", ct);
 
     public Task<InviteCode> CreateInviteCodeAsync(CreateInviteCodeRequest request, CancellationToken ct = default)
         => client.PostAsync<InviteCode>("/api/v1/admin/invite-codes", request, ct);

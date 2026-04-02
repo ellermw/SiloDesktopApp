@@ -35,12 +35,6 @@ public class ExecutionResult
     public long DurationMs { get; set; }
 }
 
-public class TasksResponse
-{
-    public List<TaskInfo> Tasks { get; set; } = [];
-}
-
-public class ExecutionHistoryResponse
-{
-    public List<ExecutionResult> Executions { get; set; } = [];
-}
+// NOTE: GET /admin/tasks returns a bare JSON array, not a wrapper object.
+// GET /admin/tasks/{key}/history also returns a bare JSON array.
+// Both are deserialized directly as List<T> in AdminApi.

@@ -14,6 +14,9 @@ public class HistoryEntry
     public string? PosterThumbhash { get; set; }
 }
 
+// NOTE: Server GET /history returns {"items": [...]}, same shape as itemsListResponse.
+// The server does NOT include "total" or "has_more" fields — they default to 0/false.
+// The items are MediaItem-shaped objects (resolved from history entries).
 public class HistoryResponse
 {
     public List<HistoryEntry> Items { get; set; } = [];

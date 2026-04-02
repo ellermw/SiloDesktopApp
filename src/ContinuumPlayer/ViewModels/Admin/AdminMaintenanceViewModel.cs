@@ -39,7 +39,7 @@ public partial class AdminMaintenanceViewModel : ObservableObject
             await Task.WhenAll(staleTask, skippedTask, unmatchedTask);
 
             StaleIds.Clear();
-            foreach (var s in staleTask.Result.Items) StaleIds.Add(s);
+            foreach (var s in staleTask.Result) StaleIds.Add(s);
 
             SkippedRoots.Clear();
             foreach (var r in skippedTask.Result) SkippedRoots.Add(r);

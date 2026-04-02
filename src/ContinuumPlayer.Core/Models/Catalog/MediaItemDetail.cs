@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using ContinuumPlayer.Core.Models.Home;
 
 namespace ContinuumPlayer.Core.Models.Catalog;
@@ -43,7 +44,23 @@ public class MediaItemDetail
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
     public bool? IsSpecials { get; set; }
-    public UserState? UserState { get; set; }
+    [JsonPropertyName("user_data")]
+    public ItemDetailUserData? UserData { get; set; }
+}
+
+public class ItemDetailUserData
+{
+    public double PositionSeconds { get; set; }
+    public double DurationSeconds { get; set; }
+    public bool IsInProgress { get; set; }
+    public int WatchedCount { get; set; }
+    public int UnplayedCount { get; set; }
+    public int InProgressCount { get; set; }
+    public bool Played { get; set; }
+    public int? LastFileId { get; set; }
+    public string? LastResolution { get; set; }
+    public bool? LastHdr { get; set; }
+    public string? LastCodecVideo { get; set; }
 }
 
 public class CastMember

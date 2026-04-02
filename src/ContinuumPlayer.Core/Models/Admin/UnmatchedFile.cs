@@ -9,7 +9,5 @@ public class UnmatchedFile
     public string Container { get; set; } = "";
 }
 
-public class UnmatchedFilesResponse
-{
-    public List<UnmatchedFile> Files { get; set; } = [];
-}
+// NOTE: Server returns unmatched items as a bare array with unmatchedItemResponse fields,
+// which differ from this model. See AdminApi.GetUnmatchedItemsAsync.

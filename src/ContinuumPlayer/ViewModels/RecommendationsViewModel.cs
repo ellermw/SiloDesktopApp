@@ -112,7 +112,7 @@ public partial class RecommendationsViewModel : ObservableObject
                             BackdropUrl = detail.BackdropUrl,
                             BackdropThumbhash = detail.BackdropThumbhash,
                             LogoUrl = detail.LogoUrl,
-                            UserState = detail.UserState
+                            UserState = detail.UserData != null ? new UserState { Played = detail.UserData.Played } : null
                         };
                     }
                     catch
@@ -163,7 +163,7 @@ public partial class RecommendationsViewModel : ObservableObject
                             BackdropUrl = detail.BackdropUrl,
                             BackdropThumbhash = detail.BackdropThumbhash,
                             LogoUrl = detail.LogoUrl,
-                            UserState = detail.UserState
+                            UserState = detail.UserData != null ? new UserState { Played = detail.UserData.Played } : null
                         };
                     }
                     catch { return null; }

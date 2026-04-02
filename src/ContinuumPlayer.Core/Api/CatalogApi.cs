@@ -1,6 +1,7 @@
 using ContinuumPlayer.Core.Models.Admin;
 using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Models.Home;
+using ContinuumPlayer.Core.Models.Playback;
 
 namespace ContinuumPlayer.Core.Api;
 
@@ -113,8 +114,8 @@ public class CatalogApi(ContinuumApiClient client)
 
     // ===== Item Versions =====
 
-    public Task<CatalogResponse> GetItemVersionsAsync(string contentId, CancellationToken ct = default)
-        => client.GetAsync<CatalogResponse>($"/api/v1/catalog/items/{Uri.EscapeDataString(contentId)}/versions", ct);
+    public Task<List<FileVersion>> GetItemVersionsAsync(string contentId, CancellationToken ct = default)
+        => client.GetAsync<List<FileVersion>>($"/api/v1/catalog/items/{Uri.EscapeDataString(contentId)}/versions", ct);
 
     // ===== Library Collections =====
 
@@ -143,8 +144,8 @@ public class CatalogApi(ContinuumApiClient client)
 
     // ===== Ratings List =====
 
-    public Task<ItemListResponse> GetRatingsListAsync(CancellationToken ct = default)
-        => client.GetAsync<ItemListResponse>("/api/v1/ratings", ct);
+    public Task<RatingListResponse> GetRatingsListAsync(CancellationToken ct = default)
+        => client.GetAsync<RatingListResponse>("/api/v1/ratings", ct);
 
     // ===== Watchlist / Favorites Check =====
 

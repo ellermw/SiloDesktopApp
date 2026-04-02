@@ -4,11 +4,11 @@ namespace ContinuumPlayer.Core.Api;
 
 public class PeopleApi(ContinuumApiClient client)
 {
-    public Task<PeopleResponse> GetPeopleAsync(string? query = null, int limit = 20, int offset = 0, CancellationToken ct = default)
+    public Task<List<Person>> GetPeopleAsync(string? query = null, int limit = 20, int offset = 0, CancellationToken ct = default)
     {
         var path = $"/api/v1/people?limit={limit}&offset={offset}";
         if (query != null) path += $"&q={Uri.EscapeDataString(query)}";
-        return client.GetAsync<PeopleResponse>(path, ct);
+        return client.GetAsync<List<Person>>(path, ct);
     }
 
     public Task<Person> GetPersonAsync(int id, CancellationToken ct = default)
