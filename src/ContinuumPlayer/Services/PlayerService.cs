@@ -338,6 +338,16 @@ public class PlayerService : IDisposable
             LogToFile("player_crash.txt", ex.ToString());
             ErrorMessage = $"Failed to start playback: {ex.Message}";
             IsLoading = false;
+
+            // Clean up — hide popup window and go back to Idle
+            _videoWindow?.Hide();
+            if (_playbackManager != null)
+            {
+                try { await _playbackManager.StopSessionAsync(); } catch { }
+                _playbackManager.Dispose();
+                _playbackManager = null;
+            }
+            SetState(PlayerState.Idle);
         }
     }
 
@@ -538,15 +548,20 @@ public class PlayerService : IDisposable
             if (_videoWindow.IsFullscreen)
             {
                 _videoWindow.ExitFullscreen();
-                SetState(PlayerState.Expanded);
+                // Dispatch to UI thread for XAML state updates
+                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Expanded));
             }
             else
             {
                 _videoWindow.Hide();
-                _ = CloseAsync();
+                // Run CloseAsync on UI thread so SetState(Idle) updates XAML properly
+                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => _ = CloseAsync());
             }
         };
-        _videoWindow.MinimizeRequested += () => Minimize();
+        _videoWindow.MinimizeRequested += () =>
+        {
+            App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => Minimize());
+        };
     }
 
     // Called by mpv when fullscreen property changes (from OSC fullscreen button or F key)
@@ -559,12 +574,12 @@ public class PlayerService : IDisposable
             if (fullscreen)
             {
                 _videoWindow.EnterFullscreen();
-                State = PlayerState.Fullscreen;
+                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Fullscreen));
             }
             else
             {
                 _videoWindow.ExitFullscreen();
-                State = PlayerState.Expanded;
+                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Expanded));
             }
         }
         catch (Exception ex)

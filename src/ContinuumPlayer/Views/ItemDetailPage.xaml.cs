@@ -735,9 +735,15 @@ public sealed partial class ItemDetailPage : Page
         NavigateToPlayer(ViewModel.Item.ContentId, fromStart: true);
     }
 
-    private void NavigateToPlayer(string contentId, bool fromStart = false, int? fileId = null)
+    private async void NavigateToPlayer(string contentId, bool fromStart = false, int? fileId = null)
     {
         var playerService = App.Services.GetRequiredService<Services.PlayerService>();
+        // Close any existing playback before starting new
+        if (playerService.State != Services.PlayerState.Idle)
+        {
+            await playerService.CloseAsync();
+            await Task.Delay(300); // Let server process the session stop
+        }
         _ = playerService.PlayAsync(contentId, fromStart: fromStart, fileId: fileId);
     }
 
