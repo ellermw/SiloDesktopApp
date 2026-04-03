@@ -1107,6 +1107,13 @@ local function render_stats()
         end
     end
 
+    -- Live bandwidth (network download speed)
+    local cache_speed = mp.get_property_number("cache-speed")
+    if cache_speed and cache_speed > 0 then
+        local mbps = cache_speed / 1000000
+        table.insert(lines, { label = "Bandwidth", value = string.format("%.1f Mbps", mbps) })
+    end
+
     if #lines == 0 then return end
 
     -- Calculate box dimensions
