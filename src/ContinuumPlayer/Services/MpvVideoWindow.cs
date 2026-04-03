@@ -218,24 +218,27 @@ public sealed class MpvVideoWindow : IDisposable
     {
         if (_hwnd == IntPtr.Zero) return;
         _isFullscreen = false;
-        // First remove TOPMOST
-        SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-            0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/ | SWP_NOACTIVATE);
-        // Restore position to match parent
         MatchParentPosition();
-        // Force to top of z-order and activate
-        SetWindowPos(_hwnd, HWND_TOP, 0, 0, 0, 0,
-            0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/ | SWP_SHOWWINDOW);
-        SetForegroundWindow(_hwnd);
-        // Re-assert after a delay (mpv internal fullscreen handling may interfere)
-        System.Threading.Tasks.Task.Delay(200).ContinueWith(_ =>
+        // mpv's internal fullscreen handling fights our z-order changes.
+        // Retry bringing to front multiple times over 500ms to win the race.
+        BringToFrontRepeatedly();
+    }
+
+    private void BringToFrontRepeatedly()
+    {
+        int attempts = 0;
+        var timer = new System.Threading.Timer(_ =>
         {
-            if (!_isFullscreen && _hwnd != IntPtr.Zero)
-            {
-                MatchParentPosition();
-                SetForegroundWindow(_hwnd);
-            }
-        });
+            if (_hwnd == IntPtr.Zero || _isFullscreen) return;
+            attempts++;
+            SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                0x0001 | 0x0002 | SWP_SHOWWINDOW);
+            SetForegroundWindow(_hwnd);
+            MatchParentPosition();
+        }, null, 0, 50); // Every 50ms
+
+        // Stop after 500ms (10 attempts)
+        System.Threading.Tasks.Task.Delay(500).ContinueWith(_ => timer.Dispose());
     }
 
     public bool IsFullscreen => _isFullscreen;

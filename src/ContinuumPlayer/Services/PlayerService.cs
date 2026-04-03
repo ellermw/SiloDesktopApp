@@ -419,10 +419,16 @@ public class PlayerService : IDisposable
 
         _mpv.PlaybackEnded += () =>
         {
+            LogToFile("state_trace.txt", $"PlaybackEnded fired: _switchingContent={_switchingContent} State={State}");
             if (!_switchingContent)
             {
+                LogToFile("state_trace.txt", "  → Hiding window and invoking PlaybackEnded");
                 _videoWindow?.Hide();
                 PlaybackEnded?.Invoke();
+            }
+            else
+            {
+                LogToFile("state_trace.txt", "  → Suppressed (switching content)");
             }
         };
 
@@ -647,6 +653,7 @@ public class PlayerService : IDisposable
 
     public async Task CloseAsync()
     {
+        LogToFile("state_trace.txt", $"CloseAsync called: State={State} _switchingContent={_switchingContent}");
         if (State == PlayerState.Fullscreen)
             ExitFullscreen();
 
