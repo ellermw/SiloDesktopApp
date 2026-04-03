@@ -244,9 +244,10 @@ public class PlayerService : IDisposable
 
             // Select version: use specified fileId if provided, otherwise pick best
             FileVersion? bestVersion = null;
+            var versions = watchDetail.Versions ?? new List<FileVersion>();
             if (fileId.HasValue)
-                bestVersion = watchDetail.Versions.FirstOrDefault(v => v.FileId == fileId.Value);
-            bestVersion ??= _playbackManager.SelectBestVersion(watchDetail.Versions);
+                bestVersion = versions.FirstOrDefault(v => v.FileId == fileId.Value);
+            bestVersion ??= _playbackManager.SelectBestVersion(versions);
             if (bestVersion == null)
             {
                 ErrorMessage = "No playable version found.";

@@ -49,6 +49,7 @@ public sealed partial class ItemDetailPage : Page
     }
 
     private string? _currentContentId;
+    private string? _playableContentId; // The actual episode/movie ID used for watch detail
     private bool _subscribedToStateChanged;
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -62,10 +63,10 @@ public sealed partial class ItemDetailPage : Page
             var playerService = App.Services.GetRequiredService<Services.PlayerService>();
             playerService.StateChanged += (state) =>
             {
-                if (state == Services.PlayerState.Idle && _currentContentId != null)
+                if (state == Services.PlayerState.Idle && _playableContentId != null)
                 {
                     // Player closed — refresh watch detail so button shows "Resume"
-                    DispatcherQueue?.TryEnqueue(() => _ = LoadWatchDetailAsync(_currentContentId));
+                    DispatcherQueue?.TryEnqueue(() => _ = LoadWatchDetailAsync(_playableContentId));
                 }
             };
         }
@@ -109,12 +110,14 @@ public sealed partial class ItemDetailPage : Page
                                   ?? ViewModel.Episodes.FirstOrDefault();
                 if (nextEpisode != null)
                 {
+                    _playableContentId = nextEpisode.ContentId;
                     _ = LoadWatchDetailAsync(nextEpisode.ContentId);
                 }
             }
             else
             {
                 // For movies/episodes, load watch detail directly
+                _playableContentId = contentId;
                 _ = LoadWatchDetailAsync(contentId);
             }
         }
@@ -752,10 +755,13 @@ public sealed partial class ItemDetailPage : Page
     {
         if (ViewModel.Item == null) return;
 
-        // For series, play the first episode from start
+        // For series, restart the current/next episode from position 0
+        // (same episode selection as the Play button)
         if (ViewModel.IsSeries && ViewModel.Episodes.Count > 0)
         {
-            NavigateToPlayer(ViewModel.Episodes[0].ContentId, fromStart: true);
+            var episode = ViewModel.Episodes.FirstOrDefault(ep => ep.UserData?.Played != true)
+                          ?? ViewModel.Episodes[0];
+            NavigateToPlayer(episode.ContentId, fromStart: true);
         }
         else
         {
