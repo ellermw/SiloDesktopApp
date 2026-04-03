@@ -348,7 +348,8 @@ public class PlayerService : IDisposable
             _mpv.Play();
             LogToFile("state_trace.txt", "Play() called");
             IsPaused = false;
-            _switchingContent = false; // Now safe to receive PlaybackEnded
+            // DON'T clear _switchingContent here — mpv may still fire PlaybackEnded
+            // from the previous Stop(). It's cleared in the FileLoaded handler instead.
 
             // Tell custom OSC the play method
             _mpv.SendScriptMessage("osc-set-play-method", session.PlayMethod ?? "direct");
@@ -404,6 +405,7 @@ public class PlayerService : IDisposable
         {
             IsLoading = false;
             _mpvFileLoaded = true;
+            _switchingContent = false; // Safe to receive PlaybackEnded now
             App.MainWindowInstance?.HideLoadingOverlay();
             LogToFile("state_trace.txt", "FileLoaded fired");
 

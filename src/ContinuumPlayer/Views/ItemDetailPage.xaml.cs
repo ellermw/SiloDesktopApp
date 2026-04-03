@@ -747,7 +747,9 @@ public sealed partial class ItemDetailPage : Page
     {
         if (sender is FrameworkElement fe && fe.Tag is string contentId)
         {
-            NavigateToPlayer(contentId);
+            // Navigate to episode detail page, not directly to player
+            var nav = App.Services.GetRequiredService<NavigationService>();
+            nav.Navigate<ItemDetailPage>(contentId);
         }
     }
 

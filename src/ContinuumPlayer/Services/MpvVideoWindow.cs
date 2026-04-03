@@ -212,17 +212,30 @@ public sealed class MpvVideoWindow : IDisposable
 
     private RECT _fullscreenRect;
 
+    private static readonly IntPtr HWND_TOP = IntPtr.Zero;
+
     public void ExitFullscreen()
     {
         if (_hwnd == IntPtr.Zero) return;
         _isFullscreen = false;
-        // Restore to parent window position
-        MatchParentPosition();
-        // Remove TOPMOST but stay on top of everything (HWND_TOP, not _parentHwnd)
-        // Using _parentHwnd as hWndInsertAfter would put us BEHIND the parent
+        // First remove TOPMOST
         SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-            0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/);
+            0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/ | SWP_NOACTIVATE);
+        // Restore position to match parent
+        MatchParentPosition();
+        // Force to top of z-order and activate
+        SetWindowPos(_hwnd, HWND_TOP, 0, 0, 0, 0,
+            0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/ | SWP_SHOWWINDOW);
         SetForegroundWindow(_hwnd);
+        // Re-assert after a delay (mpv internal fullscreen handling may interfere)
+        System.Threading.Tasks.Task.Delay(200).ContinueWith(_ =>
+        {
+            if (!_isFullscreen && _hwnd != IntPtr.Zero)
+            {
+                MatchParentPosition();
+                SetForegroundWindow(_hwnd);
+            }
+        });
     }
 
     public bool IsFullscreen => _isFullscreen;
