@@ -1345,10 +1345,9 @@ local function handle_mouse_down()
         return
     end
 
-    -- Check fullscreen — send keypress "f" so the host app handles it
-    -- (mpv's internal fullscreen conflicts with our window management)
+    -- Check fullscreen
     if L.btn_fullscreen and point_in_rect(mx, my, L.btn_fullscreen) then
-        mp.commandv("keypress", "f")
+        mp.commandv("cycle", "fullscreen")
         return
     end
 
@@ -1431,7 +1430,7 @@ end
 -- Double-click for fullscreen (track timing of clicks)
 local last_click_time = 0
 local function handle_mbtn_left_dbl()
-    mp.commandv("keypress", "f")
+    mp.commandv("cycle", "fullscreen")
 end
 
 --------------------------------------------------------------------------------
@@ -1525,10 +1524,9 @@ local function setup_key_bindings()
     mp.add_key_binding("mouse_move", "continuum-osc-mouse-move", handle_mouse_move)
 
     -- Mouse button down/up
-    mp.add_key_binding("mbtn_left", "continuum-osc-mbtn-left", function()
-        handle_mouse_move()  -- update position first
-        handle_mouse_down()
-    end)
+    -- mbtn_left click handled via osc-mouse-down/osc-mouse-up script messages
+    -- from the host app. Do NOT also bind mbtn_left here — it would double-fire
+    -- handle_mouse_down and the drag would never release.
 
     -- Right-click (for CC subtitle cycle backward)
     mp.add_key_binding("mbtn_right", "continuum-osc-mbtn-right", function()

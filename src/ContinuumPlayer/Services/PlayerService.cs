@@ -186,6 +186,8 @@ public class PlayerService : IDisposable
 
     public async Task PlayAsync(string contentId, bool fromStart = false, int? fileId = null)
     {
+        LogToFile("state_trace.txt", $"PlayAsync called: contentId={contentId} fromStart={fromStart} State={State} IsLoading={IsLoading}");
+
         // Stop any existing session first (prevents HTTP 400 from server)
         if (_playbackManager != null)
         {
@@ -391,6 +393,8 @@ public class PlayerService : IDisposable
         _mpv.FileLoaded += () =>
         {
             IsLoading = false;
+            _mpvFileLoaded = true; // Enable fullscreen observer (skip initial property fire)
+            LogToFile("state_trace.txt", "FileLoaded fired");
 
             ContentLoaded?.Invoke();
             if (_resumePosition > 0)
@@ -591,15 +595,37 @@ public class PlayerService : IDisposable
 
     // Called by mpv when fullscreen property changes (from OSC fullscreen button or F key)
     // Runs on mpv's event thread — dispatch to UI thread for safety
-    // Ignore fullscreen property changes from mpv — mpv's internal fullscreen
-    // handling conflicts with our window management (it toggles true then
-    // immediately back to false within 137ms). Instead, handle fullscreen
-    // exclusively through our own EnterFullscreen/ExitFullscreen via the
-    // OSC's fullscreen button sending a script-message.
+    private bool _mpvFileLoaded;
+    private long _lastFullscreenTrueTicks;
+
     private void OnMpvFullscreenChanged(bool fullscreen)
     {
-        // Intentionally ignored — see comment above.
-        // Fullscreen is handled by osc-toggle-fullscreen script message.
+        if (!_mpvFileLoaded) return;
+
+        LogToFile("state_trace.txt", $"OnMpvFullscreenChanged: fullscreen={fullscreen}");
+        if (_videoWindow == null) return;
+
+        if (fullscreen)
+        {
+            _lastFullscreenTrueTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+            _videoWindow.EnterFullscreen();
+            App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Fullscreen));
+        }
+        else
+        {
+            // Debounce: mpv toggles fullscreen=false within ~100ms of true
+            // (its internal handling conflicts with our window repositioning).
+            // Ignore false if it comes within 500ms of true.
+            var elapsed = (System.Diagnostics.Stopwatch.GetTimestamp() - _lastFullscreenTrueTicks)
+                * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            if (elapsed < 500)
+            {
+                LogToFile("state_trace.txt", $"  Debounced false (only {elapsed:F0}ms after true)");
+                return;
+            }
+            _videoWindow.ExitFullscreen();
+            App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Expanded));
+        }
     }
 
     public void HandleWindowResize() => _videoWindow?.MatchParentPosition();

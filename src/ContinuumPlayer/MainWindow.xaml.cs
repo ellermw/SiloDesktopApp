@@ -224,9 +224,9 @@ public sealed partial class MainWindow : Window
                 MiniPlayerBarControl.Visibility = Visibility.Collapsed;
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
                 PlayerOverlayControl.Deactivate();
-                NavView.IsPaneVisible = false;
-                NavView.Margin = new Thickness(0);
-                LogState($"  -> Expanded/Fullscreen: NavView.IsPaneVisible=false");
+                // Do NOT hide NavView — the popup window covers it.
+                // Hiding it caused the sidebar to disappear and not come back.
+                LogState($"  -> Expanded/Fullscreen: NavView untouched");
                 break;
 
             case PlayerState.Minimized:

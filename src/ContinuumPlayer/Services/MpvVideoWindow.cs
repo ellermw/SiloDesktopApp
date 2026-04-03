@@ -288,8 +288,7 @@ public sealed class MpvVideoWindow : IDisposable
             if (vk == 0x1B) { EscapeRequested?.Invoke(); return IntPtr.Zero; }
             // N — minimize
             if (vk == 0x4E) { MinimizeRequested?.Invoke(); return IntPtr.Zero; }
-            // F — fullscreen toggle (handled by us, NOT mpv)
-            if (vk == 0x46) { FullscreenToggleRequested?.Invoke(); return IntPtr.Zero; }
+            // F key goes to mpv → toggles fullscreen property → observer handles it
             // Forward all other keys to mpv
             var keyName = VkToMpvKey(vk);
             if (keyName != null) _mpv?.SendKeypress(keyName);
