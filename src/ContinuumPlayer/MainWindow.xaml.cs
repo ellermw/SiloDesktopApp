@@ -240,6 +240,16 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    public void ShowLoadingOverlay()
+    {
+        DispatcherQueue.TryEnqueue(() => LoadingOverlay.Visibility = Visibility.Visible);
+    }
+
+    public void HideLoadingOverlay()
+    {
+        DispatcherQueue.TryEnqueue(() => LoadingOverlay.Visibility = Visibility.Collapsed);
+    }
+
     private static void LogState(string msg)
     {
         try

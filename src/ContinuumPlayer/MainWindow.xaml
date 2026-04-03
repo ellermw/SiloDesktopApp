@@ -245,7 +245,16 @@
             </Grid>
         </NavigationView>
 
-        <!-- Layer 2: Full-window player overlay (above nav, initially hidden) -->
+        <!-- Layer 2: Loading overlay (shown while preparing playback) -->
+        <Grid x:Name="LoadingOverlay" Visibility="Collapsed" Background="{StaticResource AppBackgroundBrush}">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
+                <ProgressRing IsActive="True" Width="48" Height="48" />
+                <TextBlock Text="Preparing playback..." FontSize="16"
+                           Foreground="{StaticResource PrimaryTextBrush}" HorizontalAlignment="Center" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Layer 3: Full-window player overlay (above nav, initially hidden) -->
         <controls:PlayerOverlay x:Name="PlayerOverlayControl" Visibility="Collapsed"
                                  HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
 

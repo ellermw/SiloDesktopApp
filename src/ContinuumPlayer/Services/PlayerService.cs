@@ -207,6 +207,9 @@ public class PlayerService : IDisposable
         IsLoading = true;
         ContentId = contentId;
 
+        // Show loading indicator on the main window
+        App.MainWindowInstance?.ShowLoadingOverlay();
+
         try
         {
             // Create PlaybackManager for this session
@@ -352,6 +355,7 @@ public class PlayerService : IDisposable
             LogToFile("player_crash.txt", ex.ToString());
             ErrorMessage = $"Failed to start playback: {ex.Message}";
             IsLoading = false;
+            App.MainWindowInstance?.HideLoadingOverlay();
 
             // Clean up — hide popup window and go back to Idle
             _videoWindow?.Hide();
@@ -393,7 +397,8 @@ public class PlayerService : IDisposable
         _mpv.FileLoaded += () =>
         {
             IsLoading = false;
-            _mpvFileLoaded = true; // Enable fullscreen observer (skip initial property fire)
+            _mpvFileLoaded = true;
+            App.MainWindowInstance?.HideLoadingOverlay();
             LogToFile("state_trace.txt", "FileLoaded fired");
 
             ContentLoaded?.Invoke();

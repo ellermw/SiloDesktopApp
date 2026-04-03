@@ -185,15 +185,32 @@ public sealed class MpvVideoWindow : IDisposable
         var monitor = MonitorFromWindow(_hwnd, 2 /*MONITOR_DEFAULTTONEAREST*/);
         var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
         GetMonitorInfoW(monitor, ref mi);
-        // Go fullscreen — TOPMOST + activate to cover taskbar and stay in front
+        _fullscreenRect = mi.rcMonitor;
+        _isFullscreen = true;
+        // Position fullscreen, TOPMOST, activate
         SetWindowPos(_hwnd, HWND_TOPMOST,
             mi.rcMonitor.Left, mi.rcMonitor.Top,
             mi.rcMonitor.Right - mi.rcMonitor.Left,
             mi.rcMonitor.Bottom - mi.rcMonitor.Top,
             SWP_SHOWWINDOW);
         SetForegroundWindow(_hwnd);
-        _isFullscreen = true;
+        // Re-assert topmost after 200ms — mpv's internal fullscreen handling
+        // may reposition the window after our call
+        System.Threading.Tasks.Task.Delay(200).ContinueWith(_ =>
+        {
+            if (_isFullscreen && _hwnd != IntPtr.Zero)
+            {
+                SetWindowPos(_hwnd, HWND_TOPMOST,
+                    _fullscreenRect.Left, _fullscreenRect.Top,
+                    _fullscreenRect.Right - _fullscreenRect.Left,
+                    _fullscreenRect.Bottom - _fullscreenRect.Top,
+                    SWP_SHOWWINDOW);
+                SetForegroundWindow(_hwnd);
+            }
+        });
     }
+
+    private RECT _fullscreenRect;
 
     public void ExitFullscreen()
     {
