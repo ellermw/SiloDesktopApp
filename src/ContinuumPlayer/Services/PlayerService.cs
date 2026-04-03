@@ -206,6 +206,7 @@ public class PlayerService : IDisposable
         ErrorMessage = null;
         IsLoading = true;
         ContentId = contentId;
+        _switchingContent = true; // Suppress stale PlaybackEnded from previous _mpv.Stop()
 
         // Show loading indicator on the main window
         App.MainWindowInstance?.ShowLoadingOverlay();
@@ -345,6 +346,7 @@ public class PlayerService : IDisposable
             _mpv.LoadFile(streamUrl, session.PlayMethod == "transcode" ? null : authHeader);
             _mpv.Play();
             IsPaused = false;
+            _switchingContent = false; // Now safe to receive PlaybackEnded
 
             // Tell custom OSC the play method
             _mpv.SendScriptMessage("osc-set-play-method", session.PlayMethod ?? "direct");
@@ -356,6 +358,7 @@ public class PlayerService : IDisposable
             LogToFile("player_crash.txt", ex.ToString());
             ErrorMessage = $"Failed to start playback: {ex.Message}";
             IsLoading = false;
+            _switchingContent = false;
             App.MainWindowInstance?.HideLoadingOverlay();
 
             // Clean up — hide popup window and go back to Idle
