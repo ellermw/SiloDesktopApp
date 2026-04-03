@@ -142,13 +142,13 @@ public sealed partial class ItemDetailPage : Page
                 episode.Cast = series.Cast;
             if ((episode.Crew == null || episode.Crew.Count == 0) && series.Crew?.Count > 0)
                 episode.Crew = series.Crew;
-            if (episode.Studios.Count == 0 && series.Studios.Count > 0)
+            if ((episode.Studios?.Count ?? 0) == 0 && (series.Studios?.Count ?? 0) > 0)
                 episode.Studios = series.Studios;
-            if (episode.Networks.Count == 0 && series.Networks.Count > 0)
+            if ((episode.Networks?.Count ?? 0) == 0 && (series.Networks?.Count ?? 0) > 0)
                 episode.Networks = series.Networks;
-            if (episode.Countries.Count == 0 && series.Countries.Count > 0)
+            if ((episode.Countries?.Count ?? 0) == 0 && (series.Countries?.Count ?? 0) > 0)
                 episode.Countries = series.Countries;
-            if (episode.Genres.Count == 0 && series.Genres.Count > 0)
+            if ((episode.Genres?.Count ?? 0) == 0 && (series.Genres?.Count ?? 0) > 0)
                 episode.Genres = series.Genres;
             if (string.IsNullOrEmpty(episode.ContentRating) && !string.IsNullOrEmpty(series.ContentRating))
                 episode.ContentRating = series.ContentRating;
@@ -217,10 +217,10 @@ public sealed partial class ItemDetailPage : Page
             (item.Year > 0 || !string.IsNullOrEmpty(item.ContentRating))
             ? Visibility.Visible : Visibility.Collapsed;
 
-        OverviewText.Text = item.Overview;
+        OverviewText.Text = item.Overview ?? "";
 
         // Genres line below overview: "Crime · Drama · History"
-        if (item.Genres.Count > 0)
+        if (item.Genres?.Count > 0)
         {
             GenresText.Text = string.Join(" \u00B7 ", item.Genres);
             GenresText.Visibility = Visibility.Visible;
@@ -253,13 +253,13 @@ public sealed partial class ItemDetailPage : Page
         _ = LoadBackdropAsync(item, _imageCts.Token);
 
         // Build cast
-        BuildCast(item.Cast);
+        BuildCast(item.Cast ?? new());
 
         // Build crew (directors + writers)
-        BuildCrew(item.Crew);
+        BuildCrew(item.Crew ?? new());
 
         // Studios
-        if (item.Studios.Count > 0)
+        if (item.Studios?.Count > 0)
         {
             StudiosText.Text = "Studios:  " + string.Join(", ", item.Studios);
             StudiosText.Visibility = Visibility.Visible;
@@ -270,7 +270,7 @@ public sealed partial class ItemDetailPage : Page
         }
 
         // Networks (series only)
-        if (item.Networks.Count > 0)
+        if (item.Networks?.Count > 0)
         {
             NetworksText.Text = "Networks:  " + string.Join(", ", item.Networks);
             NetworksText.Visibility = Visibility.Visible;
@@ -281,7 +281,7 @@ public sealed partial class ItemDetailPage : Page
         }
 
         // Countries
-        if (item.Countries.Count > 0)
+        if (item.Countries?.Count > 0)
         {
             CountriesText.Text = "Countries:  " + string.Join(", ", item.Countries);
             CountriesText.Visibility = Visibility.Visible;
