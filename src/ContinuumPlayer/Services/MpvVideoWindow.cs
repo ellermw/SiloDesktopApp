@@ -219,26 +219,10 @@ public sealed class MpvVideoWindow : IDisposable
         if (_hwnd == IntPtr.Zero) return;
         _isFullscreen = false;
         MatchParentPosition();
-        // mpv's internal fullscreen handling fights our z-order changes.
-        // Retry bringing to front multiple times over 500ms to win the race.
-        BringToFrontRepeatedly();
-    }
-
-    private void BringToFrontRepeatedly()
-    {
-        int attempts = 0;
-        var timer = new System.Threading.Timer(_ =>
-        {
-            if (_hwnd == IntPtr.Zero || _isFullscreen) return;
-            attempts++;
-            SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                0x0001 | 0x0002 | SWP_SHOWWINDOW);
-            SetForegroundWindow(_hwnd);
-            MatchParentPosition();
-        }, null, 0, 50); // Every 50ms
-
-        // Stop after 500ms (10 attempts)
-        System.Threading.Tasks.Task.Delay(500).ContinueWith(_ => timer.Dispose());
+        // Simple: remove topmost, then bring to front once
+        SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+            0x0001 | 0x0002);
+        SetForegroundWindow(_hwnd);
     }
 
     public bool IsFullscreen => _isFullscreen;
@@ -324,7 +308,8 @@ public sealed class MpvVideoWindow : IDisposable
             if (vk == 0x1B) { EscapeRequested?.Invoke(); return IntPtr.Zero; }
             // N — minimize
             if (vk == 0x4E) { MinimizeRequested?.Invoke(); return IntPtr.Zero; }
-            // F key goes to mpv → toggles fullscreen property → observer handles it
+            // F — fullscreen toggle (handled by us, NOT mpv — prevents z-order conflicts)
+            if (vk == 0x46) { FullscreenToggleRequested?.Invoke(); return IntPtr.Zero; }
             // Forward all other keys to mpv
             var keyName = VkToMpvKey(vk);
             if (keyName != null) _mpv?.SendKeypress(keyName);

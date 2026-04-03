@@ -615,36 +615,14 @@ public class PlayerService : IDisposable
     // Called by mpv when fullscreen property changes (from OSC fullscreen button or F key)
     // Runs on mpv's event thread — dispatch to UI thread for safety
     private bool _mpvFileLoaded;
-    private long _lastFullscreenTrueTicks;
 
+    // mpv's fullscreen property observer is intentionally NOT used.
+    // mpv's internal fullscreen handling fights our window management,
+    // causing the popup to go behind the app. We handle fullscreen
+    // entirely through our WndProc (F key) and Lua OSC (keypress f).
     private void OnMpvFullscreenChanged(bool fullscreen)
     {
-        if (!_mpvFileLoaded) return;
-
-        LogToFile("state_trace.txt", $"OnMpvFullscreenChanged: fullscreen={fullscreen}");
-        if (_videoWindow == null) return;
-
-        if (fullscreen)
-        {
-            _lastFullscreenTrueTicks = System.Diagnostics.Stopwatch.GetTimestamp();
-            _videoWindow.EnterFullscreen();
-            App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Fullscreen));
-        }
-        else
-        {
-            // Debounce: mpv toggles fullscreen=false within ~100ms of true
-            // (its internal handling conflicts with our window repositioning).
-            // Ignore false if it comes within 500ms of true.
-            var elapsed = (System.Diagnostics.Stopwatch.GetTimestamp() - _lastFullscreenTrueTicks)
-                * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-            if (elapsed < 500)
-            {
-                LogToFile("state_trace.txt", $"  Debounced false (only {elapsed:F0}ms after true)");
-                return;
-            }
-            _videoWindow.ExitFullscreen();
-            App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Expanded));
-        }
+        // Intentionally empty — fullscreen handled via FullscreenToggleRequested event
     }
 
     public void HandleWindowResize() => _videoWindow?.MatchParentPosition();
@@ -656,6 +634,21 @@ public class PlayerService : IDisposable
         LogToFile("state_trace.txt", $"CloseAsync called: State={State} _switchingContent={_switchingContent}");
         if (State == PlayerState.Fullscreen)
             ExitFullscreen();
+
+        // Report final position to server BEFORE stopping (so resume works)
+        if (_mpv != null && _playbackManager?.SessionId != null)
+        {
+            var finalPos = _mpv.Position;
+            if (finalPos > 0)
+            {
+                try
+                {
+                    await _playbackApi.ReportProgressAsync(_playbackManager.SessionId, finalPos, true);
+                    LogToFile("state_trace.txt", $"Final progress reported: pos={finalPos:F1}");
+                }
+                catch { }
+            }
+        }
 
         _mpv?.Stop();
 
