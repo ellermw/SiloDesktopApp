@@ -343,8 +343,10 @@ public class PlayerService : IDisposable
             _resumePosition = startPosition;
 
             // Load and play
+            LogToFile("state_trace.txt", $"LoadFile: url={streamUrl?.Substring(0, Math.Min(80, streamUrl?.Length ?? 0))}...");
             _mpv.LoadFile(streamUrl, session.PlayMethod == "transcode" ? null : authHeader);
             _mpv.Play();
+            LogToFile("state_trace.txt", "Play() called");
             IsPaused = false;
             _switchingContent = false; // Now safe to receive PlaybackEnded
 
@@ -663,10 +665,14 @@ public class PlayerService : IDisposable
         Duration = 0;
         IsPaused = true;
         IsLoading = false;
+        _switchingContent = false;
         ErrorMessage = null;
         Versions = [];
 
+        App.MainWindowInstance?.HideLoadingOverlay();
+        _videoWindow?.Hide();
         SetState(PlayerState.Idle);
+        LogToFile("state_trace.txt", "CloseAsync completed");
     }
 
     public void Dispose()

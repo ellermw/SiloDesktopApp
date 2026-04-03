@@ -216,13 +216,12 @@ public sealed class MpvVideoWindow : IDisposable
     {
         if (_hwnd == IntPtr.Zero) return;
         _isFullscreen = false;
-        // Restore to parent window position, remove TOPMOST, keep in front
+        // Restore to parent window position
         MatchParentPosition();
+        // Remove TOPMOST but stay on top of everything (HWND_TOP, not _parentHwnd)
+        // Using _parentHwnd as hWndInsertAfter would put us BEHIND the parent
         SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-            SWP_NOACTIVATE | 0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/);
-        // Re-assert in front of parent after removing topmost
-        SetWindowPos(_hwnd, _parentHwnd, 0, 0, 0, 0,
-            0x0001 | 0x0002 | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/);
         SetForegroundWindow(_hwnd);
     }
 
