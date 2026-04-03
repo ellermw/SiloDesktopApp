@@ -615,14 +615,38 @@ public class PlayerService : IDisposable
     // Called by mpv when fullscreen property changes (from OSC fullscreen button or F key)
     // Runs on mpv's event thread — dispatch to UI thread for safety
     private bool _mpvFileLoaded;
+    private bool _handlingFullscreen;
 
-    // mpv's fullscreen property observer is intentionally NOT used.
-    // mpv's internal fullscreen handling fights our window management,
-    // causing the popup to go behind the app. We handle fullscreen
-    // entirely through our WndProc (F key) and Lua OSC (keypress f).
     private void OnMpvFullscreenChanged(bool fullscreen)
     {
-        // Intentionally empty — fullscreen handled via FullscreenToggleRequested event
+        if (!_mpvFileLoaded || _handlingFullscreen) return;
+        if (_videoWindow == null || _mpv == null) return;
+
+        // mpv's cycle fullscreen with wid= causes PlaybackEnded (breaks playback).
+        // Intercept: immediately undo mpv's property change, then toggle OUR window.
+        _handlingFullscreen = true;
+        try
+        {
+            // Undo mpv's fullscreen — prevent its internal window management
+            _mpv.SetProperty("fullscreen", "no");
+
+            // Toggle OUR fullscreen
+            LogToFile("state_trace.txt", $"Fullscreen toggle: currently={_videoWindow.IsFullscreen}");
+            if (_videoWindow.IsFullscreen)
+            {
+                _videoWindow.ExitFullscreen();
+                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Expanded));
+            }
+            else
+            {
+                _videoWindow.EnterFullscreen();
+                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Fullscreen));
+            }
+        }
+        finally
+        {
+            _handlingFullscreen = false;
+        }
     }
 
     public void HandleWindowResize() => _videoWindow?.MatchParentPosition();

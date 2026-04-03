@@ -565,6 +565,13 @@ public sealed class MpvPlayer : IDisposable
         return false;
     }
 
+    /// <summary>Sets a string property on mpv.</summary>
+    public void SetProperty(string name, string value)
+    {
+        if (_mpvHandle == IntPtr.Zero) return;
+        mpv_set_property_string(_mpvHandle, name, value);
+    }
+
     /// <summary>Gets a double property from mpv.</summary>
     public double GetPropertyDouble(string name)
     {

@@ -1354,7 +1354,7 @@ local function handle_mouse_down()
 
     -- Check fullscreen
     if L.btn_fullscreen and point_in_rect(mx, my, L.btn_fullscreen) then
-        mp.commandv("keypress", "f")
+        mp.commandv("cycle", "fullscreen")
         return
     end
 
