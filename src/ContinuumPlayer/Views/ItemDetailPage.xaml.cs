@@ -732,7 +732,16 @@ public sealed partial class ItemDetailPage : Page
     private void PlayFromStart_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.Item == null) return;
-        NavigateToPlayer(ViewModel.Item.ContentId, fromStart: true);
+
+        // For series, play the first episode from start
+        if (ViewModel.IsSeries && ViewModel.Episodes.Count > 0)
+        {
+            NavigateToPlayer(ViewModel.Episodes[0].ContentId, fromStart: true);
+        }
+        else
+        {
+            NavigateToPlayer(ViewModel.Item.ContentId, fromStart: true);
+        }
     }
 
     private async void NavigateToPlayer(string contentId, bool fromStart = false, int? fileId = null)

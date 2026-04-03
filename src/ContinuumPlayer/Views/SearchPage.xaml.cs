@@ -81,35 +81,44 @@ public sealed partial class SearchPage : Page
             ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private async void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    private DispatcherTimer? _searchDebounce;
+
+    private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         // Sync query from whichever search box was used
         if (sender is TextBox textBox)
         {
             ViewModel.Query = textBox.Text;
 
-            // Sync the other search box
+            // Sync the other search box without retriggering
             if (textBox == SearchBox && ResultsSearchBox.Text != textBox.Text)
                 ResultsSearchBox.Text = textBox.Text;
             else if (textBox == ResultsSearchBox && SearchBox.Text != textBox.Text)
                 SearchBox.Text = textBox.Text;
         }
 
-        // Transition to results state if text was entered
-        if (!string.IsNullOrWhiteSpace(ViewModel.Query))
+        if (string.IsNullOrWhiteSpace(ViewModel.Query))
         {
-            EmptyState.Visibility = Visibility.Collapsed;
-            ResultsState.Visibility = Visibility.Visible;
-            ResultsTitle.Text = $"Results for \"{ViewModel.Query}\"";
-        }
-        else
-        {
+            _searchDebounce?.Stop();
             EmptyState.Visibility = Visibility.Visible;
             ResultsState.Visibility = Visibility.Collapsed;
             return;
         }
 
-        await ViewModel.SearchCommand.ExecuteAsync(null);
+        // Debounce: wait 400ms after last keystroke before searching
+        _searchDebounce?.Stop();
+        _searchDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _searchDebounce.Tick += async (_, _) =>
+        {
+            _searchDebounce?.Stop();
+
+            EmptyState.Visibility = Visibility.Collapsed;
+            ResultsState.Visibility = Visibility.Visible;
+            ResultsTitle.Text = $"Results for \"{ViewModel.Query}\"";
+
+            await ViewModel.SearchCommand.ExecuteAsync(null);
+        };
+        _searchDebounce.Start();
     }
 
     private void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
