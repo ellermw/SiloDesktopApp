@@ -1711,6 +1711,10 @@ local function init()
     -- Show OSC briefly on file load
     mp.register_event("file-loaded", function()
         state.idle = false
+        -- Reset drag state from previous session (mpv instance is reused)
+        state.dragging_seek = false
+        state.dragging_volume = false
+        state.seek_drag_pos = nil
         show_osc()
     end)
 

@@ -48,12 +48,31 @@ public sealed partial class ItemDetailPage : Page
             BackdropContainer.Height = Math.Max(300, root.ActualHeight * 0.60);
     }
 
+    private string? _currentContentId;
+    private bool _subscribedToStateChanged;
+
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
 
+        // Subscribe to player state changes to refresh play button after playback ends
+        if (!_subscribedToStateChanged)
+        {
+            _subscribedToStateChanged = true;
+            var playerService = App.Services.GetRequiredService<Services.PlayerService>();
+            playerService.StateChanged += (state) =>
+            {
+                if (state == Services.PlayerState.Idle && _currentContentId != null)
+                {
+                    // Player closed — refresh watch detail so button shows "Resume"
+                    DispatcherQueue?.TryEnqueue(() => _ = LoadWatchDetailAsync(_currentContentId));
+                }
+            };
+        }
+
         if (e.Parameter is string contentId && !string.IsNullOrEmpty(contentId))
         {
+            _currentContentId = contentId;
             await ViewModel.LoadCommand.ExecuteAsync(contentId);
 
             // If this is an episode, enrich with series metadata
