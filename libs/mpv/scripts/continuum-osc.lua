@@ -610,6 +610,13 @@ local function draw_exit_icon(ass, cx, cy, size, color, alpha, master_alpha)
     ))
 end
 
+-- Minimize icon (horizontal bar)
+local function draw_minimize_icon(ass, cx, cy, size, color, alpha, master_alpha)
+    local hw = size * 0.32   -- half-width
+    local ht = math.max(size * 0.06, 2)  -- half-thickness, minimum 2px
+    draw_rect(ass, cx - hw, cy - ht, cx + hw, cy + ht, color, alpha, master_alpha)
+end
+
 --------------------------------------------------------------------------------
 -- Layout Computation
 --------------------------------------------------------------------------------
@@ -682,6 +689,16 @@ local function compute_layout()
     -- Fullscreen button
     rx_cursor = rx_cursor - config.small_button_size
     L.btn_fullscreen = {
+        x = rx_cursor, y = controls_y - config.small_button_size / 2,
+        w = config.small_button_size, h = config.small_button_size,
+        cx = rx_cursor + config.small_button_size / 2,
+        cy = controls_y
+    }
+    rx_cursor = rx_cursor - 12
+
+    -- Minimize button
+    rx_cursor = rx_cursor - config.small_button_size
+    L.btn_minimize = {
         x = rx_cursor, y = controls_y - config.small_button_size / 2,
         w = config.small_button_size, h = config.small_button_size,
         cx = rx_cursor + config.small_button_size / 2,
@@ -970,7 +987,12 @@ local function render_osc()
     draw_fullscreen_icon(ass, bf.cx, bf.cy, config.small_button_size,
         config.text_color, "00", ma, state.fullscreen)
 
-    -- 12. Exit button
+    -- 12. Minimize button
+    local bm = L.btn_minimize
+    draw_minimize_icon(ass, bm.cx, bm.cy, config.small_button_size,
+        config.text_color, "00", ma)
+
+    -- 13. Exit button
     local be = L.btn_exit
     draw_exit_icon(ass, be.cx, be.cy, config.small_button_size,
         config.text_color, "00", ma)
@@ -1352,15 +1374,21 @@ local function handle_mouse_down()
         return
     end
 
+    -- Check minimize
+    if L.btn_minimize and point_in_rect(mx, my, L.btn_minimize) then
+        mp.commandv("script-message", "continuum-minimize")
+        return
+    end
+
     -- Check fullscreen
     if L.btn_fullscreen and point_in_rect(mx, my, L.btn_fullscreen) then
-        mp.commandv("cycle", "fullscreen")
+        mp.commandv("script-message", "continuum-fullscreen-toggle")
         return
     end
 
     -- Check exit
     if L.btn_exit and point_in_rect(mx, my, L.btn_exit) then
-        mp.commandv("quit")
+        mp.commandv("script-message", "continuum-exit")
         return
     end
 end
@@ -1437,7 +1465,7 @@ end
 -- Double-click for fullscreen (track timing of clicks)
 local last_click_time = 0
 local function handle_mbtn_left_dbl()
-    mp.commandv("cycle", "fullscreen")
+    mp.commandv("script-message", "continuum-fullscreen-toggle")
 end
 
 --------------------------------------------------------------------------------
@@ -1471,8 +1499,9 @@ local function observe_properties()
         state.mute = val or false
     end)
 
-    mp.observe_property("fullscreen", "bool", function(_, val)
-        state.fullscreen = val or false
+    -- Fullscreen state is managed by the host — listen for its updates
+    mp.register_script_message("osc-fullscreen-state", function(val)
+        state.fullscreen = (val == "true")
     end)
 
     mp.observe_property("idle-active", "bool", function(_, val)
@@ -1569,6 +1598,11 @@ local function setup_key_bindings()
     -- Stats toggle
     mp.add_key_binding("i", "continuum-osc-toggle-stats", toggle_stats)
     mp.add_key_binding("I", "continuum-osc-toggle-stats-shift", toggle_stats)
+
+    -- Override F key — prevent mpv's default "cycle fullscreen" from firing
+    mp.add_forced_key_binding("f", "continuum-fs-override", function()
+        mp.commandv("script-message", "continuum-fullscreen-toggle")
+    end)
 
     -- Space for play/pause (as backup, mpv usually handles this)
     -- mp.add_key_binding("space", "continuum-osc-space", function() mp.commandv("cycle", "pause") end)

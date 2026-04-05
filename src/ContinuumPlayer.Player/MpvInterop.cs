@@ -23,6 +23,7 @@ public static class MpvInterop
     public const int MPV_EVENT_SHUTDOWN         = 1;
     public const int MPV_EVENT_END_FILE         = 7;
     public const int MPV_EVENT_FILE_LOADED      = 8;
+    public const int MPV_EVENT_CLIENT_MESSAGE    = 16;
     public const int MPV_EVENT_PROPERTY_CHANGE  = 22;
 
     // ── Structs ──────────────────────────────────────────────────────────
@@ -51,6 +52,17 @@ public static class MpvInterop
         public IntPtr Name;   // const char*
         public int Format;    // mpv_format (enum = int)
         public IntPtr Data;   // void*
+    }
+
+    /// <summary>
+    /// Mirrors the native mpv_event_client_message struct.
+    /// Layout: num_args (int), pad (4 bytes on 64-bit), args (char**).
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MpvEventClientMessage
+    {
+        public int NumArgs;    // int
+        public IntPtr Args;    // char** (array of null-terminated UTF-8 strings)
     }
 
     // ── libmpv functions ─────────────────────────────────────────────────

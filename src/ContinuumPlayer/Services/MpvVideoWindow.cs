@@ -308,7 +308,8 @@ public sealed class MpvVideoWindow : IDisposable
             if (vk == 0x1B) { EscapeRequested?.Invoke(); return IntPtr.Zero; }
             // N — minimize
             if (vk == 0x4E) { MinimizeRequested?.Invoke(); return IntPtr.Zero; }
-            // F key goes to mpv → cycle fullscreen → observer intercepts and handles
+            // F — fullscreen toggle (handled by host, not mpv)
+            if (vk == 0x46) { FullscreenToggleRequested?.Invoke(); return IntPtr.Zero; }
             // Forward all other keys to mpv
             var keyName = VkToMpvKey(vk);
             if (keyName != null) _mpv?.SendKeypress(keyName);
@@ -335,6 +336,7 @@ public sealed class MpvVideoWindow : IDisposable
         0x70 => "F1", 0x71 => "F2", 0x72 => "F3", 0x73 => "F4",
         0x74 => "F5", 0x75 => "F6", 0x76 => "F7", 0x77 => "F8",
         0x78 => "F9", 0x79 => "F10", 0x7A => "F11", 0x7B => "F12",
+        0x46 => null, // F key — handled directly in WndProc, not forwarded to mpv
         >= 0x41 and <= 0x5A => ((char)vk).ToString().ToLower(), // A-Z
         >= 0x30 and <= 0x39 => ((char)vk).ToString(), // 0-9
         _ => null

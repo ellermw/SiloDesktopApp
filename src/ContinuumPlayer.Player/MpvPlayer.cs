@@ -69,7 +69,8 @@ public sealed class MpvPlayer : IDisposable
 
     /// <summary>Fired when the pause state changes.</summary>
     public event Action<bool>? PauseChanged;
-    public event Action<bool>? FullscreenChanged;
+    /// <summary>Fired when a Lua script sends a script-message (Lua -> Host).</summary>
+    public event Action<string[]>? ScriptMessageReceived;
 
     /// <summary>Fired when playback reaches end-of-file or the file ends.</summary>
     public event Action? PlaybackEnded;
@@ -94,7 +95,6 @@ public sealed class MpvPlayer : IDisposable
     private const ulong UD_DURATION    = 2;
     private const ulong UD_PAUSE       = 3;
     private const ulong UD_EOF_REACHED = 4;
-    private const ulong UD_FULLSCREEN  = 5;
 
     // ── Initialization ───────────────────────────────────────────────────
 
@@ -342,7 +342,6 @@ public sealed class MpvPlayer : IDisposable
         mpv_observe_property(_mpvHandle, UD_DURATION, "duration", MPV_FORMAT_DOUBLE);
         mpv_observe_property(_mpvHandle, UD_PAUSE, "pause", MPV_FORMAT_FLAG);
         mpv_observe_property(_mpvHandle, UD_EOF_REACHED, "eof-reached", MPV_FORMAT_FLAG);
-        mpv_observe_property(_mpvHandle, UD_FULLSCREEN, "fullscreen", MPV_FORMAT_FLAG);
 
         // Start event loop thread
         _eventThread = new Thread(EventLoop)
@@ -761,6 +760,10 @@ public sealed class MpvPlayer : IDisposable
                     PlaybackEnded?.Invoke();
                     break;
 
+                case MPV_EVENT_CLIENT_MESSAGE:
+                    HandleClientMessage(ev);
+                    break;
+
                 case MPV_EVENT_SHUTDOWN:
                     return; // Exit the event loop
             }
@@ -813,13 +816,30 @@ public sealed class MpvPlayer : IDisposable
                 }
                 break;
 
-            case UD_FULLSCREEN:
-                if (prop.Format == MPV_FORMAT_FLAG && prop.Data != IntPtr.Zero)
-                {
-                    int flag = Marshal.PtrToStructure<int>(prop.Data);
-                    FullscreenChanged?.Invoke(flag != 0);
-                }
-                break;
+        }
+    }
+
+    private void HandleClientMessage(MpvEvent ev)
+    {
+        if (ev.Data == IntPtr.Zero) return;
+
+        try
+        {
+            var msg = Marshal.PtrToStructure<MpvEventClientMessage>(ev.Data);
+            if (msg.NumArgs <= 0 || msg.Args == IntPtr.Zero) return;
+
+            var args = new string[msg.NumArgs];
+            for (int i = 0; i < msg.NumArgs; i++)
+            {
+                IntPtr strPtr = Marshal.ReadIntPtr(msg.Args, i * IntPtr.Size);
+                args[i] = Marshal.PtrToStringUTF8(strPtr) ?? "";
+            }
+
+            ScriptMessageReceived?.Invoke(args);
+        }
+        catch (Exception ex)
+        {
+            Error?.Invoke($"HandleClientMessage failed: {ex.Message}");
         }
     }
 

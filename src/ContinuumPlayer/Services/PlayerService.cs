@@ -330,9 +330,6 @@ public class PlayerService : IDisposable
             // Set state to Expanded (shows the overlay)
             SetState(PlayerState.Expanded);
 
-            // Load subtitles
-            LoadSubtitles();
-
             // Build auth
             var token = _apiClient.AccessToken;
             var authHeader = token != null ? $"Bearer {token}" : null;
@@ -404,12 +401,12 @@ public class PlayerService : IDisposable
         _mpv.FileLoaded += () =>
         {
             IsLoading = false;
-            _mpvFileLoaded = true;
             _switchingContent = false; // Safe to receive PlaybackEnded now
             App.MainWindowInstance?.HideLoadingOverlay();
             LogToFile("state_trace.txt", "FileLoaded fired");
 
             ContentLoaded?.Invoke();
+            LoadSubtitles();
             if (_resumePosition > 0)
             {
                 _mpv?.Seek(_resumePosition);
@@ -432,7 +429,7 @@ public class PlayerService : IDisposable
             }
         };
 
-        _mpv.FullscreenChanged += OnMpvFullscreenChanged;
+        _mpv.ScriptMessageReceived += OnScriptMessage;
         _mpv.Error += (msg) => LogToFile("mpv_error.txt", msg);
     }
 
@@ -603,49 +600,58 @@ public class PlayerService : IDisposable
             {
                 _videoWindow.ExitFullscreen();
                 App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Expanded));
+                _mpv?.SendScriptMessage("osc-fullscreen-state", "false");
             }
             else
             {
                 _videoWindow.EnterFullscreen();
                 App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Fullscreen));
+                _mpv?.SendScriptMessage("osc-fullscreen-state", "true");
             }
         };
     }
 
-    // Called by mpv when fullscreen property changes (from OSC fullscreen button or F key)
-    // Runs on mpv's event thread — dispatch to UI thread for safety
-    private bool _mpvFileLoaded;
-    private bool _handlingFullscreen;
 
-    private void OnMpvFullscreenChanged(bool fullscreen)
+    // ── Script message dispatch (Lua → Host) ─────────────────────────────
+
+    private void OnScriptMessage(string[] args)
     {
-        if (!_mpvFileLoaded || _handlingFullscreen) return;
-        if (_videoWindow == null || _mpv == null) return;
+        if (args.Length == 0) return;
+        LogToFile("state_trace.txt", $"ScriptMessage received: {args[0]}");
 
-        // mpv's cycle fullscreen with wid= causes PlaybackEnded (breaks playback).
-        // Intercept: immediately undo mpv's property change, then toggle OUR window.
-        _handlingFullscreen = true;
-        try
+        var dispatch = App.MainWindowInstance?.DispatcherQueue;
+        if (dispatch == null) return;
+
+        switch (args[0])
         {
-            // Undo mpv's fullscreen — prevent its internal window management
-            _mpv.SetProperty("fullscreen", "no");
-
-            // Toggle OUR fullscreen
-            LogToFile("state_trace.txt", $"Fullscreen toggle: currently={_videoWindow.IsFullscreen}");
-            if (_videoWindow.IsFullscreen)
-            {
-                _videoWindow.ExitFullscreen();
-                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Expanded));
-            }
-            else
-            {
-                _videoWindow.EnterFullscreen();
-                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Fullscreen));
-            }
+            case "continuum-exit":
+                dispatch.TryEnqueue(() => _ = CloseAsync());
+                break;
+            case "continuum-fullscreen-toggle":
+                dispatch.TryEnqueue(ToggleFullscreenFromOsc);
+                break;
+            case "continuum-minimize":
+                dispatch.TryEnqueue(Minimize);
+                break;
         }
-        finally
+    }
+
+    private void ToggleFullscreenFromOsc()
+    {
+        if (_videoWindow == null) return;
+        LogToFile("state_trace.txt", $"ToggleFullscreenFromOsc: currently={_videoWindow.IsFullscreen}");
+
+        if (_videoWindow.IsFullscreen)
         {
-            _handlingFullscreen = false;
+            _videoWindow.ExitFullscreen();
+            SetState(PlayerState.Expanded);
+            _mpv?.SendScriptMessage("osc-fullscreen-state", "false");
+        }
+        else
+        {
+            _videoWindow.EnterFullscreen();
+            SetState(PlayerState.Fullscreen);
+            _mpv?.SendScriptMessage("osc-fullscreen-state", "true");
         }
     }
 
