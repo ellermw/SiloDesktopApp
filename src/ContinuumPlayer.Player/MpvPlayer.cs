@@ -311,6 +311,10 @@ public sealed class MpvPlayer : IDisposable
         SetOption("demuxer-max-back-bytes", "200MiB");
         SetOption("demuxer-readahead-secs", "120");
 
+        // Network resilience (reconnect on stream errors, HLS segment retries)
+        SetOption("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
+        SetOption("network-timeout", "30");
+
         // Performance tuning
         SetOption("video-sync", "display-resample");
         SetOption("interpolation", "no");

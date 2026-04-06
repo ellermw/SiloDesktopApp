@@ -20,6 +20,7 @@ public class PlayerService : IDisposable
     private MpvVideoWindow? _videoWindow;
     private PlaybackManager? _playbackManager;
     private bool _switchingContent;
+    private volatile bool _qualitySwitchActive;
 
     public PlayerService(PlaybackApi playbackApi, CatalogApi catalogApi, AuthService authService, ContinuumApiClient apiClient)
     {
@@ -414,6 +415,7 @@ public class PlayerService : IDisposable
         {
             IsLoading = false;
             _switchingContent = false; // Safe to receive PlaybackEnded now
+            _qualitySwitchActive = false;
             App.MainWindowInstance?.HideLoadingOverlay();
             LogToFile("state_trace.txt", "FileLoaded fired");
 
@@ -444,8 +446,8 @@ public class PlayerService : IDisposable
 
         _mpv.PlaybackEnded += () =>
         {
-            LogToFile("state_trace.txt", $"PlaybackEnded fired: _switchingContent={_switchingContent} State={State}");
-            if (!_switchingContent)
+            LogToFile("state_trace.txt", $"PlaybackEnded fired: _switchingContent={_switchingContent} _qualitySwitchActive={_qualitySwitchActive} State={State} thread={Environment.CurrentManagedThreadId}");
+            if (!_switchingContent && !_qualitySwitchActive)
             {
                 LogToFile("state_trace.txt", "  → Hiding window and invoking PlaybackEnded");
                 _videoWindow?.Hide();
@@ -750,7 +752,7 @@ public class PlayerService : IDisposable
         // Ignore echo-back of host→Lua messages (osc-mouse-move etc.) to avoid flooding.
         if (!args[0].StartsWith("continuum-")) return;
 
-        LogToFile("state_trace.txt", $"ScriptMessage received: {args[0]}");
+        LogToFile("state_trace.txt", $"ScriptMessage received: {args[0]} thread={Environment.CurrentManagedThreadId}");
 
         var dispatch = App.MainWindowInstance?.DispatcherQueue;
         if (dispatch == null) return;
@@ -791,7 +793,9 @@ public class PlayerService : IDisposable
             case "continuum-quality-select":
                 if (args.Length > 1)
                 {
-                    _switchingContent = true; // Set BEFORE dispatch — server kills direct stream on transcode start
+                    _switchingContent = true;
+                    _qualitySwitchActive = true;
+                    LogToFile("state_trace.txt", $"Quality select: tier={args[1]} flags set TRUE");
                     dispatch.TryEnqueue(() => _ = SwitchQualityTierAsync(args[1]));
                 }
                 break;
@@ -845,10 +849,11 @@ public class PlayerService : IDisposable
                 }
                 catch (Exception ex)
                 {
+                    _switchingContent = false;
+                    _qualitySwitchActive = false;
                     LogToFile("player_quality_switch_error.txt", ex.ToString());
                     _mpv.ShowOsdText("Quality switch failed", 3000);
                 }
-                finally { _switchingContent = false; }
             }
         }
         else
@@ -885,20 +890,35 @@ public class PlayerService : IDisposable
                     manifestPath = "/api/v1" + manifestPath;
                 var streamUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
 
+                // Add token to HLS URL — CDN/proxy may require it
+                var token = _apiClient.AccessToken;
+                if (token != null)
+                    streamUrl += (streamUrl.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
+
                 PlayMethod = "transcode";
                 _resumePosition = transcodeResponse.PlayerStartSeconds;
+
+                // Wait for transcoder to produce the first segment (2s segment + encoding time)
+                await Task.Delay(3000);
+
+                // Clear auth header — HLS segments use token in URL, not header
+                _mpv.SetProperty("http-header-fields", "");
                 _mpv.LoadFile(streamUrl);
                 _mpv.Play();
                 SendMediaInfoToOsc();
             }
             catch (Exception ex)
             {
+                _switchingContent = false;
+                _qualitySwitchActive = false;
                 LogToFile("player_quality_switch_error.txt", ex.ToString());
                 _mpv.ShowOsdText("Transcode failed", 3000);
             }
-            finally { _switchingContent = false; }
         }
 
+        // Don't clear _switchingContent/_qualitySwitchActive here —
+        // they're cleared in the FileLoaded handler when the new stream loads.
+        // Clearing here races with END_FILE from the old stream being killed.
         _mpv?.SendScriptMessage("osc-set-active-quality", tierId);
     }
 
@@ -1029,6 +1049,7 @@ public class PlayerService : IDisposable
         IsPaused = true;
         IsLoading = false;
         _switchingContent = false;
+        _qualitySwitchActive = false;
         ErrorMessage = null;
         Versions = [];
 
