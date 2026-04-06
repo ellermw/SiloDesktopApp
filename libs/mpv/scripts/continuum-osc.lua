@@ -1212,8 +1212,11 @@ hide_osc = function()
     end
 end
 
+local last_cursor_visible = nil
 local function request_cursor_visibility(visible)
-    -- Tell mpv / the host app whether to show the cursor
+    -- Tell mpv / the host app whether to show the cursor (only on change)
+    if visible == last_cursor_visible then return end
+    last_cursor_visible = visible
     if visible then
         mp.commandv("script-message", "osc-cursor-visible")
     else

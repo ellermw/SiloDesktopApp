@@ -219,9 +219,22 @@ public sealed class MpvVideoWindow : IDisposable
         if (_hwnd == IntPtr.Zero) return;
         _isFullscreen = false;
         MatchParentPosition();
-        // Simple: remove topmost, then bring to front once
-        SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-            0x0001 | 0x0002);
+        // Drop from TOPMOST
+        SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002);
+        BringAboveParent();
+        // Re-assert after 100ms — UI state changes may steal focus from the popup
+        Task.Delay(100).ContinueWith(_ =>
+        {
+            if (!_isFullscreen && _hwnd != IntPtr.Zero)
+                BringAboveParent();
+        });
+    }
+
+    public void BringAboveParent()
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        SetWindowPos(_hwnd, _parentHwnd, 0, 0, 0, 0,
+            SWP_NOACTIVATE | 0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/ | SWP_SHOWWINDOW);
         SetForegroundWindow(_hwnd);
     }
 
@@ -233,6 +246,17 @@ public sealed class MpvVideoWindow : IDisposable
     {
         if (_hwnd == IntPtr.Zero) return;
         ShowWindow(_hwnd, SW_HIDE);
+    }
+
+    /// <summary>
+    /// Positions the popup at a specific screen rectangle (for mini-bar thumbnail).
+    /// </summary>
+    public void PositionAt(int x, int y, int width, int height)
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
+        SetWindowPos(_hwnd, HWND_TOP, x, y, width, height,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
 
     public void MatchParentPosition()

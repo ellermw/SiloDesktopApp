@@ -819,6 +819,8 @@ public sealed class MpvPlayer : IDisposable
         }
     }
 
+    private static ReadOnlySpan<byte> ContinuumPrefix => "continuum-"u8;
+
     private void HandleClientMessage(MpvEvent ev)
     {
         if (ev.Data == IntPtr.Zero) return;
@@ -827,6 +829,19 @@ public sealed class MpvPlayer : IDisposable
         {
             var msg = Marshal.PtrToStructure<MpvEventClientMessage>(ev.Data);
             if (msg.NumArgs <= 0 || msg.Args == IntPtr.Zero) return;
+
+            // Fast check: only process "continuum-*" messages (Lua→Host intents).
+            // Skip echo-backs of host→Lua messages (osc-mouse-move, osc-cursor-visible, etc.)
+            // to avoid unnecessary allocations on the event thread.
+            IntPtr firstArgPtr = Marshal.ReadIntPtr(msg.Args, 0);
+            if (firstArgPtr == IntPtr.Zero) return;
+            bool isContinuum = true;
+            for (int i = 0; i < ContinuumPrefix.Length; i++)
+            {
+                if (Marshal.ReadByte(firstArgPtr, i) != ContinuumPrefix[i])
+                { isContinuum = false; break; }
+            }
+            if (!isContinuum) return;
 
             var args = new string[msg.NumArgs];
             for (int i = 0; i < msg.NumArgs; i++)

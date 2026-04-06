@@ -72,6 +72,8 @@ public class PlayerService : IDisposable
 
         if (newState == PlayerState.Expanded || newState == PlayerState.Fullscreen)
             _videoWindow?.Show();
+        else if (newState == PlayerState.Minimized)
+            PositionVideoForMiniBar();
         else
             _videoWindow?.Hide();
 
@@ -262,13 +264,17 @@ public class PlayerService : IDisposable
             double startPosition = 0;
             if (!fromStart && watchDetail.UserData?.PositionSeconds > 0 && watchDetail.UserData.Played != true)
                 startPosition = watchDetail.UserData.PositionSeconds!.Value;
+            LogToFile("state_trace.txt", $"Resume logic: fromStart={fromStart} userPos={watchDetail.UserData?.PositionSeconds} played={watchDetail.UserData?.Played} → startPosition={startPosition}");
 
             // Start server session
             var session = await _playbackManager.StartSessionAsync(bestVersion.FileId, startPosition, forceStartPosition: fromStart);
             PlayMethod = session.PlayMethod;
 
             if (!fromStart && session.Position > 0 && startPosition == 0)
+            {
                 startPosition = session.Position;
+                LogToFile("state_trace.txt", $"Using server session position: {session.Position:F1}");
+            }
 
             // Build stream URL
             var streamUrl = _playbackManager.StreamUrl;
@@ -406,12 +412,23 @@ public class PlayerService : IDisposable
             LogToFile("state_trace.txt", "FileLoaded fired");
 
             ContentLoaded?.Invoke();
-            LoadSubtitles();
+
+            // Seek to resume position FIRST — before subtitles block the thread
             if (_resumePosition > 0)
             {
+                LogToFile("state_trace.txt", $"Seeking to resume position: {_resumePosition:F1}");
                 _mpv?.Seek(_resumePosition);
                 _resumePosition = 0;
             }
+            else
+            {
+                LogToFile("state_trace.txt", "No resume position (starting from beginning)");
+            }
+
+            // Load subtitles on a background thread — sub-add commands are synchronous
+            // and can block for seconds (30+ HTTP requests). Running them here would
+            // freeze the event loop, preventing button clicks from being processed.
+            Task.Run(() => LoadSubtitles());
         };
 
         _mpv.PlaybackEnded += () =>
@@ -617,6 +634,10 @@ public class PlayerService : IDisposable
     private void OnScriptMessage(string[] args)
     {
         if (args.Length == 0) return;
+        // Only handle continuum-* messages (Lua→Host intents).
+        // Ignore echo-back of host→Lua messages (osc-mouse-move etc.) to avoid flooding.
+        if (!args[0].StartsWith("continuum-")) return;
+
         LogToFile("state_trace.txt", $"ScriptMessage received: {args[0]}");
 
         var dispatch = App.MainWindowInstance?.DispatcherQueue;
@@ -625,6 +646,7 @@ public class PlayerService : IDisposable
         switch (args[0])
         {
             case "continuum-exit":
+                if (State == PlayerState.Idle) return; // Prevent duplicate close
                 dispatch.TryEnqueue(() => _ = CloseAsync());
                 break;
             case "continuum-fullscreen-toggle":
@@ -655,12 +677,49 @@ public class PlayerService : IDisposable
         }
     }
 
-    public void HandleWindowResize() => _videoWindow?.MatchParentPosition();
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    private void PositionVideoForMiniBar()
+    {
+        if (_videoWindow == null) return;
+        var mw = App.MainWindowInstance;
+        if (mw == null) { _videoWindow.Hide(); return; }
+
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(mw);
+        GetWindowRect(hwnd, out var windowRect);
+
+        // Get DPI scale factor (96 = 100%, 144 = 150%, 192 = 200%)
+        double dpi = GetDpiForWindow(hwnd);
+        double scale = dpi / 96.0;
+
+        // Mini-bar thumbnail: 100x80 logical pixels, at left edge with 12px padding
+        // The mini-bar is 100px tall (logical), docked to bottom of main window
+        int thumbW = (int)(100 * scale);
+        int thumbH = (int)(80 * scale);
+        int thumbX = windowRect.Left + (int)(12 * scale);
+        int thumbY = windowRect.Bottom - (int)(100 * scale) + (int)(10 * scale);
+
+        _videoWindow.PositionAt(thumbX, thumbY, thumbW, thumbH);
+    }
+
+    public void HandleWindowResize()
+    {
+        if (State == PlayerState.Minimized)
+            PositionVideoForMiniBar();
+        else
+            _videoWindow?.MatchParentPosition();
+    }
 
     // ── Close / Dispose ──────────────────────────────────────────────────
 
+    private bool _closing;
+
     public async Task CloseAsync()
     {
+        if (_closing) return; // Prevent duplicate close from spammed exit clicks
+        _closing = true;
+
         LogToFile("state_trace.txt", $"CloseAsync called: State={State} _switchingContent={_switchingContent}");
         if (State == PlayerState.Fullscreen)
             ExitFullscreen();
@@ -704,6 +763,7 @@ public class PlayerService : IDisposable
         App.MainWindowInstance?.HideLoadingOverlay();
         _videoWindow?.Hide();
         SetState(PlayerState.Idle);
+        _closing = false;
         LogToFile("state_trace.txt", "CloseAsync completed");
     }
 
