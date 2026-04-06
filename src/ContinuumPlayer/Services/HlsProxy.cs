@@ -23,10 +23,8 @@ public sealed class HlsProxy : IDisposable
     {
         _remoteManifestUrl = remoteManifestUrl;
         _token = token;
+        // Manifest fetch uses auth; segment fetch does NOT (session UUID is the auth)
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
-        if (token != null)
-            _http.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
     }
 
     public string Start()
@@ -103,8 +101,15 @@ public sealed class HlsProxy : IDisposable
 
     private async Task ServeManifest(NetworkStream stream, CancellationToken ct)
     {
+        // Fetch manifest with token as QUERY PARAM (not Bearer header).
+        // The server embeds rawQuery into every segment URL in the manifest.
+        // This way segment URLs automatically include ?token=XXX — matching
+        // how HLS.js in the web player works.
+        var manifestUrlWithToken = _remoteManifestUrl;
+        if (_token != null)
+            manifestUrlWithToken += (manifestUrlWithToken.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(_token)}";
         Log("Fetching remote manifest...");
-        var manifest = await _http.GetStringAsync(_remoteManifestUrl, ct);
+        var manifest = await _http.GetStringAsync(manifestUrlWithToken, ct);
         Log($"Got manifest: {manifest.Length} chars");
 
         // Rewrite relative segment URLs to absolute proxy URLs
@@ -138,8 +143,13 @@ public sealed class HlsProxy : IDisposable
     {
         var segPath = path.TrimStart('/');
         var remoteUrl = _baseSegmentUrl + segPath;
-        if (_token != null && !remoteUrl.Contains("token="))
-            remoteUrl += (remoteUrl.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(_token)}";
+        // Segment URLs already have ?token=XXX embedded from the manifest
+        // (server copies rawQuery from manifest request to segment URLs).
+        // Don't add a second token.
+
+        // Log full URL to a separate file for debugging
+        try { File.WriteAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ContinuumPlayer", "last_segment_url.txt"), remoteUrl); } catch { }
+        Log($"Requesting segment (full URL in last_segment_url.txt)");
 
         byte[]? data = null;
         string? contentType = null;
@@ -148,7 +158,10 @@ public sealed class HlsProxy : IDisposable
         {
             try
             {
-                using var response = await _http.GetAsync(remoteUrl, ct);
+                // NO Authorization header — token is in the query param (matching HLS.js).
+                // CDN blocks requests with Authorization header on segment paths.
+                using var segReq = new HttpRequestMessage(HttpMethod.Get, remoteUrl);
+                using var response = await _http.SendAsync(segReq, ct);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -160,7 +173,11 @@ public sealed class HlsProxy : IDisposable
 
                 if (response.StatusCode == HttpStatusCode.NotFound)
                 {
-                    if (attempt == 0) Log($"404 on {segPath}, waiting...");
+                    if (attempt == 0)
+                    {
+                        var body = await response.Content.ReadAsStringAsync(ct);
+                        Log($"404 on {segPath}: {body}");
+                    }
                     await Task.Delay(3000, ct);
                     continue;
                 }
