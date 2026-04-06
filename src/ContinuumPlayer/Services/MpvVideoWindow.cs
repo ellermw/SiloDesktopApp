@@ -159,8 +159,9 @@ public sealed class MpvVideoWindow : IDisposable
             _classRegistered = true;
         }
 
-        // Create a popup window (top-level, no parent-child relationship)
-        // WS_EX_TOOLWINDOW hides it from the taskbar
+        // Create an OWNED popup window — owned windows always stay above their owner.
+        // WS_EX_TOOLWINDOW hides it from the taskbar.
+        // Passing parentHwnd as hWndParent with WS_POPUP creates ownership (not child).
         GetWindowRect(parentHwnd, out var parentRect);
 
         _hwnd = CreateWindowExW(
@@ -171,7 +172,7 @@ public sealed class MpvVideoWindow : IDisposable
             parentRect.Left, parentRect.Top,
             parentRect.Right - parentRect.Left,
             parentRect.Bottom - parentRect.Top,
-            IntPtr.Zero, // No parent — this is a top-level window
+            parentHwnd, // Owner — popup stays above this window automatically
             IntPtr.Zero,
             GetModuleHandleW(null),
             IntPtr.Zero);
@@ -183,16 +184,6 @@ public sealed class MpvVideoWindow : IDisposable
         _isMiniBar = false;
         MatchParentPosition();
         ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
-        SetForegroundWindow(_hwnd);
-        // Delayed re-assert — UI state changes may steal focus
-        Task.Delay(100).ContinueWith(_ =>
-        {
-            if (_hwnd != IntPtr.Zero && !_isMiniBar && !_isFullscreen)
-            {
-                MatchParentPosition();
-                SetForegroundWindow(_hwnd);
-            }
-        });
     }
 
     public void EnterFullscreen()
@@ -235,26 +226,11 @@ public sealed class MpvVideoWindow : IDisposable
     {
         if (_hwnd == IntPtr.Zero) return;
         _isFullscreen = false;
+        // Owned window — just reposition to client area, z-order is automatic
         MatchParentPosition();
-        // "Topmost flash" — briefly set TOPMOST then remove it.
-        // This reliably brings the window to front without keeping it above the taskbar.
-        SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-            SWP_NOACTIVATE | 0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/);
+        // Drop from TOPMOST (fullscreen sets it)
         SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
             SWP_NOACTIVATE | 0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/);
-        SetForegroundWindow(_hwnd);
-        // Re-assert after UI state changes settle
-        Task.Delay(150).ContinueWith(_ =>
-        {
-            if (!_isFullscreen && _hwnd != IntPtr.Zero)
-            {
-                SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                    SWP_NOACTIVATE | 0x0001 | 0x0002);
-                SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                    SWP_NOACTIVATE | 0x0001 | 0x0002);
-                SetForegroundWindow(_hwnd);
-            }
-        });
     }
 
     public bool IsFullscreen => _isFullscreen;
@@ -287,13 +263,11 @@ public sealed class MpvVideoWindow : IDisposable
         GetClientRect(_parentHwnd, out var client);
         var topLeft = new POINT { X = client.Left, Y = client.Top };
         ClientToScreen(_parentHwnd, ref topLeft);
-        // Topmost flash — reliably brings window to front without staying topmost
-        SetWindowPos(_hwnd, HWND_TOPMOST,
+        // Owned window stays above owner automatically — just reposition
+        SetWindowPos(_hwnd, IntPtr.Zero,
             topLeft.X, topLeft.Y,
             client.Right - client.Left, client.Bottom - client.Top,
-            SWP_NOACTIVATE);
-        SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-            SWP_NOACTIVATE | 0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/);
+            SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
     private IntPtr WndProcInstance(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
