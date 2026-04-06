@@ -1112,6 +1112,17 @@ public class PlayerService : IDisposable
             _videoWindow?.MatchParentPosition();
     }
 
+    public void HandleWindowMinimized(bool minimized)
+    {
+        if (State == PlayerState.Idle) return;
+        if (minimized)
+            _videoWindow?.Hide();
+        else if (State == PlayerState.Expanded || State == PlayerState.Fullscreen)
+            _videoWindow?.Show();
+        else if (State == PlayerState.Minimized)
+            PositionVideoForMiniBar();
+    }
+
     // ── Close / Dispose ──────────────────────────────────────────────────
 
     private bool _closing;

@@ -57,6 +57,23 @@ public sealed partial class MainWindow : Window
 
         // Keep native video window matched to main window size
         this.SizeChanged += (_, _) => playerService.HandleWindowResize();
+
+        // Hide/show player popup when main window is minimized/restored
+        if (AppWindow != null)
+        {
+            var presenter = AppWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter;
+            AppWindow.Changed += (_, args) =>
+            {
+                if (args.DidPresenterChange || args.DidSizeChange || args.DidPositionChange)
+                {
+                    var p = AppWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter;
+                    if (p != null)
+                    {
+                        playerService.HandleWindowMinimized(p.State == Microsoft.UI.Windowing.OverlappedPresenterState.Minimized);
+                    }
+                }
+            };
+        }
     }
 
     private async void NavView_Loaded(object sender, RoutedEventArgs e)
