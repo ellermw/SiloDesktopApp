@@ -71,9 +71,15 @@ public class PlayerService : IDisposable
         State = newState;
 
         if (newState == PlayerState.Expanded || newState == PlayerState.Fullscreen)
+        {
             _videoWindow?.Show();
+            _mpv?.SendScriptMessage("osc-set-visibility", "true");
+        }
         else if (newState == PlayerState.Minimized)
+        {
+            _mpv?.SendScriptMessage("osc-set-visibility", "false");
             PositionVideoForMiniBar();
+        }
         else
             _videoWindow?.Hide();
 
@@ -693,12 +699,11 @@ public class PlayerService : IDisposable
         double dpi = GetDpiForWindow(hwnd);
         double scale = dpi / 96.0;
 
-        // Mini-bar thumbnail: 100x80 logical pixels, at left edge with 12px padding
-        // The mini-bar is 100px tall (logical), docked to bottom of main window
-        int thumbW = (int)(100 * scale);
-        int thumbH = (int)(80 * scale);
+        // Mini-bar thumbnail: 200x112 logical pixels (16:9), bar height 132
+        int thumbW = (int)(200 * scale);
+        int thumbH = (int)(112 * scale);
         int thumbX = windowRect.Left + (int)(12 * scale);
-        int thumbY = windowRect.Bottom - (int)(100 * scale) + (int)(10 * scale);
+        int thumbY = windowRect.Bottom - (int)(132 * scale) + (int)(10 * scale);
 
         _videoWindow.PositionAt(thumbX, thumbY, thumbW, thumbH);
     }

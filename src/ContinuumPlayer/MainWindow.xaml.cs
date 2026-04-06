@@ -233,7 +233,7 @@ public sealed partial class MainWindow : Window
                 PlayerOverlayControl.Deactivate();
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
                 if (_navInitialized) NavView.IsPaneVisible = true;
-                NavView.Margin = new Thickness(0, 0, 0, 100);
+                NavView.Margin = new Thickness(0, 0, 0, 132);
                 MiniPlayerBarControl.Visibility = Visibility.Visible;
                 MiniPlayerBarControl.Activate();
                 break;

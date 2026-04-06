@@ -125,6 +125,24 @@ local state = {
 
     -- Hover tooltip
     seek_hover_time = -1,
+
+    -- Mini-bar mode (OSC disabled)
+    osc_disabled    = false,
+
+    -- Media info (from host via osc-set-media-info)
+    media_info      = nil,
+    play_method_str = "",
+    stream_type_str = "",
+    protocol_str    = "",
+    stream_codec_video = "",
+    stream_codec_audio = "",
+
+    -- Subtitle menu
+    subtitle_tracks = {},
+    active_subtitle = -1,
+    subtitle_menu_visible = false,
+    subtitle_menu_overlay = nil,
+    subtitle_menu_items = {},
 }
 
 --------------------------------------------------------------------------------
@@ -1225,6 +1243,7 @@ local function request_cursor_visibility(visible)
 end
 
 local function tick()
+    if state.osc_disabled then return end
     -- Animate alpha
     local now = mp.get_time()
     local dt = now - state.last_fade_time
@@ -1309,6 +1328,7 @@ local function toggle_stats()
 end
 
 local function handle_mouse_down()
+    if state.osc_disabled then return end
     local mx = state.mouse_x
     local my = state.mouse_y
 
@@ -1397,6 +1417,7 @@ local function handle_mouse_down()
 end
 
 local function handle_mouse_down_right()
+    if state.osc_disabled then return end
     local mx = state.mouse_x
     local my = state.mouse_y
 
@@ -1413,6 +1434,7 @@ local function handle_mouse_down_right()
 end
 
 local function handle_mouse_up()
+    if state.osc_disabled then return end
     -- Complete seek drag
     if state.dragging_seek then
         state.dragging_seek = false
@@ -1505,6 +1527,52 @@ local function observe_properties()
     -- Fullscreen state is managed by the host — listen for its updates
     mp.register_script_message("osc-fullscreen-state", function(val)
         state.fullscreen = (val == "true")
+    end)
+
+    mp.register_script_message("osc-set-visibility", function(val)
+        state.osc_disabled = (val == "false")
+        if state.osc_disabled then
+            if state.osc_overlay then
+                state.osc_overlay.data = ""
+                state.osc_overlay:update()
+            end
+            if state.stats_overlay then
+                state.stats_overlay.data = ""
+                state.stats_overlay:update()
+            end
+            if state.subtitle_menu_overlay then
+                state.subtitle_menu_overlay.data = ""
+                state.subtitle_menu_overlay:update()
+            end
+            state.stats_visible = false
+            state.subtitle_menu_visible = false
+        end
+    end)
+
+    mp.register_script_message("osc-set-media-info", function(json_str)
+        local ok, data = pcall(require("mp.utils").parse_json, json_str)
+        if ok and data then
+            state.media_info = data
+        end
+    end)
+
+    mp.register_script_message("osc-set-stream-info", function(play_method, stream_type, protocol, video_codec, audio_codec)
+        state.play_method_str = play_method or ""
+        state.stream_type_str = stream_type or ""
+        state.protocol_str = protocol or ""
+        state.stream_codec_video = video_codec or ""
+        state.stream_codec_audio = audio_codec or ""
+    end)
+
+    mp.register_script_message("osc-set-subtitles", function(json_str)
+        local ok, data = pcall(require("mp.utils").parse_json, json_str)
+        if ok and data then
+            state.subtitle_tracks = data
+        end
+    end)
+
+    mp.register_script_message("osc-set-active-subtitle", function(idx)
+        state.active_subtitle = tonumber(idx) or -1
     end)
 
     mp.observe_property("idle-active", "bool", function(_, val)
