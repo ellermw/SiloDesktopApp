@@ -171,6 +171,11 @@ public sealed partial class MiniPlayerBar : UserControl
         _playerService.Expand();
     }
 
+    private void Expand_Click(object sender, RoutedEventArgs e)
+    {
+        _playerService.Expand();
+    }
+
     private void PlayPause_Click(object sender, RoutedEventArgs e)
     {
         _playerService.Mpv?.TogglePause();

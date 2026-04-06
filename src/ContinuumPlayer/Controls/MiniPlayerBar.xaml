@@ -38,6 +38,10 @@
 
             <!-- Transport controls -->
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
+                <Button Click="Expand_Click" Background="Transparent" BorderThickness="0" Padding="10,8"
+                        ToolTipService.ToolTip="Expand player">
+                    <FontIcon Glyph="&#xE740;" FontSize="16" Foreground="{StaticResource AccentBrush}" />
+                </Button>
                 <Button Click="PlayPause_Click" Background="Transparent" BorderThickness="0" Padding="10,8">
                     <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE768;" FontSize="18" Foreground="{StaticResource PrimaryTextBrush}" />
                 </Button>

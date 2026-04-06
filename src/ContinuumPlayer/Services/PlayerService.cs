@@ -693,6 +693,10 @@ public class PlayerService : IDisposable
         {
             App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => Minimize());
         };
+        _videoWindow.ExpandRequested += () =>
+        {
+            App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => Expand());
+        };
         _videoWindow.FullscreenToggleRequested += () =>
         {
             if (_videoWindow.IsFullscreen)

@@ -35,6 +35,7 @@ public sealed class MpvVideoWindow : IDisposable
     public event Action? EscapeRequested;
     public event Action? MinimizeRequested;
     public event Action? FullscreenToggleRequested;
+    public event Action? ExpandRequested;
 
     // Reference to mpv for forwarding input events
     private ContinuumPlayer.Player.MpvPlayer? _mpv;
@@ -170,6 +171,7 @@ public sealed class MpvVideoWindow : IDisposable
     public void Show()
     {
         if (_hwnd == IntPtr.Zero) return;
+        _isMiniBar = false;
         MatchParentPosition();
         // Show just above the main window (not TOPMOST — don't cover taskbar)
         ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
@@ -242,6 +244,7 @@ public sealed class MpvVideoWindow : IDisposable
 
     public bool IsFullscreen => _isFullscreen;
     private bool _isFullscreen;
+    private bool _isMiniBar;
     private RECT _savedRect;
 
     public void Hide()
@@ -256,6 +259,7 @@ public sealed class MpvVideoWindow : IDisposable
     public void PositionAt(int x, int y, int width, int height)
     {
         if (_hwnd == IntPtr.Zero) return;
+        _isMiniBar = true;
         ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
         SetWindowPos(_hwnd, HWND_TOP, x, y, width, height,
             SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -299,6 +303,9 @@ public sealed class MpvVideoWindow : IDisposable
         }
         else if (msg == WM_LBUTTONDOWN)
         {
+            // In mini-bar mode (small popup), click expands back to full player
+            if (_isMiniBar) { ExpandRequested?.Invoke(); return IntPtr.Zero; }
+
             int x = loWord(lParam), y = hiWord(lParam);
             SetCapture(hWnd); // Capture mouse so we get WM_LBUTTONUP even outside window
             _mpv?.SendMousePos(x, y);
