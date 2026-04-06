@@ -211,8 +211,8 @@ public class PlayerService : IDisposable
             catch { }
             _playbackManager.Dispose();
             _playbackManager = null;
-            // Give server time to process the session stop
-            await Task.Delay(500);
+            // Brief delay for server to process session stop
+            await Task.Delay(200);
         }
 
         ErrorMessage = null;
@@ -237,7 +237,7 @@ public class PlayerService : IDisposable
             }
             catch (ApiException ex) when (ex.StatusCode == 400)
             {
-                await Task.Delay(1000);
+                await Task.Delay(300);
                 watchDetail = await _playbackManager.GetWatchDetailAsync(contentId);
             }
 
@@ -437,16 +437,16 @@ public class PlayerService : IDisposable
                 LogToFile("state_trace.txt", "No resume position (starting from beginning)");
             }
 
-            // Send media info, subtitles, and quality info to Lua OSC
-            SendMediaInfoToOsc();
-            SendSubtitleListToOsc();
-            SendQualityInfoToOsc();
-
-            // Send intro/credits markers for skip buttons
-            SendMarkersToOsc();
-
-            // Load subtitles on a background thread
-            Task.Run(() => LoadSubtitles());
+            // Send OSC data + load subtitles on background thread
+            // (JSON serialization + mpv commands don't need the event thread)
+            Task.Run(() =>
+            {
+                SendMediaInfoToOsc();
+                SendSubtitleListToOsc();
+                SendQualityInfoToOsc();
+                SendMarkersToOsc();
+                LoadSubtitles();
+            });
 
             // Connect WebSocket for real-time admin control
             try { ConnectWebSocket(); }

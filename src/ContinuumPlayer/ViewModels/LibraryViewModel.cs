@@ -123,8 +123,8 @@ public partial class LibraryViewModel : ObservableObject
 
         _offset = 0;
         Items.Clear();
-        await LoadPageAsync();
-        await LoadFiltersAsync();
+        // Load items and filters in parallel — independent operations
+        await Task.WhenAll(LoadPageAsync(), LoadFiltersAsync());
     }
 
     [RelayCommand]

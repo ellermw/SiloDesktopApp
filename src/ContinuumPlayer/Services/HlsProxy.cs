@@ -214,14 +214,27 @@ public sealed class HlsProxy : IDisposable
 
     private static async Task<string?> ReadLineAsync(NetworkStream stream, CancellationToken ct)
     {
+        // Read in chunks instead of byte-by-byte (reduces kernel calls)
         var sb = new StringBuilder();
-        var buf = new byte[1];
+        var buf = new byte[256];
         while (!ct.IsCancellationRequested)
         {
-            var read = await stream.ReadAsync(buf, ct);
+            // Peek one byte to check availability, then read available data
+            var read = await stream.ReadAsync(buf.AsMemory(0, 1), ct);
             if (read == 0) return null;
             if (buf[0] == '\n') return sb.ToString().TrimEnd('\r');
             sb.Append((char)buf[0]);
+            // Try to read more if available
+            while (stream.DataAvailable && sb.Length < 8192)
+            {
+                read = await stream.ReadAsync(buf, ct);
+                if (read == 0) break;
+                for (int i = 0; i < read; i++)
+                {
+                    if (buf[i] == '\n') return sb.ToString().TrimEnd('\r');
+                    sb.Append((char)buf[i]);
+                }
+            }
             if (sb.Length > 8192) return null;
         }
         return null;
