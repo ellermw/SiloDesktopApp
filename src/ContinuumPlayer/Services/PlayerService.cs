@@ -431,9 +431,10 @@ public class PlayerService : IDisposable
                 LogToFile("state_trace.txt", "No resume position (starting from beginning)");
             }
 
-            // Send media info + subtitle list to Lua OSC for stats overlay and subtitle menu
+            // Send media info, subtitles, and quality info to Lua OSC
             SendMediaInfoToOsc();
             SendSubtitleListToOsc();
+            SendQualityInfoToOsc();
 
             // Load subtitles on a background thread — sub-add commands are synchronous
             // and can block for seconds (30+ HTTP requests). Running them here would
@@ -668,6 +669,31 @@ public class PlayerService : IDisposable
         _mpv.SendScriptMessage("osc-set-active-subtitle", "-1");
     }
 
+    private void SendQualityInfoToOsc()
+    {
+        if (_mpv == null || _playbackManager?.WatchDetail == null || _playbackManager.CurrentSession == null) return;
+
+        var wd = _playbackManager.WatchDetail;
+        var session = _playbackManager.CurrentSession;
+
+        var versions = (wd.Versions ?? []).Select(v => new Dictionary<string, object?>
+        {
+            ["file_id"] = v.FileId,
+            ["label"] = v.FileName ?? $"{v.Resolution} {v.CodecVideo}",
+            ["resolution"] = v.Resolution ?? ""
+        }).ToArray();
+
+        var info = new Dictionary<string, object?>
+        {
+            ["versions"] = versions,
+            ["active_file_id"] = session.MediaFileId,
+            ["active_quality"] = "auto"
+        };
+
+        var json = System.Text.Json.JsonSerializer.Serialize(info);
+        _mpv.SendScriptMessage("osc-set-quality-info", json);
+    }
+
     // ── Video window events ────────────────────────────────────────────
 
     private void WireVideoWindowEvents()
@@ -751,7 +777,117 @@ public class PlayerService : IDisposable
             case "continuum-subtitle-search":
                 dispatch.TryEnqueue(() => _ = SearchAndDownloadSubtitlesAsync());
                 break;
+            case "continuum-version-select":
+                if (args.Length > 1 && int.TryParse(args[1], out var vFileId))
+                {
+                    var version = Versions.FirstOrDefault(v => v.FileId == vFileId);
+                    if (version != null)
+                        dispatch.TryEnqueue(() => _ = SwitchVersionAndNotifyAsync(version));
+                }
+                break;
+            case "continuum-quality-select":
+                if (args.Length > 1)
+                    dispatch.TryEnqueue(() => _ = SwitchQualityTierAsync(args[1]));
+                break;
         }
+    }
+
+    private async Task SwitchVersionAndNotifyAsync(FileVersion version)
+    {
+        await SwitchVersionAsync(version);
+        SendQualityInfoToOsc();
+        SendMediaInfoToOsc();
+        _mpv?.SendScriptMessage("osc-set-active-quality", "auto");
+    }
+
+    private async Task SwitchQualityTierAsync(string tierId)
+    {
+        if (_mpv == null || _playbackManager == null) return;
+
+        var currentPos = _mpv.Position;
+
+        if (tierId is "auto" or "original")
+        {
+            var currentFileId = _playbackManager.CurrentSession?.MediaFileId;
+            var version = Versions.FirstOrDefault(v => v.FileId == currentFileId);
+            if (version != null)
+            {
+                _switchingContent = true;
+                try
+                {
+                    await _playbackManager.StopSessionAsync();
+                    var session = await _playbackManager.StartSessionAsync(version.FileId, currentPos);
+                    PlayMethod = session.PlayMethod;
+
+                    var token = _apiClient.AccessToken;
+                    var authHeader = token != null ? $"Bearer {token}" : null;
+                    var streamUrl = _playbackManager.StreamUrl ?? "";
+                    if (token != null)
+                        streamUrl += (streamUrl.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
+
+                    _resumePosition = currentPos;
+                    _mpv.LoadFile(streamUrl, authHeader);
+                    _mpv.Play();
+                    SendMediaInfoToOsc();
+                }
+                catch (Exception ex)
+                {
+                    LogToFile("player_quality_switch_error.txt", ex.ToString());
+                    _mpv.ShowOsdText("Quality switch failed", 3000);
+                }
+                finally { _switchingContent = false; }
+            }
+        }
+        else
+        {
+            var (resolution, bitrate) = tierId switch
+            {
+                "1080p-high" => ("1080p", 10000),
+                "1080p"      => ("1080p", 6000),
+                "720p-high"  => ("720p", 4000),
+                "720p"       => ("720p", 2000),
+                "480p"       => ("480p", 1500),
+                "420p"       => ("420p", 720),
+                _ => ("1080p", 6000)
+            };
+
+            _switchingContent = true;
+            try
+            {
+                var transcodeResponse = await _playbackApi.StartTranscodeAsync(new TranscodeStartRequest
+                {
+                    SessionId = _playbackManager.SessionId!,
+                    SeekSeconds = currentPos,
+                    TargetResolution = resolution,
+                    TargetCodecVideo = "h264",
+                    TargetCodecAudio = "aac",
+                    TargetBitrateKbps = bitrate,
+                    SegmentDuration = 2,
+                    SubtitleTrackIndex = -1,
+                    SubtitleBurnIn = false
+                });
+
+                var baseUrl = _apiClient.BaseUrl;
+                var manifestPath = transcodeResponse.ManifestUrl;
+                if (!manifestPath.StartsWith("http") && !manifestPath.StartsWith("/api/v1"))
+                    manifestPath = "/api/v1" + manifestPath;
+                var streamUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
+
+                PlayMethod = "transcode";
+                _resumePosition = transcodeResponse.PlayerStartSeconds;
+                _mpv.LoadFile(streamUrl);
+                _mpv.Play();
+                SendMediaInfoToOsc();
+            }
+            catch (Exception ex)
+            {
+                LogToFile("player_quality_switch_error.txt", ex.ToString());
+                _mpv.ShowOsdText("Transcode failed", 3000);
+            }
+            finally { _switchingContent = false; }
+        }
+
+        _mpv?.SendScriptMessage("osc-set-active-quality", tierId);
     }
 
     private async Task SearchAndDownloadSubtitlesAsync()
