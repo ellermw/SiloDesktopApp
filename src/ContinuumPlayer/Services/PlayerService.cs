@@ -782,12 +782,18 @@ public class PlayerService : IDisposable
                 {
                     var version = Versions.FirstOrDefault(v => v.FileId == vFileId);
                     if (version != null)
+                    {
+                        _switchingContent = true; // Set BEFORE dispatch — event thread may fire PlaybackEnded
                         dispatch.TryEnqueue(() => _ = SwitchVersionAndNotifyAsync(version));
+                    }
                 }
                 break;
             case "continuum-quality-select":
                 if (args.Length > 1)
+                {
+                    _switchingContent = true; // Set BEFORE dispatch — server kills direct stream on transcode start
                     dispatch.TryEnqueue(() => _ = SwitchQualityTierAsync(args[1]));
+                }
                 break;
         }
     }
@@ -820,7 +826,6 @@ public class PlayerService : IDisposable
             var version = Versions.FirstOrDefault(v => v.FileId == currentFileId);
             if (version != null)
             {
-                _switchingContent = true;
                 try
                 {
                     await _playbackManager.StopSessionAsync();
@@ -859,7 +864,6 @@ public class PlayerService : IDisposable
                 _ => ("1080p", 6000)
             };
 
-            _switchingContent = true;
             try
             {
                 var transcodeResponse = await _playbackApi.StartTranscodeAsync(new TranscodeStartRequest
