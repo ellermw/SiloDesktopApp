@@ -43,7 +43,7 @@ public class CatalogApi(ContinuumApiClient client)
     public Task<CatalogResponse> SearchAsync(string query, int limit = 40, CancellationToken ct = default)
     {
         var encoded = Uri.EscapeDataString(query);
-        return client.GetAsync<CatalogResponse>($"/api/v1/catalog?source=search&q={encoded}&limit={limit}", ct);
+        return client.GetAsync<CatalogResponse>($"/api/v1/catalog?q={encoded}&limit={limit}", ct);
     }
 
     public Task<MediaItemDetail> GetItemDetailAsync(string contentId, CancellationToken ct = default)
