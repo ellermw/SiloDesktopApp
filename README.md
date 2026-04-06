@@ -4,7 +4,7 @@ Native Windows 11 media player for Continuum media servers. Built for direct pla
 
 ## Download
 
-[**Download Installer (v1.0.2)**](https://transfers.taverncdn.com/kbBJKvE9ns/ContinuumDesktopPlayer-v1.0.2-Setup.exe) — Single-file setup, includes all dependencies. Windows 10/11 x64.
+[**Download Installer (v1.0.21)**](https://transfers.taverncdn.com/oqgbTzy1Wh/ContinuumDesktopPlayer-v1.0.21-Setup.exe) — Single-file setup, includes all dependencies. Windows 10/11 x64.
 
 ## Tech Stack
 
@@ -62,3 +62,7 @@ dotnet build ContinuumPlayer.sln
 
 - Windows 10 1809+ / Windows 11
 - `libmpv-2.dll` in the output directory (copied from `libs/mpv/`)
+
+---
+
+*This has been created with 100% vibe coding.*
