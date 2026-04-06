@@ -6,6 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:converters="using:ContinuumPlayer.Converters"
+    xmlns:local="using:ContinuumPlayer.Views.Admin"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}"
     Loaded="Page_Loaded">
@@ -45,23 +46,53 @@
                                    Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
                     <Button Grid.Column="1"
-                            Content="New Import"
+                            Content="Add Source"
                             Style="{StaticResource AccentButtonStyle}"
-                            Click="NewImport_Click"
+                            Click="NewSource_Click"
                             VerticalAlignment="Top" />
                 </Grid>
 
-                <!-- Import runs list -->
-                <ItemsRepeater x:Name="RunsList"
-                               ItemsSource="{x:Bind ViewModel.Runs, Mode=OneWay}">
+                <!-- Error -->
+                <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                           Foreground="{StaticResource ErrorBrush}"
+                           Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                           TextWrapping="Wrap" />
+
+                <!-- Sources section -->
+                <TextBlock Text="SOURCES"
+                           Style="{StaticResource SectionHeaderTextStyle}" />
+
+                <ItemsRepeater ItemsSource="{x:Bind ViewModel.Sources, Mode=OneWay}">
                     <ItemsRepeater.Layout>
                         <StackLayout Spacing="8" />
                     </ItemsRepeater.Layout>
                     <ItemsRepeater.ItemTemplate>
-                        <DataTemplate x:DataType="x:String">
+                        <DataTemplate x:DataType="local:HistoryImportSourceDisplay">
                             <Border Background="{StaticResource CardBackgroundBrush}"
-                                    CornerRadius="12" Padding="16">
-                                <TextBlock Text="{x:Bind}" Foreground="{StaticResource PrimaryTextBrush}" />
+                                    CornerRadius="12" Padding="16,12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="{x:Bind Display}"
+                                                   FontSize="14" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                                        <TextBlock Text="{x:Bind SubDisplay}"
+                                                   FontSize="12"
+                                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1"
+                                            Tag="{x:Bind Id}"
+                                            Click="DeleteSource_Click"
+                                            Background="Transparent" BorderThickness="0"
+                                            VerticalAlignment="Center"
+                                            ToolTipService.ToolTip="Delete source">
+                                        <FontIcon Glyph="&#xE74D;" FontSize="14"
+                                                  Foreground="{StaticResource ErrorBrush}" />
+                                    </Button>
+                                </Grid>
                             </Border>
                         </DataTemplate>
                     </ItemsRepeater.ItemTemplate>
@@ -69,11 +100,38 @@
 
                 <!-- Empty state -->
                 <TextBlock x:Name="EmptyText"
-                           Text="No import history. Click 'New Import' to get started."
+                           Text="No import sources. Click 'Add Source' to configure a Plex, Emby, or Jellyfin server."
                            Foreground="{StaticResource SecondaryTextBrush}"
                            HorizontalAlignment="Center"
                            FontSize="14"
                            Visibility="Collapsed" />
+
+                <!-- Runs section -->
+                <TextBlock Text="IMPORT RUNS"
+                           Style="{StaticResource SectionHeaderTextStyle}"
+                           Margin="0,16,0,0" />
+
+                <ItemsRepeater ItemsSource="{x:Bind ViewModel.Runs, Mode=OneWay}">
+                    <ItemsRepeater.Layout>
+                        <StackLayout Spacing="8" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="local:HistoryImportRunDisplay">
+                            <Border Background="{StaticResource CardBackgroundBrush}"
+                                    CornerRadius="12" Padding="16,12">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{x:Bind Display}"
+                                               FontSize="14" FontWeight="SemiBold"
+                                               Foreground="{StaticResource PrimaryTextBrush}" />
+                                    <TextBlock Text="{x:Bind SubDisplay}"
+                                               FontSize="12"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+
             </StackPanel>
         </ScrollViewer>
     </Grid>

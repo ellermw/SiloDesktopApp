@@ -186,6 +186,14 @@ local quality_tiers = {
 -- Utility Functions
 --------------------------------------------------------------------------------
 
+-- DPI scale factor for 4K+ displays — scales font sizes in menus/stats/overlays
+-- Based on OSD width: 1920 = 1.0x, 2560 = 1.33x, 3840 = 2.0x
+local function ui_scale()
+    local w = state.osd_width
+    if w <= 1920 then return 1.0 end
+    return w / 1920
+end
+
 -- Format seconds to H:MM:SS or M:SS
 local function format_time(seconds)
     if not seconds or seconds < 0 then return "0:00" end
@@ -1124,10 +1132,11 @@ local function render_stats()
     local W = state.osd_width
     local H = state.osd_height
 
-    local fs = config.stats_font_size
-    local fs_small = math.max(fs - 2, 10)
-    local padding = config.stats_padding
-    local line_h = config.stats_line_height
+    local sc = ui_scale()
+    local fs = math.floor(config.stats_font_size * sc)
+    local fs_small = math.max(math.floor((config.stats_font_size - 2) * sc), 10)
+    local padding = math.floor(config.stats_padding * sc)
+    local line_h = math.floor(config.stats_line_height * sc)
     local section_gap = 12
     local header_h = line_h + 4
     local box_w = 380
@@ -1331,6 +1340,10 @@ local function request_cursor_visibility(visible)
     end
 end
 
+-- Forward declarations for functions defined after tick()
+local check_skip_markers
+local render_skip_button
+
 local function tick()
     if state.osc_disabled then return end
     -- Animate alpha
@@ -1469,10 +1482,11 @@ local function render_subtitle_menu()
     local W = state.osd_width
     local H = state.osd_height
 
-    local fs = config.stats_font_size
-    local fs_small = math.max(fs - 2, 10)
-    local padding = config.stats_padding
-    local item_h = config.stats_line_height + 4
+    local sc = ui_scale()
+    local fs = math.floor(config.stats_font_size * sc)
+    local fs_small = math.max(math.floor((config.stats_font_size - 2) * sc), 10)
+    local padding = math.floor(config.stats_padding * sc)
+    local item_h = math.floor((config.stats_line_height + 4) * sc)
     local menu_w = 280
 
     -- Sort tracks by source priority
@@ -1595,10 +1609,11 @@ local function render_quality_menu()
     local W = state.osd_width
     local H = state.osd_height
 
-    local fs = config.stats_font_size
-    local fs_small = math.max(fs - 2, 10)
-    local padding = config.stats_padding
-    local item_h = config.stats_line_height + 4
+    local sc = ui_scale()
+    local fs = math.floor(config.stats_font_size * sc)
+    local fs_small = math.max(math.floor((config.stats_font_size - 2) * sc), 10)
+    local padding = math.floor(config.stats_padding * sc)
+    local item_h = math.floor((config.stats_line_height + 4) * sc)
     local menu_w = 280
 
     local qi = state.quality_info
@@ -1739,8 +1754,9 @@ local function render_notice()
     local W = state.osd_width
     local H = state.osd_height
 
-    local fs = config.stats_font_size + 1
-    local fs_small = config.stats_font_size
+    local sc = ui_scale()
+    local fs = math.floor((config.stats_font_size + 1) * sc)
+    local fs_small = math.floor(config.stats_font_size * sc)
     local padding = 20
     local box_w = math.min(500, W - 40)
     local box_x = (W - box_w) / 2
@@ -1804,7 +1820,7 @@ end
 -- Skip Intro/Credits Button
 --------------------------------------------------------------------------------
 
-local function render_skip_button()
+render_skip_button = function()
     if not state.skip_visible then
         if state.skip_overlay then
             state.skip_overlay.data = ""
@@ -1819,11 +1835,12 @@ local function render_skip_button()
     local W = state.osd_width
     local H = state.osd_height
 
-    local fs = config.stats_font_size + 2
-    local pad_x = 24
-    local pad_y = 12
-    local btn_w = 180
-    local btn_h = 44
+    local sc = ui_scale()
+    local fs = math.floor((config.stats_font_size + 2) * sc)
+    local pad_x = math.floor(24 * sc)
+    local pad_y = math.floor(12 * sc)
+    local btn_w = math.floor(180 * sc)
+    local btn_h = math.floor(44 * sc)
     local btn_x = W - btn_w - 40
     local btn_y = H - config.bar_height - btn_h - 20
 
@@ -1852,7 +1869,7 @@ local function render_skip_button()
     state.skip_overlay:update()
 end
 
-local function check_skip_markers()
+check_skip_markers = function()
     local pos = state.time_pos
     if pos <= 0 then return end
 
