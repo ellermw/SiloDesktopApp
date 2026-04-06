@@ -156,6 +156,20 @@
                                         VerticalAlignment="Center"
                                         FontSize="13"
                                         FontWeight="Medium" />
+                                    <Border
+                                        x:Name="NavActivityBadge"
+                                        Background="{StaticResource ErrorBrush}"
+                                        CornerRadius="8"
+                                        Padding="6,2"
+                                        Visibility="Collapsed"
+                                        VerticalAlignment="Center">
+                                        <TextBlock
+                                            x:Name="NavActivityBadgeText"
+                                            Text="0 live"
+                                            FontSize="10"
+                                            FontWeight="SemiBold"
+                                            Foreground="White" />
+                                    </Border>
                                 </StackPanel>
                             </Grid>
                         </Button>

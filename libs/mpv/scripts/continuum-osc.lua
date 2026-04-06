@@ -1528,7 +1528,7 @@ local function render_subtitle_menu()
     cy = cy + item_h
 
     -- "Off" option
-    local off_active = (state.active_subtitle <= 0)
+    local off_active = (state.active_subtitle < 0)
     local off_color = off_active and config.text_color or config.dim_text_color
     if off_active then
         draw_text(ass, menu_x + padding, cy + item_h / 2, "✓",

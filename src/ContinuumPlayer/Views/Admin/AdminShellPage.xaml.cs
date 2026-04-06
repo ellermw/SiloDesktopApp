@@ -7,7 +7,9 @@ namespace ContinuumPlayer.Views.Admin;
 public sealed partial class AdminShellPage : Page
 {
     private readonly NavigationService _navigationService;
+    private readonly Core.Api.AdminApi _adminApi;
     private Button? _activeButton;
+    private DispatcherTimer? _sessionTimer;
 
     // Pairs of (nav button, accent indicator bar, icon element, text element)
     private readonly List<(Button Button, Border Bar, FontIcon Icon, TextBlock Text)> _navItems = [];
@@ -16,8 +18,10 @@ public sealed partial class AdminShellPage : Page
     {
         this.InitializeComponent();
         _navigationService = App.Services.GetRequiredService<NavigationService>();
+        _adminApi = App.Services.GetRequiredService<Core.Api.AdminApi>();
 
         Loaded += AdminShellPage_Loaded;
+        Unloaded += (_, _) => { _sessionTimer?.Stop(); _sessionTimer = null; };
     }
 
     private void AdminShellPage_Loaded(object sender, RoutedEventArgs e)
@@ -48,9 +52,37 @@ public sealed partial class AdminShellPage : Page
         // Navigate to Dashboard on load
         SetActiveNavItem(NavDashboard);
         AdminContentFrame.Navigate(typeof(AdminDashboardPage));
+
+        // Poll active session count for the "N live" badge
+        _ = UpdateSessionBadgeAsync();
+        _sessionTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+        _sessionTimer.Tick += async (_, _) => await UpdateSessionBadgeAsync();
+        _sessionTimer.Start();
     }
 
     // ===== SetActiveNavItem =====
+
+    private async Task UpdateSessionBadgeAsync()
+    {
+        try
+        {
+            var sessions = await _adminApi.GetSessionsAsync();
+            var count = sessions?.Count ?? 0;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (count > 0)
+                {
+                    NavActivityBadge.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                    NavActivityBadgeText.Text = $"{count} live";
+                }
+                else
+                {
+                    NavActivityBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                }
+            });
+        }
+        catch { }
+    }
 
     private void SetActiveNavItem(Button button)
     {
