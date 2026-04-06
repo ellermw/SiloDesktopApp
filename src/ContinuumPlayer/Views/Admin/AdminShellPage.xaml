@@ -406,6 +406,45 @@
                             </Grid>
                         </Button>
 
+                        <Button
+                            x:Name="NavHistoryImport"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Left"
+                            Padding="16,10"
+                            Margin="4,1"
+                            CornerRadius="12"
+                            Click="NavHistoryImport_Click">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="3" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Border
+                                    x:Name="NavHistoryImportBar"
+                                    Grid.Column="0"
+                                    Width="3" CornerRadius="2"
+                                    Background="{StaticResource AccentBrush}"
+                                    Margin="0,0,10,0"
+                                    Visibility="Collapsed" />
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                                    <FontIcon
+                                        x:Name="NavHistoryImportIcon"
+                                        Glyph="&#xE8B5;"
+                                        FontSize="16"
+                                        Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock
+                                        x:Name="NavHistoryImportText"
+                                        Text="History Import"
+                                        Foreground="{StaticResource SecondaryTextBrush}"
+                                        VerticalAlignment="Center"
+                                        FontSize="13"
+                                        FontWeight="Medium" />
+                                </StackPanel>
+                            </Grid>
+                        </Button>
+
                         <!-- === SERVER === -->
                         <TextBlock
                             Text="SERVER"

@@ -445,7 +445,8 @@ public class PlayerService : IDisposable
             Task.Run(() => LoadSubtitles());
 
             // Connect WebSocket for real-time admin control
-            ConnectWebSocket();
+            try { ConnectWebSocket(); }
+            catch (Exception ex) { LogToFile("state_trace.txt", $"WebSocket connect failed: {ex.Message}"); }
         };
 
         _mpv.PlaybackEnded += () =>
@@ -1218,7 +1219,11 @@ public class PlayerService : IDisposable
 
         _webSocket = new PlaybackWebSocket(baseUrl, sessionId, token);
         _webSocket.CommandReceived += HandleWebSocketCommand;
-        _ = _webSocket.ConnectAsync();
+        _ = Task.Run(async () =>
+        {
+            try { await _webSocket.ConnectAsync(); }
+            catch (Exception ex) { LogToFile("state_trace.txt", $"WebSocket error: {ex.Message}"); }
+        });
     }
 
     private void DisconnectWebSocket()
@@ -1296,7 +1301,12 @@ public class PlayerService : IDisposable
 
     private void ShowNotice(string title, string message, string tone)
     {
-        var json = System.Text.Json.JsonSerializer.Serialize(new { title, message, tone });
+        var json = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["title"] = title,
+            ["message"] = message,
+            ["tone"] = tone
+        });
         _mpv?.SendScriptMessage("osc-show-notice", json);
     }
 

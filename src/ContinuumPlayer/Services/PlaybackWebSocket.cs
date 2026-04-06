@@ -39,24 +39,26 @@ public sealed class PlaybackWebSocket : IDisposable
         _cts = new CancellationTokenSource();
 
         var wsUrl = _baseUrl.Replace("https://", "wss://").Replace("http://", "ws://");
-        wsUrl += $"/playback/ws/{_sessionId}";
+        wsUrl += $"/api/v1/playback/ws/{_sessionId}";
+        // Pass token as query param (matching web player) — CDN may strip Auth headers on WebSocket upgrades
+        if (_token != null)
+            wsUrl += $"?token={Uri.EscapeDataString(_token)}";
 
         _ws = new ClientWebSocket();
-        if (_token != null)
-            _ws.Options.SetRequestHeader("Authorization", $"Bearer {_token}");
 
         try
         {
+            Log($"Connecting to: {wsUrl.Substring(0, Math.Min(120, wsUrl.Length))}...");
             await _ws.ConnectAsync(new Uri(wsUrl), _cts.Token);
-            Log($"Connected to {wsUrl}");
+            Log($"Connected successfully");
 
-            // Send hello
-            await SendJsonAsync(new
+            // Send hello (use dictionaries — anonymous types break with .NET trimmer)
+            await SendJsonAsync(new Dictionary<string, object>
             {
-                type = "hello",
-                session_id = _sessionId,
-                client = new { name = "continuum-desktop", version = "1" },
-                capabilities = new { commands = SupportedCommands }
+                ["type"] = "hello",
+                ["session_id"] = _sessionId,
+                ["client"] = new Dictionary<string, object> { ["name"] = "continuum-desktop", ["version"] = "1" },
+                ["capabilities"] = new Dictionary<string, object> { ["commands"] = SupportedCommands }
             });
 
             // Start receive loop
@@ -151,12 +153,12 @@ public sealed class PlaybackWebSocket : IDisposable
             Log($"Command received: {name} (id={commandId})");
 
             // Send ack immediately
-            await SendJsonAsync(new
+            await SendJsonAsync(new Dictionary<string, object>
             {
-                type = "ack",
-                command_id = commandId,
-                session_id = _sessionId,
-                status = "accepted"
+                ["type"] = "ack",
+                ["command_id"] = commandId,
+                ["session_id"] = _sessionId,
+                ["status"] = "accepted"
             });
 
             // Execute command
@@ -174,7 +176,7 @@ public sealed class PlaybackWebSocket : IDisposable
             }
 
             // Send result
-            var resultMsg = new Dictionary<string, object?>
+            var resultMsg = new Dictionary<string, string>
             {
                 ["type"] = "result",
                 ["command_id"] = commandId,
@@ -195,10 +197,7 @@ public sealed class PlaybackWebSocket : IDisposable
     private async Task SendJsonAsync(object obj)
     {
         if (_ws?.State != WebSocketState.Open) return;
-        var json = JsonSerializer.Serialize(obj, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-        });
+        var json = JsonSerializer.Serialize(obj);
         var bytes = Encoding.UTF8.GetBytes(json);
         await _ws.SendAsync(bytes, WebSocketMessageType.Text, true, _cts?.Token ?? CancellationToken.None);
     }

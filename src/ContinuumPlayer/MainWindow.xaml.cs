@@ -150,17 +150,17 @@ public sealed partial class MainWindow : Window
     {
         NavView.IsPaneVisible = true;
 
-        // Always update admin button visibility based on current user role
+        // Always update admin button and profile display for current user
         AdminButton.Visibility = _authService.CurrentUser?.Role == "admin"
             ? Visibility.Visible : Visibility.Collapsed;
+        _ = UpdateProfileDisplayAsync();
 
         if (!_navInitialized)
         {
             _navInitialized = true;
 
-            // Fire both loads concurrently -- they are independent
+            // Load libraries on first init
             _ = _viewModel.LoadLibrariesCommand.ExecuteAsync(null);
-            _ = UpdateProfileDisplayAsync();
 
             // Watch for library changes to update nav (marshal to UI thread)
             _viewModel.Libraries.CollectionChanged += (_, _) =>

@@ -75,9 +75,11 @@
       <ProjectReference Include="..\ContinuumPlayer.Player\ContinuumPlayer.Player.csproj" />
     </ItemGroup>
 
-    <!-- Prevent the ILC/trimmer from stripping model types needed for JSON serialization -->
+    <!-- Prevent the ILC/trimmer from stripping assemblies needed at runtime -->
     <ItemGroup>
       <TrimmerRootAssembly Include="ContinuumPlayer.Core" />
+      <TrimmerRootAssembly Include="System.Net.WebSockets" />
+      <TrimmerRootAssembly Include="System.Net.WebSockets.Client" />
     </ItemGroup>
 
     <!-- 

@@ -182,11 +182,17 @@ public sealed class MpvVideoWindow : IDisposable
         if (_hwnd == IntPtr.Zero) return;
         _isMiniBar = false;
         MatchParentPosition();
-        // Show just above the main window (not TOPMOST — don't cover taskbar)
         ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
-        SetWindowPos(_hwnd, _parentHwnd, 0, 0, 0, 0,
-            SWP_NOACTIVATE | 0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/ | SWP_SHOWWINDOW);
         SetForegroundWindow(_hwnd);
+        // Delayed re-assert — UI state changes may steal focus
+        Task.Delay(100).ContinueWith(_ =>
+        {
+            if (_hwnd != IntPtr.Zero && !_isMiniBar && !_isFullscreen)
+            {
+                MatchParentPosition();
+                SetForegroundWindow(_hwnd);
+            }
+        });
     }
 
     public void EnterFullscreen()
@@ -281,10 +287,13 @@ public sealed class MpvVideoWindow : IDisposable
         GetClientRect(_parentHwnd, out var client);
         var topLeft = new POINT { X = client.Left, Y = client.Top };
         ClientToScreen(_parentHwnd, ref topLeft);
-        SetWindowPos(_hwnd, IntPtr.Zero,
+        // Topmost flash — reliably brings window to front without staying topmost
+        SetWindowPos(_hwnd, HWND_TOPMOST,
             topLeft.X, topLeft.Y,
             client.Right - client.Left, client.Bottom - client.Top,
-            SWP_NOZORDER | SWP_NOACTIVATE);
+            SWP_NOACTIVATE);
+        SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOACTIVATE | 0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/);
     }
 
     private IntPtr WndProcInstance(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)

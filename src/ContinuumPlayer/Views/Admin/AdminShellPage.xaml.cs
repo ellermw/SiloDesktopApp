@@ -35,6 +35,7 @@ public sealed partial class AdminShellPage : Page
         // USERS
         _navItems.Add((NavUsers,           NavUsersBar,           NavUsersIcon,           NavUsersText));
         _navItems.Add((NavPlaybackHistory, NavPlaybackHistoryBar, NavPlaybackHistoryIcon, NavPlaybackHistoryText));
+        _navItems.Add((NavHistoryImport,   NavHistoryImportBar,   NavHistoryImportIcon,   NavHistoryImportText));
         // SERVER
         _navItems.Add((NavScheduledTasks,      NavScheduledTasksBar,      NavScheduledTasksIcon,      NavScheduledTasksText));
         _navItems.Add((NavNodes,               NavNodesBar,               NavNodesIcon,               NavNodesText));
@@ -117,6 +118,12 @@ public sealed partial class AdminShellPage : Page
     {
         SetActiveNavItem(NavPlaybackHistory);
         AdminContentFrame.Navigate(typeof(AdminPlaybackHistoryPage));
+    }
+
+    private void NavHistoryImport_Click(object sender, RoutedEventArgs e)
+    {
+        SetActiveNavItem(NavHistoryImport);
+        AdminContentFrame.Navigate(typeof(AdminHistoryImportPage));
     }
 
     private void NavScheduledTasks_Click(object sender, RoutedEventArgs e)

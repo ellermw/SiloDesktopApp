@@ -21,9 +21,11 @@ public sealed partial class AdminSettingsDetailPage : Page
     private static readonly string[] TabNames =
     [
         "General",
+        "Theming",
         "Playback",
         "Scanner & Matcher",
         "Rate Limiting",
+        "Downloads",
         "Integrations",
         "Jellyfin Compat",
         "Database",
@@ -126,9 +128,11 @@ public sealed partial class AdminSettingsDetailPage : Page
         switch (tabName)
         {
             case "General": BuildGeneralTab(); break;
+            case "Theming": BuildThemingTab(); break;
             case "Playback": BuildPlaybackTab(); break;
             case "Scanner & Matcher": BuildScannerTab(); break;
             case "Rate Limiting": BuildRateLimitTab(); break;
+            case "Downloads": BuildDownloadsTab(); break;
             case "Integrations": BuildIntegrationsTab(); break;
             case "Jellyfin Compat": BuildJellyfinTab(); break;
             case "Database": BuildDatabaseTab(); break;
@@ -138,6 +142,37 @@ public sealed partial class AdminSettingsDetailPage : Page
     }
 
     // ===== Tab Builders =====
+
+    private void BuildThemingTab()
+    {
+        AddTabHeader("Theming", "Customize server branding, catalog themes, and login page appearance.");
+
+        AddSectionHeader("Branding");
+        var brandCard = BeginCard();
+        AddTextField(brandCard, "Server Name", "branding.server_name", "e.g. My Media Server");
+        AddTextField(brandCard, "Login Subtitle", "branding.login_subtitle", "Shown below server name on login page");
+        EndCard(brandCard);
+
+        AddSectionHeader("Catalog Theme");
+        var themeCard = BeginCard();
+        AddTextField(themeCard, "Theme Catalog URL", "theme.catalog_url", "URL to a remote theme catalog JSON");
+        EndCard(themeCard);
+    }
+
+    private void BuildDownloadsTab()
+    {
+        AddTabHeader("Downloads", "Control offline download availability, bandwidth limits, and concurrency.");
+
+        AddSectionHeader("Downloads");
+        var dlCard = BeginCard();
+        AddToggleField(dlCard, "Enable Downloads", "download.enabled");
+        AddTextField(dlCard, "Server Bandwidth (Mbps)", "download.server_bandwidth_mbps", "Total server bandwidth for downloads");
+        AddTextField(dlCard, "User Bandwidth (Mbps)", "download.user_bandwidth_mbps", "Per-user bandwidth limit");
+        AddTextField(dlCard, "Max Concurrent Per User", "download.max_concurrent_per_user", "Simultaneous downloads per user");
+        AddTextField(dlCard, "Max Per Period", "download.max_per_period", "Download count limit per period");
+        AddTextField(dlCard, "Period Duration", "download.period_duration", "e.g. 24h, 7d");
+        EndCard(dlCard);
+    }
 
     private void BuildGeneralTab()
     {
