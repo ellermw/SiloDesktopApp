@@ -219,23 +219,25 @@ public sealed class MpvVideoWindow : IDisposable
         if (_hwnd == IntPtr.Zero) return;
         _isFullscreen = false;
         MatchParentPosition();
-        // Drop from TOPMOST
-        SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002);
-        BringAboveParent();
-        // Re-assert after 100ms — UI state changes may steal focus from the popup
-        Task.Delay(100).ContinueWith(_ =>
+        // "Topmost flash" — briefly set TOPMOST then remove it.
+        // This reliably brings the window to front without keeping it above the taskbar.
+        SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOACTIVATE | 0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/);
+        SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOACTIVATE | 0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/);
+        SetForegroundWindow(_hwnd);
+        // Re-assert after UI state changes settle
+        Task.Delay(150).ContinueWith(_ =>
         {
             if (!_isFullscreen && _hwnd != IntPtr.Zero)
-                BringAboveParent();
+            {
+                SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                    SWP_NOACTIVATE | 0x0001 | 0x0002);
+                SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                    SWP_NOACTIVATE | 0x0001 | 0x0002);
+                SetForegroundWindow(_hwnd);
+            }
         });
-    }
-
-    public void BringAboveParent()
-    {
-        if (_hwnd == IntPtr.Zero) return;
-        SetWindowPos(_hwnd, _parentHwnd, 0, 0, 0, 0,
-            SWP_NOACTIVATE | 0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/ | SWP_SHOWWINDOW);
-        SetForegroundWindow(_hwnd);
     }
 
     public bool IsFullscreen => _isFullscreen;

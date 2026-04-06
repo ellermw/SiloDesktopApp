@@ -166,8 +166,18 @@ public class ContinuumApiClient
         if (_profileToken != null) request.Headers.Add("X-Profile-Token", _profileToken);
     }
 
-    private async Task<T> SendAsync<T>(HttpRequestMessage request, CancellationToken ct)
+    // Buffer content before sending so we can replay on 401 retry
+    private async Task<HttpResponseMessage> SendWithRetryAsync(HttpRequestMessage request, CancellationToken ct)
     {
+        // Pre-buffer content — after SendAsync the content stream is consumed
+        byte[]? contentBytes = null;
+        System.Net.Http.Headers.MediaTypeHeaderValue? contentType = null;
+        if (request.Content != null)
+        {
+            contentBytes = await request.Content.ReadAsByteArrayAsync(ct);
+            contentType = request.Content.Headers.ContentType;
+        }
+
         var response = await _http.SendAsync(request, ct);
 
         // On 401, try refreshing the token and retry once
@@ -180,48 +190,30 @@ public class ContinuumApiClient
 
             if (refreshed)
             {
-                // Clone the request with the new token
                 using var retry = new HttpRequestMessage(request.Method, request.RequestUri);
                 AddHeaders(retry);
-                if (request.Content != null)
+                if (contentBytes != null)
                 {
-                    var body = await request.Content.ReadAsByteArrayAsync(ct);
-                    retry.Content = new ByteArrayContent(body);
-                    retry.Content.Headers.ContentType = request.Content.Headers.ContentType;
+                    retry.Content = new ByteArrayContent(contentBytes);
+                    retry.Content.Headers.ContentType = contentType;
                 }
                 response = await _http.SendAsync(retry, ct);
             }
         }
 
+        return response;
+    }
+
+    private async Task<T> SendAsync<T>(HttpRequestMessage request, CancellationToken ct)
+    {
+        var response = await SendWithRetryAsync(request, ct);
         if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct);
         return (await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct))!;
     }
 
     private async Task SendNoContentAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        var response = await _http.SendAsync(request, ct);
-
-        if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized && _tokenRefresher != null)
-        {
-            bool refreshed = false;
-            await _refreshLock.WaitAsync(ct);
-            try { refreshed = await _tokenRefresher(ct); }
-            finally { _refreshLock.Release(); }
-
-            if (refreshed)
-            {
-                using var retry = new HttpRequestMessage(request.Method, request.RequestUri);
-                AddHeaders(retry);
-                if (request.Content != null)
-                {
-                    var body = await request.Content.ReadAsByteArrayAsync(ct);
-                    retry.Content = new ByteArrayContent(body);
-                    retry.Content.Headers.ContentType = request.Content.Headers.ContentType;
-                }
-                response = await _http.SendAsync(retry, ct);
-            }
-        }
-
+        var response = await SendWithRetryAsync(request, ct);
         if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct);
     }
 
