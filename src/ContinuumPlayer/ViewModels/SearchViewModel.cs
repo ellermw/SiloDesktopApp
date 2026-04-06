@@ -75,23 +75,11 @@ public partial class SearchViewModel : ObservableObject
             foreach (var person in people)
                 PeopleResults.Add(person);
 
-            // Filter client-side since the server search endpoint may not support text search yet
+            // Use server results directly — server handles text search
             Results.Clear();
-            var queryLower = Query.ToLowerInvariant();
-            var filtered = response.Items.Where(i =>
-                i.Title.Contains(queryLower, StringComparison.OrdinalIgnoreCase) ||
-                (i.Overview ?? "").Contains(queryLower, StringComparison.OrdinalIgnoreCase)).ToList();
-
-            foreach (var item in filtered)
-            {
+            foreach (var item in response.Items)
                 Results.Add(item);
-            }
-            TotalCount = filtered.Count;
-
-            if (filtered.Count == 0 && PeopleResults.Count == 0 && response.Items.Count > 0)
-            {
-                ErrorMessage = "No matches found. Server-side search may need configuration.";
-            }
+            TotalCount = response.Items.Count;
         }
         catch (OperationCanceledException)
         {
