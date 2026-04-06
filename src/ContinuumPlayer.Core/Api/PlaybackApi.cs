@@ -24,6 +24,22 @@ public class PlaybackApi(ContinuumApiClient client)
         => client.PatchAsync<ChangeAudioResponse>($"/api/v1/playback/{sessionId}/audio",
             new { audio_track_index = trackIndex, position }, ct);
 
+    // ===== Subtitle Preferences =====
+
+    public Task SaveSubtitlePrefsAsync(string seriesId, string language, string mode, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/subtitle-prefs/{Uri.EscapeDataString(seriesId)}",
+            new { subtitle_language = language, subtitle_mode = mode }, ct);
+
+    // ===== Home Dismissals =====
+
+    public Task DismissContinueWatchingAsync(string itemId, string progressUpdatedAt, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/home/dismissals/continue_watching/{Uri.EscapeDataString(itemId)}",
+            new { progress_updated_at = progressUpdatedAt }, ct);
+
+    public Task DismissNextUpAsync(string itemId, string seriesId, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/home/dismissals/next_up/{Uri.EscapeDataString(itemId)}",
+            new { series_id = seriesId }, ct);
+
     // ===== Subtitles =====
 
     public Task<SubtitleListResponse> GetSubtitlesAsync(int mediaFileId, CancellationToken ct = default)

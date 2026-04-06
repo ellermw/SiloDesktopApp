@@ -58,10 +58,8 @@ public class PluginsApi(ContinuumApiClient client)
     public Task<PluginTaskBindingUpdateResponse> SaveTaskBindingAsync(int installationId, string capabilityId, SavePluginTaskBindingRequest request, CancellationToken ct = default)
         => client.PutAsync<PluginTaskBindingUpdateResponse>($"/api/v1/admin/plugins/installations/{installationId}/task-bindings/{Uri.EscapeDataString(capabilityId)}", request, ct);
 
-    // ===== Analyzer Bindings =====
-
-    public Task SaveAnalyzerBindingsAsync(int installationId, string capabilityId, SavePluginAnalyzerBindingsRequest request, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/admin/plugins/installations/{installationId}/analyzer-bindings/{Uri.EscapeDataString(capabilityId)}", request, ct);
+    // NOTE: Analyzer bindings endpoint removed — does not exist in server router.
+    // The SaveAnalyzerBindingsAsync method was calling a non-existent endpoint.
 
     // ===== Legacy Metadata Import =====
 

@@ -23,6 +23,7 @@ public class PlayerService : IDisposable
     private volatile bool _qualitySwitchActive;
     private string _activeQualityTier = "original";
     private HlsProxy? _hlsProxy;
+    private PlaybackWebSocket? _webSocket;
 
     public PlayerService(PlaybackApi playbackApi, CatalogApi catalogApi, AuthService authService, ContinuumApiClient apiClient)
     {
@@ -440,10 +441,11 @@ public class PlayerService : IDisposable
             SendSubtitleListToOsc();
             SendQualityInfoToOsc();
 
-            // Load subtitles on a background thread — sub-add commands are synchronous
-            // and can block for seconds (30+ HTTP requests). Running them here would
-            // freeze the event loop, preventing button clicks from being processed.
+            // Load subtitles on a background thread
             Task.Run(() => LoadSubtitles());
+
+            // Connect WebSocket for real-time admin control
+            ConnectWebSocket();
         };
 
         _mpv.PlaybackEnded += () =>
@@ -1178,6 +1180,7 @@ public class PlayerService : IDisposable
         _qualitySwitchActive = false;
         _hlsProxy?.Stop();
         _hlsProxy = null;
+        DisconnectWebSocket();
         ErrorMessage = null;
         Versions = [];
 
@@ -1200,6 +1203,101 @@ public class PlayerService : IDisposable
         }
         _mpv?.Dispose();
         _mpv = null;
+    }
+
+    // ── WebSocket session control ───────────────────────────────────────
+
+    private void ConnectWebSocket()
+    {
+        _webSocket?.Disconnect();
+        if (_playbackManager?.SessionId == null) return;
+
+        var baseUrl = _apiClient.BaseUrl;
+        var sessionId = _playbackManager.SessionId;
+        var token = _apiClient.AccessToken;
+
+        _webSocket = new PlaybackWebSocket(baseUrl, sessionId, token);
+        _webSocket.CommandReceived += HandleWebSocketCommand;
+        _ = _webSocket.ConnectAsync();
+    }
+
+    private void DisconnectWebSocket()
+    {
+        _webSocket?.Disconnect();
+        _webSocket = null;
+    }
+
+    private async Task<CommandResult> HandleWebSocketCommand(WebSocketCommand cmd)
+    {
+        switch (cmd.Name)
+        {
+            case "pause":
+                _mpv?.Pause();
+                return new CommandResult();
+
+            case "unpause":
+                _mpv?.Play();
+                return new CommandResult();
+
+            case "play_pause":
+                _mpv?.TogglePause();
+                return new CommandResult();
+
+            case "seek":
+                var pos = cmd.GetNumber("position", "position_seconds", "seconds");
+                if (pos == null) return new CommandResult { Status = "rejected", Error = "missing_seek_position" };
+                _mpv?.Seek(pos.Value);
+                return new CommandResult();
+
+            case "set_volume":
+                var vol = cmd.GetNumber("volume", "level");
+                if (vol == null) return new CommandResult { Status = "rejected", Error = "missing_volume" };
+                _mpv?.SetVolume(Math.Min(100, Math.Max(0, vol.Value * 100)));
+                return new CommandResult();
+
+            case "display_message":
+                ShowNotice(
+                    cmd.GetString("title") ?? "Playback notice",
+                    cmd.GetString("message") ?? "A server message was received.",
+                    "info");
+                return new CommandResult();
+
+            case "server_restarting":
+                ShowNotice(
+                    cmd.GetString("title") ?? "Server restarting",
+                    cmd.GetString("message") ?? "Playback may end shortly while the server restarts.",
+                    "warning");
+                return new CommandResult();
+
+            case "server_shutting_down":
+                ShowNotice(
+                    cmd.GetString("title") ?? "Server shutting down",
+                    cmd.GetString("message") ?? "Playback may end shortly while the server shuts down.",
+                    "warning");
+                return new CommandResult();
+
+            case "stop":
+            case "terminate":
+                var msg = cmd.GetString("message");
+                if (msg != null)
+                {
+                    ShowNotice(
+                        cmd.GetString("title") ?? (cmd.Name == "terminate" ? "Playback ended" : "Playback stopping"),
+                        msg,
+                        "warning");
+                }
+                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => _ = CloseAsync());
+                return new CommandResult();
+
+            default:
+                return new CommandResult { Status = "rejected", Error = "unsupported" };
+        }
+    }
+
+    private void ShowNotice(string title, string message, string tone)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new { title, message, tone });
+        _mpv?.SendScriptMessage("osc-show-notice", json);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

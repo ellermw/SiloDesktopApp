@@ -150,6 +150,14 @@ local state = {
     quality_menu_visible = false,
     quality_menu_overlay = nil,
     quality_menu_items  = {},
+
+    -- Notice overlay (admin messages)
+    notice_visible  = false,
+    notice_title    = "",
+    notice_message  = "",
+    notice_tone     = "info",
+    notice_timer    = nil,
+    notice_overlay  = nil,
 }
 
 local quality_tiers = {
@@ -1699,6 +1707,85 @@ local function render_quality_menu()
     state.quality_menu_overlay:update()
 end
 
+--------------------------------------------------------------------------------
+-- Notice Overlay (admin messages via WebSocket)
+--------------------------------------------------------------------------------
+
+local function render_notice()
+    if not state.notice_visible then
+        if state.notice_overlay then
+            state.notice_overlay.data = ""
+            state.notice_overlay:update()
+        end
+        return
+    end
+
+    update_osd_dimensions()
+    local ass = assdraw.ass_new()
+    local W = state.osd_width
+    local H = state.osd_height
+
+    local fs = config.stats_font_size + 1
+    local fs_small = config.stats_font_size
+    local padding = 20
+    local box_w = math.min(500, W - 40)
+    local box_x = (W - box_w) / 2
+    local box_y = 60
+
+    -- Calculate height based on content
+    local title_h = 24
+    local msg_h = 20
+    local box_h = padding * 2 + title_h + msg_h + 8
+
+    -- Background color based on tone
+    local bg_color = state.notice_tone == "warning" and "0040B0" or "B05A00"  -- amber / sky (BGR for ASS)
+
+    -- Background
+    draw_rounded_rect(ass, box_x, box_y, box_x + box_w, box_y + box_h,
+        10, bg_color, "30", 1.0)
+
+    -- Border
+    local border_color = state.notice_tone == "warning" and "0055CC" or "CC7733"
+    draw_rounded_rect(ass, box_x, box_y, box_x + box_w, box_y + 2,
+        0, border_color, "50", 1.0)
+
+    -- Title
+    draw_text(ass, box_x + padding, box_y + padding + title_h / 2, state.notice_title,
+        fs, config.text_color, "00", 1.0, 4, nil, true)
+
+    -- Message
+    draw_text(ass, box_x + padding, box_y + padding + title_h + 8 + msg_h / 2, state.notice_message,
+        fs_small, config.text_color, "20", 1.0, 4)
+
+    -- Update overlay
+    if not state.notice_overlay then
+        state.notice_overlay = mp.create_osd_overlay("ass-events")
+    end
+    state.notice_overlay.data = ass.text
+    state.notice_overlay.res_x = W
+    state.notice_overlay.res_y = H
+    state.notice_overlay.z = 80  -- above everything
+    state.notice_overlay:update()
+end
+
+local function show_notice(title, message, tone)
+    state.notice_title = title or ""
+    state.notice_message = message or ""
+    state.notice_tone = tone or "info"
+    state.notice_visible = true
+    render_notice()
+
+    -- Auto-dismiss after 8 seconds
+    if state.notice_timer then
+        state.notice_timer:kill()
+    end
+    state.notice_timer = mp.add_timeout(8, function()
+        state.notice_visible = false
+        render_notice()
+        state.notice_timer = nil
+    end)
+end
+
 -- Toggle stats (defined here so handle_mouse_down can reference it)
 local function toggle_stats()
     state.stats_visible = not state.stats_visible
@@ -1998,6 +2085,13 @@ local function observe_properties()
             state.stats_visible = false
             state.subtitle_menu_visible = false
             state.quality_menu_visible = false
+        end
+    end)
+
+    mp.register_script_message("osc-show-notice", function(json_str)
+        local ok, data = pcall(require("mp.utils").parse_json, json_str)
+        if ok and data then
+            show_notice(data.title, data.message, data.tone)
         end
     end)
 
