@@ -48,6 +48,7 @@ public sealed class HlsProxy : IDisposable
     {
         _cts?.Cancel();
         try { _listener?.Stop(); } catch { }
+        try { (_listener as IDisposable)?.Dispose(); } catch { }
         _listener = null;
     }
 
@@ -147,8 +148,8 @@ public sealed class HlsProxy : IDisposable
         // (server copies rawQuery from manifest request to segment URLs).
         // Don't add a second token.
 
-        // Log full URL to a separate file for debugging
-        try { File.WriteAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ContinuumPlayer", "last_segment_url.txt"), remoteUrl); } catch { }
+        // Log segment path (strip token for security)
+        var logSegPath = remoteUrl.Contains('?') ? remoteUrl[..remoteUrl.IndexOf('?')] : remoteUrl;
         Log($"Requesting segment (full URL in last_segment_url.txt)");
 
         byte[]? data = null;

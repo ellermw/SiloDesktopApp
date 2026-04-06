@@ -1413,16 +1413,20 @@ local function handle_mouse_move()
     -- Handle seek drag
     if state.dragging_seek then
         local sb = L.seek_bar
-        local ratio = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
-        state.seek_drag_pos = ratio
+        if sb then
+            local ratio = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
+            state.seek_drag_pos = ratio
+        end
     end
 
     -- Handle volume drag
     if state.dragging_volume then
         local vb = L.volume_bar
-        local ratio = clamp((mx - vb.x) / vb.w, 0, 1)
-        state.volume_drag_val = ratio * 100
-        mp.commandv("set", "volume", tostring(state.volume_drag_val))
+        if vb then
+            local ratio = clamp((mx - vb.x) / vb.w, 0, 1)
+            state.volume_drag_val = ratio * 100
+            mp.commandv("set", "volume", tostring(state.volume_drag_val))
+        end
     end
 end
 
@@ -2419,15 +2423,18 @@ local function setup_script_messages()
         -- Handle seek drag
         if state.dragging_seek then
             local sb = L.seek_bar
-            local ratio = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
-            state.seek_drag_pos = ratio
+            if sb then
+                local ratio = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
+                state.seek_drag_pos = ratio
+            end
         end
 
         -- Handle volume drag
         if state.dragging_volume then
             local vb = L.volume_bar
-            local ratio = clamp((mx - vb.x) / vb.w, 0, 1)
-            state.volume_drag_val = ratio * 100
+            if vb then
+                local ratio = clamp((mx - vb.x) / vb.w, 0, 1)
+                state.volume_drag_val = ratio * 100
             mp.commandv("set", "volume", tostring(state.volume_drag_val))
         end
     end)
@@ -2532,7 +2539,7 @@ local function init()
         -- Reset drag state from previous session (mpv instance is reused)
         state.dragging_seek = false
         state.dragging_volume = false
-        state.seek_drag_pos = nil
+        state.seek_drag_pos = 0
         show_osc()
     end)
 

@@ -19,7 +19,7 @@ public class PlayerService : IDisposable
     private MpvPlayer? _mpv;
     private MpvVideoWindow? _videoWindow;
     private PlaybackManager? _playbackManager;
-    private bool _switchingContent;
+    private volatile bool _switchingContent;
     private volatile bool _qualitySwitchActive;
     private string _activeQualityTier = "original";
     private HlsProxy? _hlsProxy;
@@ -218,6 +218,7 @@ public class PlayerService : IDisposable
         ErrorMessage = null;
         IsLoading = true;
         ContentId = contentId;
+        _resumePosition = 0; // Clear stale resume from previous failed play
         _switchingContent = true; // Suppress stale PlaybackEnded from previous _mpv.Stop()
 
         // Show loading indicator on the main window

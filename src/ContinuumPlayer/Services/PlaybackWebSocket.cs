@@ -48,7 +48,8 @@ public sealed class PlaybackWebSocket : IDisposable
 
         try
         {
-            Log($"Connecting to: {wsUrl.Substring(0, Math.Min(120, wsUrl.Length))}...");
+            var logUrl = wsUrl.Contains('?') ? wsUrl[..wsUrl.IndexOf('?')] : wsUrl;
+            Log($"Connecting to: {logUrl}");
             await _ws.ConnectAsync(new Uri(wsUrl), _cts.Token);
             Log($"Connected successfully");
 
@@ -76,8 +77,7 @@ public sealed class PlaybackWebSocket : IDisposable
         try
         {
             if (_ws?.State == WebSocketState.Open)
-                _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "closing", CancellationToken.None)
-                    .GetAwaiter().GetResult();
+                _ = _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "closing", CancellationToken.None);
         }
         catch { }
         _ws?.Dispose();

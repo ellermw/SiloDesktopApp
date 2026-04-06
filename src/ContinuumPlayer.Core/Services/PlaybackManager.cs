@@ -79,7 +79,7 @@ public class PlaybackManager : IDisposable
         if (token != null)
             url += (url.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
         if (response.PlayMethod == "remux" && response.Position > 0)
-            url += $"&seek={response.Position:F3}";
+            url += (url.Contains('?') ? "&" : "?") + $"seek={response.Position:F3}";
 
         StreamUrl = url;
         StartProgressReporting();

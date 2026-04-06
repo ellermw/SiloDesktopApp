@@ -897,6 +897,16 @@ public sealed class MpvPlayer : IDisposable
             return;
         _disposed = true;
 
+        // Clear event subscribers to prevent external memory leaks
+        PositionChanged = null;
+        DurationChanged = null;
+        PauseChanged = null;
+        PlaybackEnded = null;
+        FileLoaded = null;
+        FrameReady = null;
+        ScriptMessageReceived = null;
+        Error = null;
+
         // Signal render thread to exit
         _frameUpdateEvent.Set();
 
