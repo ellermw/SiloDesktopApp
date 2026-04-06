@@ -107,14 +107,19 @@ public sealed partial class MainWindow : Window
                         if (_authService.RefreshToken != null)
                             _credentialStore.SaveCredential(server.Url, "refresh_token", _authService.RefreshToken);
 
-                        // Restore user info from saved settings (refresh doesn't return user)
-                        if (!string.IsNullOrEmpty(settings.LastUsername))
+                        // Restore user info — prefer JWT-parsed role (from TryRefreshAsync),
+                        // only fall back to saved settings if JWT didn't have user info
+                        if (_authService.CurrentUser == null && !string.IsNullOrEmpty(settings.LastUsername))
                         {
                             _authService.SetCurrentUser(new Core.Models.Auth.UserInfo
                             {
                                 Username = settings.LastUsername,
                                 Role = settings.LastUserRole ?? "user"
                             });
+                        }
+                        else if (_authService.CurrentUser != null && string.IsNullOrEmpty(_authService.CurrentUser.Username) && !string.IsNullOrEmpty(settings.LastUsername))
+                        {
+                            _authService.CurrentUser.Username = settings.LastUsername;
                         }
 
                         // Auto-select last profile if available
@@ -145,6 +150,10 @@ public sealed partial class MainWindow : Window
     {
         NavView.IsPaneVisible = true;
 
+        // Always update admin button visibility based on current user role
+        AdminButton.Visibility = _authService.CurrentUser?.Role == "admin"
+            ? Visibility.Visible : Visibility.Collapsed;
+
         if (!_navInitialized)
         {
             _navInitialized = true;
@@ -152,10 +161,6 @@ public sealed partial class MainWindow : Window
             // Fire both loads concurrently -- they are independent
             _ = _viewModel.LoadLibrariesCommand.ExecuteAsync(null);
             _ = UpdateProfileDisplayAsync();
-
-            // Show Admin button if user is admin
-            AdminButton.Visibility = _authService.CurrentUser?.Role == "admin"
-                ? Visibility.Visible : Visibility.Collapsed;
 
             // Watch for library changes to update nav (marshal to UI thread)
             _viewModel.Libraries.CollectionChanged += (_, _) =>
