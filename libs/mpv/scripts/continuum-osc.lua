@@ -1030,6 +1030,23 @@ end
 -- Stats Overlay
 --------------------------------------------------------------------------------
 
+-- Format bytes to human-readable size
+local function format_file_size(bytes)
+    if not bytes or bytes <= 0 then return "0 B" end
+    if bytes >= 1073741824 then return string.format("%.1f GiB", bytes / 1073741824) end
+    if bytes >= 1048576 then return string.format("%.1f MiB", bytes / 1048576) end
+    if bytes >= 1024 then return string.format("%.1f KiB", bytes / 1024) end
+    return string.format("%d B", bytes)
+end
+
+-- Format bitrate
+local function format_bitrate(bps)
+    if not bps or bps <= 0 then return "" end
+    if bps >= 1000000 then return string.format("%.1f Mbps", bps / 1000000) end
+    if bps >= 1000 then return string.format("%.0f kbps", bps / 1000) end
+    return string.format("%d bps", bps)
+end
+
 local function render_stats()
     if not state.stats_visible then
         if state.stats_overlay then
@@ -1042,150 +1059,159 @@ local function render_stats()
     update_osd_dimensions()
     local ass = assdraw.ass_new()
     local W = state.osd_width
+    local H = state.osd_height
 
-    local lines = {}
-
-    -- Title
-    local title = state.media_title
-    if not title or title == "" then
-        title = state.filename or "Unknown"
-    end
-    table.insert(lines, { label = "Title", value = title })
-
-    -- Video info
-    local vp = state.video_params
-    if vp then
-        local res_str = ""
-        if vp.w and vp.h then
-            res_str = string.format("%dx%d", vp.w, vp.h)
-        end
-        if vp.aspect and vp.aspect > 0 and res_str ~= "" then
-            res_str = res_str .. string.format("  (%.2f:1)", vp.aspect)
-        end
-        if res_str ~= "" then
-            table.insert(lines, { label = "Resolution", value = res_str })
-        end
-
-        -- HDR
-        local colormatrix = vp.colormatrix or ""
-        local primaries = vp.primaries or ""
-        local gamma = vp.gamma or ""
-        local hdr_str = ""
-        if gamma == "pq" or gamma == "hlg" then
-            hdr_str = "HDR"
-            if gamma == "pq" then hdr_str = "HDR10" end
-            if gamma == "hlg" then hdr_str = "HLG" end
-            if primaries == "bt.2020" then
-                hdr_str = hdr_str .. " (BT.2020)"
-            end
-        end
-        if hdr_str ~= "" then
-            table.insert(lines, { label = "HDR", value = hdr_str })
-        end
-
-        -- Pixel format
-        if vp.pixelformat and vp.pixelformat ~= "" then
-            table.insert(lines, { label = "Pixel Format", value = vp.pixelformat })
-        end
-    end
-
-    -- Video codec
-    local vc = state.video_codec
-    if vc and vc ~= "" then
-        table.insert(lines, { label = "Video Codec", value = vc })
-    end
-
-    -- Audio codec
-    local ac = state.audio_codec
-    if ac and ac ~= "" then
-        table.insert(lines, { label = "Audio Codec", value = ac })
-    end
-
-    -- Bitrate
-    local vb = mp.get_property_number("video-bitrate")
-    local ab = mp.get_property_number("audio-bitrate")
-    if vb and vb > 0 then
-        local mbps = vb / 1000000
-        table.insert(lines, { label = "Video Bitrate", value = string.format("%.1f Mbps", mbps) })
-    end
-    if ab and ab > 0 then
-        local kbps = ab / 1000
-        table.insert(lines, { label = "Audio Bitrate", value = string.format("%.0f kbps", kbps) })
-    end
-
-    -- Play method (read from user-data or filename hints)
-    local play_method = mp.get_property("user-data/play-method")
-    if play_method and play_method ~= "" then
-        table.insert(lines, { label = "Play Method", value = play_method })
-    end
-
-    -- FPS
-    local fps = mp.get_property_number("estimated-vf-fps")
-    if fps and fps > 0 then
-        table.insert(lines, { label = "FPS", value = string.format("%.2f", fps) })
-    end
-
-    -- Dropped frames
-    local dropped = mp.get_property_number("frame-drop-count") or 0
-    local decoder_dropped = mp.get_property_number("decoder-frame-drop-count") or 0
-    if dropped > 0 or decoder_dropped > 0 then
-        table.insert(lines, { label = "Dropped Frames", value = string.format("%d (decoder: %d)", dropped, decoder_dropped) })
-    end
-
-    -- A/V sync
-    local avsync = mp.get_property_number("avsync")
-    if avsync then
-        table.insert(lines, { label = "A/V Sync", value = string.format("%.3f s", avsync) })
-    end
-
-    -- Demuxer cache
-    local cache = state.demuxer_cache
-    if cache then
-        local cache_dur = cache["cache-duration"]
-        if cache_dur and cache_dur > 0 then
-            table.insert(lines, { label = "Cache", value = string.format("%.1f s", cache_dur) })
-        end
-    end
-
-    -- Live bandwidth (network download speed)
-    local cache_speed = mp.get_property_number("cache-speed")
-    if cache_speed and cache_speed > 0 then
-        local mbps = cache_speed / 1000000
-        table.insert(lines, { label = "Bandwidth", value = string.format("%.1f Mbps", mbps) })
-    end
-
-    if #lines == 0 then return end
-
-    -- Calculate box dimensions
+    local fs = config.stats_font_size
+    local fs_small = math.max(fs - 2, 10)
     local padding = config.stats_padding
     local line_h = config.stats_line_height
-    local fs = config.stats_font_size
+    local section_gap = 12
+    local header_h = line_h + 4
     local box_w = 380
-    local box_h = padding * 2 + #lines * line_h
     local box_x = 20
-    local box_y = 20
+    local box_y = 50  -- below any top UI
+
+    -- Build all sections
+    local sections = {}
+
+    -- Section 1: Player
+    local s1 = { header = "PLAYER", rows = {} }
+    table.insert(s1.rows, { label = "Player", value = "libmpv (GPU)" })
+    if state.play_method_str ~= "" then
+        table.insert(s1.rows, { label = "Play method", value = state.play_method_str })
+    end
+    if state.protocol_str ~= "" then
+        table.insert(s1.rows, { label = "Protocol", value = state.protocol_str })
+    end
+    if state.stream_type_str ~= "" then
+        table.insert(s1.rows, { label = "Stream type", value = state.stream_type_str })
+    end
+    table.insert(sections, s1)
+
+    -- Section 2: Video Info (live)
+    local s2 = { header = "VIDEO INFO", rows = {} }
+    table.insert(s2.rows, { label = "Player dimensions", value = string.format("%dx%d", W, H) })
+    local vw = mp.get_property_number("video-params/w")
+    local vh = mp.get_property_number("video-params/h")
+    if vw and vh and vw > 0 then
+        table.insert(s2.rows, { label = "Video resolution", value = string.format("%dx%d", vw, vh) })
+    end
+    local dropped = (mp.get_property_number("vo-delayed-frame-count") or 0)
+                  + (mp.get_property_number("decoder-frame-drop-count") or 0)
+    table.insert(s2.rows, { label = "Dropped frames", value = tostring(dropped) })
+    table.insert(s2.rows, { label = "Corrupted frames", value = "0" })
+    table.insert(sections, s2)
+
+    -- Section 3: Playback Stream Info
+    local s3 = { header = "PLAYBACK STREAM INFO", rows = {} }
+    if state.stream_codec_video ~= "" then
+        table.insert(s3.rows, { label = "Video codec", value = state.stream_codec_video })
+    end
+    if state.stream_codec_audio ~= "" then
+        table.insert(s3.rows, { label = "Audio codec", value = state.stream_codec_audio })
+    end
+    table.insert(sections, s3)
+
+    -- Section 4: Original Media Info
+    local s4 = { header = "ORIGINAL MEDIA INFO", rows = {} }
+    local mi = state.media_info
+    if mi then
+        if mi.container and mi.container ~= "" then
+            table.insert(s4.rows, { label = "Container", value = mi.container })
+        end
+        if mi.file_size and mi.file_size > 0 then
+            table.insert(s4.rows, { label = "Size", value = format_file_size(mi.file_size) })
+        end
+        if mi.bitrate and mi.bitrate > 0 then
+            table.insert(s4.rows, { label = "Bitrate", value = format_bitrate(mi.bitrate) })
+        end
+        if mi.codec_video and mi.codec_video ~= "" then
+            table.insert(s4.rows, { label = "Video codec", value = string.upper(mi.codec_video) })
+        end
+        -- Video bitrate from mpv (live)
+        local vb = mp.get_property_number("video-bitrate")
+        if vb and vb > 0 then
+            table.insert(s4.rows, { label = "Video bitrate", value = format_bitrate(vb) })
+        end
+        -- HDR / range type
+        local vp = state.video_params
+        if vp then
+            local gamma = vp.gamma or ""
+            local range_str = "SDR"
+            if gamma == "pq" then range_str = "HDR10"
+            elseif gamma == "hlg" then range_str = "HLG"
+            end
+            if mi.hdr and range_str == "SDR" then range_str = "HDR" end
+            table.insert(s4.rows, { label = "Video range type", value = range_str })
+        end
+        if mi.audio_title and mi.audio_title ~= "" then
+            table.insert(s4.rows, { label = "Audio codec", value = mi.audio_title })
+        elseif mi.codec_audio and mi.codec_audio ~= "" then
+            table.insert(s4.rows, { label = "Audio codec", value = string.upper(mi.codec_audio) })
+        end
+        -- Audio bitrate from mpv (live)
+        local ab = mp.get_property_number("audio-bitrate")
+        if ab and ab > 0 then
+            table.insert(s4.rows, { label = "Audio bitrate", value = format_bitrate(ab) })
+        end
+        if mi.audio_channels and mi.audio_channels > 0 then
+            table.insert(s4.rows, { label = "Audio channels", value = tostring(mi.audio_channels) })
+        end
+    end
+    table.insert(sections, s4)
+
+    -- Calculate total height
+    local total_h = padding  -- top padding
+    total_h = total_h + line_h + 8  -- header row ("Playback Info" + close X)
+    for _, sec in ipairs(sections) do
+        total_h = total_h + section_gap + header_h  -- section header
+        total_h = total_h + #sec.rows * line_h      -- rows
+    end
+    total_h = total_h + padding  -- bottom padding
 
     -- Background
     draw_rounded_rect(ass,
         box_x, box_y,
-        box_x + box_w, box_y + box_h,
+        box_x + box_w, box_y + total_h,
         8,
         config.bar_bg_color, config.stats_bg_alpha, 1.0)
 
-    -- Lines
-    for i, line in ipairs(lines) do
-        local ly = box_y + padding + (i - 1) * line_h + line_h / 2
-        -- Label
-        draw_text(ass, box_x + padding, ly, line.label .. ":",
-            fs, config.dim_text_color, "00", 1.0, 4, nil, true)
-        -- Value
-        local val = line.value
-        -- Truncate if too long
-        if #val > 40 then
-            val = string.sub(val, 1, 37) .. "..."
+    local cy = box_y + padding
+
+    -- Header: "Playback Info"
+    draw_text(ass, box_x + padding, cy + line_h / 2, "Playback Info",
+        fs + 1, config.text_color, "00", 1.0, 4, nil, true)
+    -- Close X button (top-right)
+    draw_text(ass, box_x + box_w - padding - 10, cy + line_h / 2, "✕",
+        fs, config.dim_text_color, "00", 1.0, 6)
+    -- Store close button hit area for click detection
+    state.stats_close_rect = {
+        x = box_x + box_w - padding - 30,
+        y = cy,
+        w = 40, h = line_h
+    }
+    cy = cy + line_h + 8
+
+    -- Draw sections
+    for _, sec in ipairs(sections) do
+        cy = cy + section_gap
+        -- Section header (uppercase, small, dim)
+        draw_text(ass, box_x + padding, cy + header_h / 2, sec.header,
+            fs_small, config.dim_text_color, "40", 1.0, 4, nil, true)
+        cy = cy + header_h
+
+        -- Rows
+        for _, row in ipairs(sec.rows) do
+            -- Label (left, dim)
+            draw_text(ass, box_x + padding, cy + line_h / 2, row.label,
+                fs, config.dim_text_color, "00", 1.0, 4)
+            -- Value (right-aligned, bright)
+            local val = row.value
+            if #val > 38 then val = string.sub(val, 1, 35) .. "..." end
+            draw_text(ass, box_x + box_w - padding, cy + line_h / 2, val,
+                fs, config.text_color, "00", 1.0, 6)
+            cy = cy + line_h
         end
-        draw_text(ass, box_x + padding + 130, ly, val,
-            fs, config.text_color, "00", 1.0, 4)
     end
 
     -- Update overlay
@@ -1193,8 +1219,8 @@ local function render_stats()
         state.stats_overlay = mp.create_osd_overlay("ass-events")
     end
     state.stats_overlay.data = ass.text
-    state.stats_overlay.res_x = state.osd_width
-    state.stats_overlay.res_y = state.osd_height
+    state.stats_overlay.res_x = W
+    state.stats_overlay.res_y = H
     state.stats_overlay.z = 60
     state.stats_overlay:update()
 end
@@ -1321,6 +1347,169 @@ local function handle_mouse_move()
     end
 end
 
+--------------------------------------------------------------------------------
+-- Subtitle Menu
+--------------------------------------------------------------------------------
+
+-- Map language codes to display names
+local function lang_name(code)
+    if not code or code == "" then return "Unknown" end
+    local map = {
+        en = "English", eng = "English", es = "Spanish", spa = "Spanish",
+        fr = "French", fre = "French", fra = "French", de = "German", ger = "German", deu = "German",
+        it = "Italian", ita = "Italian", pt = "Portuguese", por = "Portuguese",
+        ru = "Russian", rus = "Russian", ja = "Japanese", jpn = "Japanese",
+        ko = "Korean", kor = "Korean", zh = "Chinese", chi = "Chinese", zho = "Chinese",
+        ar = "Arabic", ara = "Arabic", hi = "Hindi", hin = "Hindi",
+        tr = "Turkish", tur = "Turkish", pl = "Polish", pol = "Polish",
+        nl = "Dutch", dut = "Dutch", nld = "Dutch", sv = "Swedish", swe = "Swedish",
+        da = "Danish", dan = "Danish", fi = "Finnish", fin = "Finnish",
+        no = "Norwegian", nob = "Norwegian", nor = "Norwegian",
+        cs = "Czech", cze = "Czech", ces = "Czech", hu = "Hungarian", hun = "Hungarian",
+        ro = "Romanian", rum = "Romanian", ron = "Romanian",
+        bg = "Bulgarian", bul = "Bulgarian", hr = "Croatian", hrv = "Croatian",
+        el = "Greek", gre = "Greek", ell = "Greek", he = "Hebrew", heb = "Hebrew",
+        th = "Thai", tha = "Thai", vi = "Vietnamese", vie = "Vietnamese",
+        id = "Indonesian", ind = "Indonesian", uk = "Ukrainian", ukr = "Ukrainian",
+    }
+    return map[code:lower()] or code:upper()
+end
+
+-- Source badge sort priority
+local function source_priority(src)
+    if src == "external" then return 0 end
+    if src == "downloaded" then return 1 end
+    return 2  -- embedded
+end
+
+-- Capitalize first letter
+local function capitalize(s)
+    if not s or s == "" then return "" end
+    return s:sub(1,1):upper() .. s:sub(2)
+end
+
+local function render_subtitle_menu()
+    if not state.subtitle_menu_visible then
+        if state.subtitle_menu_overlay then
+            state.subtitle_menu_overlay.data = ""
+            state.subtitle_menu_overlay:update()
+        end
+        state.subtitle_menu_items = {}
+        return
+    end
+
+    update_osd_dimensions()
+    local ass = assdraw.ass_new()
+    local W = state.osd_width
+    local H = state.osd_height
+
+    local fs = config.stats_font_size
+    local fs_small = math.max(fs - 2, 10)
+    local padding = config.stats_padding
+    local item_h = config.stats_line_height + 4
+    local menu_w = 280
+
+    -- Sort tracks by source priority
+    local sorted = {}
+    for _, t in ipairs(state.subtitle_tracks) do
+        table.insert(sorted, t)
+    end
+    table.sort(sorted, function(a, b)
+        return source_priority(a.source or "embedded") < source_priority(b.source or "embedded")
+    end)
+
+    -- Calculate menu height: header + "Off" + divider + tracks + divider + "Search Online..."
+    local num_items = 1 + #sorted + 1  -- Off + tracks + Search
+    local menu_h = padding * 2 + item_h + 4 + (#sorted * item_h) + 4 + item_h + 8  -- header area + items
+
+    -- Position: above the CC button (bottom-right area)
+    compute_layout()
+    local L = state.layout
+    local menu_x = W - padding - menu_w - 40
+    local menu_y = H - config.bar_height - menu_h - 10
+    if L.btn_cc then
+        menu_x = L.btn_cc.x - menu_w / 2
+        menu_y = L.btn_cc.y - menu_h - 10
+    end
+    -- Clamp to screen
+    if menu_x < 10 then menu_x = 10 end
+    if menu_y < 10 then menu_y = 10 end
+
+    -- Background
+    draw_rounded_rect(ass, menu_x, menu_y, menu_x + menu_w, menu_y + menu_h,
+        8, config.bar_bg_color, config.stats_bg_alpha, 1.0)
+
+    local cy = menu_y + padding
+    state.subtitle_menu_items = {}
+
+    -- Header
+    draw_text(ass, menu_x + padding, cy + item_h / 2, "Subtitles",
+        fs, config.text_color, "00", 1.0, 4, nil, true)
+    cy = cy + item_h
+
+    -- "Off" option
+    local off_active = (state.active_subtitle <= 0)
+    local off_color = off_active and config.text_color or config.dim_text_color
+    if off_active then
+        draw_text(ass, menu_x + padding, cy + item_h / 2, "✓",
+            fs, config.text_color, "00", 1.0, 4)
+    end
+    draw_text(ass, menu_x + padding + 24, cy + item_h / 2, "Off",
+        fs, off_color, "00", 1.0, 4)
+    table.insert(state.subtitle_menu_items, {
+        x = menu_x, y = cy, w = menu_w, h = item_h, action = "off"
+    })
+    cy = cy + item_h + 4  -- divider space
+
+    -- Track items
+    for _, track in ipairs(sorted) do
+        local is_active = (track.index == state.active_subtitle)
+        local text_color = is_active and config.text_color or config.dim_text_color
+
+        -- Checkmark
+        if is_active then
+            draw_text(ass, menu_x + padding, cy + item_h / 2, "✓",
+                fs, config.text_color, "00", 1.0, 4)
+        end
+
+        -- Language name
+        local display = lang_name(track.language or "")
+        if track.forced then display = display .. " (Forced)" end
+        draw_text(ass, menu_x + padding + 24, cy + item_h / 2, display,
+            fs, text_color, "00", 1.0, 4)
+
+        -- Source badge (right-aligned)
+        local badge = capitalize(track.source or "embedded")
+        draw_text(ass, menu_x + menu_w - padding, cy + item_h / 2, badge,
+            fs_small, config.dim_text_color, "40", 1.0, 6)
+
+        table.insert(state.subtitle_menu_items, {
+            x = menu_x, y = cy, w = menu_w, h = item_h,
+            action = "select", index = track.index
+        })
+        cy = cy + item_h
+    end
+
+    cy = cy + 4  -- divider space
+
+    -- "Search Online..." button
+    draw_text(ass, menu_x + padding + 24, cy + item_h / 2, "Search Online...",
+        fs, "6495ED", "00", 1.0, 4)  -- blue tint
+    table.insert(state.subtitle_menu_items, {
+        x = menu_x, y = cy, w = menu_w, h = item_h, action = "search"
+    })
+
+    -- Update overlay
+    if not state.subtitle_menu_overlay then
+        state.subtitle_menu_overlay = mp.create_osd_overlay("ass-events")
+    end
+    state.subtitle_menu_overlay.data = ass.text
+    state.subtitle_menu_overlay.res_x = W
+    state.subtitle_menu_overlay.res_y = H
+    state.subtitle_menu_overlay.z = 70
+    state.subtitle_menu_overlay:update()
+end
+
 -- Toggle stats (defined here so handle_mouse_down can reference it)
 local function toggle_stats()
     state.stats_visible = not state.stats_visible
@@ -1331,6 +1520,39 @@ local function handle_mouse_down()
     if state.osc_disabled then return end
     local mx = state.mouse_x
     local my = state.mouse_y
+
+    -- Stats overlay close button (always check, even if OSC is hidden)
+    if state.stats_visible and state.stats_close_rect then
+        local r = state.stats_close_rect
+        if mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h then
+            state.stats_visible = false
+            render_stats()
+            return
+        end
+    end
+
+    -- Subtitle menu click handling
+    if state.subtitle_menu_visible then
+        local handled = false
+        for _, item in ipairs(state.subtitle_menu_items) do
+            if point_in_rect(mx, my, item) then
+                if item.action == "off" then
+                    mp.commandv("script-message", "continuum-subtitle-select", "-1")
+                elseif item.action == "select" then
+                    mp.commandv("script-message", "continuum-subtitle-select", tostring(item.index))
+                elseif item.action == "search" then
+                    mp.commandv("script-message", "continuum-subtitle-search")
+                end
+                state.subtitle_menu_visible = false
+                render_subtitle_menu()
+                return
+            end
+        end
+        -- Click outside menu — close it
+        state.subtitle_menu_visible = false
+        render_subtitle_menu()
+        return
+    end
 
     if state.current_alpha < 0.1 then return end
 
@@ -1379,9 +1601,10 @@ local function handle_mouse_down()
         return
     end
 
-    -- Check CC (subtitle cycle) — left click cycles forward
+    -- Check CC (subtitle menu toggle)
     if L.btn_cc and point_in_rect(mx, my, L.btn_cc) then
-        mp.commandv("cycle", "sub")
+        state.subtitle_menu_visible = not state.subtitle_menu_visible
+        render_subtitle_menu()
         return
     end
 

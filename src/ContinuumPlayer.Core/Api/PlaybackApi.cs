@@ -31,6 +31,14 @@ public class PlaybackApi(ContinuumApiClient client)
 
     public Task DeleteSubtitleAsync(int id, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/subtitles/{id}", ct);
+
+    public Task<SubtitleSearchResponse> SearchSubtitlesAsync(int mediaFileId, string[] languages, CancellationToken ct = default)
+        => client.PostAsync<SubtitleSearchResponse>("/api/v1/subtitles/search",
+            new { media_file_id = mediaFileId, languages }, ct);
+
+    public Task<SubtitleDownloadResponse> DownloadSubtitleAsync(int mediaFileId, string provider, string subtitleId, string language, string format, CancellationToken ct = default)
+        => client.PostAsync<SubtitleDownloadResponse>("/api/v1/subtitles/download",
+            new { media_file_id = mediaFileId, provider, subtitle_id = subtitleId, language, format }, ct);
 }
 
 public class SubtitleListResponse
@@ -47,6 +55,29 @@ public class SubtitleEntry
     public string? Title { get; set; }
     public string Source { get; set; } = "";
     public bool Forced { get; set; }
+}
+
+public class SubtitleSearchResponse
+{
+    public List<SubtitleSearchResult> Results { get; set; } = [];
+}
+
+public class SubtitleSearchResult
+{
+    public string Provider { get; set; } = "";
+    public string SubtitleId { get; set; } = "";
+    public string Language { get; set; } = "";
+    public string? ReleaseName { get; set; }
+    public string Format { get; set; } = "srt";
+    public double Score { get; set; }
+    public bool HearingImpaired { get; set; }
+}
+
+public class SubtitleDownloadResponse
+{
+    public int Id { get; set; }
+    public string Language { get; set; } = "";
+    public string Format { get; set; } = "";
 }
 
 public class ChangeAudioResponse

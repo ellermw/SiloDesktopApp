@@ -431,6 +431,10 @@ public class PlayerService : IDisposable
                 LogToFile("state_trace.txt", "No resume position (starting from beginning)");
             }
 
+            // Send media info + subtitle list to Lua OSC for stats overlay and subtitle menu
+            SendMediaInfoToOsc();
+            SendSubtitleListToOsc();
+
             // Load subtitles on a background thread — sub-add commands are synchronous
             // and can block for seconds (30+ HTTP requests). Running them here would
             // freeze the event loop, preventing button clicks from being processed.
@@ -592,6 +596,78 @@ public class PlayerService : IDisposable
         }
     }
 
+    private void SendMediaInfoToOsc()
+    {
+        if (_mpv == null || _playbackManager?.WatchDetail == null || _playbackManager.CurrentSession == null) return;
+
+        var wd = _playbackManager.WatchDetail;
+        var session = _playbackManager.CurrentSession;
+        var version = wd.Versions?.FirstOrDefault(v => v.FileId == session.MediaFileId);
+        if (version == null) return;
+
+        var audioTrack = version.AudioTracks?.ElementAtOrDefault(session.AudioTrackIndex);
+
+        var info = new Dictionary<string, object?>
+        {
+            ["container"] = version.Container ?? "",
+            ["file_size"] = version.FileSize,
+            ["bitrate"] = version.Bitrate,
+            ["codec_video"] = version.CodecVideo ?? "",
+            ["codec_audio"] = version.CodecAudio ?? "",
+            ["hdr"] = version.Hdr,
+            ["resolution"] = version.Resolution ?? "",
+            ["audio_channels"] = audioTrack?.Channels ?? version.AudioChannels ?? 0,
+            ["audio_title"] = audioTrack?.Title ?? audioTrack?.EmbeddedTitle ?? "",
+        };
+
+        var json = System.Text.Json.JsonSerializer.Serialize(info);
+        _mpv.SendScriptMessage("osc-set-media-info", json);
+
+        // Send stream info
+        var pi = session.PlaybackInfo;
+        var playMethodDisplay = session.PlayMethod switch
+        {
+            "direct" => "Direct Play",
+            "remux" => "Direct Streaming",
+            "transcode" => "Transcode",
+            _ => session.PlayMethod
+        };
+        var streamType = pi?.StreamType switch
+        {
+            "hls" => "HLS",
+            _ => "Progressive"
+        };
+        var streamUrl = _playbackManager.StreamUrl ?? "";
+        var protocol = streamUrl.StartsWith("https") ? "https" : "http";
+
+        var vcSuffix = session.PlayMethod == "direct" ? "(direct)" : session.PlayMethod == "remux" ? "(copy)" : "(transcoded)";
+        var acSuffix = (pi?.TranscodeAudio == true) ? "(transcoded)" : (session.PlayMethod == "direct" ? "(direct)" : "(copy)");
+        var vcDisplay = $"{(pi?.VideoCodec ?? version.CodecVideo ?? "").ToUpper()} {vcSuffix}";
+        var acDisplay = $"{(pi?.AudioCodec ?? version.CodecAudio ?? "").ToUpper()} {acSuffix}";
+
+        _mpv.SendScriptMessage("osc-set-stream-info", playMethodDisplay, streamType, protocol, vcDisplay, acDisplay);
+    }
+
+    private void SendSubtitleListToOsc()
+    {
+        if (_mpv == null || _playbackManager?.CurrentSession == null) return;
+
+        var tracks = _playbackManager.CurrentSession.SubtitleUrls ?? [];
+        var jsonTracks = tracks.Select(t => new Dictionary<string, object?>
+        {
+            ["index"] = t.Index,
+            ["language"] = t.Language ?? "",
+            ["label"] = t.Label ?? "",
+            ["source"] = t.Source ?? "embedded",
+            ["codec"] = t.Codec ?? "",
+            ["forced"] = t.Forced
+        }).ToArray();
+
+        var json = System.Text.Json.JsonSerializer.Serialize(jsonTracks);
+        _mpv.SendScriptMessage("osc-set-subtitles", json);
+        _mpv.SendScriptMessage("osc-set-active-subtitle", "-1");
+    }
+
     // ── Video window events ────────────────────────────────────────────
 
     private void WireVideoWindowEvents()
@@ -661,6 +737,45 @@ public class PlayerService : IDisposable
             case "continuum-minimize":
                 dispatch.TryEnqueue(Minimize);
                 break;
+            case "continuum-subtitle-select":
+                if (args.Length > 1 && int.TryParse(args[1], out var subIdx))
+                {
+                    _mpv?.SetSubtitleTrack(subIdx <= 0 ? 0 : subIdx);
+                    _mpv?.SendScriptMessage("osc-set-active-subtitle", args[1]);
+                }
+                break;
+            case "continuum-subtitle-search":
+                dispatch.TryEnqueue(() => _ = SearchAndDownloadSubtitlesAsync());
+                break;
+        }
+    }
+
+    private async Task SearchAndDownloadSubtitlesAsync()
+    {
+        if (_playbackManager?.CurrentSession == null) return;
+        var fileId = _playbackManager.CurrentSession.MediaFileId;
+
+        try
+        {
+            var results = await _playbackApi.SearchSubtitlesAsync(fileId, ["en"]);
+            if (results.Results.Count == 0)
+            {
+                _mpv?.ShowOsdText("No subtitles found", 3000);
+                return;
+            }
+
+            var best = results.Results[0];
+            await _playbackApi.DownloadSubtitleAsync(fileId, best.Provider, best.SubtitleId, best.Language, best.Format);
+            _mpv?.ShowOsdText($"Downloaded: {best.Language} subtitle", 3000);
+
+            // Reload subtitles
+            Task.Run(() => LoadSubtitles());
+            SendSubtitleListToOsc();
+        }
+        catch (Exception ex)
+        {
+            LogToFile("player_subtitle_error.txt", ex.ToString());
+            _mpv?.ShowOsdText("Subtitle search failed", 3000);
         }
     }
 
