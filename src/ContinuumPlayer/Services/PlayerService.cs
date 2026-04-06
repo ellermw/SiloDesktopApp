@@ -441,6 +441,9 @@ public class PlayerService : IDisposable
             SendSubtitleListToOsc();
             SendQualityInfoToOsc();
 
+            // Send intro/credits markers for skip buttons
+            SendMarkersToOsc();
+
             // Load subtitles on a background thread
             Task.Run(() => LoadSubtitles());
 
@@ -776,6 +779,23 @@ public class PlayerService : IDisposable
         var json = System.Text.Json.JsonSerializer.Serialize(jsonTracks);
         _mpv.SendScriptMessage("osc-set-subtitles", json);
         _mpv.SendScriptMessage("osc-set-active-subtitle", "-1");
+    }
+
+    private void SendMarkersToOsc()
+    {
+        if (_mpv == null || _playbackManager?.WatchDetail == null) return;
+        var wd = _playbackManager.WatchDetail;
+
+        var markers = new Dictionary<string, double>
+        {
+            ["intro_start"] = wd.Intro?.Start ?? 0,
+            ["intro_end"] = wd.Intro?.End ?? 0,
+            ["credits_start"] = wd.Credits?.Start ?? 0,
+            ["credits_end"] = wd.Credits?.End ?? 0
+        };
+
+        var json = System.Text.Json.JsonSerializer.Serialize(markers);
+        _mpv.SendScriptMessage("osc-set-markers", json);
     }
 
     private void SendQualityInfoToOsc()

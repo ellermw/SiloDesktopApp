@@ -151,6 +151,17 @@ local state = {
     quality_menu_overlay = nil,
     quality_menu_items  = {},
 
+    -- Skip markers (intro/credits)
+    intro_start     = 0,
+    intro_end       = 0,
+    credits_start   = 0,
+    credits_end     = 0,
+    skip_visible    = false,
+    skip_label      = "",
+    skip_target     = 0,
+    skip_overlay    = nil,
+    skip_rect       = nil,
+
     -- Notice overlay (admin messages)
     notice_visible  = false,
     notice_title    = "",
@@ -1341,6 +1352,9 @@ local function tick()
     -- Render
     render_osc()
 
+    -- Check skip markers (intro/credits)
+    check_skip_markers()
+
     -- Cursor visibility
     if state.current_alpha > 0.1 then
         request_cursor_visibility(true)
@@ -1786,6 +1800,89 @@ local function show_notice(title, message, tone)
     end)
 end
 
+--------------------------------------------------------------------------------
+-- Skip Intro/Credits Button
+--------------------------------------------------------------------------------
+
+local function render_skip_button()
+    if not state.skip_visible then
+        if state.skip_overlay then
+            state.skip_overlay.data = ""
+            state.skip_overlay:update()
+        end
+        state.skip_rect = nil
+        return
+    end
+
+    update_osd_dimensions()
+    local ass = assdraw.ass_new()
+    local W = state.osd_width
+    local H = state.osd_height
+
+    local fs = config.stats_font_size + 2
+    local pad_x = 24
+    local pad_y = 12
+    local btn_w = 180
+    local btn_h = 44
+    local btn_x = W - btn_w - 40
+    local btn_y = H - config.bar_height - btn_h - 20
+
+    -- Background
+    draw_rounded_rect(ass, btn_x, btn_y, btn_x + btn_w, btn_y + btn_h,
+        8, "FFFFFF", "30", 1.0)
+
+    -- Border
+    draw_rounded_rect(ass, btn_x, btn_y, btn_x + btn_w, btn_y + 1,
+        0, "FFFFFF", "60", 1.0)
+
+    -- Text
+    draw_text(ass, btn_x + btn_w / 2, btn_y + btn_h / 2, state.skip_label,
+        fs, config.text_color, "00", 1.0, 5, nil, true)
+
+    -- Store hit rect
+    state.skip_rect = { x = btn_x, y = btn_y, w = btn_w, h = btn_h }
+
+    if not state.skip_overlay then
+        state.skip_overlay = mp.create_osd_overlay("ass-events")
+    end
+    state.skip_overlay.data = ass.text
+    state.skip_overlay.res_x = W
+    state.skip_overlay.res_y = H
+    state.skip_overlay.z = 55
+    state.skip_overlay:update()
+end
+
+local function check_skip_markers()
+    local pos = state.time_pos
+    if pos <= 0 then return end
+
+    local was_visible = state.skip_visible
+    state.skip_visible = false
+
+    -- Check intro range
+    if state.intro_start > 0 and state.intro_end > state.intro_start then
+        if pos >= state.intro_start and pos < state.intro_end then
+            state.skip_visible = true
+            state.skip_label = "Skip Intro"
+            state.skip_target = state.intro_end
+        end
+    end
+
+    -- Check credits range (credits takes priority if overlapping)
+    if state.credits_start > 0 and state.credits_end > state.credits_start then
+        if pos >= state.credits_start and pos < state.credits_end then
+            state.skip_visible = true
+            state.skip_label = "Skip Credits"
+            state.skip_target = state.credits_end
+        end
+    end
+
+    -- Only re-render if state changed
+    if state.skip_visible ~= was_visible then
+        render_skip_button()
+    end
+end
+
 -- Toggle stats (defined here so handle_mouse_down can reference it)
 local function toggle_stats()
     state.stats_visible = not state.stats_visible
@@ -1796,6 +1893,17 @@ local function handle_mouse_down()
     if state.osc_disabled then return end
     local mx = state.mouse_x
     local my = state.mouse_y
+
+    -- Skip intro/credits button
+    if state.skip_visible and state.skip_rect then
+        local r = state.skip_rect
+        if mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h then
+            mp.commandv("seek", tostring(state.skip_target), "absolute")
+            state.skip_visible = false
+            render_skip_button()
+            return
+        end
+    end
 
     -- Stats overlay close button (always check, even if OSC is hidden)
     if state.stats_visible and state.stats_close_rect then
@@ -2085,6 +2193,16 @@ local function observe_properties()
             state.stats_visible = false
             state.subtitle_menu_visible = false
             state.quality_menu_visible = false
+        end
+    end)
+
+    mp.register_script_message("osc-set-markers", function(json_str)
+        local ok, data = pcall(require("mp.utils").parse_json, json_str)
+        if ok and data then
+            state.intro_start = tonumber(data.intro_start) or 0
+            state.intro_end = tonumber(data.intro_end) or 0
+            state.credits_start = tonumber(data.credits_start) or 0
+            state.credits_end = tonumber(data.credits_end) or 0
         end
     end)
 
