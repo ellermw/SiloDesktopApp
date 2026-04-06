@@ -42,3 +42,6 @@ Desktop.ini
 installer/deps/
 installer/output/
 installer/publish/
+publish_test*
+installer/publish/
+installer/output/
