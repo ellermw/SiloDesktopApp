@@ -13,6 +13,7 @@
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
+        <converters:InverseBoolConverter x:Key="InverseBool" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
 
         <!-- Borderless surface panel style: rounded-[1.6rem] p-4, no border -->
@@ -145,7 +146,7 @@
                                 Content="Lookup"
                                 Style="{StaticResource SecondaryButtonStyle}"
                                 Command="{x:Bind ViewModel.LookupIPCommand}"
-                                IsEnabled="{x:Bind ViewModel.IpLookupLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}" />
+                                IsEnabled="{x:Bind ViewModel.IpLookupLoading, Mode=OneWay, Converter={StaticResource InverseBool}}" />
                         </Grid>
 
                         <!-- IP results table -->
