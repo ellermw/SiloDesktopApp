@@ -599,6 +599,108 @@ public class PlayerService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Downloads the HLS manifest, strips segments before the seek position,
+    /// writes a trimmed manifest to a temp file, and returns the file path.
+    /// </summary>
+    private async Task<string?> TrimHlsManifestAsync(string manifestUrl, string? authHeader, double playerStart, double seekPos)
+    {
+        try
+        {
+            using var http = new HttpClient();
+            if (_apiClient.AccessToken != null)
+                http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _apiClient.AccessToken);
+
+            var manifest = await http.GetStringAsync(manifestUrl);
+            var lines = manifest.Split('\n');
+
+            // Base URL for resolving relative segment paths
+            var baseUrl = manifestUrl;
+            var lastSlash = baseUrl.LastIndexOf('/');
+            if (lastSlash > 0) baseUrl = baseUrl.Substring(0, lastSlash + 1);
+            // Strip query from base URL (token is in manifest URL, not base)
+            var qIdx = baseUrl.IndexOf('?');
+            if (qIdx > 0) baseUrl = baseUrl.Substring(0, qIdx);
+
+            // Skip segments before the seek position (2s each)
+            int startSeg = Math.Max(0, (int)(seekPos / 2) - 2);
+
+            var sb = new System.Text.StringBuilder();
+            int segIndex = 0;
+            bool skipNextSegUrl = false;
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                var line = lines[i].TrimEnd();
+                if (line.Length == 0) { sb.AppendLine(); continue; }
+
+                if (line.StartsWith("#EXTINF:"))
+                {
+                    if (segIndex < startSeg)
+                    {
+                        skipNextSegUrl = true;
+                        segIndex++;
+                        continue;
+                    }
+                    segIndex++;
+                    sb.AppendLine(line);
+                }
+                else if (skipNextSegUrl && !line.StartsWith("#"))
+                {
+                    // This is the segment URL line after a skipped EXTINF
+                    skipNextSegUrl = false;
+                    continue;
+                }
+                else if (!line.StartsWith("#"))
+                {
+                    // Segment URL — make absolute
+                    if (!line.StartsWith("http"))
+                        sb.AppendLine(baseUrl + line);
+                    else
+                        sb.AppendLine(line);
+                }
+                else if (line.StartsWith("#EXT-X-MAP:"))
+                {
+                    // init segment — make URI absolute
+                    var uriStart = line.IndexOf("URI=\"");
+                    if (uriStart >= 0)
+                    {
+                        uriStart += 5;
+                        var uriEnd = line.IndexOf('"', uriStart);
+                        if (uriEnd > uriStart)
+                        {
+                            var uri = line.Substring(uriStart, uriEnd - uriStart);
+                            if (!uri.StartsWith("http"))
+                                uri = baseUrl + uri;
+                            sb.AppendLine($"#EXT-X-MAP:URI=\"{uri}\"");
+                            continue;
+                        }
+                    }
+                    sb.AppendLine(line);
+                }
+                else
+                {
+                    sb.AppendLine(line);
+                }
+            }
+
+            var tempDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ContinuumPlayer");
+            Directory.CreateDirectory(tempDir);
+            var tempPath = Path.Combine(tempDir, "transcode_manifest.m3u8");
+            await File.WriteAllTextAsync(tempPath, sb.ToString());
+
+            LogToFile("state_trace.txt", $"Trimmed manifest: skipped {startSeg} segments, wrote to {tempPath}");
+            return tempPath;
+        }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"Manifest trim error: {ex.Message}");
+            return null;
+        }
+    }
+
     private void SendMediaInfoToOsc()
     {
         if (_mpv == null || _playbackManager?.WatchDetail == null || _playbackManager.CurrentSession == null) return;
@@ -858,62 +960,11 @@ public class PlayerService : IDisposable
         }
         else
         {
-            var (resolution, bitrate) = tierId switch
-            {
-                "1080p-high" => ("1080p", 10000),
-                "1080p"      => ("1080p", 6000),
-                "720p-high"  => ("720p", 4000),
-                "720p"       => ("720p", 2000),
-                "480p"       => ("480p", 1500),
-                "420p"       => ("420p", 720),
-                _ => ("1080p", 6000)
-            };
-
-            try
-            {
-                var transcodeResponse = await _playbackApi.StartTranscodeAsync(new TranscodeStartRequest
-                {
-                    SessionId = _playbackManager.SessionId!,
-                    SeekSeconds = currentPos,
-                    TargetResolution = resolution,
-                    TargetCodecVideo = "h264",
-                    TargetCodecAudio = "aac",
-                    TargetBitrateKbps = bitrate,
-                    SegmentDuration = 2,
-                    SubtitleTrackIndex = -1,
-                    SubtitleBurnIn = false
-                });
-
-                var baseUrl = _apiClient.BaseUrl;
-                var manifestPath = transcodeResponse.ManifestUrl;
-                if (!manifestPath.StartsWith("http") && !manifestPath.StartsWith("/api/v1"))
-                    manifestPath = "/api/v1" + manifestPath;
-                var streamUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
-
-                // Add token to HLS URL — CDN/proxy may require it
-                var token = _apiClient.AccessToken;
-                if (token != null)
-                    streamUrl += (streamUrl.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
-
-                PlayMethod = "transcode";
-                _resumePosition = transcodeResponse.PlayerStartSeconds;
-
-                // Wait for transcoder to produce the first segment (2s segment + encoding time)
-                await Task.Delay(3000);
-
-                // Clear auth header — HLS segments use token in URL, not header
-                _mpv.SetProperty("http-header-fields", "");
-                _mpv.LoadFile(streamUrl);
-                _mpv.Play();
-                SendMediaInfoToOsc();
-            }
-            catch (Exception ex)
-            {
-                _switchingContent = false;
-                _qualitySwitchActive = false;
-                LogToFile("player_quality_switch_error.txt", ex.ToString());
-                _mpv.ShowOsdText("Transcode failed", 3000);
-            }
+            // HLS transcode tiers are not yet supported — CDN/mpv compatibility
+            // issue causes segment loading failures. Show message to user.
+            _switchingContent = false;
+            _qualitySwitchActive = false;
+            _mpv?.ShowOsdText("Transcode quality not yet available — use version switching", 4000);
         }
 
         // Don't clear _switchingContent/_qualitySwitchActive here —

@@ -578,8 +578,8 @@ end
 -- Fullscreen icon (four corner brackets)
 local function draw_fullscreen_icon(ass, cx, cy, size, color, alpha, master_alpha, is_fullscreen)
     local a = blend_alpha(alpha, master_alpha)
-    local s = size * 0.4
-    local t = math.max(size * 0.1, 3)  -- line thickness, minimum 3px
+    local s = size * 0.28
+    local t = math.max(size * 0.07, 2)  -- line thickness
     local corner_len = s * 0.6
 
     if not is_fullscreen then
@@ -617,8 +617,8 @@ end
 -- Exit/close icon (X)
 local function draw_exit_icon(ass, cx, cy, size, color, alpha, master_alpha)
     local a = blend_alpha(alpha, master_alpha)
-    local s = size * 0.32
-    local t = size * 0.09
+    local s = size * 0.22
+    local t = size * 0.06
     -- Two rotated rectangles forming X, using ASS drawing
     -- Diagonal 1: top-left to bottom-right
     ass:new_event()
