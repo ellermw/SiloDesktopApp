@@ -14,6 +14,7 @@ public class SettingsService
     };
 
     private readonly string _filePath;
+    private readonly object _lock = new();
     private AppSettings? _cached;
 
     public SettingsService(string appDataDir)
@@ -24,24 +25,30 @@ public class SettingsService
 
     public AppSettings Load()
     {
-        if (_cached != null)
-            return _cached;
-
-        if (!File.Exists(_filePath))
+        lock (_lock)
         {
-            _cached = new AppSettings();
+            if (_cached != null)
+                return _cached;
+
+            if (!File.Exists(_filePath))
+            {
+                _cached = new AppSettings();
+                return _cached;
+            }
+            var json = File.ReadAllText(_filePath);
+            _cached = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
             return _cached;
         }
-        var json = File.ReadAllText(_filePath);
-        _cached = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
-        return _cached;
     }
 
     public void Save(AppSettings settings)
     {
-        _cached = settings;
-        var json = JsonSerializer.Serialize(settings, JsonOptions);
-        File.WriteAllText(_filePath, json);
+        lock (_lock)
+        {
+            _cached = settings;
+            var json = JsonSerializer.Serialize(settings, JsonOptions);
+            File.WriteAllText(_filePath, json);
+        }
     }
 
     public void AddServer(string url, string name)

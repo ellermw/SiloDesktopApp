@@ -276,9 +276,6 @@ public class AdminApi(ContinuumApiClient client)
 
     // ===== User Detail / Impersonation =====
 
-    public Task<AdminUser> GetUserDetailAsync(int id, CancellationToken ct = default)
-        => client.GetAsync<AdminUser>($"/api/v1/admin/users/{id}", ct);
-
     public Task<ImpersonationResponse> ImpersonateUserAsync(int id, CancellationToken ct = default)
         => client.PostAsync<ImpersonationResponse>($"/api/v1/admin/users/{id}/impersonate", new { }, ct);
 

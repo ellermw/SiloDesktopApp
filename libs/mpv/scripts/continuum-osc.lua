@@ -427,7 +427,7 @@ local function draw_gradient(ass, x1, y1, x2, y2, color, top_alpha, bot_alpha, m
         local ba = tonumber(bot_alpha, 16)
         local ia = math.floor(ta + (ba - ta) * t + 0.5)
         local alpha_hex = string.format("%02X", ia)
-        draw_rect(ass, x1, y1 + i * h, x2, y1 + (i + 1) * h + 1, color, alpha_hex, master_alpha)
+        draw_rect(ass, x1, y1 + i * h, x2, y1 + (i + 1) * h, color, alpha_hex, master_alpha)
     end
 end
 
@@ -455,7 +455,6 @@ end
 
 -- Pause icon (two vertical bars)
 local function draw_pause_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    local a = blend_alpha(alpha, master_alpha)
     local half = size / 2
     local bar_w = size * 0.22
     local gap = size * 0.15
@@ -695,10 +694,14 @@ end
 -- Layout Computation
 --------------------------------------------------------------------------------
 
+local _layout_w, _layout_h = 0, 0
 local function compute_layout()
     update_osd_dimensions()
     local W = state.osd_width
     local H = state.osd_height
+    -- Skip recomputation if dimensions unchanged
+    if W == _layout_w and H == _layout_h and state.layout.bar then return end
+    _layout_w, _layout_h = W, H
     local L = state.layout
 
     -- Bar area
@@ -2171,12 +2174,7 @@ local function observe_properties()
 
     mp.observe_property("pause", "bool", function(_, val)
         state.pause = val or false
-        if state.pause then
-            show_osc()
-        else
-            -- Restart hide timer
-            show_osc()
-        end
+        show_osc()  -- Show OSC on any pause state change
     end)
 
     mp.observe_property("volume", "number", function(_, val)
@@ -2543,20 +2541,17 @@ local function init()
         show_osc()
     end)
 
-    -- Clean up on shutdown
+    -- Clean up all overlays and timers on shutdown
     mp.register_event("shutdown", function()
-        if state.osc_overlay then
-            state.osc_overlay:remove()
-        end
-        if state.stats_overlay then
-            state.stats_overlay:remove()
-        end
-        if state.tick_timer then
-            state.tick_timer:kill()
-        end
-        if state.hide_timer then
-            state.hide_timer:kill()
-        end
+        if state.osc_overlay then state.osc_overlay:remove() end
+        if state.stats_overlay then state.stats_overlay:remove() end
+        if state.subtitle_menu_overlay then state.subtitle_menu_overlay:remove() end
+        if state.quality_menu_overlay then state.quality_menu_overlay:remove() end
+        if state.notice_overlay then state.notice_overlay:remove() end
+        if state.skip_overlay then state.skip_overlay:remove() end
+        if state.tick_timer then state.tick_timer:kill() end
+        if state.hide_timer then state.hide_timer:kill() end
+        if state.notice_timer then state.notice_timer:kill() end
     end)
 
     msg.info("Continuum OSC initialized successfully")

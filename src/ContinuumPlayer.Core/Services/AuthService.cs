@@ -74,8 +74,9 @@ public class AuthService
             RefreshToken = response.RefreshToken;
             ScheduleRefresh(response.ExpiresIn);
 
-            // Extract user info from JWT claims if not already set
-            if (CurrentUser == null)
+            // Extract user info from JWT claims if not already set (thread-safe check)
+            var currentUser = CurrentUser;
+            if (currentUser == null)
             {
                 var user = TryParseUserFromJwt(response.AccessToken);
                 if (user != null)

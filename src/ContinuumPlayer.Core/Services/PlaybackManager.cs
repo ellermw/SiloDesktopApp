@@ -146,11 +146,12 @@ public class PlaybackManager : IDisposable
         StopProgressReporting();
         _progressTimer = new Timer(async _ =>
         {
-            if (_sessionId == null) return;
+            var sessionId = _sessionId; // Capture to avoid race with StopSessionAsync
+            if (sessionId == null) return;
             if (!_progressGuard.Wait(0)) return; // skip if previous report still in-flight
             try
             {
-                await _playbackApi.ReportProgressAsync(_sessionId, _lastReportedPosition, _isPaused);
+                await _playbackApi.ReportProgressAsync(sessionId, _lastReportedPosition, _isPaused);
             }
             catch (Exception ex)
             {

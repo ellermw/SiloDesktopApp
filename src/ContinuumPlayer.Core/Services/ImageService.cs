@@ -96,6 +96,7 @@ public class ImageService : IDisposable
             Interlocked.Add(ref _currentMemoryBytes, data.Length);
             _evictionOrder.Enqueue(key);
         }
+        // If key already exists, don't enqueue again (prevents counter drift on eviction)
     }
 
     private string GetDiskPath(string cacheKey)

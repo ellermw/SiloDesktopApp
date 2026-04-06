@@ -24,6 +24,7 @@ public class PlayerService : IDisposable
     private string _activeQualityTier = "original";
     private HlsProxy? _hlsProxy;
     private PlaybackWebSocket? _webSocket;
+    private CancellationTokenSource? _playbackCts;
 
     public PlayerService(PlaybackApi playbackApi, CatalogApi catalogApi, AuthService authService, ContinuumApiClient apiClient)
     {
@@ -208,7 +209,7 @@ public class PlayerService : IDisposable
                 _mpv?.Stop();
                 await _playbackManager.StopSessionAsync();
             }
-            catch { }
+            catch (Exception ex) { LogToFile("state_trace.txt", $"Stop previous session error: {ex.Message}"); }
             _playbackManager.Dispose();
             _playbackManager = null;
             // Brief delay for server to process session stop
@@ -218,7 +219,9 @@ public class PlayerService : IDisposable
         ErrorMessage = null;
         IsLoading = true;
         ContentId = contentId;
-        _resumePosition = 0; // Clear stale resume from previous failed play
+        _resumePosition = 0;
+        _playbackCts?.Cancel();
+        _playbackCts = new CancellationTokenSource();
         _switchingContent = true; // Suppress stale PlaybackEnded from previous _mpv.Stop()
 
         // Show loading indicator on the main window
@@ -382,7 +385,7 @@ public class PlayerService : IDisposable
             _videoWindow?.Hide();
             if (_playbackManager != null)
             {
-                try { await _playbackManager.StopSessionAsync(); } catch { }
+                try { await _playbackManager.StopSessionAsync(); } catch (Exception stopEx) { LogToFile("state_trace.txt", $"StopSession error: {stopEx.Message}"); }
                 _playbackManager.Dispose();
                 _playbackManager = null;
             }
@@ -437,16 +440,18 @@ public class PlayerService : IDisposable
                 LogToFile("state_trace.txt", "No resume position (starting from beginning)");
             }
 
-            // Send OSC data + load subtitles on background thread
-            // (JSON serialization + mpv commands don't need the event thread)
+            // Send OSC data + load subtitles on background thread with cancellation
+            var ct = _playbackCts?.Token ?? CancellationToken.None;
             Task.Run(() =>
             {
+                if (ct.IsCancellationRequested) return;
                 SendMediaInfoToOsc();
                 SendSubtitleListToOsc();
                 SendQualityInfoToOsc();
                 SendMarkersToOsc();
+                if (ct.IsCancellationRequested) return;
                 LoadSubtitles();
-            });
+            }, ct);
 
             // Connect WebSocket for real-time admin control
             try { ConnectWebSocket(); }
@@ -487,7 +492,7 @@ public class PlayerService : IDisposable
             // Run ALL network calls on background thread so UI never blocks
             var result = await Task.Run(async () =>
             {
-                try { await _playbackManager.StopSessionAsync(); } catch { }
+                try { await _playbackManager.StopSessionAsync(); } catch (Exception ex) { LogToFile("state_trace.txt", $"StopSession error: {ex.Message}"); }
                 var session = await _playbackManager.StartSessionAsync(version.FileId, currentPos);
                 var streamUrl = _playbackManager.StreamUrl ?? "";
 
@@ -616,7 +621,7 @@ public class PlayerService : IDisposable
     {
         try
         {
-            using var http = new HttpClient();
+            var http = new HttpClient(); // Short-lived for manifest fetch (can't reuse singleton — need custom auth header)
             if (_apiClient.AccessToken != null)
                 http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _apiClient.AccessToken);
 
@@ -1177,7 +1182,7 @@ public class PlayerService : IDisposable
                     await _playbackApi.ReportProgressAsync(_playbackManager.SessionId, finalPos, true);
                     LogToFile("state_trace.txt", $"Final progress reported: pos={finalPos:F1}");
                 }
-                catch { }
+                catch (Exception ex) { LogToFile("state_trace.txt", $"Final progress error: {ex.Message}"); }
             }
         }
 
@@ -1186,7 +1191,7 @@ public class PlayerService : IDisposable
         if (_playbackManager != null)
         {
             try { await _playbackManager.StopSessionAsync(); }
-            catch { }
+            catch (Exception ex) { LogToFile("state_trace.txt", $"Stop previous session error: {ex.Message}"); }
             _playbackManager.Dispose();
             _playbackManager = null;
         }
@@ -1203,6 +1208,8 @@ public class PlayerService : IDisposable
         _hlsProxy?.Stop();
         _hlsProxy = null;
         DisconnectWebSocket();
+        _playbackCts?.Cancel();
+        _playbackCts = null;
         ErrorMessage = null;
         Versions = [];
 
@@ -1386,16 +1393,37 @@ public class PlayerService : IDisposable
         };
     }
 
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<(string File, string Line)> _logQueue = new();
+    private static readonly Timer _logFlushTimer = new(_ => FlushLogs(), null, 100, 200);
+
     private static void LogToFile(string fileName, string content)
     {
-        try
+        _logQueue.Enqueue((fileName, $"[{DateTime.Now:HH:mm:ss.fff}] {content}\n"));
+    }
+
+    private static void FlushLogs()
+    {
+        var batches = new Dictionary<string, List<string>>();
+        while (_logQueue.TryDequeue(out var entry))
         {
-            var logPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ContinuumPlayer", fileName);
-            Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-            File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss.fff}] {content}\n");
+            if (!batches.TryGetValue(entry.File, out var list))
+            {
+                list = new List<string>();
+                batches[entry.File] = list;
+            }
+            list.Add(entry.Line);
         }
-        catch { }
+        foreach (var (fileName, lines) in batches)
+        {
+            try
+            {
+                var logPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "ContinuumPlayer", fileName);
+                Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+                File.AppendAllText(logPath, string.Concat(lines));
+            }
+            catch { }
+        }
     }
 }
