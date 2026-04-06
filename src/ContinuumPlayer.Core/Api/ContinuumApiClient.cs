@@ -25,8 +25,16 @@ public class ContinuumApiClient
     private string? _profileId;
     private string? _profileToken;
     private string _baseUrl = "";
+    private Func<CancellationToken, Task<bool>>? _tokenRefresher;
+    private readonly SemaphoreSlim _refreshLock = new(1, 1);
 
     public ContinuumApiClient(HttpClient http) { _http = http; }
+
+    /// <summary>
+    /// Registers a callback that attempts to refresh the access token.
+    /// Called automatically on 401 responses before retrying the request.
+    /// </summary>
+    public void SetTokenRefresher(Func<CancellationToken, Task<bool>> refresher) => _tokenRefresher = refresher;
 
     public void SetBaseUrl(string baseUrl) => _baseUrl = baseUrl.TrimEnd('/');
     public string BaseUrl => _baseUrl;
@@ -69,8 +77,7 @@ public class ContinuumApiClient
         using var request = new HttpRequestMessage(HttpMethod.Post, BuildUrl(path));
         AddHeaders(request);
         request.Content = CreateJsonContent(body);
-        var response = await _http.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct);
+        await SendNoContentAsync(request, ct);
     }
 
     public async Task<T> PutAsync<T>(string path, object body, CancellationToken ct = default)
@@ -86,16 +93,14 @@ public class ContinuumApiClient
         using var request = new HttpRequestMessage(HttpMethod.Put, BuildUrl(path));
         AddHeaders(request);
         if (body != null) request.Content = CreateJsonContent(body);
-        var response = await _http.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct);
+        await SendNoContentAsync(request, ct);
     }
 
     public async Task DeleteAsync(string path, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Delete, BuildUrl(path));
         AddHeaders(request);
-        var response = await _http.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct);
+        await SendNoContentAsync(request, ct);
     }
 
     public async Task<T> PatchAsync<T>(string path, object body, CancellationToken ct = default)
@@ -164,8 +169,60 @@ public class ContinuumApiClient
     private async Task<T> SendAsync<T>(HttpRequestMessage request, CancellationToken ct)
     {
         var response = await _http.SendAsync(request, ct);
+
+        // On 401, try refreshing the token and retry once
+        if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized && _tokenRefresher != null)
+        {
+            bool refreshed = false;
+            await _refreshLock.WaitAsync(ct);
+            try { refreshed = await _tokenRefresher(ct); }
+            finally { _refreshLock.Release(); }
+
+            if (refreshed)
+            {
+                // Clone the request with the new token
+                using var retry = new HttpRequestMessage(request.Method, request.RequestUri);
+                AddHeaders(retry);
+                if (request.Content != null)
+                {
+                    var body = await request.Content.ReadAsByteArrayAsync(ct);
+                    retry.Content = new ByteArrayContent(body);
+                    retry.Content.Headers.ContentType = request.Content.Headers.ContentType;
+                }
+                response = await _http.SendAsync(retry, ct);
+            }
+        }
+
         if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct);
         return (await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct))!;
+    }
+
+    private async Task SendNoContentAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var response = await _http.SendAsync(request, ct);
+
+        if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized && _tokenRefresher != null)
+        {
+            bool refreshed = false;
+            await _refreshLock.WaitAsync(ct);
+            try { refreshed = await _tokenRefresher(ct); }
+            finally { _refreshLock.Release(); }
+
+            if (refreshed)
+            {
+                using var retry = new HttpRequestMessage(request.Method, request.RequestUri);
+                AddHeaders(retry);
+                if (request.Content != null)
+                {
+                    var body = await request.Content.ReadAsByteArrayAsync(ct);
+                    retry.Content = new ByteArrayContent(body);
+                    retry.Content.Headers.ContentType = request.Content.Headers.ContentType;
+                }
+                response = await _http.SendAsync(retry, ct);
+            }
+        }
+
+        if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct);
     }
 
     private static async Task ThrowApiException(HttpResponseMessage response, CancellationToken ct)

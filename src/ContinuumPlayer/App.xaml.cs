@@ -157,6 +157,13 @@ public partial class App : Application
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminMaintenanceViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminSubtitleProvidersViewModel>();
 
-        return services.BuildServiceProvider();
+        var provider = services.BuildServiceProvider();
+
+        // Wire automatic token refresh on 401 responses
+        var apiClient = provider.GetRequiredService<ContinuumApiClient>();
+        var authService = provider.GetRequiredService<AuthService>();
+        apiClient.SetTokenRefresher(ct => authService.TryRefreshAsync(ct));
+
+        return provider;
     }
 }
