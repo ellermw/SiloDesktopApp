@@ -572,9 +572,18 @@ public sealed partial class AdminActivityPage : Page
             try
             {
                 await adminApi.StopSessionAsync(capturedSession.SessionId);
+                await Task.Delay(500); // Give server time to process
                 await ViewModel.LoadCommand.ExecuteAsync(null);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                try
+                {
+                    var dlg = new ContentDialog { XamlRoot = this.XamlRoot, Title = "Stop failed", Content = ex.Message, CloseButtonText = "OK" };
+                    await dlg.ShowAsync();
+                }
+                catch { }
+            }
             stopBtn.IsEnabled = true;
         };
         controlPanel.Children.Add(stopBtn);
@@ -600,6 +609,21 @@ public sealed partial class AdminActivityPage : Page
             }
         };
         controlPanel.Children.Add(msgBtn);
+
+        // Terminate
+        var terminateBtn = MakeSmallIconButton("\uE74D", "Terminate");
+        terminateBtn.Click += async (_, _) =>
+        {
+            terminateBtn.IsEnabled = false;
+            try
+            {
+                await adminApi.TerminateSessionAsync(capturedSession.SessionId);
+                await ViewModel.LoadCommand.ExecuteAsync(null);
+            }
+            catch { }
+            terminateBtn.IsEnabled = true;
+        };
+        controlPanel.Children.Add(terminateBtn);
 
         Grid.SetColumn(controlPanel, 5); // Share with time column
 
