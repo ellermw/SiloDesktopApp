@@ -2,7 +2,7 @@
 ; Inno Setup script for Continuum Desktop Player
 
 #define MyAppName "Continuum Desktop Player"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "Continuum"
 #define MyAppExeName "ContinuumPlayer.exe"
 
