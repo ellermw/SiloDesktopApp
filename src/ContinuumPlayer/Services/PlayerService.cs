@@ -21,6 +21,7 @@ public class PlayerService : IDisposable
     private PlaybackManager? _playbackManager;
     private bool _switchingContent;
     private volatile bool _qualitySwitchActive;
+    private string _activeQualityTier = "original";
     private HlsProxy? _hlsProxy;
 
     public PlayerService(PlaybackApi playbackApi, CatalogApi catalogApi, AuthService authService, ContinuumApiClient apiClient)
@@ -792,7 +793,7 @@ public class PlayerService : IDisposable
         {
             ["versions"] = versions,
             ["active_file_id"] = session.MediaFileId,
-            ["active_quality"] = "original"
+            ["active_quality"] = _activeQualityTier
         };
 
         var json = System.Text.Json.JsonSerializer.Serialize(info);
@@ -908,9 +909,10 @@ public class PlayerService : IDisposable
     private async Task SwitchVersionAndNotifyAsync(FileVersion version)
     {
         await SwitchVersionAsync(version);
+        _activeQualityTier = "original";
         SendQualityInfoToOsc();
         SendMediaInfoToOsc();
-        _mpv?.SendScriptMessage("osc-set-active-quality", "auto");
+        _mpv?.SendScriptMessage("osc-set-active-quality", "original");
     }
 
     private async Task SwitchQualityTierAsync(string tierId)
@@ -981,7 +983,7 @@ public class PlayerService : IDisposable
                 var transcodeResponse = await _playbackApi.StartTranscodeAsync(new TranscodeStartRequest
                 {
                     SessionId = _playbackManager.SessionId!,
-                    SeekSeconds = 0, // Start from beginning — proxy handles segment retries
+                    SeekSeconds = currentPos, // Start encoding from user's position
                     TargetResolution = resolution,
                     TargetCodecVideo = "h264",
                     TargetCodecAudio = "aac",
@@ -1008,7 +1010,10 @@ public class PlayerService : IDisposable
                 var localUrl = _hlsProxy.Start();
 
                 PlayMethod = "transcode";
-                _resumePosition = 0; // HLS.js-style startPosition handled by manifest
+                // The server starts encoding from seekSeconds. The manifest is
+                // synthetic VOD but the proxy handles segment retries. The
+                // playerStartSeconds tells us where playback should begin.
+                _resumePosition = transcodeResponse.PlayerStartSeconds;
 
                 LogToFile("state_trace.txt", $"Loading HLS via proxy: {localUrl}");
                 _mpv.LoadFile(localUrl);
@@ -1028,6 +1033,7 @@ public class PlayerService : IDisposable
         // Don't clear _switchingContent/_qualitySwitchActive here —
         // they're cleared in the FileLoaded handler when the new stream loads.
         // Clearing here races with END_FILE from the old stream being killed.
+        _activeQualityTier = tierId;
         _mpv?.SendScriptMessage("osc-set-active-quality", tierId);
     }
 
