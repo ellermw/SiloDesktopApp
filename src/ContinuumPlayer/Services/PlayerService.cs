@@ -687,7 +687,7 @@ public class PlayerService : IDisposable
         {
             ["versions"] = versions,
             ["active_file_id"] = session.MediaFileId,
-            ["active_quality"] = "auto"
+            ["active_quality"] = "original"
         };
 
         var json = System.Text.Json.JsonSerializer.Serialize(info);
@@ -808,6 +808,14 @@ public class PlayerService : IDisposable
 
         if (tierId is "auto" or "original")
         {
+            // If already on direct play or remux, this is a no-op
+            if (PlayMethod is "direct" or "remux")
+            {
+                _mpv?.SendScriptMessage("osc-set-active-quality", tierId);
+                return;
+            }
+
+            // Currently transcoding — switch back to direct play
             var currentFileId = _playbackManager.CurrentSession?.MediaFileId;
             var version = Versions.FirstOrDefault(v => v.FileId == currentFileId);
             if (version != null)

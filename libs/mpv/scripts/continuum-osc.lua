@@ -146,7 +146,7 @@ local state = {
 
     -- Quality menu
     quality_info        = nil,
-    active_quality      = "auto",
+    active_quality      = "original",
     quality_menu_visible = false,
     quality_menu_overlay = nil,
     quality_menu_items  = {},
@@ -653,20 +653,14 @@ local function draw_minimize_icon(ass, cx, cy, size, color, alpha, master_alpha)
     draw_rect(ass, cx - hw, cy - ht, cx + hw, cy + ht, color, alpha, master_alpha)
 end
 
--- Gear/settings icon (circle with rectangular notches)
-local function draw_gear_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    local r_inner = size * 0.18
-    local r_outer = size * 0.32
-    local notch = size * 0.08
-    -- Center circle
-    draw_circle(ass, cx, cy, r_inner, color, alpha, master_alpha)
-    -- 6 notches around the circle
-    for i = 0, 5 do
-        local angle = i * math.pi / 3
-        local nx = cx + math.cos(angle) * r_outer
-        local ny = cy + math.sin(angle) * r_outer
-        draw_rect(ass, nx - notch, ny - notch, nx + notch, ny + notch,
-            color, alpha, master_alpha)
+-- Quality/settings icon (three horizontal lines)
+local function draw_quality_icon(ass, cx, cy, size, color, alpha, master_alpha)
+    local hw = size * 0.28   -- half-width of lines
+    local ht = math.max(size * 0.05, 2)  -- half-thickness
+    local gap = size * 0.18  -- vertical gap between lines
+    for i = -1, 1 do
+        local ly = cy + i * gap
+        draw_rect(ass, cx - hw, ly - ht, cx + hw, ly + ht, color, alpha, master_alpha)
     end
 end
 
@@ -1057,7 +1051,7 @@ local function render_osc()
 
     -- 13. Quality/settings button
     local bq = L.btn_quality
-    draw_gear_icon(ass, bq.cx, bq.cy, config.small_button_size,
+    draw_quality_icon(ass, bq.cx, bq.cy, config.small_button_size,
         config.text_color, "00", ma)
 
     -- 13. Exit button
@@ -1667,8 +1661,23 @@ local function render_quality_menu()
         draw_text(ass, menu_x + padding + 24, cy + item_h / 2, tier.label,
             fs, text_color, "00", 1.0, 4)
 
-        if tier.sublabel then
-            draw_text(ass, menu_x + menu_w - padding, cy + item_h / 2, tier.sublabel,
+        -- Dynamic sublabel for Auto: show current play method + bitrate
+        local sublabel = tier.sublabel
+        if tier.id == "auto" then
+            local mi = state.media_info
+            local pm = state.play_method_str
+            if pm ~= "" and mi and mi.bitrate and mi.bitrate > 0 then
+                local br = mi.bitrate >= 1000000
+                    and string.format("%.1f Mbps", mi.bitrate / 1000000)
+                    or string.format("%d kbps", mi.bitrate / 1000)
+                sublabel = pm .. " · " .. br
+            elseif pm ~= "" then
+                sublabel = pm
+            end
+        end
+
+        if sublabel then
+            draw_text(ass, menu_x + menu_w - padding, cy + item_h / 2, sublabel,
                 fs_small, config.dim_text_color, "40", 1.0, 6)
         end
 
