@@ -21,6 +21,7 @@ public class PlayerService : IDisposable
     private PlaybackManager? _playbackManager;
     private bool _switchingContent;
     private volatile bool _qualitySwitchActive;
+    private HlsProxy? _hlsProxy;
 
     public PlayerService(PlaybackApi playbackApi, CatalogApi catalogApi, AuthService authService, ContinuumApiClient apiClient)
     {
@@ -960,11 +961,68 @@ public class PlayerService : IDisposable
         }
         else
         {
-            // HLS transcode tiers are not yet supported — CDN/mpv compatibility
-            // issue causes segment loading failures. Show message to user.
-            _switchingContent = false;
-            _qualitySwitchActive = false;
-            _mpv?.ShowOsdText("Transcode quality not yet available — use version switching", 4000);
+            var (resolution, bitrate) = tierId switch
+            {
+                "1080p-high" => ("1080p", 10000),
+                "1080p"      => ("1080p", 6000),
+                "720p-high"  => ("720p", 4000),
+                "720p"       => ("720p", 2000),
+                "480p"       => ("480p", 1500),
+                "420p"       => ("420p", 720),
+                _ => ("1080p", 6000)
+            };
+
+            // Pause and show loading
+            _mpv.Pause();
+            App.MainWindowInstance?.ShowLoadingOverlay();
+
+            try
+            {
+                var transcodeResponse = await _playbackApi.StartTranscodeAsync(new TranscodeStartRequest
+                {
+                    SessionId = _playbackManager.SessionId!,
+                    SeekSeconds = 0, // Start from beginning — proxy handles segment retries
+                    TargetResolution = resolution,
+                    TargetCodecVideo = "h264",
+                    TargetCodecAudio = "aac",
+                    TargetBitrateKbps = bitrate,
+                    SegmentDuration = 2,
+                    SubtitleTrackIndex = -1,
+                    SubtitleBurnIn = false
+                });
+
+                LogToFile("state_trace.txt", $"Transcode response: status={transcodeResponse.Status} manifest={transcodeResponse.ManifestUrl} switchedFileId={transcodeResponse.SwitchedFileId} playerStart={transcodeResponse.PlayerStartSeconds} duration={transcodeResponse.DurationSeconds}");
+
+                var baseUrl = _apiClient.BaseUrl;
+                var manifestPath = transcodeResponse.ManifestUrl;
+                if (!manifestPath.StartsWith("http") && !manifestPath.StartsWith("/api/v1"))
+                    manifestPath = "/api/v1" + manifestPath;
+                var remoteManifestUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
+
+                var token = _apiClient.AccessToken;
+
+                // Start local HLS proxy to handle segment retries (CDN returns 404
+                // for segments still being encoded; HLS.js retries, mpv doesn't)
+                _hlsProxy?.Stop();
+                _hlsProxy = new HlsProxy(remoteManifestUrl, token);
+                var localUrl = _hlsProxy.Start();
+
+                PlayMethod = "transcode";
+                _resumePosition = 0; // HLS.js-style startPosition handled by manifest
+
+                LogToFile("state_trace.txt", $"Loading HLS via proxy: {localUrl}");
+                _mpv.LoadFile(localUrl);
+                _mpv.Play();
+                SendMediaInfoToOsc();
+            }
+            catch (Exception ex)
+            {
+                _switchingContent = false;
+                _qualitySwitchActive = false;
+                LogToFile("player_quality_switch_error.txt", ex.ToString());
+                _mpv.ShowOsdText("Transcode failed", 3000);
+                App.MainWindowInstance?.HideLoadingOverlay();
+            }
         }
 
         // Don't clear _switchingContent/_qualitySwitchActive here —
@@ -1101,6 +1159,8 @@ public class PlayerService : IDisposable
         IsLoading = false;
         _switchingContent = false;
         _qualitySwitchActive = false;
+        _hlsProxy?.Stop();
+        _hlsProxy = null;
         ErrorMessage = null;
         Versions = [];
 

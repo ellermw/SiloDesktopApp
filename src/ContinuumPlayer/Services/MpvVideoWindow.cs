@@ -63,6 +63,15 @@ public sealed class MpvVideoWindow : IDisposable
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
     [DllImport("user32.dll")]
+    private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
+
+    [DllImport("user32.dll")]
     private static extern IntPtr DefWindowProcW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("kernel32.dll")]
@@ -268,9 +277,13 @@ public sealed class MpvVideoWindow : IDisposable
     public void MatchParentPosition()
     {
         if (_hwnd == IntPtr.Zero || _parentHwnd == IntPtr.Zero) return;
-        GetWindowRect(_parentHwnd, out var r);
+        // Use client area (excludes title bar) so the title bar stays visible
+        GetClientRect(_parentHwnd, out var client);
+        var topLeft = new POINT { X = client.Left, Y = client.Top };
+        ClientToScreen(_parentHwnd, ref topLeft);
         SetWindowPos(_hwnd, IntPtr.Zero,
-            r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top,
+            topLeft.X, topLeft.Y,
+            client.Right - client.Left, client.Bottom - client.Top,
             SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
