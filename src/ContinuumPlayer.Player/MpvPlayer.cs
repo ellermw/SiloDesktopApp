@@ -78,6 +78,9 @@ public sealed class MpvPlayer : IDisposable
     /// <summary>Fired when a file has been loaded and decoding starts.</summary>
     public event Action? FileLoaded;
 
+    /// <summary>Fired when a file fails to load or a playback error occurs (END_FILE with reason=error).</summary>
+    public event Action<string>? PlaybackError;
+
     /// <summary>Fired when an error occurs.</summary>
     public event Action<string>? Error;
 
@@ -761,6 +764,15 @@ public sealed class MpvPlayer : IDisposable
                     break;
 
                 case MPV_EVENT_END_FILE:
+                    if (ev.Data != IntPtr.Zero)
+                    {
+                        var endFile = Marshal.PtrToStructure<MpvEventEndFile>(ev.Data);
+                        if (endFile.Reason == MPV_END_FILE_REASON_ERROR)
+                        {
+                            var errMsg = GetErrorString(endFile.Error);
+                            PlaybackError?.Invoke($"Playback failed: {errMsg}");
+                        }
+                    }
                     PlaybackEnded?.Invoke();
                     break;
 

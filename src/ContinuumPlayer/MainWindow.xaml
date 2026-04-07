@@ -247,10 +247,24 @@
 
         <!-- Layer 2: Loading overlay (shown while preparing playback) -->
         <Grid x:Name="LoadingOverlay" Visibility="Collapsed" Background="{StaticResource AppBackgroundBrush}">
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
+            <!-- Loading state -->
+            <StackPanel x:Name="LoadingState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
                 <ProgressRing IsActive="True" Width="48" Height="48" />
                 <TextBlock Text="Preparing playback..." FontSize="16"
                            Foreground="{StaticResource PrimaryTextBrush}" HorizontalAlignment="Center" />
+            </StackPanel>
+            <!-- Error state -->
+            <StackPanel x:Name="ErrorState" Visibility="Collapsed"
+                        HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="20">
+                <FontIcon Glyph="&#xE783;" FontSize="48" Foreground="#FF6B6B" HorizontalAlignment="Center" />
+                <TextBlock x:Name="ErrorTitle" Text="Media Unavailable" FontSize="20" FontWeight="SemiBold"
+                           Foreground="{StaticResource PrimaryTextBrush}" HorizontalAlignment="Center" />
+                <TextBlock x:Name="ErrorDetail" Text="" FontSize="14" MaxWidth="400" TextWrapping="Wrap"
+                           Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Center"
+                           TextAlignment="Center" />
+                <Button Content="Go Back" Style="{StaticResource AccentButtonStyle}"
+                        HorizontalAlignment="Center" Padding="24,10"
+                        Click="ErrorDismiss_Click" />
             </StackPanel>
         </Grid>
 

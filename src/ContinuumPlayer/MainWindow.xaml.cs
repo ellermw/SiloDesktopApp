@@ -264,12 +264,33 @@ public sealed partial class MainWindow : Window
 
     public void ShowLoadingOverlay()
     {
-        DispatcherQueue.TryEnqueue(() => LoadingOverlay.Visibility = Visibility.Visible);
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            LoadingState.Visibility = Visibility.Visible;
+            ErrorState.Visibility = Visibility.Collapsed;
+            LoadingOverlay.Visibility = Visibility.Visible;
+        });
     }
 
     public void HideLoadingOverlay()
     {
         DispatcherQueue.TryEnqueue(() => LoadingOverlay.Visibility = Visibility.Collapsed);
+    }
+
+    public void ShowPlaybackError(string message)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            LoadingState.Visibility = Visibility.Collapsed;
+            ErrorState.Visibility = Visibility.Visible;
+            ErrorDetail.Text = message;
+            LoadingOverlay.Visibility = Visibility.Visible;
+        });
+    }
+
+    private void ErrorDismiss_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        LoadingOverlay.Visibility = Visibility.Collapsed;
     }
 
     private static void LogState(string msg)

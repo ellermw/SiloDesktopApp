@@ -379,7 +379,6 @@ public class PlayerService : IDisposable
             ErrorMessage = $"Failed to start playback: {ex.Message}";
             IsLoading = false;
             _switchingContent = false;
-            App.MainWindowInstance?.HideLoadingOverlay();
 
             // Clean up — hide popup window and go back to Idle
             _videoWindow?.Hide();
@@ -390,6 +389,7 @@ public class PlayerService : IDisposable
                 _playbackManager = null;
             }
             SetState(PlayerState.Idle);
+            App.MainWindowInstance?.ShowPlaybackError(ex.Message);
         }
     }
 
@@ -470,6 +470,29 @@ public class PlayerService : IDisposable
             else
             {
                 LogToFile("state_trace.txt", "  → Suppressed (switching content)");
+            }
+        };
+
+        _mpv.PlaybackError += (msg) =>
+        {
+            LogToFile("state_trace.txt", $"PlaybackError: {msg} _switchingContent={_switchingContent}");
+            // If we were waiting for a file to load and it failed, show error
+            if (_switchingContent)
+            {
+                _switchingContent = false;
+                _qualitySwitchActive = false;
+                IsLoading = false;
+                ErrorMessage = msg;
+                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() =>
+                {
+                    _videoWindow?.Hide();
+                    SetState(PlayerState.Idle);
+                    // Show user-friendly error instead of silently returning
+                    var detail = msg.Contains("loading failed")
+                        ? "The media file could not be loaded. It may be unavailable or the server may be experiencing issues."
+                        : msg;
+                    App.MainWindowInstance?.ShowPlaybackError(detail);
+                });
             }
         };
 

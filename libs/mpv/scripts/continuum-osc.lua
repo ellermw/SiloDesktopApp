@@ -1142,9 +1142,9 @@ local function render_stats()
     local line_h = math.floor(config.stats_line_height * sc)
     local section_gap = 12
     local header_h = line_h + 4
-    local box_w = 380
-    local box_x = 20
-    local box_y = 50  -- below any top UI
+    local box_w = math.floor(380 * sc)
+    local box_x = math.floor(20 * sc)
+    local box_y = math.floor(50 * sc)  -- below any top UI
 
     -- Build all sections
     local sections = {}
@@ -1198,7 +1198,8 @@ local function render_stats()
             table.insert(s4.rows, { label = "Size", value = format_file_size(mi.file_size) })
         end
         if mi.bitrate and mi.bitrate > 0 then
-            table.insert(s4.rows, { label = "Bitrate", value = format_bitrate(mi.bitrate) })
+            -- Server sends bitrate in kbps, format_bitrate expects bps
+            table.insert(s4.rows, { label = "Bitrate", value = format_bitrate(mi.bitrate * 1000) })
         end
         if mi.codec_video and mi.codec_video ~= "" then
             table.insert(s4.rows, { label = "Video codec", value = string.upper(mi.codec_video) })
@@ -1367,6 +1368,15 @@ local function tick()
 
     -- Render
     render_osc()
+
+    -- Refresh stats overlay ~1/sec (live bitrate, dropped frames, etc.)
+    if state.stats_visible then
+        state.stats_last_refresh = state.stats_last_refresh or 0
+        if now - state.stats_last_refresh >= 1.0 then
+            state.stats_last_refresh = now
+            render_stats()
+        end
+    end
 
     -- Check skip markers (intro/credits)
     check_skip_markers()
@@ -2433,7 +2443,8 @@ local function setup_script_messages()
             if vb then
                 local ratio = clamp((mx - vb.x) / vb.w, 0, 1)
                 state.volume_drag_val = ratio * 100
-            mp.commandv("set", "volume", tostring(state.volume_drag_val))
+                mp.commandv("set", "volume", tostring(state.volume_drag_val))
+            end
         end
     end)
 

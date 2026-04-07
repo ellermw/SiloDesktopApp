@@ -2,7 +2,7 @@
 ; Inno Setup script for Continuum Desktop Player
 
 #define MyAppName "Continuum Desktop Player"
-#define MyAppVersion "1.0.22"
+#define MyAppVersion "1.0.23"
 #define MyAppPublisher "Continuum"
 #define MyAppExeName "ContinuumPlayer.exe"
 
@@ -15,7 +15,7 @@ DefaultDirName={commonpf64}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=output
-OutputBaseFilename=ContinuumDesktopPlayer-Setup
+OutputBaseFilename=ContinuumDesktopPlayer-{#MyAppVersion}-Setup
 SetupIconFile=..\src\ContinuumPlayer\Assets\app.ico
 UninstallDisplayIcon={app}\Assets\app.ico
 Compression=lzma2/ultra64

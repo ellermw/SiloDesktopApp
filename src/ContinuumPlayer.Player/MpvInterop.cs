@@ -26,6 +26,12 @@ public static class MpvInterop
     public const int MPV_EVENT_CLIENT_MESSAGE    = 16;
     public const int MPV_EVENT_PROPERTY_CHANGE  = 22;
 
+    // ── mpv_end_file_reason constants ───────────────────────────────────
+    public const int MPV_END_FILE_REASON_EOF      = 0;
+    public const int MPV_END_FILE_REASON_STOP     = 2;
+    public const int MPV_END_FILE_REASON_QUIT     = 3;
+    public const int MPV_END_FILE_REASON_ERROR    = 4;
+
     // ── Structs ──────────────────────────────────────────────────────────
 
     /// <summary>
@@ -52,6 +58,16 @@ public static class MpvInterop
         public IntPtr Name;   // const char*
         public int Format;    // mpv_format (enum = int)
         public IntPtr Data;   // void*
+    }
+
+    /// <summary>
+    /// Mirrors the native mpv_event_end_file struct.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MpvEventEndFile
+    {
+        public int Reason;  // mpv_end_file_reason
+        public int Error;   // mpv error code (only if reason == ERROR)
     }
 
     /// <summary>
