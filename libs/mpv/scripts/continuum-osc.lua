@@ -53,6 +53,11 @@ local config = {
     stats_font_size     = 16,
     stats_bg_alpha      = "B0",
 
+    -- Top title bar
+    top_gradient_height = 80,
+    font_size_title     = 18,
+    font_size_subtitle  = 14,
+
     -- Font sizes
     font_size_time      = 17,
     font_size_button    = 28,
@@ -162,6 +167,10 @@ local state = {
     skip_overlay    = nil,
     skip_rect       = nil,
 
+    -- Content title (from host via osc-set-title)
+    content_title   = "",
+    content_subtitle = "",
+
     -- Notice overlay (admin messages)
     notice_visible  = false,
     notice_title    = "",
@@ -191,7 +200,9 @@ local quality_tiers = {
 local function ui_scale()
     local w = state.osd_width
     if w <= 1920 then return 1.0 end
-    return w / 1920
+    -- Dampened scaling: sqrt-based so 4K gets ~1.41x instead of 2x.
+    -- Linear 2x made text too large and caused quality menu overlap.
+    return math.sqrt(w / 1920)
 end
 
 -- Format seconds to H:MM:SS or M:SS
@@ -878,7 +889,32 @@ local function render_osc()
     local L = state.layout
     local ma = state.current_alpha  -- master alpha
 
-    -- 1. Gradient fade (above bar)
+    -- 1a. Top gradient + title
+    if state.content_title ~= "" then
+        local sc = ui_scale()
+        local top_gh = math.floor(config.top_gradient_height * sc)
+        draw_gradient(ass,
+            0, 0, W, top_gh,
+            config.bar_bg_color,
+            config.gradient_alpha_bot, config.gradient_alpha_top,
+            ma, 20)
+
+        local title_fs = math.floor(config.font_size_title * sc)
+        local sub_fs = math.floor(config.font_size_subtitle * sc)
+        local title_x = math.floor(20 * sc)
+        local title_y = math.floor(18 * sc)
+
+        draw_text(ass, title_x, title_y, state.content_title,
+            title_fs, config.text_color, "00", ma, 1, nil, true)
+
+        if state.content_subtitle ~= "" then
+            local sub_y = title_y + title_fs + math.floor(4 * sc)
+            draw_text(ass, title_x, sub_y, state.content_subtitle,
+                sub_fs, config.dim_text_color, "00", ma, 1)
+        end
+    end
+
+    -- 1b. Bottom gradient fade (above bar)
     draw_gradient(ass,
         L.gradient.x, L.gradient.y,
         L.gradient.x + L.gradient.w, L.gradient.y + L.gradient.h,
@@ -1504,7 +1540,7 @@ local function render_subtitle_menu()
     local fs_small = math.max(math.floor((config.stats_font_size - 2) * sc), 10)
     local padding = math.floor(config.stats_padding * sc)
     local item_h = math.floor((config.stats_line_height + 4) * sc)
-    local menu_w = 280
+    local menu_w = math.floor(280 * sc)
 
     -- Sort tracks by source priority
     local sorted = {}
@@ -1551,7 +1587,7 @@ local function render_subtitle_menu()
         draw_text(ass, menu_x + padding, cy + item_h / 2, "✓",
             fs, config.text_color, "00", 1.0, 4)
     end
-    draw_text(ass, menu_x + padding + 24, cy + item_h / 2, "Off",
+    draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, "Off",
         fs, off_color, "00", 1.0, 4)
     table.insert(state.subtitle_menu_items, {
         x = menu_x, y = cy, w = menu_w, h = item_h, action = "off"
@@ -1572,7 +1608,7 @@ local function render_subtitle_menu()
         -- Language name
         local display = lang_name(track.language or "")
         if track.forced then display = display .. " (Forced)" end
-        draw_text(ass, menu_x + padding + 24, cy + item_h / 2, display,
+        draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, display,
             fs, text_color, "00", 1.0, 4)
 
         -- Source badge (right-aligned)
@@ -1590,7 +1626,7 @@ local function render_subtitle_menu()
     cy = cy + 4  -- divider space
 
     -- "Search Online..." button
-    draw_text(ass, menu_x + padding + 24, cy + item_h / 2, "Search Online...",
+    draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, "Search Online...",
         fs, "6495ED", "00", 1.0, 4)  -- blue tint
     table.insert(state.subtitle_menu_items, {
         x = menu_x, y = cy, w = menu_w, h = item_h, action = "search"
@@ -1631,7 +1667,7 @@ local function render_quality_menu()
     local fs_small = math.max(math.floor((config.stats_font_size - 2) * sc), 10)
     local padding = math.floor(config.stats_padding * sc)
     local item_h = math.floor((config.stats_line_height + 4) * sc)
-    local menu_w = 280
+    local menu_w = math.floor(280 * sc)
 
     local qi = state.quality_info
     local versions = (qi and qi.versions) or {}
@@ -1680,7 +1716,7 @@ local function render_quality_menu()
             end
 
             local label = ver.label or ver.resolution or "Unknown"
-            draw_text(ass, menu_x + padding + 24, cy + item_h / 2, label,
+            draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, label,
                 fs, text_color, "00", 1.0, 4)
 
             if ver.resolution and ver.resolution ~= "" then
@@ -1712,7 +1748,7 @@ local function render_quality_menu()
                 fs, config.text_color, "00", 1.0, 4)
         end
 
-        draw_text(ass, menu_x + padding + 24, cy + item_h / 2, tier.label,
+        draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, tier.label,
             fs, text_color, "00", 1.0, 4)
 
         -- Dynamic sublabel for Auto: show current play method + bitrate
@@ -2223,6 +2259,11 @@ local function observe_properties()
             state.subtitle_menu_visible = false
             state.quality_menu_visible = false
         end
+    end)
+
+    mp.register_script_message("osc-set-title", function(title, subtitle)
+        state.content_title = title or ""
+        state.content_subtitle = subtitle or ""
     end)
 
     mp.register_script_message("osc-set-markers", function(json_str)

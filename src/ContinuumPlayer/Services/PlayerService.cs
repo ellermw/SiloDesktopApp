@@ -487,6 +487,7 @@ public class PlayerService : IDisposable
             Task.Run(() =>
             {
                 if (ct.IsCancellationRequested) return;
+                SendTitleToOsc();
                 SendMediaInfoToOsc();
                 SendSubtitleListToOsc();
                 SendQualityInfoToOsc();
@@ -781,6 +782,12 @@ public class PlayerService : IDisposable
             LogToFile("state_trace.txt", $"Manifest trim error: {ex.Message}");
             return null;
         }
+    }
+
+    private void SendTitleToOsc()
+    {
+        if (_mpv == null) return;
+        _mpv.SendScriptMessage("osc-set-title", Title ?? "", Subtitle ?? "");
     }
 
     private void SendMediaInfoToOsc()
