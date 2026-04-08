@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <!-- Play triangle with rounded corners, solid blue (#78AEFC) -->
-  <path d="M145 96 C135 89 120 96 120 108 L120 404 C120 416 135 423 145 416 L400 272 C410 266 410 246 400 240 Z"
-        fill="#78AEFC"
-        stroke="none"
-        rx="12" ry="12"/>
-</svg>

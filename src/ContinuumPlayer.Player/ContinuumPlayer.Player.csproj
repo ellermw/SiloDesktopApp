@@ -13,15 +13,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>libmpv-2.dll</Link>
     </None>
-    <None Include="..\..\libs\mpv\scripts\osc.lua">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>libs\mpv\scripts\osc.lua</Link>
-    </None>
-    <None Include="..\..\libs\mpv\scripts\osc-modern.lua">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>libs\mpv\scripts\osc-modern.lua</Link>
-    </None>
-    <None Include="..\..\libs\mpv\scripts\continuum-osc.lua">
+<None Include="..\..\libs\mpv\scripts\continuum-osc.lua">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>libs\mpv\scripts\continuum-osc.lua</Link>
     </None>
