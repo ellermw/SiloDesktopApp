@@ -37,10 +37,20 @@ public partial class HomeViewModel : ObservableObject
     private HomeSectionWithItems? _lastDismissedSection;
     private int _lastDismissedIndex;
 
+    private DateTime _lastLoadedAt = DateTime.MinValue;
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
+
     [RelayCommand]
     private async Task LoadAsync()
     {
         if (IsLoading) return;
+
+        // Skip API call if data was loaded recently and we already have content
+        if (FeaturedSections.Count + Sections.Count > 0
+            && DateTime.UtcNow - _lastLoadedAt < CacheDuration)
+        {
+            return;
+        }
 
         IsLoading = true;
         ErrorMessage = null;
@@ -59,6 +69,8 @@ public partial class HomeViewModel : ObservableObject
                 else
                     Sections.Add(section);
             }
+
+            _lastLoadedAt = DateTime.UtcNow;
         }
         catch (Exception ex)
         {
@@ -68,6 +80,11 @@ public partial class HomeViewModel : ObservableObject
         {
             IsLoading = false;
         }
+    }
+
+    public void InvalidateCache()
+    {
+        _lastLoadedAt = DateTime.MinValue;
     }
 
     [RelayCommand]

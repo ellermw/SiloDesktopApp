@@ -7,8 +7,25 @@ namespace ContinuumPlayer.Core.Api;
 
 public class CatalogApi(ContinuumApiClient client)
 {
-    public Task<List<Library>> GetLibrariesAsync(CancellationToken ct = default)
-        => client.GetAsync<List<Library>>("/api/v1/user/libraries", ct);
+    private List<Library>? _librariesCache;
+    private DateTime _librariesCachedAt = DateTime.MinValue;
+    private static readonly TimeSpan LibraryCacheDuration = TimeSpan.FromMinutes(5);
+
+    public async Task<List<Library>> GetLibrariesAsync(CancellationToken ct = default)
+    {
+        if (_librariesCache != null && DateTime.UtcNow - _librariesCachedAt < LibraryCacheDuration)
+            return _librariesCache;
+
+        _librariesCache = await client.GetAsync<List<Library>>("/api/v1/user/libraries", ct);
+        _librariesCachedAt = DateTime.UtcNow;
+        return _librariesCache;
+    }
+
+    public void InvalidateLibraryCache()
+    {
+        _librariesCache = null;
+        _librariesCachedAt = DateTime.MinValue;
+    }
 
     public Task<HomeSectionsResponse> GetLibrarySectionsAsync(int libraryId, CancellationToken ct = default)
         => client.GetAsync<HomeSectionsResponse>($"/api/v1/library/{libraryId}/sections", ct);
