@@ -1,4 +1,5 @@
 using ContinuumPlayer.Core.Api;
+using ContinuumPlayer.Core.Helpers;
 using ContinuumPlayer.Core.Models.Playback;
 
 namespace ContinuumPlayer.Core.Services;
@@ -76,8 +77,7 @@ public class PlaybackManager : IDisposable
         if (!streamPath.StartsWith("http") && !streamPath.StartsWith("/api/v1"))
             streamPath = "/api/v1" + streamPath;
         var url = streamPath.StartsWith("http") ? streamPath : $"{baseUrl}{streamPath}";
-        if (token != null)
-            url += (url.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
+        url = UrlHelper.AppendToken(url, token);
         if (response.PlayMethod == "remux" && response.Position > 0)
             url += (url.Contains('?') ? "&" : "?") + $"seek={response.Position:F3}";
 
@@ -135,8 +135,7 @@ public class PlaybackManager : IDisposable
             if (!subPath.StartsWith("http") && !subPath.StartsWith("/api/v1"))
                 subPath = "/api/v1" + subPath;
             var url = subPath.StartsWith("http") ? subPath : $"{baseUrl}{subPath}";
-            if (token != null)
-                url += (url.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
+            url = UrlHelper.AppendToken(url, token);
             return (s, url);
         }).ToList();
     }

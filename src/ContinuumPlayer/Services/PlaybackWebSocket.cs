@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using ContinuumPlayer.Core.Helpers;
 
 namespace ContinuumPlayer.Services;
 
@@ -41,8 +42,7 @@ public sealed class PlaybackWebSocket : IDisposable
         var wsUrl = _baseUrl.Replace("https://", "wss://").Replace("http://", "ws://");
         wsUrl += $"/api/v1/playback/ws/{_sessionId}";
         // Pass token as query param (matching web player) — CDN may strip Auth headers on WebSocket upgrades
-        if (_token != null)
-            wsUrl += $"?token={Uri.EscapeDataString(_token)}";
+        wsUrl = UrlHelper.AppendToken(wsUrl, _token);
 
         _ws = new ClientWebSocket();
 

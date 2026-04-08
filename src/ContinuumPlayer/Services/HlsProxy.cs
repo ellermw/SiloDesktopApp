@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using ContinuumPlayer.Core.Helpers;
 
 namespace ContinuumPlayer.Services;
 
@@ -107,8 +108,7 @@ public sealed class HlsProxy : IDisposable
         // This way segment URLs automatically include ?token=XXX — matching
         // how HLS.js in the web player works.
         var manifestUrlWithToken = _remoteManifestUrl;
-        if (_token != null)
-            manifestUrlWithToken += (manifestUrlWithToken.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(_token)}";
+        manifestUrlWithToken = UrlHelper.AppendToken(manifestUrlWithToken, _token);
         Log("Fetching remote manifest...");
         var manifest = await _http.GetStringAsync(manifestUrlWithToken, ct);
         Log($"Got manifest: {manifest.Length} chars");

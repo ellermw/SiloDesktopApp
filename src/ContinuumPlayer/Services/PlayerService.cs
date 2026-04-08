@@ -1,6 +1,7 @@
 // src/ContinuumPlayer/Services/PlayerService.cs
 using System.Runtime.InteropServices;
 using ContinuumPlayer.Core.Api;
+using ContinuumPlayer.Core.Helpers;
 using ContinuumPlayer.Core.Models.Playback;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Player;
@@ -221,7 +222,6 @@ public class PlayerService : IDisposable
             catch (Exception ex) { LogToFile("state_trace.txt", $"Stop previous session error: {ex.Message}"); }
             _playbackManager.Dispose();
             _playbackManager = null;
-            // Brief delay for server to process session stop
             await Task.Delay(200);
         }
 
@@ -232,49 +232,18 @@ public class PlayerService : IDisposable
         _playbackCts?.Cancel();
         _playbackCts?.Dispose();
         _playbackCts = new CancellationTokenSource();
-        _switchingContent = true; // Suppress stale PlaybackEnded from previous _mpv.Stop()
+        _switchingContent = true;
 
-        // Show loading indicator on the main window
         App.MainWindowInstance?.ShowLoadingOverlay();
 
         try
         {
-            // Create PlaybackManager for this session
             _playbackManager = new PlaybackManager(_playbackApi, _catalogApi, _authService, _apiClient);
 
-            // Get watch detail (retry once if server hasn't processed previous session stop)
-            WatchDetailResponse watchDetail;
-            try
-            {
-                watchDetail = await _playbackManager.GetWatchDetailAsync(contentId);
-            }
-            catch (ApiException ex) when (ex.StatusCode == 400)
-            {
-                await Task.Delay(300);
-                watchDetail = await _playbackManager.GetWatchDetailAsync(contentId);
-            }
+            var watchDetail = await FetchWatchDetailAsync(contentId);
+            SetTitleFromWatchDetail(watchDetail);
 
-            // Build title
-            if (watchDetail.SeasonNumber.HasValue && watchDetail.EpisodeNumber.HasValue)
-            {
-                Title = $"{watchDetail.SeriesTitle ?? watchDetail.Title} - S{watchDetail.SeasonNumber:D2}E{watchDetail.EpisodeNumber:D2}";
-                Subtitle = watchDetail.Title; // episode title
-            }
-            else
-            {
-                Title = watchDetail.Title;
-                Subtitle = watchDetail.Year > 0 ? watchDetail.Year.ToString() : null;
-            }
-
-            // Versions
-            Versions = watchDetail.Versions.ToList();
-
-            // Select version: use specified fileId if provided, otherwise pick best
-            FileVersion? bestVersion = null;
-            var versions = watchDetail.Versions ?? new List<FileVersion>();
-            if (fileId.HasValue)
-                bestVersion = versions.FirstOrDefault(v => v.FileId == fileId.Value);
-            bestVersion ??= _playbackManager.SelectBestVersion(versions);
+            var bestVersion = SelectVersion(watchDetail, fileId);
             if (bestVersion == null)
             {
                 ErrorMessage = "No playable version found.";
@@ -283,14 +252,8 @@ public class PlayerService : IDisposable
             }
 
             Resolution = bestVersion.Resolution;
+            var startPosition = DetermineStartPosition(watchDetail, fromStart);
 
-            // Determine start position
-            double startPosition = 0;
-            if (!fromStart && watchDetail.UserData?.PositionSeconds > 0 && watchDetail.UserData.Played != true)
-                startPosition = watchDetail.UserData.PositionSeconds!.Value;
-            LogToFile("state_trace.txt", $"Resume logic: fromStart={fromStart} userPos={watchDetail.UserData?.PositionSeconds} played={watchDetail.UserData?.Played} → startPosition={startPosition}");
-
-            // Start server session
             var session = await _playbackManager.StartSessionAsync(bestVersion.FileId, startPosition, forceStartPosition: fromStart);
             PlayMethod = session.PlayMethod;
 
@@ -300,7 +263,6 @@ public class PlayerService : IDisposable
                 LogToFile("state_trace.txt", $"Using server session position: {session.Position:F1}");
             }
 
-            // Build stream URL
             var streamUrl = _playbackManager.StreamUrl;
             if (string.IsNullOrEmpty(streamUrl))
             {
@@ -310,77 +272,32 @@ public class PlayerService : IDisposable
             }
 
             // HLS transcode fallback
-            if (session.PlayMethod == "transcode")
+            var (transcodeUrl, transcodeStartPos) = await HandleTranscodeFallbackAsync(session, bestVersion, startPosition);
+            if (transcodeUrl != null)
             {
-                try
-                {
-                    var transcodeResponse = await _playbackApi.StartTranscodeAsync(new TranscodeStartRequest
-                    {
-                        SessionId = session.SessionId,
-                        SeekSeconds = startPosition,
-                        TargetResolution = bestVersion.Resolution,
-                        TargetCodecVideo = "h264",
-                        TargetCodecAudio = "aac",
-                        TargetBitrateKbps = 8000,
-                        SegmentDuration = 2,
-                        SubtitleTrackIndex = -1,
-                        SubtitleBurnIn = false
-                    });
-
-                    var baseUrl = _apiClient.BaseUrl;
-                    var manifestPath = transcodeResponse.ManifestUrl;
-                    if (!manifestPath.StartsWith("http") && !manifestPath.StartsWith("/api/v1"))
-                        manifestPath = "/api/v1" + manifestPath;
-                    streamUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
-                    startPosition = transcodeResponse.PlayerStartSeconds;
-                }
-                catch (Exception ex)
-                {
-                    LogToFile("player_transcode_error.txt", ex.ToString());
-                }
+                streamUrl = transcodeUrl;
+                startPosition = transcodeStartPos!.Value;
             }
 
-            // Initialize mpv (lazy — first play only)
-            if (_mpv == null)
-            {
-                var mainWindow = App.MainWindowInstance;
-                var parentHwnd = WinRT.Interop.WindowNative.GetWindowHandle(mainWindow);
+            EnsureMpvInitialized();
 
-                _videoWindow = new MpvVideoWindow();
-                _videoWindow.Create(parentHwnd);
-                WireVideoWindowEvents();
-
-                _mpv = new MpvPlayer();
-                _mpv.InitializeWithWindow(_videoWindow.Hwnd); // vo=gpu, zero CPU, native resolution
-                _videoWindow.SetMpv(_mpv); // Forward mouse/keyboard to mpv for OSC
-                WireMpvEvents();
-
-            }
-
-            // Set state to Expanded (shows the overlay)
             SetState(PlayerState.Expanded);
 
             // Build auth
             var token = _apiClient.AccessToken;
             var authHeader = token != null ? $"Bearer {token}" : null;
-            if (session.PlayMethod != "transcode" && token != null)
-                streamUrl += (streamUrl.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
+            if (session.PlayMethod != "transcode")
+                streamUrl = UrlHelper.AppendToken(streamUrl, token);
 
-            // Store resume position — the FileLoaded handler will seek to it
             _resumePosition = startPosition;
 
-            // Load and play
             LogToFile("state_trace.txt", $"LoadFile: url={streamUrl?.Substring(0, Math.Min(80, streamUrl?.Length ?? 0))}...");
-            _mpv.LoadFile(streamUrl, session.PlayMethod == "transcode" ? null : authHeader);
+            _mpv!.LoadFile(streamUrl, session.PlayMethod == "transcode" ? null : authHeader);
             _mpv.Play();
             LogToFile("state_trace.txt", "Play() called");
             IsPaused = false;
-            // DON'T clear _switchingContent here — mpv may still fire PlaybackEnded
-            // from the previous Stop(). It's cleared in the FileLoaded handler instead.
 
-            // Tell custom OSC the play method
             _mpv.SendScriptMessage("osc-set-play-method", session.PlayMethod ?? "direct");
-
             IsLoading = false;
         }
         catch (Exception ex)
@@ -390,7 +307,6 @@ public class PlayerService : IDisposable
             IsLoading = false;
             _switchingContent = false;
 
-            // Clean up — hide popup window and go back to Idle
             _videoWindow?.Hide();
             if (_playbackManager != null)
             {
@@ -404,6 +320,105 @@ public class PlayerService : IDisposable
     }
 
     private double _resumePosition;
+
+    private async Task<WatchDetailResponse> FetchWatchDetailAsync(string contentId)
+    {
+        try
+        {
+            return await _playbackManager!.GetWatchDetailAsync(contentId);
+        }
+        catch (ApiException ex) when (ex.StatusCode == 400)
+        {
+            // Retry once if server hasn't processed previous session stop
+            await Task.Delay(300);
+            return await _playbackManager!.GetWatchDetailAsync(contentId);
+        }
+    }
+
+    private void SetTitleFromWatchDetail(WatchDetailResponse watchDetail)
+    {
+        if (watchDetail.SeasonNumber.HasValue && watchDetail.EpisodeNumber.HasValue)
+        {
+            Title = $"{watchDetail.SeriesTitle ?? watchDetail.Title} - S{watchDetail.SeasonNumber:D2}E{watchDetail.EpisodeNumber:D2}";
+            Subtitle = watchDetail.Title;
+        }
+        else
+        {
+            Title = watchDetail.Title;
+            Subtitle = watchDetail.Year > 0 ? watchDetail.Year.ToString() : null;
+        }
+    }
+
+    private FileVersion? SelectVersion(WatchDetailResponse watchDetail, int? fileId)
+    {
+        Versions = watchDetail.Versions?.ToList() ?? [];
+        var versions = watchDetail.Versions ?? new List<FileVersion>();
+
+        FileVersion? bestVersion = null;
+        if (fileId.HasValue)
+            bestVersion = versions.FirstOrDefault(v => v.FileId == fileId.Value);
+        bestVersion ??= _playbackManager!.SelectBestVersion(versions);
+        return bestVersion;
+    }
+
+    private double DetermineStartPosition(WatchDetailResponse watchDetail, bool fromStart)
+    {
+        double startPosition = 0;
+        if (!fromStart && watchDetail.UserData?.PositionSeconds > 0 && watchDetail.UserData.Played != true)
+            startPosition = watchDetail.UserData.PositionSeconds!.Value;
+        LogToFile("state_trace.txt", $"Resume logic: fromStart={fromStart} userPos={watchDetail.UserData?.PositionSeconds} played={watchDetail.UserData?.Played} → startPosition={startPosition}");
+        return startPosition;
+    }
+
+    private async Task<(string? streamUrl, double? startPosition)> HandleTranscodeFallbackAsync(PlaybackStartResponse session, FileVersion bestVersion, double startPosition)
+    {
+        if (session.PlayMethod != "transcode") return (null, null);
+
+        try
+        {
+            var transcodeResponse = await _playbackApi.StartTranscodeAsync(new TranscodeStartRequest
+            {
+                SessionId = session.SessionId,
+                SeekSeconds = startPosition,
+                TargetResolution = bestVersion.Resolution,
+                TargetCodecVideo = "h264",
+                TargetCodecAudio = "aac",
+                TargetBitrateKbps = 8000,
+                SegmentDuration = 2,
+                SubtitleTrackIndex = -1,
+                SubtitleBurnIn = false
+            });
+
+            var baseUrl = _apiClient.BaseUrl;
+            var manifestPath = transcodeResponse.ManifestUrl;
+            if (!manifestPath.StartsWith("http") && !manifestPath.StartsWith("/api/v1"))
+                manifestPath = "/api/v1" + manifestPath;
+            var streamUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
+            return (streamUrl, transcodeResponse.PlayerStartSeconds);
+        }
+        catch (Exception ex)
+        {
+            LogToFile("player_transcode_error.txt", ex.ToString());
+            return (null, null);
+        }
+    }
+
+    private void EnsureMpvInitialized()
+    {
+        if (_mpv != null) return;
+
+        var mainWindow = App.MainWindowInstance;
+        var parentHwnd = WinRT.Interop.WindowNative.GetWindowHandle(mainWindow);
+
+        _videoWindow = new MpvVideoWindow();
+        _videoWindow.Create(parentHwnd);
+        WireVideoWindowEvents();
+
+        _mpv = new MpvPlayer();
+        _mpv.InitializeWithWindow(_videoWindow.Hwnd);
+        _videoWindow.SetMpv(_mpv);
+        WireMpvEvents();
+    }
 
     private void UnwireMpvEvents()
     {
@@ -592,8 +607,8 @@ public class PlayerService : IDisposable
             var token = _apiClient.AccessToken;
             var authHeader = token != null ? $"Bearer {token}" : null;
             var finalUrl = result.streamUrl;
-            if (result.session.PlayMethod != "transcode" && token != null)
-                finalUrl += (finalUrl.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
+            if (result.session.PlayMethod != "transcode")
+                finalUrl = UrlHelper.AppendToken(finalUrl, token);
 
             _resumePosition = result.currentPos;
             _mpv.LoadFile(finalUrl, result.session.PlayMethod == "transcode" ? null : authHeader);
@@ -629,8 +644,7 @@ public class PlayerService : IDisposable
             if (!streamPath.StartsWith("http") && !streamPath.StartsWith("/api/v1"))
                 streamPath = "/api/v1" + streamPath;
             var url = streamPath.StartsWith("http") ? streamPath : $"{baseUrl}{streamPath}";
-            if (token != null)
-                url += (url.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
+            url = UrlHelper.AppendToken(url, token);
 
             PlayMethod = response.PlayMethod;
 
@@ -1026,9 +1040,7 @@ public class PlayerService : IDisposable
 
                     var token = _apiClient.AccessToken;
                     var authHeader = token != null ? $"Bearer {token}" : null;
-                    var streamUrl = _playbackManager.StreamUrl ?? "";
-                    if (token != null)
-                        streamUrl += (streamUrl.Contains('?') ? "&" : "?") + $"token={Uri.EscapeDataString(token)}";
+                    var streamUrl = UrlHelper.AppendToken(_playbackManager.StreamUrl ?? "", token);
 
                     _resumePosition = currentPos;
                     _mpv.LoadFile(streamUrl, authHeader);
