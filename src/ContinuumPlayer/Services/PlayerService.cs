@@ -26,6 +26,15 @@ public class PlayerService : IDisposable
     private PlaybackWebSocket? _webSocket;
     private CancellationTokenSource? _playbackCts;
 
+    // Stored mpv event handlers for proper unsubscription
+    private Action<double>? _mpvPositionHandler;
+    private Action<double>? _mpvDurationHandler;
+    private Action<bool>? _mpvPauseHandler;
+    private Action? _mpvFileLoadedHandler;
+    private Action? _mpvPlaybackEndedHandler;
+    private Action<string>? _mpvPlaybackErrorHandler;
+    private Action<string>? _mpvErrorHandler;
+
     public PlayerService(PlaybackApi playbackApi, CatalogApi catalogApi, AuthService authService, ContinuumApiClient apiClient)
     {
         _playbackApi = playbackApi;
@@ -221,6 +230,7 @@ public class PlayerService : IDisposable
         ContentId = contentId;
         _resumePosition = 0;
         _playbackCts?.Cancel();
+        _playbackCts?.Dispose();
         _playbackCts = new CancellationTokenSource();
         _switchingContent = true; // Suppress stale PlaybackEnded from previous _mpv.Stop()
 
@@ -395,30 +405,47 @@ public class PlayerService : IDisposable
 
     private double _resumePosition;
 
+    private void UnwireMpvEvents()
+    {
+        if (_mpv == null) return;
+        if (_mpvPositionHandler != null) _mpv.PositionChanged -= _mpvPositionHandler;
+        if (_mpvDurationHandler != null) _mpv.DurationChanged -= _mpvDurationHandler;
+        if (_mpvPauseHandler != null) _mpv.PauseChanged -= _mpvPauseHandler;
+        if (_mpvFileLoadedHandler != null) _mpv.FileLoaded -= _mpvFileLoadedHandler;
+        if (_mpvPlaybackEndedHandler != null) _mpv.PlaybackEnded -= _mpvPlaybackEndedHandler;
+        if (_mpvPlaybackErrorHandler != null) _mpv.PlaybackError -= _mpvPlaybackErrorHandler;
+        if (_mpvErrorHandler != null) _mpv.Error -= _mpvErrorHandler;
+        _mpv.ScriptMessageReceived -= OnScriptMessage;
+    }
+
     private void WireMpvEvents()
     {
         if (_mpv == null) return;
+        UnwireMpvEvents();
 
-        _mpv.PositionChanged += (pos) =>
+        _mpvPositionHandler = (pos) =>
         {
             Position = pos;
             _playbackManager?.UpdatePosition(pos, IsPaused);
             PositionChanged?.Invoke(pos);
         };
+        _mpv.PositionChanged += _mpvPositionHandler;
 
-        _mpv.DurationChanged += (dur) =>
+        _mpvDurationHandler = (dur) =>
         {
             Duration = dur;
             DurationChanged?.Invoke(dur);
         };
+        _mpv.DurationChanged += _mpvDurationHandler;
 
-        _mpv.PauseChanged += (paused) =>
+        _mpvPauseHandler = (paused) =>
         {
             IsPaused = paused;
             PauseChanged?.Invoke(paused);
         };
+        _mpv.PauseChanged += _mpvPauseHandler;
 
-        _mpv.FileLoaded += () =>
+        _mpvFileLoadedHandler = () =>
         {
             IsLoading = false;
             _switchingContent = false; // Safe to receive PlaybackEnded now
@@ -457,8 +484,9 @@ public class PlayerService : IDisposable
             try { ConnectWebSocket(); }
             catch (Exception ex) { LogToFile("state_trace.txt", $"WebSocket connect failed: {ex.Message}"); }
         };
+        _mpv.FileLoaded += _mpvFileLoadedHandler;
 
-        _mpv.PlaybackEnded += () =>
+        _mpvPlaybackEndedHandler = () =>
         {
             LogToFile("state_trace.txt", $"PlaybackEnded fired: _switchingContent={_switchingContent} _qualitySwitchActive={_qualitySwitchActive} State={State} thread={Environment.CurrentManagedThreadId}");
             if (!_switchingContent && !_qualitySwitchActive)
@@ -472,8 +500,9 @@ public class PlayerService : IDisposable
                 LogToFile("state_trace.txt", "  → Suppressed (switching content)");
             }
         };
+        _mpv.PlaybackEnded += _mpvPlaybackEndedHandler;
 
-        _mpv.PlaybackError += (msg) =>
+        _mpvPlaybackErrorHandler = (msg) =>
         {
             LogToFile("state_trace.txt", $"PlaybackError: {msg} _switchingContent={_switchingContent}");
             // If we were waiting for a file to load and it failed, show error
@@ -495,9 +524,11 @@ public class PlayerService : IDisposable
                 });
             }
         };
+        _mpv.PlaybackError += _mpvPlaybackErrorHandler;
 
         _mpv.ScriptMessageReceived += OnScriptMessage;
-        _mpv.Error += (msg) => LogToFile("mpv_error.txt", msg);
+        _mpvErrorHandler = (msg) => LogToFile("mpv_error.txt", msg);
+        _mpv.Error += _mpvErrorHandler;
     }
 
     // ── Content switching (version/audio) ────────────────────────────────
@@ -1232,6 +1263,7 @@ public class PlayerService : IDisposable
         _hlsProxy = null;
         DisconnectWebSocket();
         _playbackCts?.Cancel();
+        _playbackCts?.Dispose();
         _playbackCts = null;
         ErrorMessage = null;
         Versions = [];
@@ -1279,8 +1311,12 @@ public class PlayerService : IDisposable
 
     private void DisconnectWebSocket()
     {
-        _webSocket?.Disconnect();
-        _webSocket = null;
+        if (_webSocket != null)
+        {
+            _webSocket.CommandReceived -= HandleWebSocketCommand;
+            _webSocket.Disconnect();
+            _webSocket = null;
+        }
     }
 
     private async Task<CommandResult> HandleWebSocketCommand(WebSocketCommand cmd)

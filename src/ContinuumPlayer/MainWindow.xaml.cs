@@ -18,6 +18,7 @@ public sealed partial class MainWindow : Window
     private readonly CredentialStore _credentialStore;
     private readonly AuthService _authService;
     private readonly ContinuumApiClient _apiClient;
+    private readonly PlayerService _playerService;
 
     public MainWindow()
     {
@@ -52,28 +53,44 @@ public sealed partial class MainWindow : Window
         NavView.IsPaneVisible = false;
 
         // Listen for player state changes
-        var playerService = App.Services.GetRequiredService<PlayerService>();
-        playerService.StateChanged += OnPlayerStateChanged;
+        _playerService = App.Services.GetRequiredService<PlayerService>();
+        _playerService.StateChanged += OnPlayerStateChanged;
 
         // Keep native video window matched to main window size
-        this.SizeChanged += (_, _) => playerService.HandleWindowResize();
+        this.SizeChanged += OnWindowSizeChanged;
 
         // Hide/show player popup when main window is minimized/restored
         if (AppWindow != null)
         {
-            var presenter = AppWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter;
-            AppWindow.Changed += (_, args) =>
-            {
-                if (args.DidPresenterChange || args.DidSizeChange || args.DidPositionChange)
-                {
-                    var p = AppWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter;
-                    if (p != null)
-                    {
-                        playerService.HandleWindowMinimized(p.State == Microsoft.UI.Windowing.OverlappedPresenterState.Minimized);
-                    }
-                }
-            };
+            AppWindow.Changed += OnAppWindowChanged;
         }
+
+        // Clean up event subscriptions when window closes
+        this.Closed += OnWindowClosed;
+    }
+
+    private void OnWindowSizeChanged(object sender, WindowSizeChangedEventArgs e)
+    {
+        _playerService.HandleWindowResize();
+    }
+
+    private void OnAppWindowChanged(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args)
+    {
+        if (args.DidPresenterChange || args.DidSizeChange || args.DidPositionChange)
+        {
+            var p = AppWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter;
+            if (p != null)
+            {
+                _playerService.HandleWindowMinimized(p.State == Microsoft.UI.Windowing.OverlappedPresenterState.Minimized);
+            }
+        }
+    }
+
+    private void OnWindowClosed(object sender, WindowEventArgs args)
+    {
+        _playerService.StateChanged -= OnPlayerStateChanged;
+        this.SizeChanged -= OnWindowSizeChanged;
+        if (AppWindow != null) AppWindow.Changed -= OnAppWindowChanged;
     }
 
     private async void NavView_Loaded(object sender, RoutedEventArgs e)

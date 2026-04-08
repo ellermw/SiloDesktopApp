@@ -19,6 +19,8 @@ public sealed partial class ItemDetailPage : Page
     private int _highlightedSeasonNumber;
     private WatchDetailResponse? _watchDetail;
     private FileVersion? _selectedVersion;
+    private Services.PlayerService? _playerService;
+    private FrameworkElement? _rootElement;
 
     public ItemDetailPage()
     {
@@ -27,18 +29,9 @@ public sealed partial class ItemDetailPage : Page
         SmoothScrollHelper.Attach(ContentScroll);
 
         // Listen for async property changes (e.g., rating loaded after initial UI update)
-        ViewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName == nameof(ViewModel.UserRating))
-                DispatcherQueue.TryEnqueue(UpdateStarRating);
-        };
+        ViewModel.PropertyChanged += OnViewModelPropertyChanged;
 
-        this.Loaded += (_, _) =>
-        {
-            UpdateBackdropHeight();
-            if (XamlRoot?.Content is FrameworkElement root)
-                root.SizeChanged += (_, _) => UpdateBackdropHeight();
-        };
+        this.Loaded += OnPageLoaded;
     }
 
     private void UpdateBackdropHeight()
@@ -46,6 +39,52 @@ public sealed partial class ItemDetailPage : Page
         // Match web UI: min-h-[60dvh] -- 60% of viewport height
         if (XamlRoot?.Content is FrameworkElement root && root.ActualHeight > 0)
             BackdropContainer.Height = Math.Max(300, root.ActualHeight * 0.60);
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(ViewModel.UserRating))
+            DispatcherQueue.TryEnqueue(UpdateStarRating);
+    }
+
+    private void OnPageLoaded(object sender, RoutedEventArgs e)
+    {
+        UpdateBackdropHeight();
+        if (XamlRoot?.Content is FrameworkElement root)
+        {
+            _rootElement = root;
+            _rootElement.SizeChanged += OnRootSizeChanged;
+        }
+    }
+
+    private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateBackdropHeight();
+    }
+
+    private void OnPlayerStateChanged(Services.PlayerState state)
+    {
+        if (state == Services.PlayerState.Idle && _playableContentId != null)
+        {
+            DispatcherQueue?.TryEnqueue(() => _ = LoadWatchDetailAsync(_playableContentId));
+        }
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+
+        ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        if (_rootElement != null)
+        {
+            _rootElement.SizeChanged -= OnRootSizeChanged;
+            _rootElement = null;
+        }
+        if (_playerService != null)
+        {
+            _playerService.StateChanged -= OnPlayerStateChanged;
+            _subscribedToStateChanged = false;
+        }
     }
 
     private string? _currentContentId;
@@ -60,15 +99,8 @@ public sealed partial class ItemDetailPage : Page
         if (!_subscribedToStateChanged)
         {
             _subscribedToStateChanged = true;
-            var playerService = App.Services.GetRequiredService<Services.PlayerService>();
-            playerService.StateChanged += (state) =>
-            {
-                if (state == Services.PlayerState.Idle && _playableContentId != null)
-                {
-                    // Player closed — refresh watch detail so button shows "Resume"
-                    DispatcherQueue?.TryEnqueue(() => _ = LoadWatchDetailAsync(_playableContentId));
-                }
-            };
+            _playerService = App.Services.GetRequiredService<Services.PlayerService>();
+            _playerService.StateChanged += OnPlayerStateChanged;
         }
 
         if (e.Parameter is string contentId && !string.IsNullOrEmpty(contentId))
@@ -249,6 +281,7 @@ public sealed partial class ItemDetailPage : Page
 
         // Load backdrop
         _imageCts?.Cancel();
+        _imageCts?.Dispose();
         _imageCts = new CancellationTokenSource();
         _ = LoadBackdropAsync(item, _imageCts.Token);
 

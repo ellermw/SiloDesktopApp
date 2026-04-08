@@ -42,6 +42,7 @@ public sealed partial class PosterCard : UserControl
     private void UpdateContent(MediaItem item)
     {
         _loadCts?.Cancel();
+        _loadCts?.Dispose();
         _loadCts = new CancellationTokenSource();
         var ct = _loadCts.Token;
 

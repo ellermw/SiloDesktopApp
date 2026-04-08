@@ -33,17 +33,9 @@ public sealed partial class HomePage : Page
             if (!_eventsAttached)
             {
                 _eventsAttached = true;
-                ViewModel.FeaturedSections.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(() => BuildContent());
-                ViewModel.Sections.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(() => BuildContent());
-
-                // Watch for undo banner visibility changes
-                ViewModel.PropertyChanged += (_, args) =>
-                {
-                    if (args.PropertyName == nameof(ViewModel.ShowUndoBanner))
-                    {
-                        DispatcherQueue.TryEnqueue(UpdateUndoBanner);
-                    }
-                };
+                ViewModel.FeaturedSections.CollectionChanged += OnSectionsChanged;
+                ViewModel.Sections.CollectionChanged += OnSectionsChanged;
+                ViewModel.PropertyChanged += OnViewModelPropertyChanged;
             }
         }
         catch (Exception ex)
@@ -99,5 +91,31 @@ public sealed partial class HomePage : Page
         await ViewModel.UndoDismissalCommand.ExecuteAsync(null);
         // Rebuild content to restore the item
         BuildContent();
+    }
+
+    private void OnSectionsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() => BuildContent());
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ViewModel.ShowUndoBanner))
+        {
+            DispatcherQueue.TryEnqueue(UpdateUndoBanner);
+        }
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+
+        if (_eventsAttached)
+        {
+            ViewModel.FeaturedSections.CollectionChanged -= OnSectionsChanged;
+            ViewModel.Sections.CollectionChanged -= OnSectionsChanged;
+            ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _eventsAttached = false;
+        }
     }
 }

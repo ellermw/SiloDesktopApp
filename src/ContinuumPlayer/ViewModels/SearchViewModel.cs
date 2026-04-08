@@ -39,6 +39,7 @@ public partial class SearchViewModel : ObservableObject
     {
         // Cancel previous search
         _searchCts?.Cancel();
+        _searchCts?.Dispose();
         _searchCts = new CancellationTokenSource();
         var ct = _searchCts.Token;
 
