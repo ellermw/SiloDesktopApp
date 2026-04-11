@@ -66,6 +66,19 @@ public sealed partial class LandscapeCard : UserControl
             SubtitleText.Visibility = Visibility.Collapsed;
         }
 
+        // Badge pill (e.g. "SEASON PREMIERE") — mirrors WebUI ContinueWatchingCard.
+        // Server attaches badge strings to section items; we render the first known one.
+        var badgeLabel = GetBadgeLabel(item);
+        if (badgeLabel != null)
+        {
+            BadgeText.Text = badgeLabel;
+            BadgePill.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            BadgePill.Visibility = Visibility.Collapsed;
+        }
+
         // Progress bar
         if (item.PositionSeconds.HasValue && item.DurationSeconds.HasValue && item.DurationSeconds.Value > 0)
         {
@@ -161,5 +174,30 @@ public sealed partial class LandscapeCard : UserControl
     {
         CardBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["CardBackgroundBrush"];
+    }
+
+    /// <summary>
+    /// Translate a server-attached badge string into the uppercase label we
+    /// display on the card. Returns null if no known badge applies. Mirrors the
+    /// WebUI <c>upcomingBadgeLabel()</c> helper.
+    /// </summary>
+    private static string? GetBadgeLabel(MediaItem item)
+    {
+        if (item.Badges == null || item.Badges.Count == 0) return null;
+
+        foreach (var badge in item.Badges)
+        {
+            if (string.IsNullOrEmpty(badge)) continue;
+            switch (badge)
+            {
+                case "season_premiere": return "SEASON PREMIERE";
+                case "series_premiere": return "SERIES PREMIERE";
+                case "new_season":      return "NEW SEASON";
+                case "new_episode":     return "NEW EPISODE";
+                // Unknown badge: render the server string in uppercase as a best-effort fallback.
+                default: return badge.Replace('_', ' ').ToUpperInvariant();
+            }
+        }
+        return null;
     }
 }

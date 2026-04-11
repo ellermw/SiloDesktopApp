@@ -102,6 +102,26 @@
                 TextTrimming="CharacterEllipsis"
                 MaxLines="1"
                 Visibility="Collapsed" />
+            <!-- Badge row (e.g. "SEASON PREMIERE") — WebUI parity with ContinueWatchingCard.
+                 Uses a rounded-full pill with emerald accent. Visible only when the server
+                 attaches a badge string to the section item. -->
+            <Border
+                x:Name="BadgePill"
+                HorizontalAlignment="Left"
+                Margin="0,4,0,0"
+                Padding="8,2"
+                CornerRadius="999"
+                BorderThickness="1"
+                BorderBrush="#4D34D399"
+                Background="#1A34D399"
+                Visibility="Collapsed">
+                <TextBlock
+                    x:Name="BadgeText"
+                    FontSize="10"
+                    FontWeight="SemiBold"
+                    CharacterSpacing="80"
+                    Foreground="#6EE7B7" />
+            </Border>
         </StackPanel>
     </Grid>
 </UserControl>

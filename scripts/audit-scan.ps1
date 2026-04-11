@@ -25,6 +25,7 @@ param(
     [string]$ServerPath = "F:\continuum-server",
     [string]$BaselinePath = (Join-Path (Join-Path $PSScriptRoot "..") "docs\audit-baseline.json"),
     [string]$ReportsDir = (Join-Path (Join-Path $PSScriptRoot "..") "docs\audit-reports"),
+    [string]$Since = "",   # Optional: override the baseline SHA for an ad-hoc scan
     [switch]$Pull
 )
 
@@ -40,7 +41,7 @@ if (-not (Test-Path $BaselinePath)) {
 }
 
 $baseline = Get-Content $BaselinePath -Raw | ConvertFrom-Json
-$baselineSha = $baseline.continuum_server_sha
+$baselineSha = if ($Since) { $Since } else { $baseline.continuum_server_sha }
 if (-not $baselineSha) {
     Write-Error "audit-baseline.json has no continuum_server_sha. Bootstrap it first."
     exit 1

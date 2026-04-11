@@ -133,7 +133,17 @@ public sealed partial class ItemDetailPage : Page
                 SeasonsLoadingRing.IsActive = false;
                 SeasonsLoadingRing.Visibility = Visibility.Collapsed;
 
-                BuildSeasonCards();
+                // Inline episodes for single-season series — skip the season picker
+                // entirely and show the flat episode list directly. Matches WebUI
+                // SeriesContent's single-season-collapse behavior (commit 7da3620).
+                if (ViewModel.Seasons.Count <= 1)
+                {
+                    SeasonsSection.Visibility = Visibility.Collapsed;
+                }
+                else
+                {
+                    BuildSeasonCards();
+                }
                 BuildEpisodeRows();
 
                 // For series, find the next episode to play and load its watch detail

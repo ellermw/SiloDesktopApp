@@ -444,6 +444,24 @@ B53 (dead render code cleanup), B55 (SubtitleAppearance shape), B56 (AdminMainte
 **Fix:** Add confirm dialogs matching web.
 **Source:** 05
 
+### Regressions introduced during this parity work
+
+#### B59: `Person.Id` type mismatch — PersonDetail fails to deserialize
+**Where:** `ContinuumPlayer.Core/Models/Catalog/Person.cs`, `PeopleApi.cs`, `PersonDetailViewModel.cs`, `PersonDetailPage.xaml.cs`, `ItemDetailPage.xaml.cs` (cast/crew navigation)
+**Reported:** User clicked Gwyneth Paltrow in an Iron Man item detail. Error: `Failed to load person: The JSON value could not be converted to System.String. Path: $.id | LineNumber: 0 | BytePositionInLine: 24`.
+**Problem:** B33 changed `Person.Id` from `int` to `string` on the theory that person IDs could be non-numeric strings from third-party providers. Root cause: the server's `GET /api/v1/people/{id}` endpoint actually returns `id` as a JSON **number** (matches `Person.id: number` in the WebUI `types.ts`). My change broke deserialization of every numeric person response (which is all of them today). WebUI's *separate* shape is:
+- `Person.id: number` (on the `/people/{id}` response)
+- `CastMember.person_id: string` and `CrewMember.person_id: string` (on item detail cast/crew arrays)
+
+**Fix plan:**
+1. Revert `Person.Id` to `int`. Revert `PeopleApi.GetPersonAsync(int id)` / `RefreshPersonAsync(int id)`. Revert `CatalogApi.GetPersonFilmographyAsync(int personId, ...)`. Revert `PersonDetailViewModel.LoadAsync(int personId)` and related.
+2. Keep `CastMember.PersonId` and `CrewMember.PersonId` as `string?` (WebUI contract is correct).
+3. In `ItemDetailPage.xaml.cs` cast/crew click handlers: try `int.TryParse(personId, out var numeric)` before navigating to `PersonDetailPage`. If it doesn't parse, fall back to a catalog browse filtered by `source=person&person_id={stringId}` — matches WebUI's `buildPersonCatalogHref` behavior. For now, if the catalog browse page doesn't exist yet, log and skip navigation rather than crash.
+4. Revert `PersonDetailPage.OnNavigatedTo` back to `int` parameter (keep the back-compat case for receiving an `int`).
+5. Revert `SearchPage.PersonCard_Click` back to `int` Tag handling.
+
+**Source:** Runtime bug reported 2026-04-10 during v1.0.35 testing. B33 was well-intentioned but based on a misread of the WebUI types. This reverts half of B33 and preserves the other half (cast/crew strings).
+
 ---
 
 ## PRIORITY 2 — FOUNDATIONAL INFRASTRUCTURE

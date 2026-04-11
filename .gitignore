@@ -46,3 +46,6 @@ installer/publish/
 # Diagnostic / intermediate publish directories
 publish_test*
 publish-test/
+
+# Generated audit scan reports (regenerated on each audit-scan.ps1 run)
+docs/audit-reports/

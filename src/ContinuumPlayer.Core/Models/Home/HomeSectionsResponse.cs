@@ -40,6 +40,9 @@ public class MediaItem
     public double? DurationSeconds { get; set; }
     public string? ProgressUpdatedAt { get; set; }
     public string? ItemSource { get; set; }
+    /// <summary>Server-attached badges (e.g. "season_premiere") shown as pills on
+    /// section item cards. Source: HomeSectionItem.badges[] on the server.</summary>
+    public List<string>? Badges { get; set; }
 }
 public class OverlaySummary
 {
