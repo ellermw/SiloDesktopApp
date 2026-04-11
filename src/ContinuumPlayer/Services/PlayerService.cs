@@ -21,6 +21,11 @@ public class PlayerService : IDisposable
     private MpvVideoWindow? _videoWindow;
     private PlaybackManager? _playbackManager;
     private volatile bool _switchingContent;
+    /// <summary>
+    /// Pre-play subtitle selection captured from PlayAsync and applied to mpv
+    /// before LoadFile. null = auto, -1 = off, 0+ = 0-based track index.
+    /// </summary>
+    private int? _pendingSubtitleSelection;
     private volatile bool _qualitySwitchActive;
     private string _activeQualityTier = "original";
     private HlsProxy? _hlsProxy;
@@ -207,9 +212,18 @@ public class PlayerService : IDisposable
 
     // ── Playback ─────────────────────────────────────────────────────────
 
-    public async Task PlayAsync(string contentId, bool fromStart = false, int? fileId = null, int? audioTrackIndex = null)
+    /// <summary>
+    /// Start playback for an item. Supports pre-play audio and subtitle selection.
+    /// </summary>
+    /// <param name="subtitleSelection">
+    /// Pre-play subtitle choice. null = auto (let mpv pick default);
+    /// -1 = off (no subtitles); 0+ = explicit embedded track index
+    /// (0-based, will be translated to mpv's 1-based sid).
+    /// </param>
+    public async Task PlayAsync(string contentId, bool fromStart = false, int? fileId = null, int? audioTrackIndex = null, int? subtitleSelection = null)
     {
-        LogToFile("state_trace.txt", $"PlayAsync called: contentId={contentId} fromStart={fromStart} audioTrackIndex={audioTrackIndex?.ToString() ?? "auto"} State={State} IsLoading={IsLoading}");
+        _pendingSubtitleSelection = subtitleSelection;
+        LogToFile("state_trace.txt", $"PlayAsync called: contentId={contentId} fromStart={fromStart} audioTrackIndex={audioTrackIndex?.ToString() ?? "auto"} subtitleSelection={FormatSubtitleSelection(subtitleSelection)} State={State} IsLoading={IsLoading}");
 
         // Stop any existing session first (prevents HTTP 400 from server)
         if (_playbackManager != null)
@@ -292,6 +306,12 @@ public class PlayerService : IDisposable
             _resumePosition = startPosition;
 
             LogToFile("state_trace.txt", $"LoadFile: url={streamUrl?.Substring(0, Math.Min(80, streamUrl?.Length ?? 0))}...");
+
+            // Phase 2b: apply pre-play subtitle selection by setting mpv's "sid"
+            // property BEFORE loadfile so the initial state is the user's choice.
+            // -1 = "no" (off), 0+ = 1-based mpv sid. null = don't touch, let mpv default.
+            ApplyPendingSubtitleSelection();
+
             _mpv!.LoadFile(streamUrl, session.PlayMethod == "transcode" ? null : authHeader);
             _mpv.Play();
             LogToFile("state_trace.txt", "Play() called");
@@ -320,6 +340,42 @@ public class PlayerService : IDisposable
     }
 
     private double _resumePosition;
+
+    /// <summary>
+    /// Push the pending pre-play subtitle selection into mpv via the "sid"
+    /// property. Called before <see cref="MpvPlayer.LoadFile"/> so the initial
+    /// subtitle state matches the user's choice. Translates the 0-based track
+    /// index from the UI to mpv's 1-based sid.
+    /// </summary>
+    private void ApplyPendingSubtitleSelection()
+    {
+        if (_mpv == null) return;
+        var sel = _pendingSubtitleSelection;
+        if (sel == null) return;              // Auto — let mpv pick default
+        try
+        {
+            if (sel.Value == -1)
+            {
+                _mpv.SetProperty("sid", "no");
+            }
+            else if (sel.Value >= 0)
+            {
+                // UI stores a 0-based embedded track index; mpv sid is 1-based.
+                _mpv.SetProperty("sid", (sel.Value + 1).ToString());
+            }
+        }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"ApplyPendingSubtitleSelection failed: {ex.Message}");
+        }
+    }
+
+    private static string FormatSubtitleSelection(int? sel)
+    {
+        if (sel == null) return "auto";
+        if (sel.Value == -1) return "off";
+        return $"track#{sel.Value}";
+    }
 
     private async Task<WatchDetailResponse> FetchWatchDetailAsync(string contentId)
     {

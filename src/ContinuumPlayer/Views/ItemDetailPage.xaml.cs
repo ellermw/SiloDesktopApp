@@ -26,6 +26,16 @@ public sealed partial class ItemDetailPage : Page
     /// <c>PlaybackManager.StartSessionAsync</c> so the initial stream uses it.
     /// </summary>
     private int? _selectedAudioTrackIndex;
+
+    /// <summary>
+    /// Pre-play subtitle selection (Phase 2b). Sentinels:
+    ///   null = auto (let mpv pick default or server-resolved language)
+    ///   -1   = off (no subtitles)
+    ///   0+   = explicit embedded subtitle track index (0-based, into FileVersion.SubtitleTracks).
+    /// Applied client-side via mpv's "sid" property before loadfile, rather than
+    /// the server, since subtitles aren't transmuxed — they're picked live by mpv.
+    /// </summary>
+    private int? _selectedSubtitleIndex;
     private Services.PlayerService? _playerService;
     private FrameworkElement? _rootElement;
 
@@ -862,8 +872,13 @@ public sealed partial class ItemDetailPage : Page
             await playerService.CloseAsync();
             await Task.Delay(300); // Let server process the session stop
         }
-        // Phase 2a: pass the pre-play audio track selection through to the new session.
-        _ = playerService.PlayAsync(contentId, fromStart: fromStart, fileId: fileId, audioTrackIndex: _selectedAudioTrackIndex);
+        // Phase 2a + 2b: pass pre-play audio + subtitle selections through.
+        _ = playerService.PlayAsync(
+            contentId,
+            fromStart: fromStart,
+            fileId: fileId,
+            audioTrackIndex: _selectedAudioTrackIndex,
+            subtitleSelection: _selectedSubtitleIndex);
     }
 
     // ===== Initial Play Button & Quality Badges from Catalog Item Data =====
@@ -1075,6 +1090,7 @@ public sealed partial class ItemDetailPage : Page
             var best = manager.SelectBestVersion(versions);
             _selectedVersion = best;
             BuildAudioTracksFlyout(best);
+            BuildSubtitlesPopoverFlyout(best);
 
             if (best != null)
             {
@@ -1201,6 +1217,111 @@ public sealed partial class ItemDetailPage : Page
                                   FormatAudioTrackSummary(track);
     }
 
+    // ===== Pre-play subtitle popover (Phase 2b) =====
+
+    /// <summary>
+    /// Rebuild the Subtitles popover for the currently-selected file version.
+    /// Shows "Off" + "Auto" + each embedded subtitle track. Selection applied
+    /// client-side by setting mpv's "sid" property before loadfile — subtitles
+    /// aren't baked into the stream, mpv reads them live from the MKV/MP4
+    /// container and picks based on the sid property.
+    /// </summary>
+    private void BuildSubtitlesPopoverFlyout(FileVersion? version)
+    {
+        SubtitlesPopoverFlyout.Items.Clear();
+        var subs = version?.SubtitleTracks;
+        // Show the button as long as there's at least one embedded sub — the
+        // "Off" option is still useful even with a single track.
+        if (subs == null || subs.Count == 0)
+        {
+            SubtitlesPopoverButton.Visibility = Visibility.Collapsed;
+            _selectedSubtitleIndex = null;
+            return;
+        }
+
+        SubtitlesPopoverButton.Visibility = Visibility.Visible;
+        _selectedSubtitleIndex = null; // Reset on version change
+
+        // Off
+        var offItem = new MenuFlyoutItem { Text = "Off" };
+        offItem.Click += (_, _) =>
+        {
+            _selectedSubtitleIndex = -1;
+            UpdateSubtitlesPopoverSummary(subs);
+        };
+        SubtitlesPopoverFlyout.Items.Add(offItem);
+
+        // Auto
+        var autoItem = new MenuFlyoutItem { Text = "Auto" };
+        autoItem.Click += (_, _) =>
+        {
+            _selectedSubtitleIndex = null;
+            UpdateSubtitlesPopoverSummary(subs);
+        };
+        SubtitlesPopoverFlyout.Items.Add(autoItem);
+
+        SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutSeparator());
+
+        // Explicit embedded tracks
+        for (int i = 0; i < subs.Count; i++)
+        {
+            var idx = i;
+            var sub = subs[i];
+            var item = new MenuFlyoutItem { Text = FormatSubtitleTrackSummary(sub) };
+            item.Click += (_, _) =>
+            {
+                _selectedSubtitleIndex = idx;
+                UpdateSubtitlesPopoverSummary(subs);
+            };
+            SubtitlesPopoverFlyout.Items.Add(item);
+        }
+
+        UpdateSubtitlesPopoverSummary(subs);
+    }
+
+    private void UpdateSubtitlesPopoverSummary(List<VersionSubtitleTrack> subs)
+    {
+        if (_selectedSubtitleIndex == -1)
+        {
+            SubtitlesSummary.Text = "Off";
+            return;
+        }
+        if (_selectedSubtitleIndex == null)
+        {
+            SubtitlesSummary.Text = "Auto";
+            return;
+        }
+        var idx = _selectedSubtitleIndex.Value;
+        if (idx < 0 || idx >= subs.Count)
+        {
+            SubtitlesSummary.Text = "Auto";
+            return;
+        }
+        SubtitlesSummary.Text = FormatSubtitleTrackSummary(subs[idx]);
+    }
+
+    /// <summary>Short label for a subtitle track: "ENG (Forced)", "JPN SRT", etc.</summary>
+    private static string FormatSubtitleTrackSummary(VersionSubtitleTrack sub)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(sub.Language))
+            parts.Add(sub.Language.ToUpperInvariant());
+        else if (!string.IsNullOrWhiteSpace(sub.Title))
+            parts.Add(sub.Title!);
+        else
+            parts.Add("Unknown");
+
+        if (!string.IsNullOrWhiteSpace(sub.Codec))
+            parts.Add(sub.Codec.ToUpperInvariant());
+
+        var flags = new List<string>();
+        if (sub.Forced == true) flags.Add("Forced");
+        if (sub.HearingImpaired == true) flags.Add("HI");
+        if (flags.Count > 0) parts.Add($"({string.Join(", ", flags)})");
+
+        return string.Join(" ", parts);
+    }
+
     /// <summary>
     /// Build a short descriptive label for an audio track: "English AC3 5.1", "FRE DTS 7.1", etc.
     /// Mirrors the WebUI <c>formatAudioTrackSummary</c> helper.
@@ -1270,6 +1391,7 @@ public sealed partial class ItemDetailPage : Page
                 {
                     _selectedVersion = fileVersion;
                     BuildAudioTracksFlyout(fileVersion);
+                    BuildSubtitlesPopoverFlyout(fileVersion);
 
                     // If already playing, switch version mid-playback
                     var playerService = App.Services.GetRequiredService<Services.PlayerService>();
