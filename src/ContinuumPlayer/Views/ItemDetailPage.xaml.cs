@@ -19,6 +19,13 @@ public sealed partial class ItemDetailPage : Page
     private int _highlightedSeasonNumber;
     private WatchDetailResponse? _watchDetail;
     private FileVersion? _selectedVersion;
+    /// <summary>
+    /// Pre-play audio track selection (Phase 2a). Null = auto (server picks based
+    /// on effective_audio_track_index or default flag). Otherwise an explicit track
+    /// index into <see cref="FileVersion.AudioTracks"/> that will be passed to
+    /// <c>PlaybackManager.StartSessionAsync</c> so the initial stream uses it.
+    /// </summary>
+    private int? _selectedAudioTrackIndex;
     private Services.PlayerService? _playerService;
     private FrameworkElement? _rootElement;
 
@@ -855,7 +862,8 @@ public sealed partial class ItemDetailPage : Page
             await playerService.CloseAsync();
             await Task.Delay(300); // Let server process the session stop
         }
-        _ = playerService.PlayAsync(contentId, fromStart: fromStart, fileId: fileId);
+        // Phase 2a: pass the pre-play audio track selection through to the new session.
+        _ = playerService.PlayAsync(contentId, fromStart: fromStart, fileId: fileId, audioTrackIndex: _selectedAudioTrackIndex);
     }
 
     // ===== Initial Play Button & Quality Badges from Catalog Item Data =====
@@ -1066,6 +1074,7 @@ public sealed partial class ItemDetailPage : Page
             var manager = App.Services.GetRequiredService<PlaybackManager>();
             var best = manager.SelectBestVersion(versions);
             _selectedVersion = best;
+            BuildAudioTracksFlyout(best);
 
             if (best != null)
             {
@@ -1112,6 +1121,119 @@ public sealed partial class ItemDetailPage : Page
         }
     }
 
+    // ===== Pre-play audio track popover (Phase 2a) =====
+
+    /// <summary>
+    /// Rebuild the Audio track popover for the currently-selected file version.
+    /// Hides the button if the version has fewer than 2 audio tracks. Mirrors
+    /// the WebUI AudioTracksPopover behavior: "Auto: &lt;summary&gt;" option first,
+    /// then every track individually. User selection is stored in
+    /// <see cref="_selectedAudioTrackIndex"/> and flows into StartSessionAsync
+    /// when playback starts.
+    /// </summary>
+    private void BuildAudioTracksFlyout(FileVersion? version)
+    {
+        AudioTracksFlyout.Items.Clear();
+        var tracks = version?.AudioTracks;
+        if (tracks == null || tracks.Count == 0)
+        {
+            AudioTracksButton.Visibility = Visibility.Collapsed;
+            _selectedAudioTrackIndex = null;
+            return;
+        }
+
+        // Show only when there's a real choice — one track = no point in showing.
+        if (tracks.Count < 2)
+        {
+            AudioTracksButton.Visibility = Visibility.Collapsed;
+            _selectedAudioTrackIndex = null;
+            return;
+        }
+
+        AudioTracksButton.Visibility = Visibility.Visible;
+
+        // Reset selection when we're on a new version so stale explicit indices
+        // from a previous version don't leak in.
+        _selectedAudioTrackIndex = null;
+
+        // Auto index: prefer server's effective_audio_track_index, else first default, else 0.
+        var autoIndex = version!.EffectiveAudioTrackIndex ?? -1;
+        if (autoIndex < 0 || autoIndex >= tracks.Count)
+            autoIndex = tracks.FindIndex(t => t.Default);
+        if (autoIndex < 0) autoIndex = 0;
+        var autoSummary = FormatAudioTrackSummary(tracks[autoIndex]);
+
+        // "Auto" option
+        var autoItem = new MenuFlyoutItem { Text = $"Auto: {autoSummary}" };
+        autoItem.Click += (_, _) =>
+        {
+            _selectedAudioTrackIndex = null;
+            UpdateAudioTracksSummary(tracks, autoIndex);
+        };
+        AudioTracksFlyout.Items.Add(autoItem);
+        AudioTracksFlyout.Items.Add(new MenuFlyoutSeparator());
+
+        // Explicit track options
+        for (int i = 0; i < tracks.Count; i++)
+        {
+            var idx = i; // capture
+            var track = tracks[i];
+            var label = FormatAudioTrackSummary(track);
+            if (track.Default) label += "  (default)";
+            var item = new MenuFlyoutItem { Text = label };
+            item.Click += (_, _) =>
+            {
+                _selectedAudioTrackIndex = idx;
+                UpdateAudioTracksSummary(tracks, autoIndex);
+            };
+            AudioTracksFlyout.Items.Add(item);
+        }
+
+        UpdateAudioTracksSummary(tracks, autoIndex);
+    }
+
+    private void UpdateAudioTracksSummary(List<AudioTrackInfo> tracks, int autoIndex)
+    {
+        var shownIndex = _selectedAudioTrackIndex ?? autoIndex;
+        if (shownIndex < 0 || shownIndex >= tracks.Count) shownIndex = 0;
+        var track = tracks[shownIndex];
+        AudioTracksSummary.Text = (_selectedAudioTrackIndex == null ? "Auto: " : "") +
+                                  FormatAudioTrackSummary(track);
+    }
+
+    /// <summary>
+    /// Build a short descriptive label for an audio track: "English AC3 5.1", "FRE DTS 7.1", etc.
+    /// Mirrors the WebUI <c>formatAudioTrackSummary</c> helper.
+    /// </summary>
+    private static string FormatAudioTrackSummary(AudioTrackInfo track)
+    {
+        var parts = new List<string>();
+        var lang = !string.IsNullOrWhiteSpace(track.Language) ? track.Language.ToUpperInvariant() : null;
+        var title = !string.IsNullOrWhiteSpace(track.Title) ? track.Title : track.EmbeddedTitle;
+        if (!string.IsNullOrEmpty(lang)) parts.Add(lang);
+        else if (!string.IsNullOrEmpty(title)) parts.Add(title!);
+        else parts.Add("Unknown");
+
+        if (!string.IsNullOrWhiteSpace(track.Codec))
+            parts.Add(track.Codec.ToUpperInvariant());
+
+        if (track.Channels.HasValue)
+        {
+            var ch = track.Channels.Value switch
+            {
+                1 => "Mono",
+                2 => "Stereo",
+                6 => "5.1",
+                7 => "6.1",
+                8 => "7.1",
+                _ => $"{track.Channels.Value}ch",
+            };
+            parts.Add(ch);
+        }
+
+        return string.Join(" ", parts);
+    }
+
     private void BuildVersionFlyout(List<FileVersion> versions, bool isResuming)
     {
         VersionFlyout.Items.Clear();
@@ -1147,6 +1269,7 @@ public sealed partial class ItemDetailPage : Page
                 item.Click += (_, _) =>
                 {
                     _selectedVersion = fileVersion;
+                    BuildAudioTracksFlyout(fileVersion);
 
                     // If already playing, switch version mid-playback
                     var playerService = App.Services.GetRequiredService<Services.PlayerService>();

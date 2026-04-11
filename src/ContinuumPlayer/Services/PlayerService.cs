@@ -207,9 +207,9 @@ public class PlayerService : IDisposable
 
     // ── Playback ─────────────────────────────────────────────────────────
 
-    public async Task PlayAsync(string contentId, bool fromStart = false, int? fileId = null)
+    public async Task PlayAsync(string contentId, bool fromStart = false, int? fileId = null, int? audioTrackIndex = null)
     {
-        LogToFile("state_trace.txt", $"PlayAsync called: contentId={contentId} fromStart={fromStart} State={State} IsLoading={IsLoading}");
+        LogToFile("state_trace.txt", $"PlayAsync called: contentId={contentId} fromStart={fromStart} audioTrackIndex={audioTrackIndex?.ToString() ?? "auto"} State={State} IsLoading={IsLoading}");
 
         // Stop any existing session first (prevents HTTP 400 from server)
         if (_playbackManager != null)
@@ -254,7 +254,7 @@ public class PlayerService : IDisposable
             Resolution = bestVersion.Resolution;
             var startPosition = DetermineStartPosition(watchDetail, fromStart);
 
-            var session = await _playbackManager.StartSessionAsync(bestVersion.FileId, startPosition, forceStartPosition: fromStart);
+            var session = await _playbackManager.StartSessionAsync(bestVersion.FileId, startPosition, forceStartPosition: fromStart, audioTrackIndex: audioTrackIndex);
             PlayMethod = session.PlayMethod;
 
             if (!fromStart && session.Position > 0 && startPosition == 0)

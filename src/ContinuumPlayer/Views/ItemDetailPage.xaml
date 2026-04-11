@@ -237,6 +237,50 @@
                             </Border>
                         </Grid>
 
+                        <!-- Audio tracks popover (pre-play selection) — Phase 2a.
+                             Visible only when the current version has 2+ audio tracks.
+                             Flyout is populated programmatically from the version's audio_tracks[]. -->
+                        <Button
+                            x:Name="AudioTracksButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Padding="14,10"
+                            CornerRadius="22"
+                            Visibility="Collapsed">
+                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xE767;" FontSize="14" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Audio" VerticalAlignment="Center" FontSize="13" />
+                                <TextBlock x:Name="AudioTracksSummary" Text="" FontSize="12"
+                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                           VerticalAlignment="Center" MaxWidth="180" TextTrimming="CharacterEllipsis" />
+                                <FontIcon Glyph="&#xE70D;" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                            <Button.Flyout>
+                                <MenuFlyout x:Name="AudioTracksFlyout" />
+                            </Button.Flyout>
+                        </Button>
+
+                        <!-- Subtitles popover (pre-play selection) — Phase 2b.
+                             Visible only when the current version has subtitle tracks or downloaded subs.
+                             Flyout populated from version.subtitle_tracks + WatchDetail.subtitles. -->
+                        <Button
+                            x:Name="SubtitlesPopoverButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Padding="14,10"
+                            CornerRadius="22"
+                            Visibility="Collapsed">
+                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xED1E;" FontSize="14" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Subtitles" VerticalAlignment="Center" FontSize="13" />
+                                <TextBlock x:Name="SubtitlesSummary" Text="" FontSize="12"
+                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                           VerticalAlignment="Center" MaxWidth="180" TextTrimming="CharacterEllipsis" />
+                                <FontIcon Glyph="&#xE70D;" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                            <Button.Flyout>
+                                <MenuFlyout x:Name="SubtitlesPopoverFlyout" />
+                            </Button.Flyout>
+                        </Button>
+
                         <!-- Watched toggle button -->
                         <Button
                             x:Name="WatchedButton"
