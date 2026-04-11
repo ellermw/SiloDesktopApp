@@ -55,6 +55,10 @@ public class PlaybackManager : IDisposable
 
     public async Task<PlaybackStartResponse> StartSessionAsync(int fileId, double startPosition = 0, bool forceStartPosition = false, int? audioTrackIndex = null, CancellationToken ct = default)
     {
+        // Declare full codec capabilities so the server chooses direct play for HEVC/HDR/lossless
+        // audio content. This is the whole point of the native mpv player — without these caps
+        // the server falls back to forcing H.264 transcoding for HEVC content.
+        // (Per CLAUDE.md lines 223-230: containers=[mp4,mkv], 4K HDR, all audio codecs.)
         var request = new PlaybackStartRequest
         {
             FileId = fileId,
@@ -63,11 +67,20 @@ public class PlaybackManager : IDisposable
             // null means "let server restore saved progress".
             StartPosition = forceStartPosition ? startPosition : (startPosition > 0 ? startPosition : null),
             AudioTrackIndex = audioTrackIndex,
+            CodecsVideo = ["h264", "hevc", "av1", "vp9"],
+            CodecsAudio = ["aac", "flac", "opus", "eac3", "ac3", "dts", "truehd"],
+            Containers = ["mp4", "mkv"],
+            MaxResolution = "2160p",
+            Hdr = true,
         };
+
+        LogToStateTrace($"StartSession: fileId={fileId}, pos={startPosition}, force={forceStartPosition}, codecs_video=[{string.Join(",", request.CodecsVideo)}], codecs_audio=[{string.Join(",", request.CodecsAudio)}], containers=[{string.Join(",", request.Containers)}], max_res={request.MaxResolution}, hdr={request.Hdr}");
 
         var response = await _playbackApi.StartPlaybackAsync(request, ct);
         _sessionId = response.SessionId;
         CurrentSession = response;
+
+        LogToStateTrace($"StartSession response: play_method={response.PlayMethod}, session={response.SessionId}, position={response.Position:F1}");
 
         var baseUrl = _apiClient.BaseUrl;
         var streamPath = response.StreamUrl;
@@ -183,6 +196,20 @@ public class PlaybackManager : IDisposable
     {
         "2160p" or "4k" => 4, "1440p" => 3, "1080p" => 2, "720p" => 1, "480p" => 0, _ => -1
     };
+
+    private static void LogToStateTrace(string msg)
+    {
+        try
+        {
+            var logPath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ContinuumPlayer", "state_trace.txt");
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(logPath)!);
+            System.IO.File.AppendAllText(logPath,
+                $"[{DateTime.Now:HH:mm:ss.fff}] PlaybackManager: {msg}\n");
+        }
+        catch { }
+    }
 
     public void Dispose()
     {

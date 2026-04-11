@@ -21,7 +21,7 @@ public sealed partial class SetupWizardPage : Page
         BuildStepIndicator();
     }
 
-    protected override void OnNavigatedTo(NavigationEventArgs e)
+    protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
 
@@ -34,6 +34,8 @@ public sealed partial class SetupWizardPage : Page
             ViewModel.ServerUrl = serverUrl;
         }
 
+        // B47: Derive the starting step from current server state instead of always 1.
+        await ViewModel.DetermineStartingStepAsync();
         UpdateStepVisibility();
     }
 

@@ -734,153 +734,263 @@ public partial class SettingsViewModel : ObservableObject
     }
 
     // ===== History Import =====
+    // Full rebuild to match WebUI 2026-04-10:
+    //   - Three source types: Emby (Connect|Saved), Plex (OAuth|Saved), Jellyfin (Direct)
+    //   - Per-mode credential forms (matches HistoryImportSettings.tsx 998 lines)
+    //   - Profile selector (import target)
+    //   - Saved sources list (admin-configured servers, filtered by source type)
+    //   - Live "active run" tracking via EventChannelClient subscription
+    //   - Recent runs list populated from events + initial GET
 
-    [ObservableProperty]
-    private string _importSourceType = "emby";
+    [ObservableProperty] private string _importSourceType = "emby";        // "emby" | "plex" | "jellyfin"
+    [ObservableProperty] private string _importEmbyMode = "connect";       // "connect" | "saved"
+    [ObservableProperty] private string _importPlexMode = "oauth";         // "oauth" | "saved"
 
-    [ObservableProperty]
-    private string _embyEmail = "";
+    /// <summary>Target profile the imported history will be attached to.</summary>
+    [ObservableProperty] private string _importProfileId = "";
 
-    [ObservableProperty]
-    private string _embyPassword = "";
+    public ObservableCollection<Core.Models.Auth.Profile> ImportProfiles { get; } = [];
 
-    [ObservableProperty]
-    private string? _embyConnectSessionId;
+    // ----- Emby Connect state -----
+    [ObservableProperty] private string _embyConnectUsername = "";
+    [ObservableProperty] private string _embyConnectPassword = "";
+    [ObservableProperty] private string? _embyConnectSessionId;
+    [ObservableProperty] private bool _embyConnectLoginPending;
+    public ObservableCollection<HistoryImportConnectServer> EmbyConnectServers { get; } = [];
+    [ObservableProperty] private HistoryImportConnectServer? _selectedEmbyConnectServer;
 
-    public ObservableCollection<HistoryImportConnectServer> EmbyServers { get; } = [];
+    // ----- Emby Saved state -----
+    [ObservableProperty] private HistoryImportSource? _selectedEmbySavedSource;
+    [ObservableProperty] private string _embySavedUsername = "";
+    [ObservableProperty] private string _embySavedPassword = "";
 
-    [ObservableProperty]
-    private HistoryImportConnectServer? _selectedEmbyServer;
+    // ----- Plex OAuth state -----
+    [ObservableProperty] private string? _plexSessionId;
+    [ObservableProperty] private string _plexAuthStatus = "";
+    [ObservableProperty] private bool _plexAuthPending;
+    [ObservableProperty] private string? _plexAuthError;
+    public ObservableCollection<PlexServer> PlexOAuthServers { get; } = [];
+    [ObservableProperty] private PlexServer? _selectedPlexOAuthServer;
 
-    [ObservableProperty]
-    private string _jellyfinUrl = "";
+    // ----- Plex Saved state -----
+    [ObservableProperty] private HistoryImportSource? _selectedPlexSavedSource;
+    [ObservableProperty] private string _plexSavedToken = "";
 
-    [ObservableProperty]
-    private string _jellyfinUsername = "";
+    // ----- Jellyfin Direct state -----
+    [ObservableProperty] private string _jellyfinServerUrl = "";
+    [ObservableProperty] private string _jellyfinUsername = "";
+    [ObservableProperty] private string _jellyfinPassword = "";
 
-    [ObservableProperty]
-    private string _jellyfinPassword = "";
+    // ----- Saved sources (admin-configured servers, shared across Emby/Plex Saved modes) -----
+    public ObservableCollection<HistoryImportSource> AllImportSources { get; } = [];
+    public ObservableCollection<HistoryImportSource> EmbySavedSources { get; } = [];
+    public ObservableCollection<HistoryImportSource> PlexSavedSources { get; } = [];
+    [ObservableProperty] private bool _isLoadingImportSources;
 
-    [ObservableProperty]
-    private string _plexAuthStatus = "";
+    // ----- Runs / history -----
+    /// <summary>Current / most-recent run shown in the summary card. Updated live
+    /// via events as well as from the initial GET.</summary>
+    [ObservableProperty] private HistoryImportRun? _displayRun;
 
-    [ObservableProperty]
-    private string? _plexSessionId;
-
-    public ObservableCollection<PlexServer> PlexServers { get; } = [];
-
-    [ObservableProperty]
-    private PlexServer? _selectedPlexServer;
+    /// <summary>ID of the run the user explicitly selected from the history list.
+    /// Overrides "most recent" for display purposes while set.</summary>
+    [ObservableProperty] private string? _selectedRunId;
 
     public ObservableCollection<HistoryImportRun> ImportRuns { get; } = [];
 
-    [ObservableProperty]
-    private bool _isImporting;
+    [ObservableProperty] private bool _isImporting;
+    [ObservableProperty] private bool _isLoadingImportRuns;
 
-    [ObservableProperty]
-    private bool _isLoadingImportRuns;
+    /// <summary>True while the EventChannelClient has an open WebSocket to /events/ws
+    /// with a live history_import subscription.</summary>
+    [ObservableProperty] private bool _importEventsConnected;
 
+    /// <summary>Login to Emby Connect with the entered credentials. On success,
+    /// populates <see cref="EmbyConnectServers"/> and selects the first server.</summary>
     [RelayCommand]
-    private async Task EmbyConnectAsync()
+    private async Task EmbyConnectLoginAsync()
     {
+        if (EmbyConnectLoginPending) return;
+        EmbyConnectLoginPending = true;
+        ErrorMessage = null;
         try
         {
             var response = await _historyImportApi.EmbyConnectLoginAsync(new EmbyConnectLoginRequest
             {
-                Username = EmbyEmail,
-                Password = EmbyPassword,
+                Username = EmbyConnectUsername,
+                Password = EmbyConnectPassword,
             });
             EmbyConnectSessionId = response.ConnectSessionId;
-            EmbyServers.Clear();
+            EmbyConnectServers.Clear();
             foreach (var server in response.Servers)
-                EmbyServers.Add(server);
+                EmbyConnectServers.Add(server);
+            SelectedEmbyConnectServer = EmbyConnectServers.FirstOrDefault();
             ShowStatus($"Found {response.Servers.Count} Emby server(s)");
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Emby Connect failed: {ex.Message}";
+            ErrorMessage = $"Emby Connect login failed: {ex.Message}";
+        }
+        finally
+        {
+            EmbyConnectLoginPending = false;
         }
     }
 
+    /// <summary>Start the Plex OAuth PIN flow: create a pin, open the browser,
+    /// then poll server for authentication up to ~2 minutes.</summary>
     [RelayCommand]
-    private async Task PlexSignInAsync()
+    private async Task PlexAuthStartAsync()
     {
+        if (PlexAuthPending) return;
+        PlexAuthPending = true;
+        PlexAuthError = null;
+        PlexAuthStatus = "Requesting PIN...";
         try
         {
-            PlexAuthStatus = "Requesting PIN...";
             var pinResponse = await _historyImportApi.PlexAuthPinAsync();
             PlexSessionId = pinResponse.SessionId;
-            PlexAuthStatus = $"Open browser to sign in. PIN: {pinResponse.PinCode}";
+            PlexAuthStatus = $"Waiting for approval in browser (PIN: {pinResponse.PinCode})";
 
-            // Open auth URL in browser
             try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(pinResponse.AuthUrl) { UseShellExecute = true }); }
-            catch { /* Browser launch failed, user can copy the URL */ }
+            catch { /* browser launch is best-effort */ }
 
-            // Poll for authentication
+            // Poll for completion every 2s for up to 2 minutes.
             for (int i = 0; i < 60; i++)
             {
                 await Task.Delay(2000);
                 var checkResponse = await _historyImportApi.PlexAuthCheckAsync(new PlexCheckRequest { SessionId = pinResponse.SessionId });
                 if (checkResponse.Authenticated)
                 {
-                    PlexAuthStatus = "Authenticated";
-                    PlexServers.Clear();
+                    PlexAuthStatus = "Connected";
+                    PlexOAuthServers.Clear();
                     if (checkResponse.Servers != null)
                         foreach (var server in checkResponse.Servers)
-                            PlexServers.Add(server);
-                    ShowStatus($"Found {PlexServers.Count} Plex server(s)");
+                            PlexOAuthServers.Add(server);
+                    SelectedPlexOAuthServer = PlexOAuthServers.FirstOrDefault();
                     return;
                 }
             }
-            PlexAuthStatus = "Timed out waiting for authentication";
+            PlexAuthStatus = "";
+            PlexAuthError = "Timed out waiting for Plex approval. Try again.";
         }
         catch (Exception ex)
         {
-            PlexAuthStatus = "Failed";
-            ErrorMessage = $"Plex sign-in failed: {ex.Message}";
+            PlexAuthStatus = "";
+            PlexAuthError = $"Plex sign-in failed: {ex.Message}";
+        }
+        finally
+        {
+            PlexAuthPending = false;
         }
     }
 
+    /// <summary>True when the Start Import button should be enabled for the
+    /// current source + mode + profile selection. Mirrors the WebUI canStart
+    /// logic in HistoryImportSettings.utils.ts.</summary>
+    public bool CanStartImport
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(ImportProfileId)) return false;
+            return ImportSourceType switch
+            {
+                "emby" => ImportEmbyMode switch
+                {
+                    "connect" => !string.IsNullOrEmpty(EmbyConnectSessionId)
+                                 && SelectedEmbyConnectServer != null,
+                    "saved"   => SelectedEmbySavedSource != null
+                                 && !string.IsNullOrWhiteSpace(EmbySavedUsername)
+                                 && !string.IsNullOrWhiteSpace(EmbySavedPassword),
+                    _ => false,
+                },
+                "plex" => ImportPlexMode switch
+                {
+                    "oauth" => SelectedPlexOAuthServer != null,
+                    "saved" => SelectedPlexSavedSource != null
+                                && !string.IsNullOrWhiteSpace(PlexSavedToken),
+                    _ => false,
+                },
+                "jellyfin" => !string.IsNullOrWhiteSpace(JellyfinServerUrl)
+                              && !string.IsNullOrWhiteSpace(JellyfinUsername)
+                              && !string.IsNullOrWhiteSpace(JellyfinPassword),
+                _ => false,
+            };
+        }
+    }
+
+    // Re-raise CanStartImport when any of its dependencies change.
+    partial void OnImportSourceTypeChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnImportEmbyModeChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnImportPlexModeChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnImportProfileIdChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnEmbyConnectSessionIdChanged(string? value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnSelectedEmbyConnectServerChanged(HistoryImportConnectServer? value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnSelectedEmbySavedSourceChanged(HistoryImportSource? value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnEmbySavedUsernameChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnEmbySavedPasswordChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnSelectedPlexOAuthServerChanged(PlexServer? value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnSelectedPlexSavedSourceChanged(HistoryImportSource? value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnPlexSavedTokenChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnJellyfinServerUrlChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnJellyfinUsernameChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnJellyfinPasswordChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
+
+    /// <summary>Kick off a new import run using the currently-configured source + mode.</summary>
     [RelayCommand]
     private async Task StartImportAsync()
     {
-        if (IsImporting) return;
+        if (IsImporting || !CanStartImport) return;
         IsImporting = true;
+        ErrorMessage = null;
         try
         {
-            var profileId = _authService.SelectedProfileId;
-            if (string.IsNullOrEmpty(profileId))
-            {
-                ErrorMessage = "No profile selected";
-                return;
-            }
-
             var request = new CreateHistoryImportRunRequest
             {
-                ProfileId = profileId,
+                ProfileId = ImportProfileId,
                 Source = ImportSourceType,
             };
 
             switch (ImportSourceType)
             {
-                case "emby":
+                case "emby" when ImportEmbyMode == "connect":
                     request.ConnectSessionId = EmbyConnectSessionId;
-                    request.ServerId = SelectedEmbyServer?.ServerId;
+                    request.ServerId = SelectedEmbyConnectServer?.ServerId;
                     break;
+
+                case "emby" when ImportEmbyMode == "saved":
+                    request.SourceId = SelectedEmbySavedSource?.Id;
+                    request.Username = EmbySavedUsername;
+                    request.Password = EmbySavedPassword;
+                    break;
+
+                case "plex" when ImportPlexMode == "oauth":
+                    // Plex OAuth mode: WebUI sends plex_session_id + plex_server_id per the fresh source.
+                    // The server then exchanges them for a local token.
+                    request.PlexSessionId = PlexSessionId;
+                    request.PlexServerId = SelectedPlexOAuthServer?.ClientIdentifier;
+                    break;
+
+                case "plex" when ImportPlexMode == "saved":
+                    request.SourceId = SelectedPlexSavedSource?.Id;
+                    request.PlexToken = PlexSavedToken;
+                    break;
+
                 case "jellyfin":
-                    request.JellyfinBaseUrl = JellyfinUrl;
+                    request.JellyfinBaseUrl = JellyfinServerUrl.Trim();
                     request.JellyfinUsername = JellyfinUsername;
                     request.JellyfinPassword = JellyfinPassword;
-                    break;
-                case "plex":
-                    request.PlexSessionId = PlexSessionId;
-                    request.PlexServerId = SelectedPlexServer?.ClientIdentifier;
                     break;
             }
 
             var run = await _historyImportApi.CreateImportRunAsync(request);
-            ShowStatus($"Import started: {run.Status}");
-            await LoadImportRunsAsync();
+
+            // Display the new run immediately and put it at the top of the history list.
+            SelectedRunId = run.Id;
+            DisplayRun = run;
+            ImportRuns.Insert(0, run);
+
+            ShowStatus("Import started");
         }
         catch (Exception ex)
         {
@@ -892,6 +1002,59 @@ public partial class SettingsViewModel : ObservableObject
         }
     }
 
+    /// <summary>Load saved sources + recent runs + available profiles. Called when
+    /// the Import tab is first shown.</summary>
+    [RelayCommand]
+    public async Task LoadImportTabAsync()
+    {
+        if (IsLoadingImportSources) return;
+        IsLoadingImportSources = true;
+        try
+        {
+            // Default target profile = currently-selected profile on AuthService
+            if (string.IsNullOrEmpty(ImportProfileId) && !string.IsNullOrEmpty(_authService.SelectedProfileId))
+                ImportProfileId = _authService.SelectedProfileId;
+
+            // Fetch saved sources (admin-configured).
+            try
+            {
+                var sources = await _historyImportApi.GetImportSourcesAsync();
+                AllImportSources.Clear();
+                EmbySavedSources.Clear();
+                PlexSavedSources.Clear();
+                foreach (var s in sources)
+                {
+                    AllImportSources.Add(s);
+                    if (s.SourceType == "emby") EmbySavedSources.Add(s);
+                    else if (s.SourceType == "plex") PlexSavedSources.Add(s);
+                }
+                SelectedEmbySavedSource ??= EmbySavedSources.FirstOrDefault();
+                SelectedPlexSavedSource ??= PlexSavedSources.FirstOrDefault();
+            }
+            catch (Exception ex)
+            {
+                ErrorMessage = $"Failed to load saved import sources: {ex.Message}";
+            }
+
+            // Fetch the user's profiles for the import-target dropdown.
+            try
+            {
+                var profilesResp = await _authApi.GetProfilesAsync();
+                ImportProfiles.Clear();
+                foreach (var p in profilesResp.Profiles)
+                    ImportProfiles.Add(p);
+            }
+            catch { /* Non-fatal; dropdown will be empty */ }
+
+            // Fetch recent runs.
+            await LoadImportRunsAsync();
+        }
+        finally
+        {
+            IsLoadingImportSources = false;
+        }
+    }
+
     [RelayCommand]
     private async Task LoadImportRunsAsync()
     {
@@ -899,10 +1062,12 @@ public partial class SettingsViewModel : ObservableObject
         IsLoadingImportRuns = true;
         try
         {
-            var response = await _historyImportApi.GetImportRunsAsync();
+            var runs = await _historyImportApi.GetImportRunsAsync();
             ImportRuns.Clear();
-            foreach (var run in response.Runs.OrderByDescending(r => r.CreatedAt))
+            foreach (var run in runs.OrderByDescending(r => r.CreatedAt))
                 ImportRuns.Add(run);
+            // Default display run = most recent if nothing selected.
+            if (DisplayRun == null) DisplayRun = ImportRuns.FirstOrDefault();
         }
         catch (Exception ex)
         {
@@ -912,6 +1077,32 @@ public partial class SettingsViewModel : ObservableObject
         {
             IsLoadingImportRuns = false;
         }
+    }
+
+    /// <summary>Merge a live event update for an import run into the view-model
+    /// state — updates the recent-runs list and the currently-displayed run if
+    /// it matches. Called from the EventChannelClient event handler in the page.</summary>
+    public void ApplyImportRunUpdate(HistoryImportRun run)
+    {
+        // Update or insert in recent runs list.
+        var existingIdx = -1;
+        for (int i = 0; i < ImportRuns.Count; i++)
+        {
+            if (ImportRuns[i].Id == run.Id) { existingIdx = i; break; }
+        }
+        if (existingIdx >= 0) ImportRuns[existingIdx] = run;
+        else ImportRuns.Insert(0, run);
+
+        // Update display run when it's the one being tracked.
+        if (SelectedRunId == run.Id) DisplayRun = run;
+        else if (SelectedRunId == null && ImportRuns.Count > 0) DisplayRun = ImportRuns[0];
+    }
+
+    /// <summary>Manually pick a historical run from the list to show in the summary card.</summary>
+    public void SelectRunForDisplay(HistoryImportRun run)
+    {
+        SelectedRunId = run.Id;
+        DisplayRun = run;
     }
 
     // ===== Plugin Settings =====

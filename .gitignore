@@ -42,6 +42,7 @@ Desktop.ini
 installer/deps/
 installer/output/
 installer/publish/
+
+# Diagnostic / intermediate publish directories
 publish_test*
-installer/publish/
-installer/output/
+publish-test/

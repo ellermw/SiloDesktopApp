@@ -149,128 +149,130 @@
             </Grid>
         </Grid>
 
-        <!-- Filter bar (web: AdvancedFilterBar - flex-wrap items-center gap-2) -->
-        <StackPanel
+        <!-- Filter bar (web: AdvancedFilterBar - flex items-center gap-2, sort pushed right via ml-auto) -->
+        <Grid
             x:Name="FilterBar"
             Grid.Row="1"
-            Orientation="Horizontal"
-            Spacing="8"
             Margin="40,0,40,16"
             Canvas.ZIndex="10"
             Background="{StaticResource AppBackgroundBrush}"
+            ColumnDefinitions="Auto,*,Auto"
             Visibility="Collapsed">
 
-            <!-- Genre filter (web: pill select) -->
-            <ComboBox
-                x:Name="GenreComboBox"
-                Style="{StaticResource PillComboBoxStyle}"
-                Width="150"
-                SelectionChanged="GenreComboBox_SelectionChanged"
-                PlaceholderText="All Genres" />
+            <!-- Left: filters -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                <!-- Genre filter (web: pill select) -->
+                <ComboBox
+                    x:Name="GenreComboBox"
+                    Style="{StaticResource PillComboBoxStyle}"
+                    Width="150"
+                    SelectionChanged="GenreComboBox_SelectionChanged"
+                    PlaceholderText="All Genres" />
 
-            <!-- Content Rating filter -->
-            <ComboBox
-                x:Name="ContentRatingComboBox"
-                Style="{StaticResource PillComboBoxStyle}"
-                Width="130"
-                SelectionChanged="ContentRatingComboBox_SelectionChanged"
-                PlaceholderText="All Ratings" />
+                <!-- Content Rating filter -->
+                <ComboBox
+                    x:Name="ContentRatingComboBox"
+                    Style="{StaticResource PillComboBoxStyle}"
+                    Width="130"
+                    SelectionChanged="ContentRatingComboBox_SelectionChanged"
+                    PlaceholderText="All Ratings" />
 
-            <!-- Year range (web: Year <from> - <to>) -->
-            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                <TextBlock
-                    Text="Year"
-                    FontSize="13"
-                    Foreground="{StaticResource SecondaryTextBrush}"
-                    VerticalAlignment="Center" />
-                <TextBox
-                    x:Name="YearMinBox"
-                    Style="{StaticResource YearInputStyle}"
-                    PlaceholderText="From"
-                    TextChanged="YearFilter_TextChanged"
-                    InputScope="Number" />
-                <TextBlock
-                    Text="&#x2013;"
-                    FontSize="12"
-                    Foreground="{StaticResource TertiaryTextBrush}"
-                    VerticalAlignment="Center"
-                    Margin="0,0,0,0" />
-                <TextBox
-                    x:Name="YearMaxBox"
-                    Style="{StaticResource YearInputStyle}"
-                    PlaceholderText="To"
-                    TextChanged="YearFilter_TextChanged"
-                    InputScope="Number" />
+                <!-- Year range (web: Year <from> - <to>) -->
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <TextBlock
+                        Text="Year"
+                        FontSize="13"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        VerticalAlignment="Center" />
+                    <TextBox
+                        x:Name="YearMinBox"
+                        Style="{StaticResource YearInputStyle}"
+                        PlaceholderText="From"
+                        TextChanged="YearFilter_TextChanged"
+                        InputScope="Number" />
+                    <TextBlock
+                        Text="&#x2013;"
+                        FontSize="12"
+                        Foreground="{StaticResource TertiaryTextBrush}"
+                        VerticalAlignment="Center"
+                        Margin="0,0,0,0" />
+                    <TextBox
+                        x:Name="YearMaxBox"
+                        Style="{StaticResource YearInputStyle}"
+                        PlaceholderText="To"
+                        TextChanged="YearFilter_TextChanged"
+                        InputScope="Number" />
+                </StackPanel>
+
+                <!-- Studio filter -->
+                <ComboBox
+                    x:Name="StudioComboBox"
+                    Style="{StaticResource PillComboBoxStyle}"
+                    Width="150"
+                    SelectionChanged="StudioComboBox_SelectionChanged"
+                    PlaceholderText="All Studios" />
+
+                <!-- Country filter -->
+                <ComboBox
+                    x:Name="CountryComboBox"
+                    Style="{StaticResource PillComboBoxStyle}"
+                    Width="140"
+                    SelectionChanged="CountryComboBox_SelectionChanged"
+                    PlaceholderText="All Countries" />
+
+                <!-- Resolution filter -->
+                <ComboBox
+                    x:Name="ResolutionComboBox"
+                    Style="{StaticResource PillComboBoxStyle}"
+                    Width="130"
+                    SelectionChanged="ResolutionComboBox_SelectionChanged"
+                    PlaceholderText="All Quality" />
+
+                <!-- Audio Language filter -->
+                <ComboBox
+                    x:Name="AudioLangComboBox"
+                    Style="{StaticResource PillComboBoxStyle}"
+                    Width="150"
+                    SelectionChanged="AudioLangComboBox_SelectionChanged"
+                    PlaceholderText="All Audio" />
             </StackPanel>
 
-            <!-- Studio filter -->
-            <ComboBox
-                x:Name="StudioComboBox"
-                Style="{StaticResource PillComboBoxStyle}"
-                Width="150"
-                SelectionChanged="StudioComboBox_SelectionChanged"
-                PlaceholderText="All Studios" />
+            <!-- Right: sort + order + count (pushed right via Grid column) -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                <!-- Sort + Order (web: ml-auto, pill) -->
+                <!-- B43: Sort tags align with WebUI catalog params: sort_title,
+                     recently_added, year, rating_imdb. -->
+                <ComboBox
+                    x:Name="SortComboBox"
+                    Style="{StaticResource PillComboBoxStyle}"
+                    Width="160"
+                    SelectionChanged="SortComboBox_SelectionChanged">
+                    <ComboBoxItem Content="Title" Tag="sort_title" IsSelected="True" />
+                    <ComboBoxItem Content="Recently Added" Tag="recently_added" />
+                    <ComboBoxItem Content="Year" Tag="year" />
+                    <ComboBoxItem Content="IMDb Rating" Tag="rating_imdb" />
+                </ComboBox>
 
-            <!-- Country filter -->
-            <ComboBox
-                x:Name="CountryComboBox"
-                Style="{StaticResource PillComboBoxStyle}"
-                Width="140"
-                SelectionChanged="CountryComboBox_SelectionChanged"
-                PlaceholderText="All Countries" />
+                <!-- Order toggle button (web: arrow up/down in circle) -->
+                <Button
+                    x:Name="OrderToggleButton"
+                    Style="{StaticResource OrderToggleButtonStyle}"
+                    Click="OrderToggle_Click"
+                    ToolTipService.ToolTip="Ascending">
+                    <FontIcon
+                        x:Name="OrderIcon"
+                        Glyph="&#xE74A;"
+                        FontSize="14" />
+                </Button>
 
-            <!-- Resolution filter -->
-            <ComboBox
-                x:Name="ResolutionComboBox"
-                Style="{StaticResource PillComboBoxStyle}"
-                Width="130"
-                SelectionChanged="ResolutionComboBox_SelectionChanged"
-                PlaceholderText="All Quality" />
-
-            <!-- Audio Language filter -->
-            <ComboBox
-                x:Name="AudioLangComboBox"
-                Style="{StaticResource PillComboBoxStyle}"
-                Width="150"
-                SelectionChanged="AudioLangComboBox_SelectionChanged"
-                PlaceholderText="All Audio" />
-
-            <!-- Spacer to push sort to right -->
-            <Border HorizontalAlignment="Stretch" Width="0" />
-
-            <!-- Sort + Order (web: ml-auto, pill) -->
-            <ComboBox
-                x:Name="SortComboBox"
-                Style="{StaticResource PillComboBoxStyle}"
-                Width="160"
-                SelectionChanged="SortComboBox_SelectionChanged">
-                <ComboBoxItem Content="Title" Tag="title" IsSelected="True" />
-                <ComboBoxItem Content="Recently Added" Tag="added_at" />
-                <ComboBoxItem Content="Release Date" Tag="release_date" />
-                <ComboBoxItem Content="Year" Tag="year" />
-                <ComboBoxItem Content="IMDb Rating" Tag="rating_imdb" />
-            </ComboBox>
-
-            <!-- Order toggle button (web: arrow up/down in circle) -->
-            <Button
-                x:Name="OrderToggleButton"
-                Style="{StaticResource OrderToggleButtonStyle}"
-                Click="OrderToggle_Click"
-                ToolTipService.ToolTip="Ascending">
-                <FontIcon
-                    x:Name="OrderIcon"
-                    Glyph="&#xE74A;"
-                    FontSize="14" />
-            </Button>
-
-            <!-- Item count (web: surface-panel-subtle with count) -->
-            <Border
-                x:Name="CountPanel"
-                Background="{StaticResource SurfaceBrush}"
-                CornerRadius="16"
-                Padding="16,8"
-                Margin="8,0,0,0"
-                VerticalAlignment="Center">
+                <!-- Item count (web: surface-panel-subtle with count) -->
+                <Border
+                    x:Name="CountPanel"
+                    Background="{StaticResource SurfaceBrush}"
+                    CornerRadius="16"
+                    Padding="16,8"
+                    Margin="8,0,0,0"
+                    VerticalAlignment="Center">
                 <StackPanel HorizontalAlignment="Right">
                     <TextBlock
                         Text="AVAILABLE NOW"
@@ -290,7 +292,8 @@
                         Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
             </Border>
-        </StackPanel>
+            </StackPanel>
+        </Grid>
 
         <!-- Active filter badges -->
         <StackPanel
@@ -312,17 +315,16 @@
                 Visibility="Collapsed" />
         </StackPanel>
 
-        <!-- Content area with scrollviewer for infinite scroll (Library tab) -->
-        <ScrollViewer
-            x:Name="ContentScrollViewer"
-            Grid.Row="3"
-            ViewChanged="ContentScrollViewer_ViewChanged"
-            IsScrollInertiaEnabled="True"
-            Padding="40,0,40,24"
-            Visibility="Collapsed">
+        <!-- Content area: Grid wraps ScrollViewer + overlaid loading indicators.
+             ItemsRepeater MUST be the direct child of ScrollViewer (no StackPanel)
+             so that UniformGridLayout receives proper viewport info and virtualizes. -->
+        <Grid x:Name="LibraryContentArea" Grid.Row="3" Visibility="Collapsed">
+            <ScrollViewer
+                x:Name="ContentScrollViewer"
+                ViewChanged="ContentScrollViewer_ViewChanged"
+                IsScrollInertiaEnabled="True"
+                Padding="40,0,40,24">
 
-            <StackPanel>
-                <!-- Poster grid (web: grid grid-cols-3..8 gap-3) -->
                 <ItemsRepeater
                     x:Name="PosterRepeater">
                     <ItemsRepeater.Layout>
@@ -339,26 +341,28 @@
                         </DataTemplate>
                     </ItemsRepeater.ItemTemplate>
                 </ItemsRepeater>
+            </ScrollViewer>
 
-                <!-- Loading indicator at bottom -->
-                <ProgressRing
-                    x:Name="LoadingRing"
-                    IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                    HorizontalAlignment="Center"
-                    Margin="0,16,0,16"
-                    Width="32" Height="32" />
+            <!-- Loading indicator overlaid at bottom of viewport -->
+            <ProgressRing
+                x:Name="LoadingRing"
+                IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Bottom"
+                Margin="0,0,0,24"
+                Width="32" Height="32" />
 
-                <!-- Error message -->
-                <TextBlock
-                    Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                    Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
-                    Foreground="{StaticResource ErrorBrush}"
-                    Style="{StaticResource BodyTextStyle}"
-                    HorizontalAlignment="Center"
-                    Margin="0,8,0,8" />
-            </StackPanel>
-        </ScrollViewer>
+            <!-- Error message overlaid at bottom of viewport -->
+            <TextBlock
+                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
+                Foreground="{StaticResource ErrorBrush}"
+                Style="{StaticResource BodyTextStyle}"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Bottom"
+                Margin="0,0,0,8" />
+        </Grid>
 
         <!-- Recommended tab content (web: space-y-10 py-2 sm:space-y-12) -->
         <ScrollViewer

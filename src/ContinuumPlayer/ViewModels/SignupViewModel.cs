@@ -107,8 +107,7 @@ public partial class SignupViewModel : ObservableObject
 
             var response = await _authApi.SignupAsync(request);
 
-            // Save tokens
-            _credentialStore.SaveCredential(ServerUrl, "access_token", response.AccessToken);
+            // Save refresh token only (access token stays in-memory, re-minted on launch)
             _credentialStore.SaveCredential(ServerUrl, "refresh_token", response.RefreshToken);
 
             // Set auth state

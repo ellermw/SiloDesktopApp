@@ -5,6 +5,7 @@ using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Admin;
 using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Models.Home;
+using ContinuumPlayer.Helpers;
 
 namespace ContinuumPlayer.ViewModels;
 
@@ -17,7 +18,7 @@ public partial class LibraryViewModel : ObservableObject
         _catalogApi = catalogApi;
     }
 
-    public ObservableCollection<MediaItem> Items { get; } = [];
+    public BulkObservableCollection<MediaItem> Items { get; } = [];
 
     /// <summary>Fired after each page is loaded so the UI can check if more content is needed to fill the viewport.</summary>
     public event Action? PageLoaded;
@@ -31,8 +32,9 @@ public partial class LibraryViewModel : ObservableObject
     [ObservableProperty]
     private string? _errorMessage;
 
+    // B43: align with WebUI catalog sort param.
     [ObservableProperty]
-    private string? _selectedSort = "title";
+    private string? _selectedSort = "sort_title";
 
     [ObservableProperty]
     private string? _selectedOrder = "asc";
@@ -74,14 +76,17 @@ public partial class LibraryViewModel : ObservableObject
     [ObservableProperty]
     private string? _selectedAudioLanguage;
 
-    // Filter options loaded from server
-    public ObservableCollection<string> Genres { get; } = [];
-    public ObservableCollection<string> ContentRatings { get; } = [];
-    public ObservableCollection<string> Studios { get; } = [];
-    public ObservableCollection<string> Countries { get; } = [];
-    public ObservableCollection<string> Resolutions { get; } = [];
-    public ObservableCollection<string> AudioLanguages { get; } = [];
-    public ObservableCollection<string> SortOptions { get; } = ["title", "year", "rating_imdb", "created_at", "added_at"];
+    // Filter options loaded from server — BulkObservableCollection fires ONE event
+    // per AddRange instead of per-item, preventing hundreds of redundant ComboBox rebuilds
+    public BulkObservableCollection<string> Genres { get; } = [];
+    public BulkObservableCollection<string> ContentRatings { get; } = [];
+    public BulkObservableCollection<string> Studios { get; } = [];
+    public BulkObservableCollection<string> Countries { get; } = [];
+    public BulkObservableCollection<string> Resolutions { get; } = [];
+    public BulkObservableCollection<string> AudioLanguages { get; } = [];
+    // B43: tags must match the WebUI catalog API contract: sort_title / recently_added /
+    // year / rating_imdb. Saved filters from web don't bridge if these don't match.
+    public ObservableCollection<string> SortOptions { get; } = ["sort_title", "recently_added", "year", "rating_imdb"];
 
     // Collections
     public ObservableCollection<LibraryCollection> Collections { get; } = [];
@@ -151,7 +156,8 @@ public partial class LibraryViewModel : ObservableObject
     {
         if (Library == null || TotalCount == 0) return;
 
-        SelectedSort = "title";
+        // B43: aligned with WebUI sort_title.
+        SelectedSort = "sort_title";
         SelectedOrder = "asc";
 
         if (letter == "#")
@@ -242,7 +248,7 @@ public partial class LibraryViewModel : ObservableObject
         try
         {
             var probe = await _catalogApi.GetCatalogAsync(
-                libraryId: Library!.Id, sort: "title", order: "asc", limit: 1, offset: offset);
+                libraryId: Library!.Id, sort: "sort_title", order: "asc", limit: 1, offset: offset);
             if (probe.Items.Count > 0)
             {
                 var title = probe.Items[0].Title.TrimStart();
@@ -282,10 +288,7 @@ public partial class LibraryViewModel : ObservableObject
                 limit: PageSize,
                 offset: _offset);
 
-            foreach (var item in response.Items)
-            {
-                Items.Add(item);
-            }
+            Items.AddRange(response.Items);
 
             TotalCount = response.Total;
             _offset += response.Items.Count;
@@ -311,35 +314,27 @@ public partial class LibraryViewModel : ObservableObject
         try
         {
             var filters = await _catalogApi.GetFiltersAsync(Library.Id);
+
+            // Single AddRange per filter → one CollectionChanged event → one ComboBox rebuild.
+            // Previously each .Add() fired CollectionChanged, causing ~192 redundant ComboBox
+            // rebuilds that froze the UI thread.
             Genres.Clear();
-            Genres.Add(""); // All genres
-            foreach (var genre in filters.Genres)
-                Genres.Add(genre);
+            Genres.AddRange(filters.Genres.Prepend(""));
 
             ContentRatings.Clear();
-            ContentRatings.Add(""); // All ratings
-            foreach (var rating in filters.ContentRatings)
-                ContentRatings.Add(rating);
+            ContentRatings.AddRange(filters.ContentRatings.Prepend(""));
 
             Studios.Clear();
-            Studios.Add(""); // All studios
-            foreach (var studio in filters.Studios)
-                Studios.Add(studio);
+            Studios.AddRange(filters.Studios.Prepend(""));
 
             Countries.Clear();
-            Countries.Add(""); // All countries
-            foreach (var country in filters.Countries)
-                Countries.Add(country);
+            Countries.AddRange(filters.Countries.Prepend(""));
 
             Resolutions.Clear();
-            Resolutions.Add(""); // All resolutions
-            foreach (var res in filters.Resolutions)
-                Resolutions.Add(res);
+            Resolutions.AddRange(filters.Resolutions.Prepend(""));
 
             AudioLanguages.Clear();
-            AudioLanguages.Add(""); // All audio languages
-            foreach (var lang in filters.AudioLanguages)
-                AudioLanguages.Add(lang);
+            AudioLanguages.AddRange(filters.AudioLanguages.Prepend(""));
         }
         catch
         {

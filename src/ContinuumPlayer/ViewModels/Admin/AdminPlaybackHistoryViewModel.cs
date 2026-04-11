@@ -129,13 +129,8 @@ public partial class AdminPlaybackHistoryViewModel : ObservableObject
         return dt.ToLocalTime().ToString("MMM d, yyyy h:mm tt");
     }
 
+    // B29: Delegated to ContinuumPlayer.Core.Helpers.TimeAgo for consistency
+    // across all admin pages.
     public static string FormatRelative(string dateStr)
-    {
-        if (!DateTime.TryParse(dateStr, out var dt)) return dateStr;
-        var diff = DateTime.UtcNow - dt.ToUniversalTime();
-        if (diff.TotalSeconds < 60) return "just now";
-        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
-        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
-        return $"{(int)diff.TotalDays}d ago";
-    }
+        => Core.Helpers.TimeAgo.FormatShort(dateStr);
 }

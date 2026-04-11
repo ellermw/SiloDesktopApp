@@ -18,16 +18,44 @@ public sealed partial class ImpersonationBanner : UserControl
             nameof(ImpersonatedUsername),
             typeof(string),
             typeof(ImpersonationBanner),
-            new PropertyMetadata("", OnUsernameChanged));
+            new PropertyMetadata("", OnAnyChanged));
 
-    private static void OnUsernameChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    public string ImpersonatorUsername
+    {
+        get => (string)GetValue(ImpersonatorUsernameProperty);
+        set => SetValue(ImpersonatorUsernameProperty, value);
+    }
+
+    public static readonly DependencyProperty ImpersonatorUsernameProperty =
+        DependencyProperty.Register(
+            nameof(ImpersonatorUsername),
+            typeof(string),
+            typeof(ImpersonationBanner),
+            new PropertyMetadata("", OnAnyChanged));
+
+    private static void OnAnyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is ImpersonationBanner banner)
         {
-            var username = e.NewValue as string ?? "";
-            banner.ImpersonatingText.Text = string.IsNullOrEmpty(username)
-                ? "Impersonating user"
-                : $"Impersonating {username}";
+            banner.UpdateText();
+        }
+    }
+
+    private void UpdateText()
+    {
+        // Match WebUI format: "Impersonating {user} as requested by {impersonator}".
+        // Fall back gracefully when fields are missing.
+        if (string.IsNullOrEmpty(ImpersonatedUsername))
+        {
+            ImpersonatingText.Text = "Impersonating user";
+        }
+        else if (string.IsNullOrEmpty(ImpersonatorUsername))
+        {
+            ImpersonatingText.Text = $"Impersonating {ImpersonatedUsername}";
+        }
+        else
+        {
+            ImpersonatingText.Text = $"Impersonating {ImpersonatedUsername} as requested by {ImpersonatorUsername}";
         }
     }
 

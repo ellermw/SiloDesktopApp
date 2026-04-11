@@ -25,7 +25,7 @@ public class SettingsApi(ContinuumApiClient client)
         => client.PutNoContentAsync($"/api/v1/settings/{Uri.EscapeDataString(key)}", new { value }, ct);
 
     public Task<Profile> UpdateProfileAsync(string profileId, object updates, CancellationToken ct = default)
-        => client.PatchAsync<Profile>($"/api/v1/profiles/{profileId}", updates, ct);
+        => client.PutAsync<Profile>($"/api/v1/profiles/{profileId}", updates, ct);
 
     public Task<ProfilesResponse> GetProfilesAsync(CancellationToken ct = default)
         => client.GetAsync<ProfilesResponse>("/api/v1/profiles", ct);

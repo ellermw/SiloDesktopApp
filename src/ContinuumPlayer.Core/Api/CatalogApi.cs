@@ -206,9 +206,10 @@ public class CatalogApi(ContinuumApiClient client)
 
     // ===== Person Filmography =====
 
-    public Task<CatalogResponse> GetPersonFilmographyAsync(int personId, string? type = null, int limit = 60, int offset = 0, CancellationToken ct = default)
+    // B33: personId is a string — supports non-numeric IDs from third-party providers.
+    public Task<CatalogResponse> GetPersonFilmographyAsync(string personId, string? type = null, int limit = 60, int offset = 0, CancellationToken ct = default)
     {
-        var query = $"/api/v1/catalog?source=person&person_id={personId}&limit={limit}&offset={offset}&sort=year&order=desc";
+        var query = $"/api/v1/catalog?source=person&person_id={Uri.EscapeDataString(personId)}&limit={limit}&offset={offset}&sort=year&order=desc";
         if (!string.IsNullOrEmpty(type) && type != "all")
             query += $"&type={Uri.EscapeDataString(type)}";
         return client.GetAsync<CatalogResponse>(query, ct);

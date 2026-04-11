@@ -83,7 +83,10 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock x:Name="PositionText" Text="0:00" Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center" />
-                    <Slider x:Name="SeekSlider" Grid.Column="1" Minimum="0" Maximum="1" ValueChanged="SeekSlider_ValueChanged" />
+                    <Slider x:Name="SeekSlider" Grid.Column="1" Minimum="0" Maximum="1"
+                            ValueChanged="SeekSlider_ValueChanged"
+                            PointerPressed="SeekSlider_PointerPressed"
+                            PointerCaptureLost="SeekSlider_PointerCaptureLost" />
                     <TextBlock x:Name="DurationText" Text="0:00" Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center" Grid.Column="2" />
                 </Grid>
 

@@ -353,20 +353,9 @@ public sealed partial class AdminTasksPage : Page
     }
 
     // ===== Time Formatting =====
-
+    // B29: Delegated to ContinuumPlayer.Core.Helpers.TimeAgo for consistency.
     private static string FormatRelativeTime(string dateStr)
-    {
-        if (!DateTime.TryParse(dateStr, out var dt)) return dateStr;
-        var diff = DateTimeOffset.UtcNow - dt.ToUniversalTime();
-        int seconds = (int)diff.TotalSeconds;
-        if (seconds < 60) return "just now";
-        int minutes = (int)diff.TotalMinutes;
-        if (minutes < 60) return $"{minutes}m ago";
-        int hours = (int)diff.TotalHours;
-        if (hours < 24) return $"{hours}h ago";
-        int days = (int)diff.TotalDays;
-        return $"{days}d ago";
-    }
+        => Core.Helpers.TimeAgo.FormatShort(dateStr);
 
     private static string FormatNextRun(string dateStr)
     {

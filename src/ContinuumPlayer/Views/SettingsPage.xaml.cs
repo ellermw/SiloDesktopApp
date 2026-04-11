@@ -15,7 +15,11 @@ namespace ContinuumPlayer.Views;
 public sealed partial class SettingsPage : Page
 {
     public SettingsViewModel ViewModel { get; }
-    private bool _suppressEvents;
+    // Start suppressed — handlers that fire during XAML parse (before all sibling
+    // x:Name fields are assigned) would otherwise null-ref on their forward references
+    // and surface as a cryptic "Failed to assign to RangeBase.Value" XamlParseException.
+    // Set back to false after the page finishes loading.
+    private bool _suppressEvents = true;
 
     // Language options for audio (spoken language)
     private static readonly (string Tag, string Label)[] AudioLanguageOptions =
@@ -104,6 +108,13 @@ public sealed partial class SettingsPage : Page
         UpdateCurrentThemeDisplay();
     }
 
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        // Stop the history_import event channel subscription when leaving Settings.
+        StopImportEventSubscription();
+        base.OnNavigatedFrom(e);
+    }
+
     private void SyncComboBoxes()
     {
         _suppressEvents = true;
@@ -182,7 +193,7 @@ public sealed partial class SettingsPage : Page
         }
         else if (tag == "Import")
         {
-            _ = ViewModel.LoadImportRunsCommand.ExecuteAsync(null);
+            _ = EnsureImportTabLoadedAsync();
         }
         else if (tag == "Plugins")
         {
@@ -1035,6 +1046,9 @@ public sealed partial class SettingsPage : Page
         actionStack.Children.Add(visBtn);
 
         // Delete (only custom sections)
+        // B58: Confirm before destructive removal. Web copy distinguishes
+        // "Delete custom section?" from "Remove section?" — only IsCustom
+        // sections expose this button so we use the "Delete custom section" copy.
         if (section.IsCustom)
         {
             var delBtn = new Button
@@ -1043,9 +1057,23 @@ public sealed partial class SettingsPage : Page
                 Style = (Style)Application.Current.Resources["GhostButtonStyle"],
                 Padding = new Thickness(6),
             };
-            delBtn.Click += (_, _) =>
+            delBtn.Click += async (_, _) =>
             {
-                ViewModel.RemoveSection(section);
+                var dialog = new ContentDialog
+                {
+                    Title = "Delete custom section",
+                    Content = $"Delete \"{section.Title}\"? This action cannot be undone.",
+                    PrimaryButtonText = "Delete",
+                    CloseButtonText = "Cancel",
+                    XamlRoot = this.XamlRoot,
+                    DefaultButton = ContentDialogButton.Close,
+                };
+
+                var result = await dialog.ShowAsync();
+                if (result == ContentDialogResult.Primary)
+                {
+                    ViewModel.RemoveSection(section);
+                }
             };
             actionStack.Children.Add(delBtn);
         }
@@ -1062,93 +1090,241 @@ public sealed partial class SettingsPage : Page
         _ = ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
     }
 
-    private void HomeSectionsReset_Click(object sender, RoutedEventArgs e)
+    // B57: Confirm before destructive reset of all section customizations.
+    private async void HomeSectionsReset_Click(object sender, RoutedEventArgs e)
     {
-        _ = ViewModel.ResetHomeSectionsCommand.ExecuteAsync(null);
+        var dialog = new ContentDialog
+        {
+            Title = "Reset section customizations",
+            Content = "Reset all section customizations to defaults? This action cannot be undone.",
+            PrimaryButtonText = "Reset",
+            CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot,
+            DefaultButton = ContentDialogButton.Close,
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary)
+        {
+            await ViewModel.ResetHomeSectionsCommand.ExecuteAsync(null);
+        }
     }
 
-    // ===== Import Handlers =====
+    // ===================================================================
+    // ===== Import Handlers (rebuilt to match WebUI 2026-04-10) =====
+    // ===================================================================
 
-    private void ImportSource_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Styles for the three source cards — highlights the currently-selected one
+    /// with an accent border. Called whenever the source type changes.
+    /// </summary>
+    private void UpdateImportSourceCardStyles()
+    {
+        var selected = ViewModel.ImportSourceType;
+        var accent = (Brush)Application.Current.Resources["AccentBrush"];
+        var border = (Brush)Application.Current.Resources["BorderBrush"];
+        ImportSourceEmbyCard.BorderBrush = selected == "emby" ? accent : border;
+        ImportSourceEmbyCard.BorderThickness = new Thickness(selected == "emby" ? 2 : 1);
+        ImportSourceJellyfinCard.BorderBrush = selected == "jellyfin" ? accent : border;
+        ImportSourceJellyfinCard.BorderThickness = new Thickness(selected == "jellyfin" ? 2 : 1);
+        ImportSourcePlexCard.BorderBrush = selected == "plex" ? accent : border;
+        ImportSourcePlexCard.BorderThickness = new Thickness(selected == "plex" ? 2 : 1);
+    }
+
+    /// <summary>Clicked on one of the three source cards (Emby/Jellyfin/Plex).</summary>
+    private void ImportSourceCard_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not string source) return;
-
         ViewModel.ImportSourceType = source;
-
-        // Update button styles
-        ImportEmbyBtn.Style = source == "emby"
-            ? (Style)Application.Current.Resources["AccentButtonStyle"]
-            : (Style)Application.Current.Resources["SecondaryButtonStyle"];
-        ImportJellyfinBtn.Style = source == "jellyfin"
-            ? (Style)Application.Current.Resources["AccentButtonStyle"]
-            : (Style)Application.Current.Resources["SecondaryButtonStyle"];
-        ImportPlexBtn.Style = source == "plex"
-            ? (Style)Application.Current.Resources["AccentButtonStyle"]
-            : (Style)Application.Current.Resources["SecondaryButtonStyle"];
-
-        // Show/hide connection panels
-        EmbyConnectionPanel.Visibility = source == "emby" ? Visibility.Visible : Visibility.Collapsed;
-        JellyfinConnectionPanel.Visibility = source == "jellyfin" ? Visibility.Visible : Visibility.Collapsed;
-        PlexConnectionPanel.Visibility = source == "plex" ? Visibility.Visible : Visibility.Collapsed;
+        UpdateImportPanelVisibility();
     }
 
-    private async void EmbyConnect_Click(object sender, RoutedEventArgs e)
+    /// <summary>Emby sub-mode buttons — Connect / Saved.</summary>
+    private void ImportEmbyMode_Click(object sender, RoutedEventArgs e)
     {
-        ViewModel.EmbyEmail = EmbyEmailBox.Text;
-        ViewModel.EmbyPassword = EmbyPasswordBox.Password;
-        await ViewModel.EmbyConnectCommand.ExecuteAsync(null);
-
-        if (ViewModel.EmbyServers.Count > 0)
-        {
-            EmbyServerList.Visibility = Visibility.Visible;
-            EmbyServerComboBox.Items.Clear();
-            foreach (var server in ViewModel.EmbyServers)
-            {
-                EmbyServerComboBox.Items.Add(new ComboBoxItem { Content = server.Name, Tag = server });
-            }
-            if (EmbyServerComboBox.Items.Count > 0)
-                EmbyServerComboBox.SelectedIndex = 0;
-        }
+        if (sender is not Button btn || btn.Tag is not string mode) return;
+        ViewModel.ImportEmbyMode = mode;
+        UpdateImportPanelVisibility();
     }
 
-    private async void PlexSignIn_Click(object sender, RoutedEventArgs e)
+    /// <summary>Plex sub-mode buttons — OAuth / Saved.</summary>
+    private void ImportPlexMode_Click(object sender, RoutedEventArgs e)
     {
-        await ViewModel.PlexSignInCommand.ExecuteAsync(null);
-
-        if (ViewModel.PlexServers.Count > 0)
-        {
-            PlexServerList.Visibility = Visibility.Visible;
-            PlexServerComboBox.Items.Clear();
-            foreach (var server in ViewModel.PlexServers)
-            {
-                PlexServerComboBox.Items.Add(new ComboBoxItem { Content = server.Name, Tag = server });
-            }
-            if (PlexServerComboBox.Items.Count > 0)
-                PlexServerComboBox.SelectedIndex = 0;
-        }
+        if (sender is not Button btn || btn.Tag is not string mode) return;
+        ViewModel.ImportPlexMode = mode;
+        UpdateImportPanelVisibility();
     }
 
+    /// <summary>
+    /// Syncs visibility of the source-card highlight, mode selectors, and per-mode
+    /// auth panels to the current ViewModel source/mode state.
+    /// </summary>
+    private void UpdateImportPanelVisibility()
+    {
+        UpdateImportSourceCardStyles();
+
+        var source = ViewModel.ImportSourceType;
+
+        // Mode selectors
+        ImportEmbyModeSelector.Visibility = source == "emby" ? Visibility.Visible : Visibility.Collapsed;
+        ImportPlexModeSelector.Visibility = source == "plex" ? Visibility.Visible : Visibility.Collapsed;
+
+        // Style Emby mode buttons as accent/secondary based on ImportEmbyMode
+        var emodeAccent = (Style)Application.Current.Resources["AccentButtonStyle"];
+        var emodeSecondary = (Style)Application.Current.Resources["SecondaryButtonStyle"];
+        ImportEmbyConnectModeBtn.Style = ViewModel.ImportEmbyMode == "connect" ? emodeAccent : emodeSecondary;
+        ImportEmbySavedModeBtn.Style = ViewModel.ImportEmbyMode == "saved" ? emodeAccent : emodeSecondary;
+
+        // Style Plex mode buttons
+        ImportPlexOAuthModeBtn.Style = ViewModel.ImportPlexMode == "oauth" ? emodeAccent : emodeSecondary;
+        ImportPlexSavedModeBtn.Style = ViewModel.ImportPlexMode == "saved" ? emodeAccent : emodeSecondary;
+
+        // Auth panels
+        ImportEmbyConnectPanel.Visibility = (source == "emby" && ViewModel.ImportEmbyMode == "connect") ? Visibility.Visible : Visibility.Collapsed;
+        ImportEmbySavedPanel.Visibility   = (source == "emby" && ViewModel.ImportEmbyMode == "saved")   ? Visibility.Visible : Visibility.Collapsed;
+        ImportPlexOAuthPanel.Visibility   = (source == "plex" && ViewModel.ImportPlexMode == "oauth")   ? Visibility.Visible : Visibility.Collapsed;
+        ImportPlexSavedPanel.Visibility   = (source == "plex" && ViewModel.ImportPlexMode == "saved")   ? Visibility.Visible : Visibility.Collapsed;
+        ImportJellyfinPanel.Visibility    = source == "jellyfin" ? Visibility.Visible : Visibility.Collapsed;
+
+        // Plex OAuth sub-states
+        PlexAuthPendingPanel.Visibility = ViewModel.PlexAuthPending ? Visibility.Visible : Visibility.Collapsed;
+        PlexAuthPendingText.Text = string.IsNullOrEmpty(ViewModel.PlexAuthStatus)
+            ? "Waiting for approval in browser..."
+            : ViewModel.PlexAuthStatus;
+        PlexAuthErrorPanel.Visibility = !string.IsNullOrEmpty(ViewModel.PlexAuthError) ? Visibility.Visible : Visibility.Collapsed;
+        PlexAuthErrorText.Text = ViewModel.PlexAuthError ?? "";
+
+        bool plexConnected = ViewModel.PlexOAuthServers.Count > 0 && !ViewModel.PlexAuthPending;
+        PlexAuthConnectedPanel.Visibility = plexConnected ? Visibility.Visible : Visibility.Collapsed;
+        PlexAuthSignInButton.Visibility = (plexConnected || ViewModel.PlexAuthPending || !string.IsNullOrEmpty(ViewModel.PlexAuthError))
+            ? Visibility.Collapsed : Visibility.Visible;
+
+        // Emby Connect connected panel
+        bool embyConnected = ViewModel.EmbyConnectServers.Count > 0;
+        EmbyConnectConnectedPanel.Visibility = embyConnected ? Visibility.Visible : Visibility.Collapsed;
+
+        // Start button enabled state
+        StartImportButton.IsEnabled = ViewModel.CanStartImport && !ViewModel.IsImporting;
+    }
+
+    // ----- Password box handlers (PasswordBox can't x:Bind directly to VM) -----
+    private void EmbyConnectPassword_Changed(object sender, RoutedEventArgs e)
+        => ViewModel.EmbyConnectPassword = EmbyConnectPasswordBox.Password;
+    private void EmbySavedPassword_Changed(object sender, RoutedEventArgs e)
+        => ViewModel.EmbySavedPassword = EmbySavedPasswordBox.Password;
+    private void PlexSavedToken_Changed(object sender, RoutedEventArgs e)
+        => ViewModel.PlexSavedToken = PlexSavedTokenBox.Password;
+    private void JellyfinPassword_Changed(object sender, RoutedEventArgs e)
+        => ViewModel.JellyfinPassword = JellyfinPasswordBox.Password;
+
+    // ----- Emby Connect login -----
+    private async void EmbyConnectLogin_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.EmbyConnectLoginCommand.ExecuteAsync(null);
+        // Populate server combo from VM state.
+        EmbyConnectServerCombo.Items.Clear();
+        foreach (var server in ViewModel.EmbyConnectServers)
+            EmbyConnectServerCombo.Items.Add(new ComboBoxItem { Content = server.Name, Tag = server });
+        if (EmbyConnectServerCombo.Items.Count > 0) EmbyConnectServerCombo.SelectedIndex = 0;
+        UpdateImportPanelVisibility();
+    }
+
+    private void EmbyConnectServer_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (EmbyConnectServerCombo.SelectedItem is ComboBoxItem item && item.Tag is HistoryImportConnectServer srv)
+            ViewModel.SelectedEmbyConnectServer = srv;
+        StartImportButton.IsEnabled = ViewModel.CanStartImport && !ViewModel.IsImporting;
+    }
+
+    // ----- Emby Saved -----
+    private void EmbySavedSource_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (EmbySavedSourceCombo.SelectedItem is ComboBoxItem item && item.Tag is HistoryImportSource src)
+            ViewModel.SelectedEmbySavedSource = src;
+        StartImportButton.IsEnabled = ViewModel.CanStartImport && !ViewModel.IsImporting;
+    }
+
+    // ----- Plex OAuth -----
+    private async void PlexAuthStart_Click(object sender, RoutedEventArgs e)
+    {
+        // Show pending panel immediately.
+        UpdateImportPanelVisibility();
+        await ViewModel.PlexAuthStartCommand.ExecuteAsync(null);
+        // Populate server combo and refresh UI.
+        PlexOAuthServerCombo.Items.Clear();
+        foreach (var s in ViewModel.PlexOAuthServers)
+            PlexOAuthServerCombo.Items.Add(new ComboBoxItem { Content = s.Name, Tag = s });
+        if (PlexOAuthServerCombo.Items.Count > 0) PlexOAuthServerCombo.SelectedIndex = 0;
+        UpdateImportPanelVisibility();
+    }
+
+    private void PlexOAuthServer_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PlexOAuthServerCombo.SelectedItem is ComboBoxItem item && item.Tag is PlexServer srv)
+            ViewModel.SelectedPlexOAuthServer = srv;
+        StartImportButton.IsEnabled = ViewModel.CanStartImport && !ViewModel.IsImporting;
+    }
+
+    // ----- Plex Saved -----
+    private void PlexSavedSource_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PlexSavedSourceCombo.SelectedItem is ComboBoxItem item && item.Tag is HistoryImportSource src)
+            ViewModel.SelectedPlexSavedSource = src;
+        StartImportButton.IsEnabled = ViewModel.CanStartImport && !ViewModel.IsImporting;
+    }
+
+    // ----- Profile -----
+    private void ImportProfile_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ImportProfileCombo.SelectedItem is ComboBoxItem item && item.Tag is string profileId)
+            ViewModel.ImportProfileId = profileId;
+        StartImportButton.IsEnabled = ViewModel.CanStartImport && !ViewModel.IsImporting;
+    }
+
+    // ----- Start import -----
     private async void StartImport_Click(object sender, RoutedEventArgs e)
     {
-        // Set selected server from combo boxes
-        if (ViewModel.ImportSourceType == "emby" && EmbyServerComboBox.SelectedItem is ComboBoxItem embyItem)
-        {
-            ViewModel.SelectedEmbyServer = embyItem.Tag as HistoryImportConnectServer;
-        }
-        else if (ViewModel.ImportSourceType == "jellyfin")
-        {
-            ViewModel.JellyfinUrl = JellyfinUrlBox.Text;
-            ViewModel.JellyfinUsername = JellyfinUsernameBox.Text;
-            ViewModel.JellyfinPassword = JellyfinPasswordBox.Password;
-        }
-        else if (ViewModel.ImportSourceType == "plex" && PlexServerComboBox.SelectedItem is ComboBoxItem plexItem)
-        {
-            ViewModel.SelectedPlexServer = plexItem.Tag as PlexServer;
-        }
-
         await ViewModel.StartImportCommand.ExecuteAsync(null);
+        UpdateImportPanelVisibility();
     }
 
+    // ----- Saved sources + profiles combo population -----
+    private void RebuildImportSourcesCombos()
+    {
+        // Emby saved sources
+        EmbySavedSourceCombo.Items.Clear();
+        foreach (var s in ViewModel.EmbySavedSources)
+            EmbySavedSourceCombo.Items.Add(new ComboBoxItem { Content = s.Name, Tag = s });
+        if (EmbySavedSourceCombo.Items.Count > 0 && EmbySavedSourceCombo.SelectedIndex < 0)
+            EmbySavedSourceCombo.SelectedIndex = 0;
+
+        // Plex saved sources
+        PlexSavedSourceCombo.Items.Clear();
+        foreach (var s in ViewModel.PlexSavedSources)
+            PlexSavedSourceCombo.Items.Add(new ComboBoxItem { Content = s.Name, Tag = s });
+        if (PlexSavedSourceCombo.Items.Count > 0 && PlexSavedSourceCombo.SelectedIndex < 0)
+            PlexSavedSourceCombo.SelectedIndex = 0;
+    }
+
+    private void RebuildImportProfilesCombo()
+    {
+        ImportProfileCombo.Items.Clear();
+        foreach (var p in ViewModel.ImportProfiles)
+            ImportProfileCombo.Items.Add(new ComboBoxItem { Content = p.Name, Tag = p.Id });
+        // Preselect the VM's current profile id.
+        for (int i = 0; i < ImportProfileCombo.Items.Count; i++)
+        {
+            if (ImportProfileCombo.Items[i] is ComboBoxItem item && (item.Tag as string) == ViewModel.ImportProfileId)
+            {
+                ImportProfileCombo.SelectedIndex = i;
+                break;
+            }
+        }
+        if (ImportProfileCombo.SelectedIndex < 0 && ImportProfileCombo.Items.Count > 0)
+            ImportProfileCombo.SelectedIndex = 0;
+    }
+
+    // ----- Run history list -----
     private void ImportRuns_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         RebuildImportRunCards();
@@ -1160,98 +1336,465 @@ public sealed partial class SettingsPage : Page
 
         if (ViewModel.ImportRuns.Count == 0)
         {
-            ImportRunsContainer.Children.Add(new TextBlock
+            ImportRunsContainer.Children.Add(new Border
             {
-                Text = "No import runs yet.",
-                FontSize = 13,
-                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(14, 12, 14, 12),
+                Child = new TextBlock
+                {
+                    Text = "No imports have been started yet.",
+                    FontSize = 13,
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                },
             });
             return;
         }
 
         foreach (var run in ViewModel.ImportRuns)
         {
-            ImportRunsContainer.Children.Add(BuildImportRunCard(run));
+            ImportRunsContainer.Children.Add(BuildHistoryRunCard(run));
         }
     }
 
-    private static Border BuildImportRunCard(HistoryImportRun run)
+    /// <summary>Build one card for the Import history list. Click selects the run
+    /// for display in the summary card above.</summary>
+    private Border BuildHistoryRunCard(HistoryImportRun run)
     {
+        var isActive = ViewModel.SelectedRunId == run.Id;
+
         var card = new Border
         {
             Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(16, 12, 16, 12),
+            BorderBrush = (Brush)Application.Current.Resources[isActive ? "AccentBrush" : "BorderBrush"],
+            BorderThickness = new Thickness(isActive ? 2 : 1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(14, 12, 14, 12),
         };
 
-        var stack = new StackPanel { Spacing = 4 };
+        var row = new Grid { ColumnSpacing = 12 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        // Header: source type + status
-        var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        headerRow.Children.Add(new TextBlock
+        // Source letter icon
+        var (iconLetter, iconBg, iconFg) = run.SourceType switch
         {
-            Text = run.SourceType.ToUpperInvariant(),
+            "emby"     => ("E", "#1DCFA1", Microsoft.UI.Colors.White),
+            "jellyfin" => ("J", "#00A4DC", Microsoft.UI.Colors.White),
+            "plex"     => ("P", "#E5A00D", Microsoft.UI.Colors.Black),
+            _          => ("?", "#6B7280", Microsoft.UI.Colors.White),
+        };
+        var iconBorder = new Border
+        {
+            Width = 28, Height = 28,
+            CornerRadius = new CornerRadius(6),
+            Background = new SolidColorBrush(HexToColor(iconBg)),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = iconLetter,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(iconFg),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
+        Grid.SetColumn(iconBorder, 0);
+        row.Children.Add(iconBorder);
+
+        // Title + meta
+        var textStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        textStack.Children.Add(new TextBlock
+        {
+            Text = $"{CapitalizeSource(run.SourceType)} import",
             FontSize = 14,
-            FontWeight = FontWeights.SemiBold,
+            FontWeight = FontWeights.Medium,
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
         });
-
-        var statusColor = run.Status switch
+        var metaBits = new List<string> { FormatRelativeTime(run.CreatedAt) };
+        if (run.Matched > 0) metaBits.Add($"{run.Matched} matched");
+        textStack.Children.Add(new TextBlock
         {
-            "completed" => (Brush)Application.Current.Resources["AccentBrush"],
-            "failed" => (Brush)Application.Current.Resources["ErrorBrush"],
-            _ => (Brush)Application.Current.Resources["SecondaryTextBrush"],
-        };
-
-        var statusBadge = new Border
-        {
-            Background = (Brush)Application.Current.Resources["SurfaceHoverBrush"],
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(8, 2, 8, 2),
-        };
-        statusBadge.Child = new TextBlock
-        {
-            Text = run.Status,
-            FontSize = 11,
-            Foreground = statusColor,
-        };
-        headerRow.Children.Add(statusBadge);
-        stack.Children.Add(headerRow);
-
-        // Stats
-        var statsText = $"Matched: {run.Matched} | Unmatched: {run.Unmatched} | Skipped: {run.Skipped}";
-        stack.Children.Add(new TextBlock
-        {
-            Text = statsText,
+            Text = string.Join("  \u00b7  ", metaBits),
             FontSize = 12,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
         });
+        Grid.SetColumn(textStack, 1);
+        row.Children.Add(textStack);
 
-        // Created date
-        if (DateTime.TryParse(run.CreatedAt, out var created))
+        // Status badge
+        var badge = BuildRunStatusBadge(run.Status);
+        Grid.SetColumn(badge, 2);
+        row.Children.Add(badge);
+
+        card.Child = row;
+        card.Tapped += (_, _) =>
         {
-            stack.Children.Add(new TextBlock
+            ViewModel.SelectRunForDisplay(run);
+            RebuildRunSummaryCard();
+            RebuildImportRunCards(); // re-render to highlight active
+        };
+        return card;
+    }
+
+    private Border BuildRunStatusBadge(string status)
+    {
+        var (label, glyph, fg, bg) = status switch
+        {
+            "queued"    => ("Queued",    "\uE916", "#78AEFC", "#143056"),
+            "running"   => ("Running",   "\uE895", "#FBBF24", "#3B2A0E"),
+            "completed" => ("Completed", "\uE73E", "#4ADE80", "#0E2E18"),
+            "failed"    => ("Failed",    "\uE711", "#F87171", "#3A1313"),
+            "cancelled" => ("Cancelled", "\uE7A7", "#9CA3AF", "#1F2126"),
+            _           => (status,      "\uE916", "#9CA3AF", "#1F2126"),
+        };
+        var badge = new Border
+        {
+            Background = new SolidColorBrush(HexToColor(bg)),
+            BorderBrush = new SolidColorBrush(HexToColor(fg) with { A = 0x55 }),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(999),
+            Padding = new Thickness(10, 3, 10, 3),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        row.Children.Add(new FontIcon { Glyph = glyph, FontSize = 11, Foreground = new SolidColorBrush(HexToColor(fg)) });
+        row.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 11,
+            FontWeight = FontWeights.Medium,
+            Foreground = new SolidColorBrush(HexToColor(fg)),
+        });
+        badge.Child = row;
+        return badge;
+    }
+
+    // ----- Run summary card -----
+    private void RebuildRunSummaryCard()
+    {
+        RunSummaryContainer.Children.Clear();
+        var run = ViewModel.DisplayRun;
+
+        // Title/subtitle state
+        RunSummaryTitle.Text = ViewModel.SelectedRunId != null ? "Selected import" : "Latest import";
+        RunSummarySubtitle.Text = ViewModel.SelectedRunId != null
+            ? "Details from the selected import run."
+            : "Results from the most recent import run.";
+
+        if (run == null)
+        {
+            RunSummaryContainer.Children.Add(new TextBlock
             {
-                Text = $"Started: {created.ToLocalTime():g}",
-                FontSize = 11,
-                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+                Text = "Import summaries will appear here after you start a run.",
+                FontSize = 13,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+            return;
+        }
+
+        // Header: source + status
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, VerticalAlignment = VerticalAlignment.Center };
+        header.Children.Add(new TextBlock
+        {
+            Text = $"{CapitalizeSource(run.SourceType)} import",
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        header.Children.Add(BuildRunStatusBadge(run.Status));
+        RunSummaryContainer.Children.Add(header);
+
+        var relative = FormatRelativeTime(run.CreatedAt);
+        if (!string.IsNullOrEmpty(relative))
+        {
+            RunSummaryContainer.Children.Add(new TextBlock
+            {
+                Text = relative,
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             });
         }
 
-        // Error message if any
+        // Progress bar (when running and fetched > 0)
+        bool isActive = run.Status == "running" || run.Status == "queued";
+        if (isActive && run.Fetched > 0)
+        {
+            var progressValue = 100.0 * (run.Matched + run.Unmatched + run.Skipped) / Math.Max(1, run.Fetched);
+            var progressBar = new ProgressBar
+            {
+                Minimum = 0,
+                Maximum = 100,
+                Value = Math.Clamp(progressValue, 0, 100),
+                Height = 6,
+                Foreground = new SolidColorBrush(HexToColor("#FBBF24")),
+                Background = new SolidColorBrush(HexToColor("#1F2937")),
+            };
+            RunSummaryContainer.Children.Add(progressBar);
+            RunSummaryContainer.Children.Add(new TextBlock
+            {
+                Text = $"{run.Matched + run.Unmatched + run.Skipped} / {run.Fetched} processed",
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+        }
+
+        // Metrics grid (6 boxes)
+        var metricsGrid = new Grid { ColumnSpacing = 10, RowSpacing = 10 };
+        for (int i = 0; i < 6; i++) metricsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        void AddMetric(int col, string label, int value, string? accentColor = null)
+        {
+            var box = new Border
+            {
+                Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(10, 8, 10, 8),
+            };
+            var sp = new StackPanel { Spacing = 2 };
+            sp.Children.Add(new TextBlock
+            {
+                Text = label,
+                FontSize = 11,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+            sp.Children.Add(new TextBlock
+            {
+                Text = value.ToString("N0"),
+                FontSize = 18,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (accentColor != null && value > 0)
+                    ? new SolidColorBrush(HexToColor(accentColor))
+                    : (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            });
+            box.Child = sp;
+            Grid.SetColumn(box, col);
+            metricsGrid.Children.Add(box);
+        }
+        AddMetric(0, "Fetched",  run.Fetched);
+        AddMetric(1, "Matched",  run.Matched,         "#4ADE80");
+        AddMetric(2, "Unmatched",run.Unmatched,       "#FBBF24");
+        AddMetric(3, "Progress", run.ProgressUpdated, "#4ADE80");
+        AddMetric(4, "History",  run.HistoryCreated,  "#4ADE80");
+        AddMetric(5, "Skipped",  run.Skipped);
+        RunSummaryContainer.Children.Add(metricsGrid);
+
+        // Error box
         if (!string.IsNullOrEmpty(run.ErrorMessage))
         {
-            stack.Children.Add(new TextBlock
+            var errBorder = new Border
+            {
+                Background = new SolidColorBrush(HexToColor("#1A0E0E")),
+                BorderBrush = new SolidColorBrush(HexToColor("#3A1313")),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(14, 10, 14, 10),
+            };
+            var errRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+            errRow.Children.Add(new FontIcon { Glyph = "\uE711", FontSize = 14, Foreground = new SolidColorBrush(HexToColor("#F87171")) });
+            errRow.Children.Add(new TextBlock
             {
                 Text = run.ErrorMessage,
-                FontSize = 12,
-                Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+                FontSize = 13,
+                Foreground = new SolidColorBrush(HexToColor("#F87171")),
                 TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 540,
             });
+            errBorder.Child = errRow;
+            RunSummaryContainer.Children.Add(errBorder);
         }
 
-        card.Child = stack;
-        return card;
+        // Warnings
+        if (run.Warnings != null && run.Warnings.Count > 0)
+        {
+            RunSummaryContainer.Children.Add(new TextBlock
+            {
+                Text = "Warnings",
+                FontSize = 13,
+                FontWeight = FontWeights.Medium,
+                Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+                Margin = new Thickness(0, 6, 0, 0),
+            });
+            foreach (var w in run.Warnings)
+            {
+                var wRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                wRow.Children.Add(new FontIcon { Glyph = "\uE7BA", FontSize = 12, Foreground = new SolidColorBrush(HexToColor("#FBBF24")), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 2, 0, 0) });
+                wRow.Children.Add(new TextBlock
+                {
+                    Text = w,
+                    FontSize = 12,
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = 540,
+                });
+                RunSummaryContainer.Children.Add(wRow);
+            }
+        }
+
+        // Unmatched samples
+        if (run.UnmatchedSamples != null && run.UnmatchedSamples.Count > 0)
+        {
+            RunSummaryContainer.Children.Add(new TextBlock
+            {
+                Text = "Unmatched examples",
+                FontSize = 13,
+                FontWeight = FontWeights.Medium,
+                Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+                Margin = new Thickness(0, 6, 0, 0),
+            });
+            foreach (var s in run.UnmatchedSamples)
+            {
+                var card = new Border
+                {
+                    Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+                    BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(12, 8, 12, 8),
+                };
+                var sp = new StackPanel { Spacing = 2 };
+                var titleText = s.Year > 0 ? $"{s.Title} ({s.Year})" : s.Title;
+                sp.Children.Add(new TextBlock
+                {
+                    Text = titleText,
+                    FontSize = 13,
+                    FontWeight = FontWeights.Medium,
+                    Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+                });
+                sp.Children.Add(new TextBlock
+                {
+                    Text = $"{s.Kind} · {s.Reason}",
+                    FontSize = 11,
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                });
+                card.Child = sp;
+                RunSummaryContainer.Children.Add(card);
+            }
+        }
+    }
+
+    // ----- Event channel wiring -----
+    private Core.Services.EventChannelClient? _importEventsClient;
+    private bool _importTabInitialized;
+
+    private async Task EnsureImportTabLoadedAsync()
+    {
+        if (_importTabInitialized) return;
+        _importTabInitialized = true;
+
+        await ViewModel.LoadImportTabCommand.ExecuteAsync(null);
+        RebuildImportSourcesCombos();
+        RebuildImportProfilesCombo();
+        RebuildRunSummaryCard();
+        RebuildImportRunCards();
+        UpdateImportPanelVisibility();
+
+        // Start the event channel subscription for live run updates.
+        StartImportEventSubscription();
+    }
+
+    private void StartImportEventSubscription()
+    {
+        try
+        {
+            _importEventsClient ??= App.Services.GetRequiredService<Core.Services.EventChannelClient>();
+            _importEventsClient.SnapshotReceived -= OnImportEventSnapshot;
+            _importEventsClient.EventReceived -= OnImportEventFrame;
+            _importEventsClient.SnapshotReceived += OnImportEventSnapshot;
+            _importEventsClient.EventReceived += OnImportEventFrame;
+            _importEventsClient.Start("history_import");
+        }
+        catch { /* Best-effort — polling fallback is via LoadImportRunsAsync on entry */ }
+    }
+
+    private void StopImportEventSubscription()
+    {
+        if (_importEventsClient == null) return;
+        _importEventsClient.SnapshotReceived -= OnImportEventSnapshot;
+        _importEventsClient.EventReceived -= OnImportEventFrame;
+        _importEventsClient.Stop();
+    }
+
+    private void OnImportEventSnapshot(string channel, System.Text.Json.JsonElement data)
+    {
+        if (channel != "history_import" || data.ValueKind != System.Text.Json.JsonValueKind.Array) return;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            foreach (var element in data.EnumerateArray())
+            {
+                var run = DeserializeHistoryImportRun(element);
+                if (run != null) ViewModel.ApplyImportRunUpdate(run);
+            }
+            RebuildRunSummaryCard();
+            RebuildImportRunCards();
+        });
+    }
+
+    private void OnImportEventFrame(string channel, string eventName, System.Text.Json.JsonElement data)
+    {
+        if (channel != "history_import") return;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var run = DeserializeHistoryImportRun(data);
+            if (run != null) ViewModel.ApplyImportRunUpdate(run);
+            RebuildRunSummaryCard();
+            RebuildImportRunCards();
+        });
+    }
+
+    private static HistoryImportRun? DeserializeHistoryImportRun(System.Text.Json.JsonElement el)
+    {
+        if (el.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+        try
+        {
+            // Reuse the API client's snake-case options.
+            var options = new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower,
+                TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),
+            };
+            return System.Text.Json.JsonSerializer.Deserialize<HistoryImportRun>(el.GetRawText(), options);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // ----- Helpers -----
+    private static string CapitalizeSource(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return s;
+        return char.ToUpperInvariant(s[0]) + s[1..];
+    }
+
+    private static Windows.UI.Color HexToColor(string hex)
+    {
+        hex = hex.TrimStart('#');
+        if (hex.Length == 6) hex = "FF" + hex;
+        uint value = Convert.ToUInt32(hex, 16);
+        return Windows.UI.Color.FromArgb(
+            (byte)((value >> 24) & 0xFF),
+            (byte)((value >> 16) & 0xFF),
+            (byte)((value >> 8) & 0xFF),
+            (byte)(value & 0xFF));
+    }
+
+    private static string FormatRelativeTime(string iso)
+    {
+        if (!DateTime.TryParse(iso, out var dt)) return "";
+        var diff = DateTimeOffset.UtcNow - dt.ToUniversalTime();
+        if (diff.TotalSeconds < 60) return "just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 7) return $"{(int)diff.TotalDays}d ago";
+        return dt.ToLocalTime().ToString("MMM d, yyyy");
     }
 
     // ===== Plugin Settings Handlers =====

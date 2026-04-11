@@ -135,24 +135,46 @@
     <x:Double x:Key="DurationGlacial">700</x:Double>
     <x:Double x:Key="DurationCinematic">1200</x:Double>
 
-    <!-- ===== Spacing Constants ===== -->
+    <!-- ===== Spacing Constants =====
+         B23: Web Card is `py-6` with children handling horizontal `px-6`.
+         The legacy `CardPadding` (12 all sides) is preserved so existing
+         CardStyle Borders don't lose their inner margins. New code should
+         use `CardVerticalPadding` + the CardHeader/Content/Footer padding
+         tokens via the matching styles below. -->
     <Thickness x:Key="PagePadding">24,24,24,24</Thickness>
     <Thickness x:Key="SectionSpacing">0,0,0,40</Thickness>
     <Thickness x:Key="CardPadding">12,12,12,12</Thickness>
+    <Thickness x:Key="CardVerticalPadding">0,24,0,24</Thickness>
+    <Thickness x:Key="CardHeaderPadding">24,0,24,0</Thickness>
+    <Thickness x:Key="CardContentPadding">24,0,24,0</Thickness>
+    <Thickness x:Key="CardFooterPadding">24,0,24,0</Thickness>
     <Thickness x:Key="ItemSpacing">0,0,12,0</Thickness>
-    <x:Double x:Key="SidebarWidth">240</x:Double>
+    <x:Double x:Key="SidebarWidth">260</x:Double>
 
-    <!-- ===== Corner Radii ===== -->
-    <CornerRadius x:Key="SmallCornerRadius">4</CornerRadius>
-    <CornerRadius x:Key="MediumCornerRadius">8</CornerRadius>
-    <CornerRadius x:Key="LargeCornerRadius">12</CornerRadius>
-    <CornerRadius x:Key="XLargeCornerRadius">16</CornerRadius>
+    <!-- ===== Corner Radii =====
+         B19: shadcn scale: rounded-xs=2, rounded-sm=2, rounded-md=6, rounded-lg=8,
+         rounded-full=9999. Desktop previously had Small=4 / Medium=8 / Large=12 —
+         all wrong by one tier. Re-numbered to match. New canonical names live
+         alongside the existing aliases so call sites can migrate gradually.
+         B20: BadgeCornerRadius corrected from 4 to 6 (rounded-md). -->
+    <CornerRadius x:Key="RadiusXS">2</CornerRadius>
+    <CornerRadius x:Key="RadiusSM">2</CornerRadius>
+    <CornerRadius x:Key="RadiusMD">6</CornerRadius>
+    <CornerRadius x:Key="RadiusLG">8</CornerRadius>
+    <CornerRadius x:Key="RadiusXL">12</CornerRadius>
+    <CornerRadius x:Key="RadiusFull">9999</CornerRadius>
+
+    <!-- Existing aliases re-pointed at the corrected values. -->
+    <CornerRadius x:Key="SmallCornerRadius">2</CornerRadius>
+    <CornerRadius x:Key="MediumCornerRadius">6</CornerRadius>
+    <CornerRadius x:Key="LargeCornerRadius">8</CornerRadius>
+    <CornerRadius x:Key="XLargeCornerRadius">12</CornerRadius>
     <CornerRadius x:Key="XXLargeCornerRadius">24</CornerRadius>
     <CornerRadius x:Key="ProfileCardCornerRadius">28</CornerRadius>
     <CornerRadius x:Key="AuthCardCornerRadius">32</CornerRadius>
     <CornerRadius x:Key="CardCornerRadius">8</CornerRadius>
     <CornerRadius x:Key="PosterCornerRadius">12</CornerRadius>
-    <CornerRadius x:Key="BadgeCornerRadius">4</CornerRadius>
+    <CornerRadius x:Key="BadgeCornerRadius">6</CornerRadius>
     <CornerRadius x:Key="NavItemCornerRadius">12</CornerRadius>
     <CornerRadius x:Key="RadiusPill">9999</CornerRadius>
 
@@ -217,7 +239,8 @@
         <Setter Property="Padding" Value="16,10" />
         <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
-        <Setter Property="FontWeight" Value="SemiBold" />
+        <!-- WebUI buttons use font-medium (500), not SemiBold (600) -->
+        <Setter Property="FontWeight" Value="Medium" />
         <Setter Property="BorderThickness" Value="0" />
     </Style>
 
@@ -251,35 +274,40 @@
         <Setter Property="BorderThickness" Value="1" />
     </Style>
 
-    <!-- ===== TextBox Dark Style ===== -->
+    <!-- ===== TextBox Dark Style =====
+         B21: shadcn input is `rounded-md` (=6), `px-3 py-1` (= 12,4), `h-9` (=36).
+         Background should be the input/app background, not surface. -->
     <Style x:Key="DarkTextBoxStyle" TargetType="TextBox">
-        <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+        <Setter Property="Background" Value="{StaticResource AppBackgroundBrush}" />
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="{StaticResource SmallCornerRadius}" />
-        <Setter Property="Padding" Value="12,10" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusMD}" />
+        <Setter Property="Padding" Value="12,4" />
+        <Setter Property="MinHeight" Value="36" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
     </Style>
 
     <!-- ===== PasswordBox Dark Style ===== -->
     <Style x:Key="DarkPasswordBoxStyle" TargetType="PasswordBox">
-        <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+        <Setter Property="Background" Value="{StaticResource AppBackgroundBrush}" />
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="{StaticResource SmallCornerRadius}" />
-        <Setter Property="Padding" Value="12,10" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusMD}" />
+        <Setter Property="Padding" Value="12,4" />
+        <Setter Property="MinHeight" Value="36" />
         <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
         <Setter Property="HorizontalAlignment" Value="Stretch" />
         <Setter Property="PasswordRevealMode" Value="Peek" />
     </Style>
 
-    <!-- ===== Badge Style ===== -->
+    <!-- ===== Badge Style =====
+         B20: shadcn `Badge` is `px-2 py-0.5 rounded-md`. Padding fixed to 8,2. -->
     <Style x:Key="BadgeStyle" TargetType="Border">
         <Setter Property="Background" Value="{StaticResource BadgeBackgroundBrush}" />
-        <Setter Property="CornerRadius" Value="{StaticResource BadgeCornerRadius}" />
-        <Setter Property="Padding" Value="8,4" />
+        <Setter Property="CornerRadius" Value="{StaticResource RadiusMD}" />
+        <Setter Property="Padding" Value="8,2" />
     </Style>
 
     <!-- ===== Glass Card Style (auth pages) ===== -->

@@ -242,10 +242,21 @@ public sealed partial class ProfileSelectPage : Page
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
         {
-            if (isEdit)
+            if (isEdit && existingProfile != null)
             {
-                // For now, just reload (no update API wired yet)
-                await ViewModel.LoadProfilesCommand.ExecuteAsync(null);
+                // Build update dict. Only include fields the user can actually change in
+                // this dialog. An empty PIN means "don't change the PIN" (user can't clear
+                // it from this dialog — that would need a separate "remove PIN" flow).
+                var updates = new Dictionary<string, object?>
+                {
+                    ["name"] = nameBox.Text.Trim(),
+                    ["is_child"] = kidsToggle.IsOn,
+                };
+                if (!string.IsNullOrEmpty(pinBox.Password))
+                {
+                    updates["pin"] = pinBox.Password;
+                }
+                await ViewModel.UpdateProfileAsync(existingProfile.Id, updates);
             }
             else
             {

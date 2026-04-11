@@ -90,10 +90,11 @@ public partial class PersonDetailViewModel : ObservableObject
         }
     }
 
+    // B33: personId is a string end-to-end.
     [RelayCommand]
-    private async Task LoadAsync(int personId)
+    private async Task LoadAsync(string personId)
     {
-        if (IsLoading) return;
+        if (IsLoading || string.IsNullOrEmpty(personId)) return;
 
         IsLoading = true;
         ErrorMessage = null;
@@ -153,7 +154,7 @@ public partial class PersonDetailViewModel : ObservableObject
         }
     }
 
-    private async Task LoadFilmographyAsync(int personId)
+    private async Task LoadFilmographyAsync(string personId)
     {
         try
         {

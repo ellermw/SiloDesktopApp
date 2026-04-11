@@ -33,7 +33,9 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs e)
     {
-        // Global unhandled exception handler -- write to crash log instead of silently dying
+        // Global unhandled exception handler -- write to crash log instead of silently dying.
+        // Walks the entire InnerException chain so XamlParseException reasons (which are
+        // usually nested) are captured, not just the top-level "RangeBase.Value" message.
         this.UnhandledException += (sender, args) =>
         {
             args.Handled = true;
@@ -41,7 +43,33 @@ public partial class App : Application
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ContinuumPlayer", "crash.txt");
             Directory.CreateDirectory(Path.GetDirectoryName(crashLog)!);
-            File.WriteAllText(crashLog, $"{DateTime.Now}\nUnhandled: {args.Exception}\n");
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"{DateTime.Now}");
+            sb.AppendLine($"args.Message: {args.Message}");
+            sb.AppendLine();
+
+            var ex = args.Exception;
+            int depth = 0;
+            while (ex != null)
+            {
+                sb.AppendLine($"--- Exception depth {depth} ---");
+                sb.AppendLine($"Type: {ex.GetType().FullName}");
+                sb.AppendLine($"HResult: 0x{ex.HResult:X8}");
+                sb.AppendLine($"Message: {ex.Message}");
+                if (ex.Data.Count > 0)
+                {
+                    foreach (System.Collections.DictionaryEntry entry in ex.Data)
+                        sb.AppendLine($"  Data[{entry.Key}] = {entry.Value}");
+                }
+                sb.AppendLine($"StackTrace: {ex.StackTrace}");
+                sb.AppendLine();
+                ex = ex.InnerException;
+                depth++;
+                if (depth > 10) break;
+            }
+
+            File.WriteAllText(crashLog, sb.ToString());
         };
 
         _window = new MainWindow();
@@ -103,6 +131,9 @@ public partial class App : Application
         services.AddSingleton<AuthService>(sp => new AuthService(
             sp.GetRequiredService<ContinuumApiClient>(),
             sp.GetRequiredService<AuthApi>()));
+
+        // Event channel client (realtime WebSocket for history_import, sessions, etc.)
+        services.AddSingleton<EventChannelClient>();
 
         // Image service
         services.AddSingleton(new ImageService(imageCacheDir));

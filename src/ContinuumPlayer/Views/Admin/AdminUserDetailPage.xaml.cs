@@ -16,13 +16,9 @@ public sealed partial class AdminUserDetailPage : Page
 
     private int _userId;
 
-    // Playback quality options matching web UI
-    private static readonly (string Value, string Label, string Description)[] PlaybackQualityOptions =
-    [
-        ("any", "Any", "Allow all resolutions"),
-        ("standard", "Standard", "Hide 4K and higher versions"),
-        ("4k", "4K", "Allow 4K and lower versions"),
-    ];
+    // B54: Playback quality options now live in ContinuumPlayer.Core.Helpers.PlaybackQuality.
+    private static readonly (string Value, string Label, string Description)[] PlaybackQualityOptions
+        = Core.Helpers.PlaybackQuality.Options;
 
     // Tab names
     private static readonly string[] TabNames = ["Overview", "Profiles", "Watch History", "IP History"];
@@ -1165,49 +1161,18 @@ public sealed partial class AdminUserDetailPage : Page
 
     // ===== Playback Quality Helpers =====
 
+    // B54: All four helpers delegate to ContinuumPlayer.Core.Helpers.PlaybackQuality.
     private static string PlaybackQualityPresetFromValue(string? value)
-    {
-        string canonical = CanonicalPlaybackQuality(value);
-        return canonical switch
-        {
-            "2160p" => "4k",
-            "1080p" => "standard",
-            _ => "any"
-        };
-    }
+        => Core.Helpers.PlaybackQuality.PresetFromValue(value);
 
     private static string PlaybackQualityValueFromPreset(string preset)
-    {
-        return preset switch
-        {
-            "standard" => "1080p",
-            "4k" => "2160p",
-            _ => ""
-        };
-    }
+        => Core.Helpers.PlaybackQuality.ValueFromPreset(preset);
 
     private static string CanonicalPlaybackQuality(string? value)
-    {
-        string v = (value ?? "").Trim().ToLowerInvariant();
-        return v switch
-        {
-            "" or "any" => "",
-            "standard" or "480p" or "720p" or "1080p" => "1080p",
-            "4k" or "uhd" or "2160p" or "4320p" => "2160p",
-            _ => ""
-        };
-    }
+        => Core.Helpers.PlaybackQuality.Canonical(value);
 
     private static string FormatPlaybackQualityPreset(string? value)
-    {
-        string preset = PlaybackQualityPresetFromValue(value);
-        return preset switch
-        {
-            "standard" => "Standard",
-            "4k" => "4K",
-            _ => "Any"
-        };
-    }
+        => Core.Helpers.PlaybackQuality.FormatPreset(value);
 
     // ===== Helpers =====
 

@@ -118,7 +118,7 @@ public partial class HomeViewModel : ObservableObject
         {
             var body = surface == "continue_watching"
                 ? new { progress_updated_at = DateTime.UtcNow.ToString("o") }
-                : (object)new { series_id = request.Item.ContentId };
+                : (object)new { series_id = request.Item.SeriesId ?? request.Item.ContentId };
 
             await _homeApi.DismissItemAsync(surface, request.Item.ContentId, body);
         }

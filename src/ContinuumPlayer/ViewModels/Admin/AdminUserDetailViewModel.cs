@@ -105,14 +105,7 @@ public partial class AdminUserDetailViewModel : ObservableObject
         return dt.ToLocalTime().ToString("MMM d, yyyy");
     }
 
+    // B29: Delegated to ContinuumPlayer.Core.Helpers.TimeAgo for consistency.
     public static string FormatRelative(string? iso)
-    {
-        if (string.IsNullOrWhiteSpace(iso)) return "";
-        if (!DateTime.TryParse(iso, out var dt)) return iso;
-        var diff = DateTime.UtcNow - dt.ToUniversalTime();
-        if (diff.TotalMinutes < 1) return "just now";
-        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
-        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
-        return $"{(int)diff.TotalDays}d ago";
-    }
+        => Core.Helpers.TimeAgo.FormatShort(iso);
 }

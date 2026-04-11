@@ -2,7 +2,10 @@ namespace ContinuumPlayer.Core.Models.Catalog;
 
 public class Person
 {
-    public int Id { get; set; }
+    // B33: Person IDs are strings end-to-end (cast/crew person_id can be non-numeric
+    // for third-party-provider records). The /people/{id} server route accepts the
+    // string as-is. Numeric IDs still work because they round-trip as decimal strings.
+    public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public string? Bio { get; set; }
     public string? BirthDate { get; set; }

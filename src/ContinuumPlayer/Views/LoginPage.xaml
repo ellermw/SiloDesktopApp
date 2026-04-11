@@ -141,7 +141,9 @@
                                         Content="{Binding DisplayName}"
                                         Style="{StaticResource OutlineButtonStyle}"
                                         HorizontalAlignment="Stretch"
-                                        Padding="16,10" />
+                                        Padding="16,10"
+                                        Tag="{Binding Id}"
+                                        Click="AuthProviderButton_Click" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>

@@ -147,8 +147,8 @@ public class AdminApi(ContinuumApiClient client)
     public Task DeleteAPIKeyAsync(int id, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/admin/api-keys/{id}", ct);
 
-    public Task UpdateAPIKeyTierAsync(int id, string rateTier, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/admin/api-keys/{id}/tier", new { rate_tier = rateTier }, ct);
+    public Task UpdateAPIKeyTierAsync(int id, string tier, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/admin/api-keys/{id}/tier", new { tier }, ct);
 
     // ===== Playback History =====
 
@@ -233,10 +233,14 @@ public class AdminApi(ContinuumApiClient client)
 
     // ===== Sections =====
 
-    public async Task<List<AdminSection>> GetSectionsAsync(string? scope = null, CancellationToken ct = default)
+    // B10: WebUI uses ?scope=home or ?scope=library&library_id={N}. The desktop
+    // previously sent the bare library id as the scope value, which the server
+    // doesn't recognize.
+    public async Task<List<AdminSection>> GetSectionsAsync(string scope = "home", int? libraryId = null, CancellationToken ct = default)
     {
-        var query = "/api/v1/admin/sections";
-        if (scope != null) query += $"?scope={Uri.EscapeDataString(scope)}";
+        var query = $"/api/v1/admin/sections?scope={Uri.EscapeDataString(scope)}";
+        if (scope == "library" && libraryId.HasValue)
+            query += $"&library_id={libraryId.Value}";
         var response = await client.GetAsync<AdminSectionsListResponse>(query, ct);
         return response.Sections;
     }
@@ -324,8 +328,13 @@ public class AdminApi(ContinuumApiClient client)
 
     // ===== Jobs =====
 
-    public Task<AdminJobsResponse> GetJobsAsync(CancellationToken ct = default)
-        => client.GetAsync<AdminJobsResponse>("/api/v1/admin/jobs", ct);
+    // B11: WebUI passes ?job_type={type}&limit={N}. Catalog seed flows filter by type.
+    public Task<AdminJobsResponse> GetJobsAsync(string? jobType = null, int limit = 50, CancellationToken ct = default)
+    {
+        var query = $"/api/v1/admin/jobs?limit={limit}";
+        if (jobType != null) query += $"&job_type={Uri.EscapeDataString(jobType)}";
+        return client.GetAsync<AdminJobsResponse>(query, ct);
+    }
 
     public Task<AdminJob> GetJobAsync(string id, CancellationToken ct = default)
         => client.GetAsync<AdminJob>($"/api/v1/admin/jobs/{Uri.EscapeDataString(id)}", ct);
@@ -344,19 +353,20 @@ public class AdminApi(ContinuumApiClient client)
     public Task DeleteProviderAsync(int id, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/admin/providers/{id}", ct);
 
+    // B9: Path is /libraries/{id}/providers (no /admin/) — matches WebUI useLibraryProviders.
     public Task<LibraryProviderChainResponse> GetLibraryProvidersAsync(int libraryId, CancellationToken ct = default)
-        => client.GetAsync<LibraryProviderChainResponse>($"/api/v1/admin/libraries/{libraryId}/providers", ct);
+        => client.GetAsync<LibraryProviderChainResponse>($"/api/v1/libraries/{libraryId}/providers", ct);
 
     public Task UpdateLibraryProvidersAsync(int libraryId, SetLibraryChainRequest request, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/admin/libraries/{libraryId}/providers", request, ct);
+        => client.PutNoContentAsync($"/api/v1/libraries/{libraryId}/providers", request, ct);
 
     // ===== Library Extras =====
 
-    public Task SetLibraryPosterAsync(int libraryId, object request, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/admin/libraries/{libraryId}/poster", request, ct);
+    public Task SetLibraryPosterAsync(int libraryId, byte[] fileBytes, string fileName, string contentType, CancellationToken ct = default)
+        => client.PutMultipartNoContentAsync($"/api/v1/libraries/{libraryId}/poster", "poster", fileName, fileBytes, contentType, ct);
 
     public Task DeleteLibraryPosterAsync(int libraryId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/admin/libraries/{libraryId}/poster", ct);
+        => client.DeleteAsync($"/api/v1/libraries/{libraryId}/poster", ct);
 
     public Task<List<StaleMediaId>> GetStaleIdsAsync(CancellationToken ct = default)
         => client.GetAsync<List<StaleMediaId>>("/api/v1/admin/libraries/stale-ids", ct);
@@ -400,8 +410,8 @@ public class AdminApi(ContinuumApiClient client)
     public Task<ImportTMDBCollectionResponse> ImportTMDBCollectionAsync(ImportTMDBCollectionRequest request, CancellationToken ct = default)
         => client.PostAsync<ImportTMDBCollectionResponse>("/api/v1/admin/collections/import/tmdb", request, ct);
 
-    public Task DeleteCollectionImageAsync(string id, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/admin/collections/{Uri.EscapeDataString(id)}/image", ct);
+    public Task DeleteCollectionImageAsync(string id, string type, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/collections/{Uri.EscapeDataString(id)}/image?type={Uri.EscapeDataString(type)}", ct);
 
     // ===== History Import Sources (Admin) =====
 

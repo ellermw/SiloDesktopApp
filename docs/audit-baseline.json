@@ -1,0 +1,187 @@
+{
+  "$schema": "./audit-baseline.schema.json",
+  "continuum_server_sha": "94c2f322e837a2c23e804ae38f64cc3a6de8f98d",
+  "continuum_server_short_sha": "94c2f32",
+  "continuum_server_commit_message": "Recognize ID-tagged movie folders as canonical roots",
+  "audited_at": "2026-04-10T21:15:00-05:00",
+  "notes": "Initial baseline for the change-tracking system. Areas are populated as each one is audited + rebuilt against the current SHA. Parity values: 'full' (desktop matches), 'partial' (some features done), 'rebuilding' (in progress), 'missing' (not yet started), 'desktop-only' (no webui counterpart).",
+  "areas": {
+    "events/realtime-channel": {
+      "description": "WebSocket event channel protocol at /api/v1/events/ws. Backend for all live-update features (history_import, user_state, sessions, jobs, scans, tasks).",
+      "web_sources": [
+        "web/src/components/RealtimeEventsProvider.tsx"
+      ],
+      "server_sources": [
+        "internal/events/types.go",
+        "internal/events/publishers.go",
+        "internal/events/hub.go",
+        "internal/api/handlers/events_ws.go"
+      ],
+      "line_counts": {
+        "web/src/components/RealtimeEventsProvider.tsx": 0,
+        "internal/events/types.go": 97,
+        "internal/api/handlers/events_ws.go": 419
+      },
+      "desktop_files": [
+        "src/ContinuumPlayer.Core/Services/EventChannelClient.cs"
+      ],
+      "parity": "partial",
+      "notes": "Spec at docs/events-channel-spec.md. Desktop EventChannelClient built for history_import subscription; connects, handshakes, dispatches snapshots/events with exponential-backoff reconnect. Other channels (user_state, sessions, jobs, scans, tasks) not wired to desktop subscribers yet."
+    },
+    "settings/history-import": {
+      "description": "Settings > Import tab: import watch history from Emby (Connect/Saved), Jellyfin (Direct), or Plex (OAuth/Saved) into a Continuum profile.",
+      "web_sources": [
+        "web/src/pages/settings/HistoryImportSettings.tsx",
+        "web/src/pages/settings/HistoryImportSettings.utils.ts",
+        "web/src/hooks/queries/history-import.ts",
+        "web/src/lib/plexAuth.ts"
+      ],
+      "server_sources": [
+        "internal/historyimport/types.go",
+        "internal/historyimport/service.go",
+        "internal/api/handlers/history_import.go",
+        "internal/events/publishers.go"
+      ],
+      "line_counts": {
+        "web/src/pages/settings/HistoryImportSettings.tsx": 998,
+        "web/src/pages/settings/HistoryImportSettings.utils.ts": 65,
+        "internal/historyimport/types.go": 315
+      },
+      "desktop_files": [
+        "src/ContinuumPlayer/Views/SettingsPage.xaml",
+        "src/ContinuumPlayer/Views/SettingsPage.xaml.cs",
+        "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs",
+        "src/ContinuumPlayer.Core/Api/HistoryImportApi.cs",
+        "src/ContinuumPlayer.Core/Models/HistoryImport/",
+        "src/ContinuumPlayer.Core/Services/EventChannelClient.cs"
+      ],
+      "parity": "full",
+      "notes": "Rebuilt 2026-04-10 against 94c2f32. Desktop Import tab now has: 3 source cards (Emby/Jellyfin/Plex) with selected-card border highlight, Emby Connect/Saved sub-modes, Plex OAuth/Saved sub-modes, Jellyfin direct form, profile selector, Start Import button with live CanStart validation, Latest Import / Selected Import summary card (6-metric grid, progress bar, error box, warnings, unmatched samples, colored status badge), Import History list with click-to-select, and live realtime updates via EventChannelClient on /api/v1/events/ws subscribed to history_import."
+    },
+    "settings/playback": {
+      "description": "Settings > Playback tab: quality preference, subtitle language/mode, spoken language preference, next-up mode.",
+      "web_sources": ["web/src/pages/settings/PlaybackSettings.tsx"],
+      "line_counts": {"web/src/pages/settings/PlaybackSettings.tsx": 351},
+      "desktop_files": ["src/ContinuumPlayer/Views/SettingsPage.xaml", "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"],
+      "parity": "partial",
+      "notes": "Desktop has basic quality + subtitle language combos. Full per-field parity not yet audited against the 351-line fresh source."
+    },
+    "settings/subtitle-appearance": {
+      "description": "Settings > Subtitles tab: font size, family, color, outline, background style/opacity, position, live preview.",
+      "web_sources": ["web/src/pages/settings/SubtitleAppearanceSettings.tsx"],
+      "line_counts": {"web/src/pages/settings/SubtitleAppearanceSettings.tsx": 373},
+      "desktop_files": ["src/ContinuumPlayer/Views/SettingsPage.xaml", "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"],
+      "parity": "partial",
+      "notes": "Desktop Subtitles tab had the RangeBase.Value crash that was fixed in session #12. Not yet audited field-by-field against fresh source."
+    },
+    "settings/appearance": {
+      "description": "Settings > Appearance tab: theme picker, font family, density.",
+      "web_sources": ["web/src/pages/settings/AppearanceSettings.tsx"],
+      "line_counts": {"web/src/pages/settings/AppearanceSettings.tsx": 124},
+      "desktop_files": ["src/ContinuumPlayer/Views/SettingsPage.xaml", "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"],
+      "parity": "partial",
+      "notes": "Desktop has a 13-theme picker but design tokens/spacing don't match shadcn exactly. Not audited against fresh source yet."
+    },
+    "settings/library": {
+      "description": "Settings > Library tab: per-library playback overrides, hidden libraries.",
+      "web_sources": ["web/src/pages/settings/LibrarySettings.tsx", "web/src/pages/settings/libraryPlaybackPreferences.ts"],
+      "line_counts": {"web/src/pages/settings/LibrarySettings.tsx": 573},
+      "desktop_files": ["src/ContinuumPlayer/Views/SettingsPage.xaml", "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"],
+      "parity": "partial",
+      "notes": "Desktop has per-library cards but 573-line fresh source likely has features we're missing."
+    },
+    "settings/home-screen": {
+      "description": "Settings > Home Screen tab: section list, reorder, add/remove custom sections, reset to defaults.",
+      "web_sources": ["web/src/pages/settings/HomeScreenSettings.tsx"],
+      "line_counts": {"web/src/pages/settings/HomeScreenSettings.tsx": 606},
+      "desktop_files": ["src/ContinuumPlayer/Views/SettingsPage.xaml", "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"],
+      "parity": "partial",
+      "notes": "Desktop Home Screen tab has list + add/remove with confirm dialogs (B57/B58). 606-line fresh source likely richer."
+    },
+    "settings/accessibility": {
+      "description": "Settings > Accessibility tab.",
+      "web_sources": ["web/src/pages/settings/AccessibilitySettings.tsx"],
+      "line_counts": {"web/src/pages/settings/AccessibilitySettings.tsx": 127},
+      "desktop_files": [],
+      "parity": "missing",
+      "notes": "Not implemented on desktop yet."
+    },
+    "settings/card-overlay": {
+      "description": "Settings > Card Overlay tab (new area — didn't exist in previous WebUI snapshot).",
+      "web_sources": ["web/src/pages/settings/CardOverlaySettings.tsx"],
+      "line_counts": {"web/src/pages/settings/CardOverlaySettings.tsx": 234},
+      "desktop_files": [],
+      "parity": "missing",
+      "notes": "New area added between the old stale snapshot and 94c2f32. Needs implementation."
+    },
+    "settings/plugins": {
+      "description": "Settings > Plugins tab (new area).",
+      "web_sources": ["web/src/pages/settings/PluginSettings.tsx"],
+      "line_counts": {"web/src/pages/settings/PluginSettings.tsx": 121},
+      "desktop_files": [],
+      "parity": "missing",
+      "notes": "New area added between the old stale snapshot and 94c2f32. Needs implementation."
+    },
+    "settings/profiles": {
+      "description": "Settings > Profiles tab (new area).",
+      "web_sources": ["web/src/pages/settings/ProfilesSettings.tsx"],
+      "line_counts": {"web/src/pages/settings/ProfilesSettings.tsx": 254},
+      "desktop_files": [],
+      "parity": "missing",
+      "notes": "New area added between the old stale snapshot and 94c2f32. Needs implementation."
+    },
+    "settings/theme-editor": {
+      "description": "Settings > Theme Editor tab (new area — user can customize theme tokens live).",
+      "web_sources": ["web/src/pages/settings/ThemeEditorSettings.tsx"],
+      "line_counts": {"web/src/pages/settings/ThemeEditorSettings.tsx": 118},
+      "desktop_files": [],
+      "parity": "missing",
+      "notes": "New area added between the old stale snapshot and 94c2f32. Needs implementation."
+    },
+    "settings/webhook-sync": {
+      "description": "Settings > Webhook Sync tab (new area, 1281 lines — the biggest new feature).",
+      "web_sources": ["web/src/pages/settings/WebhookSyncSettings.tsx"],
+      "line_counts": {"web/src/pages/settings/WebhookSyncSettings.tsx": 1281},
+      "desktop_files": [],
+      "parity": "missing",
+      "notes": "Large new feature — Plex/Webhook sync connections management. 1281 lines of UI."
+    },
+    "player/watch-together": {
+      "description": "Player Watch Together / Watch Party feature (new).",
+      "web_sources": [
+        "web/src/player/components/WatchTogetherPanel.tsx",
+        "web/src/player/hooks/useWatchTogetherRoom.ts",
+        "web/src/player/hooks/useWatchTogetherPlaybackSync.ts",
+        "web/src/player/hooks/useWatchTogetherRoomConnection.ts"
+      ],
+      "desktop_files": [],
+      "parity": "missing",
+      "notes": "Brand new feature in 94c2f32. Complex — group watch rooms with playback sync. Likely uses the event channel."
+    },
+    "player/ass-subtitles": {
+      "description": "Advanced SubStation Alpha subtitle support (new).",
+      "web_sources": [
+        "web/src/player/hooks/useASSSubtitles.ts",
+        "web/src/player/utils/assSubtitles.ts"
+      ],
+      "desktop_files": ["src/ContinuumPlayer/Controls/PlayerOverlay.xaml.cs"],
+      "parity": "partial",
+      "notes": "libmpv natively supports ASS subtitles so desktop gets them for free during direct play. But if the WebUI has explicit selection/styling UI in player, we need to match."
+    },
+    "auth/device-login": {
+      "description": "Device login approval flow (new) — ActivateDevice page for users to approve login from another device.",
+      "web_sources": ["web/src/pages/ActivateDevice.tsx"],
+      "server_sources": ["internal/auth/device_approval.go"],
+      "desktop_files": [],
+      "parity": "missing",
+      "notes": "Brand new auth flow added in 94c2f32. Likely needs a desktop UI entry point."
+    },
+    "calendar": {
+      "description": "Calendar page (new top-level page).",
+      "web_sources": ["web/src/pages/Calendar.tsx"],
+      "desktop_files": [],
+      "parity": "missing",
+      "notes": "Brand new page in 94c2f32. Upcoming/recently-added calendar view?"
+    }
+  }
+}

@@ -135,7 +135,8 @@ public sealed partial class SearchPage : Page
 
     private void PersonCard_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button btn && btn.Tag is int personId && personId > 0)
+        // B33: Person.Id is a string end-to-end now.
+        if (sender is Button btn && btn.Tag is string personId && !string.IsNullOrEmpty(personId))
         {
             var nav = App.Services.GetRequiredService<NavigationService>();
             nav.Navigate<PersonDetailPage>(personId);

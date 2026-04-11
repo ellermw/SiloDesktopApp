@@ -31,10 +31,11 @@
             <Setter Property="BorderThickness" Value="0" />
         </Style>
 
-        <!-- Table card (no border, rounded top for header) -->
+        <!-- Table card (no border, rounded top for header)
+             B26: 24 was 3x too round; web `rounded-lg`=8. -->
         <Style x:Key="TableCardStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="24" />
+            <Setter Property="CornerRadius" Value="{StaticResource RadiusLG}" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>

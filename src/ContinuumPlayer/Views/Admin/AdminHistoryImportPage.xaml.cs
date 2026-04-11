@@ -128,9 +128,9 @@ public partial class AdminHistoryImportViewModel : CommunityToolkit.Mvvm.Compone
                 });
             }
 
-            var runsResponse = await importApi.GetImportRunsAsync();
+            var runs = await importApi.GetImportRunsAsync();
             Runs.Clear();
-            foreach (var run in runsResponse.Runs)
+            foreach (var run in runs)
             {
                 Runs.Add(new HistoryImportRunDisplay
                 {

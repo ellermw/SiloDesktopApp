@@ -98,6 +98,10 @@ public sealed partial class PosterCard : UserControl
         }
     }
 
+    // Limit concurrent image decodes on the UI thread to prevent bursts of
+    // SetSourceAsync calls from freezing the app during fast scrolling.
+    private static readonly SemaphoreSlim s_decodeLock = new(4);
+
     private async Task LoadPosterAsync(MediaItem item, CancellationToken ct)
     {
         var imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
@@ -114,24 +118,39 @@ public sealed partial class PosterCard : UserControl
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
             var imageType = !string.IsNullOrEmpty(item.PosterUrl) ? "poster" : "backdrop";
-            var bytes = await imageService.GetImageAsync(
-                item.ContentId, imageType, imageUrl, httpClient, ct);
+
+            // Run all I/O on a background thread — File.Exists, disk reads,
+            // and HTTP downloads were previously running on the UI thread
+            var bytes = await Task.Run(async () =>
+                await imageService.GetImageAsync(
+                    item.ContentId, imageType, imageUrl, httpClient, ct), ct);
 
             if (ct.IsCancellationRequested || bytes == null) return;
 
-            var bitmapImage = new BitmapImage
+            // Throttle concurrent image decodes on the UI thread
+            await s_decodeLock.WaitAsync(ct);
+            try
             {
-                // Decode at display size, not full resolution -- huge perf win
-                DecodePixelWidth = 200,
-                DecodePixelType = DecodePixelType.Logical
-            };
-            using var stream = new MemoryStream(bytes);
-            await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
+                if (ct.IsCancellationRequested) return;
 
-            if (ct.IsCancellationRequested) return;
+                var bitmapImage = new BitmapImage
+                {
+                    // Decode at display size, not full resolution -- huge perf win
+                    DecodePixelWidth = 200,
+                    DecodePixelType = DecodePixelType.Logical
+                };
+                using var stream = new MemoryStream(bytes);
+                await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
 
-            PosterImage.Source = bitmapImage;
-            PosterImage.Opacity = 1;
+                if (ct.IsCancellationRequested) return;
+
+                PosterImage.Source = bitmapImage;
+                PosterImage.Opacity = 1;
+            }
+            finally
+            {
+                s_decodeLock.Release();
+            }
         }
         catch (OperationCanceledException) { }
         catch { }

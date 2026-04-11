@@ -480,13 +480,45 @@ public sealed partial class PlayerOverlay : UserControl
     }
 
     // ── Seek slider interaction (suppressed feedback loop pattern) ────────
+    //
+    // WebUI commits seeks only on mouseup, not during drag — avoids seek storms
+    // on mpv (which can cause buffering thrashing). We replicate that here with
+    // a _isDragging flag: ValueChanged during drag only updates the displayed
+    // position; the actual mpv.Seek() fires on PointerCaptureLost (drag-end).
+    // Plain clicks (tap without drag) seek immediately via PointerPressed.
+
+    private bool _isDragging;
+    private double _pendingSeekValue;
+
+    private void SeekSlider_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        _isDragging = true;
+        _pendingSeekValue = SeekSlider.Value;
+    }
+
+    private void SeekSlider_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_isDragging || _playerService.Mpv == null) { _isDragging = false; return; }
+        _isDragging = false;
+        // Commit the final seek position
+        _playerService.Mpv.Seek(_pendingSeekValue);
+        ShowControls();
+    }
 
     private void SeekSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
         // If the change came from our programmatic update in the timer, ignore it
         if (_suppressSeek || _playerService.Mpv == null) return;
 
-        // User clicked or dragged the slider -- seek to the new position
+        if (_isDragging)
+        {
+            // Track where the user is scrubbing — don't commit until drag-end
+            _pendingSeekValue = e.NewValue;
+            ShowControls();
+            return;
+        }
+
+        // User clicked without dragging — seek to the new position immediately
         _playerService.Mpv.Seek(e.NewValue);
         ShowControls();
     }

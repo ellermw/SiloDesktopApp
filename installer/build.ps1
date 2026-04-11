@@ -42,6 +42,27 @@ if (-not (Test-Path $WinAppSdkInstaller)) {
 Write-Host "=== Publishing app ($Configuration, $Runtime) ==="
 if (Test-Path $PublishDir) { Remove-Item -Recurse -Force $PublishDir }
 
+# Clean obj/{Release,x64/Release} and bin/{Release,x64/Release} for the app project
+# to force every .xbf to recompile against the current XamlTypeInfo.g.cs. WinUI 3's
+# incremental build does NOT track XamlTypeInfo dependencies — when that file is
+# regenerated and type indices shift, stale XBFs reference old indices and crash at
+# runtime with cryptic errors like "Failed to assign to property RangeBase.Value".
+# Note: the installer publish uses -p:Platform=x64 which puts output under
+# obj/x64/Release, not obj/Release, so we must clean BOTH paths.
+$AppProjectDir = Split-Path -Parent $ProjectPath
+$CleanPaths = @(
+    (Join-Path $AppProjectDir "obj\$Configuration"),
+    (Join-Path $AppProjectDir "obj\x64\$Configuration"),
+    (Join-Path $AppProjectDir "bin\$Configuration"),
+    (Join-Path $AppProjectDir "bin\x64\$Configuration")
+)
+foreach ($p in $CleanPaths) {
+    if (Test-Path $p) {
+        Write-Host "Cleaning $p"
+        Remove-Item -Recurse -Force $p
+    }
+}
+
 dotnet publish $ProjectPath `
     -c $Configuration `
     -r $Runtime `
@@ -78,7 +99,11 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-$SetupExe = Get-ChildItem "$OutputDir\ContinuumDesktopPlayer-Setup.exe" -ErrorAction SilentlyContinue
+# Inno Setup writes a versioned filename (ContinuumDesktopPlayer-{version}-Setup.exe).
+# Pick the most recent one from the output directory.
+$SetupExe = Get-ChildItem "$OutputDir\ContinuumDesktopPlayer-*-Setup.exe" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
 if ($SetupExe) {
     $SizeMB = [math]::Round($SetupExe.Length / 1MB, 1)
     Write-Host ""

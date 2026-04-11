@@ -623,24 +623,6 @@ public class ThemeService
         },
     };
 
-    /// <summary>Display names for the theme picker.</summary>
-    private static readonly Dictionary<string, string> ThemeDisplayNames = new()
-    {
-        ["catppuccin"] = "Catppuccin",
-        ["gruvbox"] = "Gruvbox",
-        ["void-space"] = "Void Space",
-        ["charcoal-studio"] = "Charcoal Studio",
-        ["graphite-pro"] = "Graphite Pro",
-        ["obsidian-depth"] = "Obsidian Depth",
-        ["midnight-cinema"] = "Midnight Cinema",
-        ["cinema-light"] = "Cinema Light",
-        ["cobalt-studio"] = "Cobalt Studio",
-        ["oxblood-noir"] = "Oxblood Noir",
-        ["ember-slate"] = "Ember Slate",
-        ["evergreen-studio"] = "Evergreen Studio",
-        ["verdant-ink"] = "Verdant Ink",
-    };
-
     /// <summary>Metadata for each theme used in the picker UI.</summary>
     private static readonly Dictionary<string, ThemeInfo> ThemeInfos = new()
     {
@@ -666,10 +648,13 @@ public class ThemeService
 
     public IReadOnlyList<string> AvailableThemeIds => Themes.Keys.ToList();
 
-    public string CurrentTheme { get; private set; } = "cobalt-studio";
+    public string CurrentTheme { get; private set; } = "midnight-cinema";
 
+    // Single source of truth for theme labels: ThemeInfos.Label. WebUI uses
+    // Cinema Dark / Cinema Light / Cobalt / Oxblood / Ember / etc. — not the
+    // "Midnight Cinema / Cobalt Studio / Ember Slate" labels from the old dict.
     public static string GetDisplayName(string themeId)
-        => ThemeDisplayNames.TryGetValue(themeId, out var name) ? name : themeId;
+        => ThemeInfos.TryGetValue(themeId, out var info) ? info.Label : themeId;
 
     /// <summary>Returns theme metadata for the picker UI. Curated themes are returned first.</summary>
     public static IReadOnlyList<ThemeInfo> GetAllThemeInfos()

@@ -7,9 +7,14 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
+    <!-- WebUI uses bg-muted/40 neutral tone with foreground/muted-foreground text.
+         Maps to our SurfaceBrush @ ~60% + border, matching a muted informational bar
+         instead of the old alarming gold/yellow warning look. -->
     <Border
-        Background="#CC7B5E00"
-        Padding="12,8"
+        Background="{StaticResource SurfaceBrush}"
+        BorderBrush="{StaticResource BorderBrush}"
+        BorderThickness="0,0,0,1"
+        Padding="16,10"
         HorizontalAlignment="Stretch">
         <Grid>
             <Grid.ColumnDefinitions>
@@ -17,22 +22,22 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <!-- Warning icon + text -->
+            <!-- Info icon + text (neutral, not a warning) -->
             <StackPanel
                 Grid.Column="0"
                 Orientation="Horizontal"
-                Spacing="8"
+                Spacing="10"
                 VerticalAlignment="Center">
                 <FontIcon
-                    Glyph="&#xE7BA;"
-                    FontSize="16"
-                    Foreground="#FFFFC107" />
+                    Glyph="&#xE946;"
+                    FontSize="14"
+                    Foreground="{StaticResource SecondaryTextBrush}" />
                 <TextBlock
                     x:Name="ImpersonatingText"
                     Text="Impersonating user"
                     FontSize="13"
-                    FontWeight="SemiBold"
-                    Foreground="#FFFFC107"
+                    FontWeight="Medium"
+                    Foreground="{StaticResource PrimaryTextBrush}"
                     VerticalAlignment="Center" />
             </StackPanel>
 
@@ -41,14 +46,10 @@
                 Grid.Column="1"
                 x:Name="EndImpersonationButton"
                 Content="End Impersonation"
-                Background="#33FFFFFF"
-                Foreground="#FFFFC107"
-                BorderThickness="1"
-                BorderBrush="#4DFFC107"
-                CornerRadius="8"
+                Style="{StaticResource GhostButtonStyle}"
                 Padding="12,6"
                 FontSize="12"
-                FontWeight="SemiBold"
+                FontWeight="Medium"
                 Click="EndImpersonation_Click" />
         </Grid>
     </Border>

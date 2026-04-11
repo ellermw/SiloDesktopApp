@@ -112,6 +112,22 @@ public class ContinuumApiClient
     }
 
     /// <summary>
+    /// PUT a multipart/form-data request with a single file field. Used for endpoints
+    /// that expect file uploads (e.g., library poster upload).
+    /// </summary>
+    public async Task PutMultipartNoContentAsync(string path, string fieldName, string fileName, byte[] fileBytes, string contentType, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, BuildUrl(path));
+        AddHeaders(request);
+        var form = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(fileBytes);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+        form.Add(fileContent, fieldName, fileName);
+        request.Content = form;
+        await SendNoContentAsync(request, ct);
+    }
+
+    /// <summary>
     /// Serialize using property reflection that works in all build modes.
     /// .NET 8 self-contained publish disables System.Text.Json reflection by default,
     /// so we build a dictionary manually from the object's properties.

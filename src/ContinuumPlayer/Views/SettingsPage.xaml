@@ -36,11 +36,13 @@
             <Setter Property="BorderThickness" Value="0" />
         </Style>
 
-        <!-- Settings group card -->
+        <!-- Settings group card
+             B24: 22 was arbitrary; shadcn `rounded-lg`=8. Padding 24 vertical /
+             24 horizontal matches `py-6 px-6`. -->
         <Style x:Key="SettingsGroupStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="22" />
-            <Setter Property="Padding" Value="24,20" />
+            <Setter Property="CornerRadius" Value="{StaticResource RadiusLG}" />
+            <Setter Property="Padding" Value="24,24" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
         </Style>
@@ -798,133 +800,369 @@
             <!-- ===================================================================== -->
             <StackPanel x:Name="ImportPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
 
+                <!-- ===== Header ===== -->
                 <StackPanel Spacing="12">
-                    <TextBlock Text="History Import" FontSize="24" FontWeight="SemiBold"
+                    <TextBlock Text="History import" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="Import your watch history from another media server to carry your progress over."
+                    <TextBlock Text="Import watch history from an external media server into a Continuum profile."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
-                               TextWrapping="Wrap" />
+                               TextWrapping="Wrap" MaxWidth="640" HorizontalAlignment="Left" />
                 </StackPanel>
 
-                <!-- Source type selector -->
+                <!-- ===== New import — source + credentials + start button ===== -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="20">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="New import" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock Text="Choose a source, enter credentials, then pick the profile to import into."
+                                       FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <!-- Source cards — 3-up grid (Emby / Jellyfin / Plex) -->
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <Button x:Name="ImportSourceEmbyCard" Grid.Column="0" Tag="emby"
+                                    Click="ImportSourceCard_Click"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                    BorderThickness="1" CornerRadius="12" Padding="16,14"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}">
+                                <StackPanel Spacing="6">
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <Border Width="28" Height="28" CornerRadius="6" Background="#1DCFA1">
+                                            <TextBlock Text="E" FontSize="15" FontWeight="SemiBold" Foreground="White"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                        <TextBlock Text="Emby" FontSize="15" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource PrimaryTextBrush}"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <TextBlock Text="Emby Connect cloud or a saved admin server."
+                                               FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Button>
+
+                            <Button x:Name="ImportSourceJellyfinCard" Grid.Column="1" Tag="jellyfin"
+                                    Click="ImportSourceCard_Click"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                    BorderThickness="1" CornerRadius="12" Padding="16,14"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}">
+                                <StackPanel Spacing="6">
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <Border Width="28" Height="28" CornerRadius="6" Background="#00A4DC">
+                                            <TextBlock Text="J" FontSize="15" FontWeight="SemiBold" Foreground="White"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                        <TextBlock Text="Jellyfin" FontSize="15" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource PrimaryTextBrush}"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <TextBlock Text="Point directly at a Jellyfin server URL."
+                                               FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Button>
+
+                            <Button x:Name="ImportSourcePlexCard" Grid.Column="2" Tag="plex"
+                                    Click="ImportSourceCard_Click"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                    BorderThickness="1" CornerRadius="12" Padding="16,14"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}">
+                                <StackPanel Spacing="6">
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <Border Width="28" Height="28" CornerRadius="6" Background="#E5A00D">
+                                            <TextBlock Text="P" FontSize="15" FontWeight="SemiBold" Foreground="Black"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                        <TextBlock Text="Plex" FontSize="15" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource PrimaryTextBrush}"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <TextBlock Text="Plex OAuth sign-in or a saved admin server."
+                                               FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <!-- Mode selector — only for Emby and Plex (Jellyfin is single-mode) -->
+                        <StackPanel x:Name="ImportEmbyModeSelector" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
+                            <Button x:Name="ImportEmbyConnectModeBtn" Content="Emby Connect" Tag="connect"
+                                    Click="ImportEmbyMode_Click" Padding="14,8"
+                                    Style="{StaticResource AccentButtonStyle}" />
+                            <Button x:Name="ImportEmbySavedModeBtn" Content="Saved Server" Tag="saved"
+                                    Click="ImportEmbyMode_Click" Padding="14,8"
+                                    Style="{StaticResource SecondaryButtonStyle}" />
+                        </StackPanel>
+
+                        <StackPanel x:Name="ImportPlexModeSelector" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
+                            <Button x:Name="ImportPlexOAuthModeBtn" Content="Plex Account" Tag="oauth"
+                                    Click="ImportPlexMode_Click" Padding="14,8"
+                                    Style="{StaticResource AccentButtonStyle}" />
+                            <Button x:Name="ImportPlexSavedModeBtn" Content="Saved Server" Tag="saved"
+                                    Click="ImportPlexMode_Click" Padding="14,8"
+                                    Style="{StaticResource SecondaryButtonStyle}" />
+                        </StackPanel>
+
+                        <!-- ===== Auth panels (one visible at a time) ===== -->
+
+                        <!-- Emby Connect form -->
+                        <StackPanel x:Name="ImportEmbyConnectPanel" Spacing="12" Visibility="Collapsed">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Spacing="6">
+                                    <TextBlock Text="Emby Connect email or username" FontSize="13"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBox x:Name="EmbyConnectUsernameBox"
+                                             Text="{x:Bind ViewModel.EmbyConnectUsername, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Style="{StaticResource DarkTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="6">
+                                    <TextBlock Text="Emby Connect password" FontSize="13"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <PasswordBox x:Name="EmbyConnectPasswordBox"
+                                                 PasswordChanged="EmbyConnectPassword_Changed"
+                                                 Style="{StaticResource DarkPasswordBoxStyle}" />
+                                </StackPanel>
+                            </Grid>
+                            <Button x:Name="EmbyConnectLoginButton" Content="Find my Emby servers"
+                                    Style="{StaticResource SecondaryButtonStyle}" Padding="14,8"
+                                    Click="EmbyConnectLogin_Click" />
+
+                            <!-- Connected panel -->
+                            <Border x:Name="EmbyConnectConnectedPanel" Visibility="Collapsed"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1" CornerRadius="10" Padding="14,12">
+                                <StackPanel Spacing="10">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon Glyph="&#xE73E;" FontSize="14" Foreground="#4ADE80" />
+                                        <TextBlock Text="Connected" FontSize="13" FontWeight="Medium"
+                                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                                    </StackPanel>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="Server" FontSize="13"
+                                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <ComboBox x:Name="EmbyConnectServerCombo"
+                                                  SelectionChanged="EmbyConnectServer_SelectionChanged"
+                                                  HorizontalAlignment="Stretch" MaxWidth="420" />
+                                    </StackPanel>
+                                    <TextBlock Text="Continuum will exchange the server's temporary access key for a local Emby token and use it only for this import."
+                                               FontSize="12" Foreground="{StaticResource TertiaryTextBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- Emby Saved form -->
+                        <StackPanel x:Name="ImportEmbySavedPanel" Spacing="12" Visibility="Collapsed">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Saved server" FontSize="13"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                <ComboBox x:Name="EmbySavedSourceCombo" HorizontalAlignment="Stretch" MaxWidth="420"
+                                          SelectionChanged="EmbySavedSource_SelectionChanged" />
+                            </StackPanel>
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Spacing="6">
+                                    <TextBlock Text="Emby username" FontSize="13"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBox x:Name="EmbySavedUsernameBox"
+                                             Text="{x:Bind ViewModel.EmbySavedUsername, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Style="{StaticResource DarkTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="6">
+                                    <TextBlock Text="Emby password" FontSize="13"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <PasswordBox x:Name="EmbySavedPasswordBox"
+                                                 PasswordChanged="EmbySavedPassword_Changed"
+                                                 Style="{StaticResource DarkPasswordBoxStyle}" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- Plex OAuth form -->
+                        <StackPanel x:Name="ImportPlexOAuthPanel" Spacing="12" Visibility="Collapsed">
+                            <!-- Pending spinner + status -->
+                            <Border x:Name="PlexAuthPendingPanel" Visibility="Collapsed"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1" CornerRadius="10" Padding="14,12">
+                                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                    <ProgressRing IsActive="True" Width="18" Height="18" />
+                                    <TextBlock x:Name="PlexAuthPendingText" FontSize="13"
+                                               Foreground="{StaticResource PrimaryTextBrush}" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Error panel -->
+                            <Border x:Name="PlexAuthErrorPanel" Visibility="Collapsed"
+                                    Background="#331F1F1F"
+                                    BorderBrush="{StaticResource ErrorBrush}"
+                                    BorderThickness="1" CornerRadius="10" Padding="14,12">
+                                <StackPanel Spacing="10">
+                                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                        <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="{StaticResource ErrorBrush}" />
+                                        <TextBlock x:Name="PlexAuthErrorText" FontSize="13"
+                                                   Foreground="{StaticResource ErrorBrush}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <Button Content="Try again" Click="PlexAuthStart_Click"
+                                            Style="{StaticResource SecondaryButtonStyle}" Padding="12,6" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Sign-in button -->
+                            <Button x:Name="PlexAuthSignInButton" Content="Sign in with Plex"
+                                    Style="{StaticResource SecondaryButtonStyle}" Padding="14,8"
+                                    Click="PlexAuthStart_Click" />
+
+                            <!-- Connected panel -->
+                            <Border x:Name="PlexAuthConnectedPanel" Visibility="Collapsed"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1" CornerRadius="10" Padding="14,12">
+                                <StackPanel Spacing="10">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon Glyph="&#xE73E;" FontSize="14" Foreground="#4ADE80" />
+                                        <TextBlock Text="Connected" FontSize="13" FontWeight="Medium"
+                                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                                    </StackPanel>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="Server" FontSize="13"
+                                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <ComboBox x:Name="PlexOAuthServerCombo"
+                                                  SelectionChanged="PlexOAuthServer_SelectionChanged"
+                                                  HorizontalAlignment="Stretch" MaxWidth="420" />
+                                    </StackPanel>
+                                    <Button Content="Reconnect Plex account" Click="PlexAuthStart_Click"
+                                            Style="{StaticResource SecondaryButtonStyle}" Padding="12,6"
+                                            HorizontalAlignment="Left" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- Plex Saved form -->
+                        <StackPanel x:Name="ImportPlexSavedPanel" Spacing="12" Visibility="Collapsed">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Saved server" FontSize="13"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                <ComboBox x:Name="PlexSavedSourceCombo" HorizontalAlignment="Stretch" MaxWidth="420"
+                                          SelectionChanged="PlexSavedSource_SelectionChanged" />
+                            </StackPanel>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Plex auth token" FontSize="13"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                <PasswordBox x:Name="PlexSavedTokenBox"
+                                             PasswordChanged="PlexSavedToken_Changed"
+                                             Style="{StaticResource DarkPasswordBoxStyle}" MaxWidth="420" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- Jellyfin direct form -->
+                        <StackPanel x:Name="ImportJellyfinPanel" Spacing="12" Visibility="Collapsed">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Jellyfin server URL" FontSize="13"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBox x:Name="JellyfinServerUrlBox"
+                                         PlaceholderText="https://jellyfin.example.com"
+                                         Text="{x:Bind ViewModel.JellyfinServerUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Style="{StaticResource DarkTextBoxStyle}" />
+                            </StackPanel>
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Spacing="6">
+                                    <TextBlock Text="Jellyfin username" FontSize="13"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBox x:Name="JellyfinUsernameBox"
+                                             Text="{x:Bind ViewModel.JellyfinUsername, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Style="{StaticResource DarkTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="6">
+                                    <TextBlock Text="Jellyfin password" FontSize="13"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <PasswordBox x:Name="JellyfinPasswordBox"
+                                                 PasswordChanged="JellyfinPassword_Changed"
+                                                 Style="{StaticResource DarkPasswordBoxStyle}" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Text="Enter the base URL for the Jellyfin server you want to import from."
+                                       FontSize="12" Foreground="{StaticResource TertiaryTextBrush}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <!-- Divider before target row -->
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
+                        <!-- Profile + Start Import row -->
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" MinWidth="200" MaxWidth="320" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="6">
+                                <TextBlock Text="Import into profile" FontSize="13"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                <ComboBox x:Name="ImportProfileCombo" HorizontalAlignment="Stretch"
+                                          SelectionChanged="ImportProfile_SelectionChanged"
+                                          PlaceholderText="Choose a profile" />
+                            </StackPanel>
+                            <Button x:Name="StartImportButton" Grid.Column="1"
+                                    Content="Start import" VerticalAlignment="Bottom"
+                                    Style="{StaticResource AccentButtonStyle}" Padding="24,10"
+                                    Click="StartImport_Click" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== Latest import / selected run summary ===== -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="16">
+                        <StackPanel Spacing="4">
+                            <TextBlock x:Name="RunSummaryTitle" Text="Latest import" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock x:Name="RunSummarySubtitle" Text="Results from the most recent import run."
+                                       FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                        <!-- Run summary card is built programmatically into this container -->
+                        <StackPanel x:Name="RunSummaryContainer" Spacing="14" />
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== Import history list ===== -->
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="12">
-                        <TextBlock Text="Source" FontSize="16" FontWeight="SemiBold"
-                                   Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Select the media server to import from."
-                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                   TextWrapping="Wrap" />
-
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button x:Name="ImportEmbyBtn" Content="Emby"
-                                    Style="{StaticResource AccentButtonStyle}"
-                                    Padding="16,8" Click="ImportSource_Click" Tag="emby" />
-                            <Button x:Name="ImportJellyfinBtn" Content="Jellyfin"
-                                    Style="{StaticResource SecondaryButtonStyle}"
-                                    Padding="16,8" Click="ImportSource_Click" Tag="jellyfin" />
-                            <Button x:Name="ImportPlexBtn" Content="Plex"
-                                    Style="{StaticResource SecondaryButtonStyle}"
-                                    Padding="16,8" Click="ImportSource_Click" Tag="plex" />
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-
-                <!-- Connection form (Emby) -->
-                <Border x:Name="EmbyConnectionPanel" Style="{StaticResource SettingsGroupStyle}">
-                    <StackPanel Spacing="16">
-                        <TextBlock Text="Emby Connect" FontSize="16" FontWeight="SemiBold"
-                                   Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Sign in with your Emby Connect credentials to discover servers."
-                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                   TextWrapping="Wrap" />
-
-                        <StackPanel Spacing="8">
-                            <TextBlock Text="Email" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBox x:Name="EmbyEmailBox" PlaceholderText="user@example.com" Width="360"
-                                     HorizontalAlignment="Left" />
-                        </StackPanel>
-                        <StackPanel Spacing="8">
-                            <TextBlock Text="Password" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <PasswordBox x:Name="EmbyPasswordBox" PlaceholderText="Password" Width="360"
-                                         HorizontalAlignment="Left" />
-                        </StackPanel>
-                        <Button Content="Connect" Style="{StaticResource AccentButtonStyle}"
-                                Padding="16,8" Click="EmbyConnect_Click" />
-
-                        <!-- Server list (shown after connect) -->
-                        <StackPanel x:Name="EmbyServerList" Spacing="8" Visibility="Collapsed">
-                            <TextBlock Text="Select a server:" FontSize="13" FontWeight="Medium"
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Import history" FontSize="18" FontWeight="SemiBold"
                                        Foreground="{StaticResource PrimaryTextBrush}" />
-                            <ComboBox x:Name="EmbyServerComboBox" Width="360" HorizontalAlignment="Left" />
+                            <TextBlock Text="Select a past run to view its details above."
+                                       FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
-                    </StackPanel>
-                </Border>
-
-                <!-- Connection form (Jellyfin) -->
-                <Border x:Name="JellyfinConnectionPanel" Style="{StaticResource SettingsGroupStyle}" Visibility="Collapsed">
-                    <StackPanel Spacing="16">
-                        <TextBlock Text="Jellyfin Server" FontSize="16" FontWeight="SemiBold"
-                                   Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Enter your Jellyfin server details."
-                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                   TextWrapping="Wrap" />
-
-                        <StackPanel Spacing="8">
-                            <TextBlock Text="Server URL" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBox x:Name="JellyfinUrlBox" PlaceholderText="https://jellyfin.example.com" Width="360"
-                                     HorizontalAlignment="Left" />
-                        </StackPanel>
-                        <StackPanel Spacing="8">
-                            <TextBlock Text="Username" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBox x:Name="JellyfinUsernameBox" PlaceholderText="Username" Width="360"
-                                     HorizontalAlignment="Left" />
-                        </StackPanel>
-                        <StackPanel Spacing="8">
-                            <TextBlock Text="Password" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <PasswordBox x:Name="JellyfinPasswordBox" PlaceholderText="Password" Width="360"
-                                         HorizontalAlignment="Left" />
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-
-                <!-- Connection form (Plex) -->
-                <Border x:Name="PlexConnectionPanel" Style="{StaticResource SettingsGroupStyle}" Visibility="Collapsed">
-                    <StackPanel Spacing="16">
-                        <TextBlock Text="Plex" FontSize="16" FontWeight="SemiBold"
-                                   Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Sign in with your Plex account to discover servers."
-                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                   TextWrapping="Wrap" />
-
-                        <Button Content="Sign in with Plex" Style="{StaticResource AccentButtonStyle}"
-                                Padding="16,8" Click="PlexSignIn_Click" />
-                        <TextBlock x:Name="PlexAuthStatusText" FontSize="13"
-                                   Foreground="{StaticResource SecondaryTextBrush}"
-                                   Text="{x:Bind ViewModel.PlexAuthStatus, Mode=OneWay}" />
-
-                        <!-- Server list (shown after connect) -->
-                        <StackPanel x:Name="PlexServerList" Spacing="8" Visibility="Collapsed">
-                            <TextBlock Text="Select a server:" FontSize="13" FontWeight="Medium"
-                                       Foreground="{StaticResource PrimaryTextBrush}" />
-                            <ComboBox x:Name="PlexServerComboBox" Width="360" HorizontalAlignment="Left" />
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-
-                <!-- Start import button -->
-                <Button x:Name="StartImportBtn" Content="Start Import" Style="{StaticResource AccentButtonStyle}"
-                        Padding="16,8" Click="StartImport_Click" />
-
-                <!-- Import runs history -->
-                <Border Style="{StaticResource SettingsGroupStyle}">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Import History" FontSize="16" FontWeight="SemiBold"
-                                   Foreground="{StaticResource PrimaryTextBrush}" />
                         <ProgressRing
                             IsActive="{x:Bind ViewModel.IsLoadingImportRuns, Mode=OneWay}"
                             Visibility="{x:Bind ViewModel.IsLoadingImportRuns, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                             HorizontalAlignment="Left"
-                            Width="24" Height="24" />
+                            Width="20" Height="20" />
                         <StackPanel x:Name="ImportRunsContainer" Spacing="8" />
                     </StackPanel>
                 </Border>

@@ -23,11 +23,22 @@ public partial class SetupWizardViewModel : ObservableObject
     }
 
     // ===== Step tracking =====
+    // B47: We still track step as 1-5 internally for the linear visibility logic,
+    // but DetermineStartingStepAsync() jumps the wizard forward when state shows
+    // earlier steps already done (matches WebUI accountComplete/profileComplete/...).
 
     [ObservableProperty]
     private int _currentStep = 1;
 
     public int TotalSteps => 5;
+
+    /// <summary>True after the user has explicitly skipped the library step. Persisted in-memory only.</summary>
+    [ObservableProperty]
+    private bool _libraryStepSkipped;
+
+    /// <summary>True after the user has saved the server step at least once.</summary>
+    [ObservableProperty]
+    private bool _serverStepDone;
 
     [ObservableProperty]
     private bool _isLoading;
@@ -81,8 +92,9 @@ public partial class SetupWizardViewModel : ObservableObject
     [ObservableProperty]
     private string _transcodeDir = "";
 
+    // B48: Default to "auto" (recommended) — matches WebUI default.
     [ObservableProperty]
-    private string _hardwareAccel = "";
+    private string _hardwareAccel = "auto";
 
     [ObservableProperty]
     private bool _transcodingEnabled;
@@ -95,8 +107,9 @@ public partial class SetupWizardViewModel : ObservableObject
 
     // ===== Step 5: Metadata =====
 
+    // B49: Default to MetaDB — Continuum's primary metadata source.
     [ObservableProperty]
-    private string _selectedProvider = "tmdb";
+    private string _selectedProvider = "metadb";
 
     // ===== Navigation helpers =====
 
@@ -112,6 +125,80 @@ public partial class SetupWizardViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(CanGoBack));
         OnPropertyChanged(nameof(CanGoNext));
+    }
+
+    /// <summary>
+    /// B47: Derive the starting wizard step from current server state. If the
+    /// admin account already exists, jump past Account; if profiles already
+    /// exist, past Profile; etc. Mirrors WebUI <c>currentStep</c> derivation in
+    /// SetupWizard.tsx.
+    /// </summary>
+    public async Task DetermineStartingStepAsync()
+    {
+        try
+        {
+            // 1. Account complete? Try fetching current user via /auth/me. If it
+            //    succeeds we're already authenticated → Account is done.
+            bool accountComplete = _authService.CurrentUser != null;
+            if (!accountComplete)
+            {
+                CurrentStep = 1;
+                return;
+            }
+
+            // 2. Profile complete?
+            bool profileComplete = false;
+            try
+            {
+                var profilesResponse = await _authApi.GetProfilesAsync();
+                profileComplete = profilesResponse.Profiles.Count > 0;
+            }
+            catch
+            {
+                // If we can't fetch profiles, fall back to step 2
+            }
+            if (!profileComplete)
+            {
+                CurrentStep = 2;
+                return;
+            }
+
+            // 3. Library complete? (only check if user is admin — non-admins
+            //    can't see /libraries during setup anyway)
+            bool libraryComplete = false;
+            if (_authService.CurrentUser?.Role == "admin")
+            {
+                try
+                {
+                    var libs = await _adminApi.GetAdminLibrariesAsync();
+                    libraryComplete = libs.Count > 0;
+                }
+                catch
+                {
+                    // Fall through — treat as not complete
+                }
+            }
+            if (!libraryComplete && !LibraryStepSkipped)
+            {
+                CurrentStep = 3;
+                return;
+            }
+
+            // 4. Server step done?
+            if (!ServerStepDone)
+            {
+                CurrentStep = 4;
+                return;
+            }
+
+            // 5. Metadata
+            CurrentStep = 5;
+        }
+        catch
+        {
+            // On any unexpected error, default to step 1
+            CurrentStep = 1;
+        }
     }
 
     [RelayCommand]
@@ -209,8 +296,7 @@ public partial class SetupWizardViewModel : ObservableObject
 
             var response = await _authApi.SetupAsync(request);
 
-            // Store tokens
-            _credentialStore.SaveCredential(ServerUrl, "access_token", response.AccessToken);
+            // Save refresh token only (access token stays in-memory, re-minted on launch)
             _credentialStore.SaveCredential(ServerUrl, "refresh_token", response.RefreshToken);
 
             _authService.SetTokens(response.AccessToken, response.RefreshToken, response.ExpiresIn);
@@ -273,8 +359,12 @@ public partial class SetupWizardViewModel : ObservableObject
     private async Task<bool> SubmitLibraryStepAsync()
     {
         // Library creation is optional during setup
+        // B47: Track skip so DetermineStartingStepAsync won't bounce us back here.
         if (string.IsNullOrWhiteSpace(LibraryName))
+        {
+            LibraryStepSkipped = true;
             return true;
+        }
 
         IsLoading = true;
         try
@@ -352,6 +442,8 @@ public partial class SetupWizardViewModel : ObservableObject
                 }
             }
 
+            // B47: Mark server step done so DetermineStartingStepAsync can skip past it.
+            ServerStepDone = true;
             return true;
         }
         catch (Exception ex)

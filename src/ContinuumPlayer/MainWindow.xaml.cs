@@ -106,6 +106,9 @@ public sealed partial class MainWindow : Window
         if (settings.Servers.Count == 1)
         {
             var server = settings.Servers[0];
+            // Clean up any previously-persisted access token (B1 security fix — we no
+            // longer write access tokens to disk; this removes stale ones from old installs).
+            _credentialStore.DeleteCredential(server.Url, "access_token");
             var refreshToken = _credentialStore.LoadCredential(server.Url, "refresh_token");
 
             if (!string.IsNullOrEmpty(refreshToken))
@@ -443,11 +446,12 @@ public sealed partial class MainWindow : Window
 
     // ===== Impersonation =====
 
-    public void ShowImpersonationBanner(string username)
+    public void ShowImpersonationBanner(string username, string impersonatorUsername = "")
     {
         _viewModel.IsImpersonating = true;
         _viewModel.ImpersonatedUsername = username;
         ImpersonationBannerControl.ImpersonatedUsername = username;
+        ImpersonationBannerControl.ImpersonatorUsername = impersonatorUsername;
         ImpersonationBannerControl.Visibility = Visibility.Visible;
     }
 
@@ -455,6 +459,7 @@ public sealed partial class MainWindow : Window
     {
         _viewModel.IsImpersonating = false;
         _viewModel.ImpersonatedUsername = "";
+        ImpersonationBannerControl.ImpersonatorUsername = "";
         ImpersonationBannerControl.Visibility = Visibility.Collapsed;
     }
 

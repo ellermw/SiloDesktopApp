@@ -196,14 +196,6 @@ public sealed partial class HeroCarousel : UserControl
         nav.Navigate<ItemDetailPage>(item.ContentId);
     }
 
-    private void DetailsButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_items == null || _items.Count == 0 || _currentIndex >= _items.Count) return;
-        var item = _items[_currentIndex];
-        var nav = App.Services.GetRequiredService<NavigationService>();
-        nav.Navigate<ItemDetailPage>(item.ContentId);
-    }
-
     private async Task LoadBackdropAsync(MediaItem item, CancellationToken ct)
     {
         // Show thumbhash placeholder first

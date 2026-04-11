@@ -275,12 +275,14 @@
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Hardware Acceleration" FontSize="14" FontWeight="Medium"
                                            Foreground="{StaticResource PrimaryTextBrush}" />
+                                <!-- B48: Auto is default; ordering matches WebUI. -->
                                 <ComboBox x:Name="HardwareAccelComboBox" Width="200"
                                           SelectionChanged="HardwareAccelComboBox_SelectionChanged">
-                                    <ComboBoxItem Content="None" Tag="" IsSelected="True" />
+                                    <ComboBoxItem Content="Auto (recommended)" Tag="auto" IsSelected="True" />
                                     <ComboBoxItem Content="VAAPI" Tag="vaapi" />
-                                    <ComboBoxItem Content="QSV" Tag="qsv" />
                                     <ComboBoxItem Content="NVENC" Tag="nvenc" />
+                                    <ComboBoxItem Content="QSV" Tag="qsv" />
+                                    <ComboBoxItem Content="None" Tag="none" />
                                 </ComboBox>
                             </StackPanel>
 
@@ -332,12 +334,14 @@
                         <StackPanel Spacing="6">
                             <TextBlock Text="Provider" FontSize="14" FontWeight="Medium"
                                        Foreground="{StaticResource PrimaryTextBrush}" />
-                            <ComboBox x:Name="MetadataProviderComboBox" Width="240"
+                            <!-- B49: Replace IMDB with MetaDB+S3 — Continuum's primary providers. -->
+                            <ComboBox x:Name="MetadataProviderComboBox" Width="280"
                                       SelectedIndex="0"
                                       SelectionChanged="MetadataProviderComboBox_SelectionChanged">
+                                <ComboBoxItem Content="MetaDB (recommended)" Tag="metadb" IsSelected="True" />
+                                <ComboBoxItem Content="S3 metadata bucket" Tag="s3" />
                                 <ComboBoxItem Content="TMDB (The Movie Database)" Tag="tmdb" />
                                 <ComboBoxItem Content="TVDB (The TV Database)" Tag="tvdb" />
-                                <ComboBoxItem Content="IMDB" Tag="imdb" />
                             </ComboBox>
                         </StackPanel>
                     </StackPanel>

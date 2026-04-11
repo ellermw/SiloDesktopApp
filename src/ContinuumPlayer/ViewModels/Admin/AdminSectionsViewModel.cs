@@ -40,11 +40,10 @@ public partial class AdminSectionsViewModel : ObservableObject
                 foreach (var l in libs) Libraries.Add(l);
             }
 
-            string? scopeParam = Scope == "home" ? "home"
-                : SelectedLibraryId.HasValue ? SelectedLibraryId.Value.ToString()
-                : null;
-
-            var sections = await _adminApi.GetSectionsAsync(scopeParam);
+            // B10: pass scope=library with library_id rather than the bare id as the scope.
+            var sections = Scope == "library" && SelectedLibraryId.HasValue
+                ? await _adminApi.GetSectionsAsync("library", SelectedLibraryId.Value)
+                : await _adminApi.GetSectionsAsync("home");
             Sections.Clear();
             foreach (var s in sections) Sections.Add(s);
         }

@@ -114,8 +114,9 @@ public partial class LoginViewModel : ObservableObject
         {
             var response = await _authService.LoginAsync(Username.Trim(), Password);
 
-            // Save tokens to credential store
-            _credentialStore.SaveCredential(ServerUrl, "access_token", response.AccessToken);
+            // Save refresh token only. Access token is kept in-memory and re-minted
+            // from the refresh token on each app launch (matches WebUI security model
+            // and prevents the 24h JWT from sitting on disk).
             _credentialStore.SaveCredential(ServerUrl, "refresh_token", response.RefreshToken);
 
             LoginSucceeded?.Invoke();

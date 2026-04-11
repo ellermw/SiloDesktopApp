@@ -10,12 +10,14 @@ namespace ContinuumPlayer.ViewModels;
 public partial class ProfileSelectViewModel : ObservableObject
 {
     private readonly AuthApi _authApi;
+    private readonly SettingsApi _settingsApi;
     private readonly AuthService _authService;
     private readonly SettingsService _settingsService;
 
-    public ProfileSelectViewModel(AuthApi authApi, AuthService authService, SettingsService settingsService)
+    public ProfileSelectViewModel(AuthApi authApi, SettingsApi settingsApi, AuthService authService, SettingsService settingsService)
     {
         _authApi = authApi;
+        _settingsApi = settingsApi;
         _authService = authService;
         _settingsService = settingsService;
     }
@@ -154,6 +156,42 @@ public partial class ProfileSelectViewModel : ObservableObject
         catch (Exception ex)
         {
             ErrorMessage = $"Failed to create profile: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Updates an existing profile via PUT /profiles/{id}. Accepts a dictionary of fields
+    /// to change (name, pin, is_child, etc.) — only fields in the dict are sent.
+    /// </summary>
+    public async Task UpdateProfileAsync(string profileId, Dictionary<string, object?> updates)
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+
+        try
+        {
+            var updated = await _settingsApi.UpdateProfileAsync(profileId, updates);
+            // Replace the matching profile in the observable collection so the UI reflects changes
+            for (int i = 0; i < Profiles.Count; i++)
+            {
+                if (Profiles[i].Id == profileId)
+                {
+                    Profiles[i] = updated;
+                    break;
+                }
+            }
+        }
+        catch (ApiException ex)
+        {
+            ErrorMessage = $"Failed to update profile: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to update profile: {ex.Message}";
         }
         finally
         {

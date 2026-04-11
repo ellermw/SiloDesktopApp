@@ -65,4 +65,24 @@ public sealed partial class LoginPage : Page
             ViewModel.LoginCommand.Execute(null);
         }
     }
+
+    private async void AuthProviderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not string providerId || string.IsNullOrEmpty(providerId))
+            return;
+
+        // Open the provider authorize URL in the default browser. The server handles the
+        // OAuth round-trip and redirects back; the user will need to copy the resulting
+        // refresh token back into the app manually for now. (Proper deep-link callback
+        // handling is a future task — tracked under OAuth flow completion.)
+        var url = $"{ViewModel.ServerUrl.TrimEnd('/')}/api/v1/auth/providers/{Uri.EscapeDataString(providerId)}/authorize";
+        try
+        {
+            await Windows.System.Launcher.LaunchUriAsync(new Uri(url));
+        }
+        catch (Exception ex)
+        {
+            ViewModel.ErrorMessage = $"Couldn't open browser: {ex.Message}";
+        }
+    }
 }

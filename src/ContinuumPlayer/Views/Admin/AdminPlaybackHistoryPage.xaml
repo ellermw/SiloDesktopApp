@@ -15,18 +15,17 @@
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
 
-        <!-- surface-panel rounded-[1.5rem] border-0 — info cards -->
+        <!-- B26: shadcn `rounded-lg`=8 — was 24/26, way too round. -->
         <Style x:Key="InfoCardStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="24" />
+            <Setter Property="CornerRadius" Value="{StaticResource RadiusLG}" />
             <Setter Property="Padding" Value="16" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
 
-        <!-- surface-panel rounded-[1.6rem] border-0 — table card -->
         <Style x:Key="TableCardStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="26" />
+            <Setter Property="CornerRadius" Value="{StaticResource RadiusLG}" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>

@@ -14,11 +14,32 @@ namespace ContinuumPlayer.Views;
 
 public sealed partial class LibraryPage : Page
 {
+    // B42: Persist last-viewed tab + filters per library across navigations.
+    // Web parses this from the URL (?tab=library|collections); we don't have
+    // routing yet, so we mirror the page state in a per-library in-memory dict.
+    private sealed class LibraryViewState
+    {
+        public string Tab { get; set; } = "Recommended";
+        public string Sort { get; set; } = "sort_title";
+        public string Order { get; set; } = "asc";
+        public string? Genre { get; set; }
+        public string? ContentRating { get; set; }
+        public string? Studio { get; set; }
+        public string? Country { get; set; }
+        public string? Resolution { get; set; }
+        public string? AudioLanguage { get; set; }
+        public string? YearMin { get; set; }
+        public string? YearMax { get; set; }
+    }
+
+    private static readonly Dictionary<int, LibraryViewState> _viewStateByLibrary = new();
+
     public LibraryViewModel ViewModel { get; }
     private bool _suppressFilterEvents;
     private bool _recommendedLoaded;
     private bool _collectionsLoaded;
     private bool _orderAsc = true;
+    private string _currentTab = "Recommended";
     private DispatcherTimer? _yearDebounceTimer;
 
     public LibraryPage()
@@ -69,43 +90,74 @@ public sealed partial class LibraryPage : Page
             LibraryTitle.Text = library.Name;
             ViewModel.Library = library;
 
+            // B42: Restore previously-viewed tab + filters for this library if any.
+            // Falls back to fresh defaults on first visit.
+            _viewStateByLibrary.TryGetValue(library.Id, out var state);
+            state ??= new LibraryViewState();
+
             _suppressFilterEvents = true;
-            SortComboBox.SelectedIndex = 0;
+            SortComboBox.SelectedIndex = IndexOfSortTag(state.Sort);
             GenreComboBox.SelectedIndex = -1;
             ContentRatingComboBox.SelectedIndex = -1;
             StudioComboBox.SelectedIndex = -1;
             CountryComboBox.SelectedIndex = -1;
             ResolutionComboBox.SelectedIndex = -1;
             AudioLangComboBox.SelectedIndex = -1;
-            YearMinBox.Text = "";
-            YearMaxBox.Text = "";
-            _orderAsc = true;
+            YearMinBox.Text = state.YearMin ?? "";
+            YearMaxBox.Text = state.YearMax ?? "";
+            _orderAsc = state.Order != "desc";
             UpdateOrderButton();
-            ViewModel.SelectedSort = "title";
-            ViewModel.SelectedOrder = "asc";
-            ViewModel.SelectedGenre = null;
-            ViewModel.SelectedContentRating = null;
-            ViewModel.SelectedStudio = null;
-            ViewModel.SelectedCountry = null;
-            ViewModel.SelectedResolution = null;
-            ViewModel.SelectedAudioLanguage = null;
-            ViewModel.SelectedYearMin = null;
-            ViewModel.SelectedYearMax = null;
+            ViewModel.SelectedSort = state.Sort;
+            ViewModel.SelectedOrder = state.Order;
+            ViewModel.SelectedGenre = state.Genre;
+            ViewModel.SelectedContentRating = state.ContentRating;
+            ViewModel.SelectedStudio = state.Studio;
+            ViewModel.SelectedCountry = state.Country;
+            ViewModel.SelectedResolution = state.Resolution;
+            ViewModel.SelectedAudioLanguage = state.AudioLanguage;
+            ViewModel.SelectedYearMin = state.YearMin;
+            ViewModel.SelectedYearMax = state.YearMax;
             _suppressFilterEvents = false;
             _recommendedLoaded = false;
             _collectionsLoaded = false;
             ActiveFiltersBar.Visibility = Visibility.Collapsed;
 
-            // Show Recommended panel by default
-            ShowTab("Recommended");
+            ShowTab(state.Tab);
 
-            // Load recommendations first (default tab)
-            if (!_recommendedLoaded)
+            if (state.Tab == "Recommended" && !_recommendedLoaded)
                 await LoadRecommendationsAsync();
 
-            // Load library items in background for when user switches tabs
             await ViewModel.LoadCommand.ExecuteAsync(null);
         }
+    }
+
+    private static int IndexOfSortTag(string tag) => tag switch
+    {
+        "sort_title" => 0,
+        "recently_added" => 1,
+        "year" => 2,
+        "rating_imdb" => 3,
+        _ => 0,
+    };
+
+    /// <summary>B42: Persist current page state for this library.</summary>
+    private void SaveViewState(string tab)
+    {
+        if (ViewModel.Library == null) return;
+        _viewStateByLibrary[ViewModel.Library.Id] = new LibraryViewState
+        {
+            Tab = tab,
+            Sort = ViewModel.SelectedSort ?? "sort_title",
+            Order = ViewModel.SelectedOrder ?? "asc",
+            Genre = ViewModel.SelectedGenre,
+            ContentRating = ViewModel.SelectedContentRating,
+            Studio = ViewModel.SelectedStudio,
+            Country = ViewModel.SelectedCountry,
+            Resolution = ViewModel.SelectedResolution,
+            AudioLanguage = ViewModel.SelectedAudioLanguage,
+            YearMin = ViewModel.SelectedYearMin,
+            YearMax = ViewModel.SelectedYearMax,
+        };
     }
 
     private void ShowTab(string tag)
@@ -127,9 +179,13 @@ public sealed partial class LibraryPage : Page
 
         // Toggle panel visibility
         FilterBar.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
-        ContentScrollViewer.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
+        LibraryContentArea.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
         RecommendedPanel.Visibility = tag == "Recommended" ? Visibility.Visible : Visibility.Collapsed;
         CollectionsPanel.Visibility = tag == "Collections" ? Visibility.Visible : Visibility.Collapsed;
+
+        _currentTab = tag;
+        // B42: Persist tab selection so a return to this library lands on the same tab.
+        SaveViewState(tag);
     }
 
     /// <summary>
@@ -141,7 +197,7 @@ public sealed partial class LibraryPage : Page
 
         while (ViewModel.HasMore && !ViewModel.IsLoading &&
                ContentScrollViewer.ScrollableHeight < 200 &&
-               ContentScrollViewer.Visibility == Visibility.Visible)
+               LibraryContentArea.Visibility == Visibility.Visible)
         {
             await ViewModel.LoadMoreCommand.ExecuteAsync(null);
             await Task.Delay(100);
@@ -204,6 +260,7 @@ public sealed partial class LibraryPage : Page
             ViewModel.SelectedSort = sort;
             await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
             await FillViewportAsync();
+            SaveViewState(_currentTab); // B42
         }
     }
 
@@ -214,6 +271,7 @@ public sealed partial class LibraryPage : Page
         ViewModel.SelectedOrder = _orderAsc ? "asc" : "desc";
         await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
         await FillViewportAsync();
+        SaveViewState(_currentTab); // B42
     }
 
     private async void GenreComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -224,6 +282,8 @@ public sealed partial class LibraryPage : Page
             ViewModel.SelectedGenre = string.IsNullOrEmpty(genre) ? null : genre;
             await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
             await FillViewportAsync();
+            UpdateActiveFilterBadges();
+            SaveViewState(_currentTab); // B42
         }
     }
 
@@ -235,6 +295,8 @@ public sealed partial class LibraryPage : Page
             ViewModel.SelectedContentRating = string.IsNullOrEmpty(rating) ? null : rating;
             await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
             await FillViewportAsync();
+            UpdateActiveFilterBadges();
+            SaveViewState(_currentTab); // B42
         }
     }
 
@@ -254,6 +316,8 @@ public sealed partial class LibraryPage : Page
             ViewModel.SelectedYearMax = string.IsNullOrWhiteSpace(YearMaxBox.Text) ? null : YearMaxBox.Text;
             await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
             await FillViewportAsync();
+            UpdateActiveFilterBadges();
+            SaveViewState(_currentTab); // B42
         };
         _yearDebounceTimer.Start();
     }
@@ -499,10 +563,22 @@ public sealed partial class LibraryPage : Page
         };
 
         // Click navigates to catalog filtered by collection
-        card.Tapped += (s, _) =>
+        card.Tapped += async (s, _) =>
         {
-            // For now, we navigate to the library tab with a collection filter
-            // This could be expanded to a dedicated collection page
+            var catalogApi = App.Services.GetRequiredService<CatalogApi>();
+            try
+            {
+                var response = await catalogApi.GetLibraryCollectionItemsAsync(
+                    ViewModel.Library!.Id, collection.Id);
+
+                ViewModel.Items.Clear();
+                ViewModel.Items.AddRange(response.Items);
+
+                // Switch to library tab to show results
+                ShowTab("Library");
+                LibraryTitle.Text = $"{ViewModel.Library.Name} — {collection.Title}";
+            }
+            catch { }
         };
 
         return card;
@@ -604,6 +680,7 @@ public sealed partial class LibraryPage : Page
             await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
             await FillViewportAsync();
             UpdateActiveFilterBadges();
+            SaveViewState(_currentTab); // B42
         }
     }
 
@@ -616,6 +693,7 @@ public sealed partial class LibraryPage : Page
             await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
             await FillViewportAsync();
             UpdateActiveFilterBadges();
+            SaveViewState(_currentTab); // B42
         }
     }
 
@@ -628,6 +706,7 @@ public sealed partial class LibraryPage : Page
             await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
             await FillViewportAsync();
             UpdateActiveFilterBadges();
+            SaveViewState(_currentTab); // B42
         }
     }
 
@@ -640,6 +719,7 @@ public sealed partial class LibraryPage : Page
             await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
             await FillViewportAsync();
             UpdateActiveFilterBadges();
+            SaveViewState(_currentTab); // B42
         }
     }
 

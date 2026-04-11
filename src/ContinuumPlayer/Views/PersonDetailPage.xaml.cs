@@ -30,9 +30,17 @@ public sealed partial class PersonDetailPage : Page
     {
         base.OnNavigatedTo(e);
 
-        if (e.Parameter is int personId && personId > 0)
+        // B33: PersonDetailPage now accepts a string ID; supports non-numeric
+        // person IDs from third-party providers (matches WebUI cast/crew shape).
+        if (e.Parameter is string personId && !string.IsNullOrEmpty(personId))
         {
             await ViewModel.LoadCommand.ExecuteAsync(personId);
+            UpdateUI();
+        }
+        else if (e.Parameter is int legacyId && legacyId > 0)
+        {
+            // Back-compat for any caller still passing int
+            await ViewModel.LoadCommand.ExecuteAsync(legacyId.ToString());
             UpdateUI();
         }
     }

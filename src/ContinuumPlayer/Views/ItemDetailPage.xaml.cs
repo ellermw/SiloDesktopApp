@@ -274,10 +274,11 @@ public sealed partial class ItemDetailPage : Page
         // Set initial quality badges from catalog item user data (before watch detail loads)
         UpdateQualityBadgesFromItemData(item);
 
-        // Show Match button for admin users
+        // Show Match + Refresh metadata buttons for admin users
         var authService = App.Services.GetRequiredService<AuthService>();
-        MatchButton.Visibility = authService.CurrentUser?.Role == "admin"
-            ? Visibility.Visible : Visibility.Collapsed;
+        var isAdmin = authService.CurrentUser?.Role == "admin";
+        MatchButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
+        RefreshMetadataButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
 
         // Load backdrop
         _imageCts?.Cancel();
@@ -506,16 +507,20 @@ public sealed partial class ItemDetailPage : Page
 
     private void UpdateFavoriteButton()
     {
-        FavoriteIcon.Glyph = ViewModel.IsFavorite ? "\uE735" : "\uE734";
+        // Segoe Fluent: \uEB52 = heart filled, \uEB51 = heart outline. WebUI uses a Heart
+        // icon with text-red-400 fill-current when favorited — matches the red tint below.
+        FavoriteIcon.Glyph = ViewModel.IsFavorite ? "\uEB52" : "\uEB51";
         FavoriteIcon.Foreground = ViewModel.IsFavorite
-            ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.IndianRed)
+            ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xF8, 0x71, 0x71)) // text-red-400
             : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
         ToolTipService.SetToolTip(FavoriteButton, ViewModel.IsFavorite ? "Unfavorite" : "Favorite");
     }
 
     private void UpdateWatchlistButton()
     {
-        WatchlistIcon.Glyph = ViewModel.InWatchlist ? "\uE73E" : "\uE8B7";
+        // Segoe Fluent: \uE73E = check (in watchlist), \uE710 = plus (add to watchlist).
+        // Previous \uE8B7 (bookmark) was confusing against the watched state's check.
+        WatchlistIcon.Glyph = ViewModel.InWatchlist ? "\uE73E" : "\uE710";
         WatchlistText.Text = ViewModel.InWatchlist ? "In Watchlist" : "Watchlist";
     }
 
@@ -600,6 +605,33 @@ public sealed partial class ItemDetailPage : Page
             {
                 // Match apply failure is non-fatal
             }
+        }
+    }
+
+    // ===== Refresh metadata (admin) — B12 =====
+
+    private async void RefreshMetadataButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = ViewModel.Item;
+        if (item == null) return;
+
+        try
+        {
+            RefreshMetadataButton.IsEnabled = false;
+            var adminApi = App.Services.GetRequiredService<AdminApi>();
+            await adminApi.RefreshItemMetadataAsync(item.ContentId);
+
+            // Reload the item detail to pick up refreshed metadata
+            await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+            UpdateUI();
+        }
+        catch
+        {
+            // Refresh failure is non-fatal
+        }
+        finally
+        {
+            RefreshMetadataButton.IsEnabled = true;
         }
     }
 
@@ -1229,18 +1261,20 @@ public sealed partial class ItemDetailPage : Page
 
         foreach (var member in cast.Take(20))
         {
+            // B34: Portrait cards 110x165 (aspect 2:3) instead of 64x64 circles —
+            // matches WebUI CastCarousel aspect-[2/3] frames.
             var card = new StackPanel
             {
-                Width = 100,
-                Spacing = 4
+                Width = 110,
+                Spacing = 6
             };
 
-            // Photo placeholder (circle)
+            // Photo placeholder (portrait, rounded corners — not a circle)
             var photoBorder = new Border
             {
-                Width = 64,
-                Height = 64,
-                CornerRadius = new CornerRadius(32),
+                Width = 110,
+                Height = 165,
+                CornerRadius = new CornerRadius(8),
                 Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"],
                 HorizontalAlignment = HorizontalAlignment.Center
             };
@@ -1248,7 +1282,7 @@ public sealed partial class ItemDetailPage : Page
             var photoIcon = new FontIcon
             {
                 Glyph = "\uE77B",
-                FontSize = 24,
+                FontSize = 32,
                 Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
@@ -1310,8 +1344,11 @@ public sealed partial class ItemDetailPage : Page
 
     private void CastCard_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
     {
-        if (sender is FrameworkElement fe && fe.Tag is string personIdStr
-            && int.TryParse(personIdStr, out int personId) && personId > 0)
+        // B33: Pass the string ID through. Non-numeric IDs from third-party
+        // providers used to be filtered out by int.TryParse and silently
+        // become non-clickable.
+        if (sender is FrameworkElement fe && fe.Tag is string personId
+            && !string.IsNullOrEmpty(personId))
         {
             var nav = App.Services.GetRequiredService<NavigationService>();
             nav.Navigate<PersonDetailPage>(personId);
@@ -1361,12 +1398,13 @@ public sealed partial class ItemDetailPage : Page
             return;
         }
 
+        // Match WebUI: group by exact job value, not synthesized categories.
+        // Writers and Screenplay and Story are distinct jobs in the web UI; the
+        // desktop was lumping them together under "Written by".
         var directors = crew.Where(c =>
             c.Job.Equals("Director", StringComparison.OrdinalIgnoreCase)).ToList();
         var writers = crew.Where(c =>
-            c.Job.Equals("Writer", StringComparison.OrdinalIgnoreCase)
-            || c.Job.Equals("Screenplay", StringComparison.OrdinalIgnoreCase)
-            || c.Job.Equals("Story", StringComparison.OrdinalIgnoreCase)).ToList();
+            c.Job.Equals("Writer", StringComparison.OrdinalIgnoreCase)).ToList();
 
         bool hasDirectors = directors.Count > 0;
         bool hasWriters = writers.Count > 0;
@@ -1414,9 +1452,10 @@ public sealed partial class ItemDetailPage : Page
                 FontSize = 13
             };
 
-            if (!string.IsNullOrEmpty(member.PersonId) && int.TryParse(member.PersonId, out int personId) && personId > 0)
+            // B33: Pass string person IDs through; supports non-numeric IDs.
+            if (!string.IsNullOrEmpty(member.PersonId))
             {
-                var id = personId;
+                var id = member.PersonId;
                 link.Click += (_, _) =>
                 {
                     var nav = App.Services.GetRequiredService<NavigationService>();
@@ -1434,7 +1473,7 @@ public sealed partial class ItemDetailPage : Page
             {
                 panel.Children.Add(new TextBlock
                 {
-                    Text = ",  ",
+                    Text = ", ",
                     FontSize = 13,
                     Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
                     VerticalAlignment = VerticalAlignment.Center
@@ -1691,10 +1730,12 @@ public sealed partial class ItemDetailPage : Page
             progressGrid.Children.Add(stillBorder);
 
             var progressFraction = episode.UserData.PositionSeconds / episode.UserData.DurationSeconds;
+            // B46: Match web `rounded-r-sm` — only the right end is rounded, the
+            // left end is flush against the still's left edge.
             var progressBar = new Border
             {
                 Height = 3,
-                CornerRadius = new CornerRadius(1.5),
+                CornerRadius = new CornerRadius(0, 2, 2, 0),
                 Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"],
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Bottom,

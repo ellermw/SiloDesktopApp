@@ -11,9 +11,10 @@ public class PeopleApi(ContinuumApiClient client)
         return client.GetAsync<List<Person>>(path, ct);
     }
 
-    public Task<Person> GetPersonAsync(int id, CancellationToken ct = default)
-        => client.GetAsync<Person>($"/api/v1/people/{id}", ct);
+    // B33: id is a string — cast/crew person_id is `string` in WebUI types and may be non-numeric.
+    public Task<Person> GetPersonAsync(string id, CancellationToken ct = default)
+        => client.GetAsync<Person>($"/api/v1/people/{Uri.EscapeDataString(id)}", ct);
 
-    public Task<PersonRefreshResponse> RefreshPersonAsync(int id, CancellationToken ct = default)
-        => client.PostAsync<PersonRefreshResponse>($"/api/v1/people/{id}/refresh", new { }, ct);
+    public Task<PersonRefreshResponse> RefreshPersonAsync(string id, CancellationToken ct = default)
+        => client.PostAsync<PersonRefreshResponse>($"/api/v1/people/{Uri.EscapeDataString(id)}/refresh", new { }, ct);
 }
