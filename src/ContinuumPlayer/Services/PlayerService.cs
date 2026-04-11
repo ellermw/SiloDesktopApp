@@ -79,6 +79,23 @@ public class PlayerService : IDisposable
     public event Action<bool>? PauseChanged;
     public event Action? PlaybackEnded;
     public event Action? ContentLoaded; // fired when file is loaded and decoding starts
+    /// <summary>
+    /// Fired instead of <see cref="PlaybackEnded"/> when the current episode
+    /// finishes AND a next episode is available (NextEpisode* fields are set).
+    /// The PlayerOverlay uses this to show its "Up next" screen. If the user
+    /// cancels, call <see cref="CancelPlayingNext"/>; if they accept, call
+    /// <see cref="ContinuePlayingNextAsync"/>.
+    /// </summary>
+    public event Action? ShowPlayingNextRequested;
+
+    // ── Next-episode metadata (set by ItemDetailPage before playback) ────
+
+    /// <summary>Content ID of the next episode to play. Null = no prompt shown at end.</summary>
+    public string? NextEpisodeContentId { get; set; }
+    public string? NextEpisodeTitle { get; set; }
+    public string? NextEpisodeSeriesTitle { get; set; }
+    public string? NextEpisodePosterUrl { get; set; }
+    public string? NextEpisodeOverview { get; set; }
 
     // ── State transitions ────────────────────────────────────────────────
 
@@ -342,6 +359,40 @@ public class PlayerService : IDisposable
     private double _resumePosition;
 
     /// <summary>
+    /// Phase 3b — start playback of the queued next episode after the user
+    /// approved the Playing Next prompt (or the countdown expired).
+    /// Clears the next-episode state so the new session has no stale hint.
+    /// </summary>
+    public Task ContinuePlayingNextAsync()
+    {
+        var nextId = NextEpisodeContentId;
+        ClearNextEpisodeHint();
+        if (string.IsNullOrEmpty(nextId)) return Task.CompletedTask;
+        return PlayAsync(nextId);
+    }
+
+    /// <summary>
+    /// Phase 3b — user dismissed the Playing Next prompt. Clears the next
+    /// episode state and invokes the normal PlaybackEnded close flow.
+    /// </summary>
+    public void CancelPlayingNext()
+    {
+        ClearNextEpisodeHint();
+        _videoWindow?.Hide();
+        PlaybackEnded?.Invoke();
+    }
+
+    /// <summary>Reset all next-episode fields to their default null state.</summary>
+    private void ClearNextEpisodeHint()
+    {
+        NextEpisodeContentId = null;
+        NextEpisodeTitle = null;
+        NextEpisodeSeriesTitle = null;
+        NextEpisodePosterUrl = null;
+        NextEpisodeOverview = null;
+    }
+
+    /// <summary>
     /// Push the pending pre-play subtitle selection into mpv via the "sid"
     /// property. Called before <see cref="MpvPlayer.LoadFile"/> so the initial
     /// subtitle state matches the user's choice. Translates the 0-based track
@@ -560,9 +611,18 @@ public class PlayerService : IDisposable
 
         _mpvPlaybackEndedHandler = () =>
         {
-            LogToFile("state_trace.txt", $"PlaybackEnded fired: _switchingContent={_switchingContent} _qualitySwitchActive={_qualitySwitchActive} State={State} thread={Environment.CurrentManagedThreadId}");
+            LogToFile("state_trace.txt", $"PlaybackEnded fired: _switchingContent={_switchingContent} _qualitySwitchActive={_qualitySwitchActive} nextEpisode={NextEpisodeContentId ?? "none"} State={State} thread={Environment.CurrentManagedThreadId}");
             if (!_switchingContent && !_qualitySwitchActive)
             {
+                // Phase 3b: if the caller set a next-episode hint before playback,
+                // show the Playing Next overlay instead of closing the player.
+                // The overlay will call ContinuePlayingNextAsync or CancelPlayingNext.
+                if (!string.IsNullOrEmpty(NextEpisodeContentId))
+                {
+                    LogToFile("state_trace.txt", "  → Next-episode prompt requested");
+                    ShowPlayingNextRequested?.Invoke();
+                    return;
+                }
                 LogToFile("state_trace.txt", "  → Hiding window and invoking PlaybackEnded");
                 _videoWindow?.Hide();
                 PlaybackEnded?.Invoke();

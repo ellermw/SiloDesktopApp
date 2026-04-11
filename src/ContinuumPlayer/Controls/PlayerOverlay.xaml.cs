@@ -2,6 +2,8 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using ContinuumPlayer.Core.Models.Playback;
 using ContinuumPlayer.Services;
 
@@ -45,6 +47,7 @@ public sealed partial class PlayerOverlay : UserControl
         // Subscribe to content/playback events (video renders via native GPU window)
         _playerService.ContentLoaded += OnContentLoaded;
         _playerService.PlaybackEnded += OnPlaybackEnded;
+        _playerService.ShowPlayingNextRequested += OnShowPlayingNextRequested;
 
         // Show loading overlay if still loading
         if (_playerService.IsLoading)
@@ -77,6 +80,7 @@ public sealed partial class PlayerOverlay : UserControl
         PopulateQualityFlyout();
         PopulateSubtitleFlyout();
         PopulateAudioFlyout();
+        PopulateChaptersFlyout();
 
         // Update playback info display
         UpdatePlaybackInfo();
@@ -106,6 +110,9 @@ public sealed partial class PlayerOverlay : UserControl
         // Unsubscribe from events
         _playerService.ContentLoaded -= OnContentLoaded;
         _playerService.PlaybackEnded -= OnPlaybackEnded;
+        _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
+        StopPlayingNextCountdown();
+        PlayingNextOverlay.Visibility = Visibility.Collapsed;
 
         // Stop timers
         _uiTimer?.Stop();
@@ -131,6 +138,7 @@ public sealed partial class PlayerOverlay : UserControl
             PopulateQualityFlyout();
             PopulateSubtitleFlyout();
             PopulateAudioFlyout();
+            PopulateChaptersFlyout();
         });
     }
 
@@ -141,6 +149,112 @@ public sealed partial class PlayerOverlay : UserControl
             if (!_isActive) return;
             _playerService.Minimize();
         });
+    }
+
+    // ── Playing Next cinematic overlay (Phase 3b) ───────────────────────
+
+    private DispatcherTimer? _playingNextTimer;
+    private int _playingNextRemaining;
+    private const int PlayingNextCountdownSeconds = 10;
+
+    private void OnShowPlayingNextRequested()
+    {
+        DispatcherQueue?.TryEnqueue(() =>
+        {
+            if (!_isActive) return;
+
+            var title = _playerService.NextEpisodeTitle ?? "Next episode";
+            var series = _playerService.NextEpisodeSeriesTitle;
+            var overview = _playerService.NextEpisodeOverview ?? "";
+
+            PlayingNextTitleText.Text = title;
+            PlayingNextSeriesText.Text = series ?? "";
+            PlayingNextSeriesText.Visibility = string.IsNullOrEmpty(series) ? Visibility.Collapsed : Visibility.Visible;
+            PlayingNextOverviewText.Text = overview;
+            PlayingNextOverviewText.Visibility = string.IsNullOrEmpty(overview) ? Visibility.Collapsed : Visibility.Visible;
+            PlayingNextPoster.Source = null;
+            _ = LoadPlayingNextPosterAsync();
+
+            _playingNextRemaining = PlayingNextCountdownSeconds;
+            PlayingNextPlayNowText.Text = $"Play next in {_playingNextRemaining}";
+            PlayingNextOverlay.Visibility = Visibility.Visible;
+
+            StartPlayingNextCountdown();
+        });
+    }
+
+    private void StartPlayingNextCountdown()
+    {
+        StopPlayingNextCountdown();
+        _playingNextTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _playingNextTimer.Tick += PlayingNextTimer_Tick;
+        _playingNextTimer.Start();
+    }
+
+    private void StopPlayingNextCountdown()
+    {
+        if (_playingNextTimer != null)
+        {
+            _playingNextTimer.Stop();
+            _playingNextTimer.Tick -= PlayingNextTimer_Tick;
+            _playingNextTimer = null;
+        }
+    }
+
+    private void PlayingNextTimer_Tick(object? sender, object e)
+    {
+        _playingNextRemaining--;
+        if (_playingNextRemaining <= 0)
+        {
+            StopPlayingNextCountdown();
+            PlayingNextOverlay.Visibility = Visibility.Collapsed;
+            _ = _playerService.ContinuePlayingNextAsync();
+            return;
+        }
+        PlayingNextPlayNowText.Text = $"Play next in {_playingNextRemaining}";
+    }
+
+    private void PlayingNextPlayNow_Click(object sender, RoutedEventArgs e)
+    {
+        StopPlayingNextCountdown();
+        PlayingNextOverlay.Visibility = Visibility.Collapsed;
+        _ = _playerService.ContinuePlayingNextAsync();
+    }
+
+    private void PlayingNextCancel_Click(object sender, RoutedEventArgs e)
+    {
+        StopPlayingNextCountdown();
+        PlayingNextOverlay.Visibility = Visibility.Collapsed;
+        _playerService.CancelPlayingNext();
+    }
+
+    private async Task LoadPlayingNextPosterAsync()
+    {
+        var url = _playerService.NextEpisodePosterUrl;
+        if (string.IsNullOrEmpty(url)) return;
+        try
+        {
+            var imageService = App.Services.GetRequiredService<Core.Services.ImageService>();
+            var httpClient = App.Services.GetRequiredService<HttpClient>();
+            var bytes = await imageService.GetImageAsync(
+                _playerService.NextEpisodeContentId ?? "next",
+                "backdrop", url, httpClient, CancellationToken.None);
+            if (bytes == null) return;
+
+            var bitmap = new BitmapImage
+            {
+                DecodePixelWidth = 640,
+                DecodePixelType = DecodePixelType.Logical,
+            };
+            using var stream = new MemoryStream(bytes);
+            await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+
+            DispatcherQueue?.TryEnqueue(() =>
+            {
+                PlayingNextPoster.Source = bitmap;
+            });
+        }
+        catch { /* Poster is cosmetic */ }
     }
 
     // ── Frame rendering (double buffer + native memcpy) ──────────────────
@@ -640,6 +754,168 @@ public sealed partial class PlayerOverlay : UserControl
             item.Click += (_, _) => _ = _playerService.SwitchAudioTrackAsync(trackIndex);
             AudioFlyout.Items.Add(item);
         }
+    }
+
+    // ── Chapters menu (Phase 3a) ─────────────────────────────────────────
+
+    /// <summary>
+    /// Populate the chapters flyout from the currently-playing FileVersion's
+    /// chapters list. Each row has an optional thumbnail, the chapter title,
+    /// and the timestamp. Click → mpv seeks to the chapter start.
+    /// Mirrors the WebUI ChaptersMenu.tsx layout.
+    /// </summary>
+    private void PopulateChaptersFlyout()
+    {
+        ChaptersListPanel.Children.Clear();
+
+        var currentSession = _playerService.Manager?.CurrentSession;
+        if (currentSession == null)
+        {
+            ChaptersButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var version = _playerService.Versions.FirstOrDefault(v => v.FileId == currentSession.MediaFileId);
+        var chapters = version?.Chapters;
+        if (chapters == null || chapters.Count == 0)
+        {
+            ChaptersButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        ChaptersButton.Visibility = Visibility.Visible;
+
+        // Header row
+        ChaptersListPanel.Children.Add(new TextBlock
+        {
+            Text = "CHAPTERS",
+            FontSize = 11,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            CharacterSpacing = 80,
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gainsboro) { Opacity = 0.55 },
+            Margin = new Thickness(12, 6, 12, 6),
+        });
+
+        foreach (var chapter in chapters)
+        {
+            ChaptersListPanel.Children.Add(BuildChapterRow(chapter));
+        }
+    }
+
+    private Button BuildChapterRow(Core.Models.Playback.VersionChapter chapter)
+    {
+        var row = new Grid { ColumnSpacing = 10, Padding = new Thickness(8) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        // Thumbnail (80×48 aspect-preserving, placeholder border while null)
+        var thumbBorder = new Border
+        {
+            Width = 80,
+            Height = 48,
+            CornerRadius = new CornerRadius(4),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.White) { Opacity = 0.06 },
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        if (!string.IsNullOrEmpty(chapter.ThumbnailUrl))
+        {
+            _ = LoadChapterThumbnailAsync(thumbBorder, chapter);
+        }
+        else
+        {
+            thumbBorder.Child = new FontIcon
+            {
+                Glyph = "\uE714", // "Film" placeholder
+                FontSize = 16,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) { Opacity = 0.25 },
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+        }
+        Grid.SetColumn(thumbBorder, 0);
+        row.Children.Add(thumbBorder);
+
+        // Title + timestamp stack
+        var textStack = new StackPanel
+        {
+            Spacing = 2,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        textStack.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrEmpty(chapter.Title) ? $"Chapter {chapter.Index + 1}" : chapter.Title,
+            FontSize = 13,
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 1,
+        });
+        textStack.Children.Add(new TextBlock
+        {
+            Text = FormatChapterTime(chapter.StartSeconds),
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) { Opacity = 0.45 },
+        });
+        Grid.SetColumn(textStack, 1);
+        row.Children.Add(textStack);
+
+        var btn = new Button
+        {
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            CornerRadius = new CornerRadius(6),
+            Content = row,
+        };
+        btn.Click += (_, _) =>
+        {
+            try
+            {
+                _playerService.Mpv?.Seek(chapter.StartSeconds);
+                ChaptersFlyout.Hide();
+            }
+            catch { }
+        };
+        return btn;
+    }
+
+    private async Task LoadChapterThumbnailAsync(Border container, Core.Models.Playback.VersionChapter chapter)
+    {
+        try
+        {
+            var imageService = App.Services.GetRequiredService<Core.Services.ImageService>();
+            var httpClient = App.Services.GetRequiredService<HttpClient>();
+            var key = $"chapter_{chapter.Index}";
+            var bytes = await imageService.GetImageAsync(key, "chapter", chapter.ThumbnailUrl!, httpClient, CancellationToken.None);
+            if (bytes == null) return;
+
+            var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage
+            {
+                DecodePixelWidth = 160,
+                DecodePixelType = Microsoft.UI.Xaml.Media.Imaging.DecodePixelType.Logical,
+            };
+            using var stream = new MemoryStream(bytes);
+            await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                container.Child = new Image
+                {
+                    Source = bitmap,
+                    Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
+                };
+            });
+        }
+        catch { /* Thumbnail is cosmetic */ }
+    }
+
+    private static string FormatChapterTime(double seconds)
+    {
+        var ts = TimeSpan.FromSeconds(seconds);
+        return ts.TotalHours >= 1
+            ? $"{(int)ts.TotalHours}:{ts.Minutes:D2}:{ts.Seconds:D2}"
+            : $"{ts.Minutes}:{ts.Seconds:D2}";
     }
 
     // ── Stats overlay ────────────────────────────────────────────────────

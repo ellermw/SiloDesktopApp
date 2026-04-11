@@ -866,6 +866,12 @@ public sealed partial class ItemDetailPage : Page
     private async void NavigateToPlayer(string contentId, bool fromStart = false, int? fileId = null)
     {
         var playerService = App.Services.GetRequiredService<Services.PlayerService>();
+
+        // Phase 3b: pre-load the "next episode" hint so the Playing Next
+        // cinematic overlay can show at the end of this episode. Applies
+        // when this is a series episode with a known successor.
+        SetNextEpisodeHintIfApplicable(playerService, contentId);
+
         // Close any existing playback before starting new
         if (playerService.State != Services.PlayerState.Idle)
         {
@@ -879,6 +885,44 @@ public sealed partial class ItemDetailPage : Page
             fileId: fileId,
             audioTrackIndex: _selectedAudioTrackIndex,
             subtitleSelection: _selectedSubtitleIndex);
+    }
+
+    /// <summary>
+    /// Phase 3b — if the content being played is a series episode in the
+    /// currently-loaded Episodes list, find the next one after it and record
+    /// metadata on the PlayerService so the "Up next" overlay fires at the
+    /// end. Clears any stale hint from a previous playback first.
+    /// </summary>
+    private void SetNextEpisodeHintIfApplicable(Services.PlayerService playerService, string currentContentId)
+    {
+        // Always clear first so a previous episode's next-hint doesn't leak in.
+        playerService.NextEpisodeContentId = null;
+        playerService.NextEpisodeTitle = null;
+        playerService.NextEpisodeSeriesTitle = null;
+        playerService.NextEpisodePosterUrl = null;
+        playerService.NextEpisodeOverview = null;
+
+        if (!ViewModel.IsSeries || ViewModel.Episodes.Count == 0) return;
+
+        int currentIdx = -1;
+        for (int i = 0; i < ViewModel.Episodes.Count; i++)
+        {
+            if (ViewModel.Episodes[i].ContentId == currentContentId)
+            {
+                currentIdx = i;
+                break;
+            }
+        }
+        if (currentIdx < 0 || currentIdx >= ViewModel.Episodes.Count - 1) return;
+
+        var next = ViewModel.Episodes[currentIdx + 1];
+        playerService.NextEpisodeContentId = next.ContentId;
+        // Format the title the way the overlay shows it: "S2 E5 · Episode Name"
+        var label = $"S{next.SeasonNumber} E{next.EpisodeNumber}";
+        playerService.NextEpisodeTitle = string.IsNullOrEmpty(next.Title) ? label : $"{label} \u00B7 {next.Title}";
+        playerService.NextEpisodeSeriesTitle = ViewModel.Item?.Title;
+        playerService.NextEpisodePosterUrl = next.StillUrl;
+        playerService.NextEpisodeOverview = next.Overview;
     }
 
     // ===== Initial Play Button & Quality Badges from Catalog Item Data =====
