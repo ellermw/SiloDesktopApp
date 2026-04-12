@@ -13,11 +13,10 @@
     IsTabStop="True">
 
     <Grid Background="Black">
-        <!-- Video frame rendered by mpv SW render into WriteableBitmap -->
-        <Image x:Name="VideoFrame"
-               Stretch="Uniform"
-               HorizontalAlignment="Center"
-               VerticalAlignment="Center" />
+        <!-- Video is rendered by the mpv GPU popup window positioned over the
+             XAML tree — this control hosts only the chrome overlays (loading,
+             error, controls). The old <Image VideoFrame> hosting the SW
+             render pipeline was removed (B53). -->
 
         <!-- Loading overlay (opaque, covers video during loading) -->
         <Grid x:Name="LoadingOverlay" Background="#101722" Visibility="Collapsed">
@@ -88,12 +87,13 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- Countdown + buttons -->
+                <!-- Countdown + buttons — explicit Height + numeric CornerRadius so the
+                     pill fill renders cleanly (extreme CornerRadius values warp in WinUI 3). -->
                 <StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center">
                     <Button x:Name="PlayingNextPlayNowButton" Click="PlayingNextPlayNow_Click"
-                            Style="{StaticResource AccentButtonStyle}" Padding="24,12"
-                            CornerRadius="999">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            Style="{StaticResource AccentButtonStyle}" Padding="24,0"
+                            Height="44" CornerRadius="22">
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <FontIcon Glyph="&#xE768;" FontSize="14"
                                       Foreground="{StaticResource AccentForegroundBrush}" />
                             <TextBlock x:Name="PlayingNextPlayNowText" Text="Play next in 10"
@@ -102,9 +102,9 @@
                         </StackPanel>
                     </Button>
                     <Button x:Name="PlayingNextCancelButton" Click="PlayingNextCancel_Click"
-                            Style="{StaticResource SecondaryButtonStyle}" Padding="24,12"
-                            CornerRadius="999">
-                        <TextBlock Text="Cancel" FontSize="14" />
+                            Style="{StaticResource SecondaryButtonStyle}" Padding="24,0"
+                            Height="44" CornerRadius="22">
+                        <TextBlock Text="Cancel" FontSize="14" VerticalAlignment="Center" />
                     </Button>
                 </StackPanel>
             </StackPanel>

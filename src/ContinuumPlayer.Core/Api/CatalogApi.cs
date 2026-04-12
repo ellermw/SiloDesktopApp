@@ -36,7 +36,7 @@ public class CatalogApi(ContinuumApiClient client)
         string? genre = null, string? studio = null, string? contentRating = null,
         string? country = null, string? resolution = null, string? audioLanguage = null,
         string? yearMin = null, string? yearMax = null,
-        string? q = null, int limit = 40, int offset = 0,
+        string? q = null, string? type = null, int limit = 40, int offset = 0,
         CancellationToken ct = default)
     {
         var query = $"/api/v1/catalog?library_id={libraryId}&limit={limit}&offset={offset}";
@@ -51,6 +51,7 @@ public class CatalogApi(ContinuumApiClient client)
         if (yearMin != null) query += $"&year_min={Uri.EscapeDataString(yearMin)}";
         if (yearMax != null) query += $"&year_max={Uri.EscapeDataString(yearMax)}";
         if (q != null) query += $"&q={Uri.EscapeDataString(q)}";
+        if (type != null) query += $"&type={Uri.EscapeDataString(type)}";
         return client.GetAsync<CatalogResponse>(query, ct);
     }
 
@@ -215,8 +216,60 @@ public class CatalogApi(ContinuumApiClient client)
         return client.GetAsync<CatalogResponse>(query, ct);
     }
 
+    // ===== Collection Browse (B40 + B41) =====
+
+    /// <summary>
+    /// Browse a user-defined collection's items as a catalog page. Mirrors
+    /// the webui <c>buildCollectionCatalogHref("user_collection", id)</c>.
+    /// </summary>
+    public Task<CatalogResponse> BrowseUserCollectionAsync(string collectionId, string? sort = null, string? order = null, int limit = 60, int offset = 0, CancellationToken ct = default)
+    {
+        var query = $"/api/v1/catalog?source=user_collection&collection_id={Uri.EscapeDataString(collectionId)}&limit={limit}&offset={offset}";
+        if (sort != null) query += $"&sort={Uri.EscapeDataString(sort)}";
+        if (order != null) query += $"&order={Uri.EscapeDataString(order)}";
+        return client.GetAsync<CatalogResponse>(query, ct);
+    }
+
+    /// <summary>
+    /// Browse a server-discovered library collection (aka smart collection)
+    /// by its library collection ID.
+    /// </summary>
+    public Task<CatalogResponse> BrowseLibraryCollectionAsync(string collectionId, string? sort = null, string? order = null, int limit = 60, int offset = 0, CancellationToken ct = default)
+    {
+        var query = $"/api/v1/catalog?source=library_collection&collection_id={Uri.EscapeDataString(collectionId)}&limit={limit}&offset={offset}";
+        if (sort != null) query += $"&sort={Uri.EscapeDataString(sort)}";
+        if (order != null) query += $"&order={Uri.EscapeDataString(order)}";
+        return client.GetAsync<CatalogResponse>(query, ct);
+    }
+
     // ===== Sync =====
 
     public Task SyncProgressAsync(object request, CancellationToken ct = default)
         => client.PostNoContentAsync("/api/v1/sync/progress", request, ct);
+
+    // ===== Calendar =====
+
+    /// <summary>
+    /// Fetches calendar events for a date range. Mirrors the web client's
+    /// <c>useCalendarWeek</c> hook which calls
+    /// <c>GET /api/v1/calendar?start=&amp;end=&amp;filter=&amp;library_id=</c>.
+    /// </summary>
+    /// <param name="start">Inclusive start date (YYYY-MM-DD).</param>
+    /// <param name="end">Inclusive end date (YYYY-MM-DD), max 31 days after start.</param>
+    /// <param name="filter"><c>all</c>, <c>favorites</c>, or <c>watchlist</c>.</param>
+    /// <param name="libraryId">Optional library scope.</param>
+    public Task<CalendarResponse> GetCalendarAsync(
+        string start,
+        string end,
+        string filter = "all",
+        int? libraryId = null,
+        CancellationToken ct = default)
+    {
+        var query = $"/api/v1/calendar?start={Uri.EscapeDataString(start)}" +
+                    $"&end={Uri.EscapeDataString(end)}" +
+                    $"&filter={Uri.EscapeDataString(filter)}";
+        if (libraryId.HasValue)
+            query += $"&library_id={libraryId.Value}";
+        return client.GetAsync<CalendarResponse>(query, ct);
+    }
 }

@@ -1,0 +1,307 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="ContinuumPlayer.Controls.WatchTonightDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:ContinuumPlayer.Controls"
+    mc:Ignorable="d"
+    Title=""
+    CloseButtonText="Close"
+    DefaultButton="Close">
+
+    <Grid Width="480" MinHeight="500">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- ─── Header (shared across all steps) ─────────────────────────── -->
+        <StackPanel Grid.Row="0" Spacing="6" Margin="0,0,0,18">
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <FontIcon
+                    Glyph="&#xE734;"
+                    FontSize="18"
+                    Foreground="{StaticResource AccentBrush}"
+                    VerticalAlignment="Center" />
+                <TextBlock
+                    Text="Watch Tonight"
+                    FontSize="18"
+                    FontWeight="SemiBold"
+                    Foreground="{StaticResource PrimaryTextBrush}"
+                    VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock
+                x:Name="DescriptionText"
+                FontSize="12"
+                Foreground="{StaticResource SecondaryTextBrush}" />
+        </StackPanel>
+
+        <!-- ─── Body (one step visible at a time) ────────────────────────── -->
+        <Grid Grid.Row="1">
+
+            <!-- STEP 1 ── Mode selection ──────────────────────────────── -->
+            <Grid x:Name="ModeSelectStep" Visibility="Visible">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Button
+                    Grid.Column="0"
+                    x:Name="ContinueModeButton"
+                    Click="ContinueModeButton_Click"
+                    Background="Transparent"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="2"
+                    CornerRadius="12"
+                    Padding="16,24"
+                    Margin="0,0,6,0"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Stretch">
+                    <StackPanel Spacing="12" HorizontalAlignment="Center">
+                        <Border
+                            Width="48" Height="48"
+                            CornerRadius="24"
+                            Background="{StaticResource AccentBackgroundBrush}"
+                            HorizontalAlignment="Center">
+                            <FontIcon
+                                Glyph="&#xE81C;"
+                                FontSize="20"
+                                Foreground="{StaticResource AccentBrush}" />
+                        </Border>
+                        <TextBlock
+                            Text="Pick Up Where I Left Off"
+                            FontSize="13"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource PrimaryTextBrush}"
+                            HorizontalAlignment="Center"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            Text="Continue watching or start next episodes"
+                            FontSize="11"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            HorizontalAlignment="Center"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </Button>
+
+                <Button
+                    Grid.Column="1"
+                    x:Name="DiscoverModeButton"
+                    Click="DiscoverModeButton_Click"
+                    Background="Transparent"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="2"
+                    CornerRadius="12"
+                    Padding="16,24"
+                    Margin="6,0,0,0"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Stretch">
+                    <StackPanel Spacing="12" HorizontalAlignment="Center">
+                        <Border
+                            Width="48" Height="48"
+                            CornerRadius="24"
+                            Background="{StaticResource AccentBackgroundBrush}"
+                            HorizontalAlignment="Center">
+                            <FontIcon
+                                Glyph="&#xE734;"
+                                FontSize="20"
+                                Foreground="{StaticResource AccentBrush}" />
+                        </Border>
+                        <TextBlock
+                            Text="Find Something New"
+                            FontSize="13"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource PrimaryTextBrush}"
+                            HorizontalAlignment="Center"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            Text="Discover personalized recommendations"
+                            FontSize="11"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            HorizontalAlignment="Center"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+
+            <!-- STEP 2 ── Genre picker ────────────────────────────────── -->
+            <StackPanel
+                x:Name="GenrePickerStep"
+                Visibility="Collapsed"
+                Spacing="24">
+                <controls:WrapPanel
+                    x:Name="GenreChipsPanel"
+                    HorizontalSpacing="8"
+                    VerticalSpacing="8" />
+
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <HyperlinkButton
+                        Grid.Column="0"
+                        Content="Back"
+                        FontSize="12"
+                        Click="GenreBackButton_Click"
+                        VerticalAlignment="Center" />
+                    <Button
+                        Grid.Column="1"
+                        x:Name="GenreGoButton"
+                        Click="GenreGoButton_Click"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Padding="14,6">
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <TextBlock
+                                x:Name="GenreGoButtonText"
+                                Text="All Genres"
+                                FontSize="13"
+                                VerticalAlignment="Center" />
+                            <FontIcon Glyph="&#xE76C;" FontSize="11" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+            </StackPanel>
+
+            <!-- STEP 3 ── Swipe deck ─────────────────────────────────── -->
+            <Grid x:Name="SwipeDeckStep" Visibility="Collapsed">
+                <StackPanel HorizontalAlignment="Center" Spacing="0">
+                    <!-- Card stack host (absolutely positioned cards built in code) -->
+                    <Grid
+                        x:Name="CardStackHost"
+                        Width="360"
+                        Height="440"
+                        HorizontalAlignment="Center" />
+
+                    <!-- Action buttons -->
+                    <StackPanel
+                        x:Name="ActionButtonsPanel"
+                        Orientation="Horizontal"
+                        Spacing="16"
+                        HorizontalAlignment="Center"
+                        Margin="0,14,0,0">
+                        <Button
+                            x:Name="SkipButton"
+                            Click="SkipButton_Click"
+                            Width="52" Height="52"
+                            CornerRadius="26"
+                            Background="Transparent"
+                            BorderBrush="#66EF4444"
+                            BorderThickness="2"
+                            Padding="0"
+                            ToolTipService.ToolTip="Skip">
+                            <FontIcon Glyph="&#xE711;" FontSize="18" Foreground="#EF4444" />
+                        </Button>
+                        <Button
+                            x:Name="PlayButton"
+                            Click="PlayButton_Click"
+                            Width="60" Height="60"
+                            CornerRadius="30"
+                            Background="Transparent"
+                            BorderBrush="{StaticResource AccentBrush}"
+                            BorderThickness="2"
+                            Padding="0"
+                            ToolTipService.ToolTip="Play now">
+                            <FontIcon Glyph="&#xE768;" FontSize="22" Foreground="{StaticResource AccentBrush}" />
+                        </Button>
+                        <Button
+                            x:Name="LikeButton"
+                            Click="LikeButton_Click"
+                            Width="52" Height="52"
+                            CornerRadius="26"
+                            Background="Transparent"
+                            BorderBrush="#6622C55E"
+                            BorderThickness="2"
+                            Padding="0"
+                            ToolTipService.ToolTip="Like">
+                            <FontIcon Glyph="&#xE73E;" FontSize="18" Foreground="#22C55E" />
+                        </Button>
+                    </StackPanel>
+
+                    <TextBlock
+                        x:Name="CounterText"
+                        FontSize="11"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        HorizontalAlignment="Center"
+                        Margin="0,8,0,0" />
+                </StackPanel>
+
+                <!-- Loading overlay (initial fetch) -->
+                <StackPanel
+                    x:Name="DeckLoadingPanel"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Spacing="12"
+                    Visibility="Collapsed">
+                    <ProgressRing IsActive="True" Width="40" Height="40" />
+                    <TextBlock
+                        Text="Finding something to watch..."
+                        FontSize="12"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        HorizontalAlignment="Center" />
+                </StackPanel>
+
+                <!-- Empty / done state -->
+                <StackPanel
+                    x:Name="DeckEmptyPanel"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Spacing="14"
+                    Visibility="Collapsed">
+                    <FontIcon
+                        Glyph="&#xE7F4;"
+                        FontSize="36"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        HorizontalAlignment="Center" />
+                    <TextBlock
+                        Text="You've seen everything! Come back later for fresh picks."
+                        FontSize="12"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        TextWrapping="Wrap"
+                        TextAlignment="Center"
+                        MaxWidth="340"
+                        HorizontalAlignment="Center" />
+                    <Button
+                        x:Name="StartOverButton"
+                        Click="StartOverButton_Click"
+                        HorizontalAlignment="Center"
+                        Padding="14,6">
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE72C;" FontSize="12" VerticalAlignment="Center" />
+                            <TextBlock Text="Start Over" FontSize="12" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <!-- Error overlay -->
+                <StackPanel
+                    x:Name="DeckErrorPanel"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Spacing="8"
+                    Visibility="Collapsed">
+                    <FontIcon
+                        Glyph="&#xE783;"
+                        FontSize="32"
+                        Foreground="{StaticResource ErrorBrush}"
+                        HorizontalAlignment="Center" />
+                    <TextBlock
+                        x:Name="DeckErrorText"
+                        FontSize="12"
+                        Foreground="{StaticResource ErrorBrush}"
+                        TextWrapping="Wrap"
+                        MaxWidth="380"
+                        TextAlignment="Center"
+                        HorizontalAlignment="Center" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Grid>
+</ContentDialog>

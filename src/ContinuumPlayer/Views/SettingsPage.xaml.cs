@@ -138,8 +138,10 @@ public sealed partial class SettingsPage : Page
         SelectComboBoxByTag(SubtitleBgStyleComboBox, ViewModel.SubBackgroundStyle);
         SelectComboBoxByTag(SubtitlePositionComboBox, ViewModel.SubPosition);
         SubtitleOutlineToggle.IsOn = ViewModel.SubOutlineEnabled;
-        SubtitleBgOpacitySlider.Value = ViewModel.SubBackgroundOpacity * 100;
-        SubtitleBgOpacityLabel.Text = $"{(int)(ViewModel.SubBackgroundOpacity * 100)}%";
+        // B55: SubBackgroundOpacity is now int 0-100 (matching webui) — no
+        // more /*100 scaling.
+        SubtitleBgOpacitySlider.Value = ViewModel.SubBackgroundOpacity;
+        SubtitleBgOpacityLabel.Text = $"{ViewModel.SubBackgroundOpacity}%";
         UpdateSubtitleColorSelection();
         UpdateSubtitlePreview();
         _suppressEvents = false;
@@ -826,8 +828,9 @@ public sealed partial class SettingsPage : Page
     private void SubtitleBgOpacity_Changed(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
         if (_suppressEvents) return;
-        ViewModel.SubBackgroundOpacity = SubtitleBgOpacitySlider.Value / 100.0;
-        SubtitleBgOpacityLabel.Text = $"{(int)SubtitleBgOpacitySlider.Value}%";
+        // B55: 0-100 integer scale
+        ViewModel.SubBackgroundOpacity = (int)Math.Round(SubtitleBgOpacitySlider.Value);
+        SubtitleBgOpacityLabel.Text = $"{ViewModel.SubBackgroundOpacity}%";
         UpdateSubtitlePreview();
     }
 
@@ -884,7 +887,8 @@ public sealed partial class SettingsPage : Page
         if (ViewModel.SubBackgroundStyle == "box")
         {
             var bgColor = ColorFromHex(ViewModel.SubBackgroundColor);
-            byte alpha = (byte)(ViewModel.SubBackgroundOpacity * 255);
+            // B55: SubBackgroundOpacity is 0-100 integer — convert to 0-255 alpha.
+            byte alpha = (byte)Math.Round(ViewModel.SubBackgroundOpacity * 2.55);
             var bgBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(alpha, bgColor.R, bgColor.G, bgColor.B));
             SubtitlePreviewBg1.Background = bgBrush;
             SubtitlePreviewBg2.Background = bgBrush;
@@ -1457,8 +1461,9 @@ public sealed partial class SettingsPage : Page
             Background = new SolidColorBrush(HexToColor(bg)),
             BorderBrush = new SolidColorBrush(HexToColor(fg) with { A = 0x55 }),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(999),
-            Padding = new Thickness(10, 3, 10, 3),
+            Height = 22,
+            CornerRadius = new CornerRadius(11),
+            Padding = new Thickness(10, 0, 10, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
@@ -1469,6 +1474,7 @@ public sealed partial class SettingsPage : Page
             FontSize = 11,
             FontWeight = FontWeights.Medium,
             Foreground = new SolidColorBrush(HexToColor(fg)),
+            VerticalAlignment = VerticalAlignment.Center,
         });
         badge.Child = row;
         return badge;

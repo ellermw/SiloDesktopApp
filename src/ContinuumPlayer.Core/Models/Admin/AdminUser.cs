@@ -11,6 +11,7 @@ public class AdminUser
     public string MaxPlaybackQuality { get; set; } = "";
     public int MaxStreams { get; set; }
     public int MaxTranscodes { get; set; }
+    public int MaxProfiles { get; set; }
     public bool DownloadAllowed { get; set; }
     public bool DownloadTranscodeAllowed { get; set; }
     public string CreatedAt { get; set; } = "";
@@ -27,6 +28,7 @@ public class CreateUserRequest
     public string? MaxPlaybackQuality { get; set; }
     public int? MaxStreams { get; set; }
     public int? MaxTranscodes { get; set; }
+    public int? MaxProfiles { get; set; }
     public bool? DownloadAllowed { get; set; }
     public bool? DownloadTranscodeAllowed { get; set; }
 }
@@ -42,6 +44,7 @@ public class UpdateUserRequest
     public string? MaxPlaybackQuality { get; set; }
     public int? MaxStreams { get; set; }
     public int? MaxTranscodes { get; set; }
+    public int? MaxProfiles { get; set; }
     public bool? DownloadAllowed { get; set; }
     public bool? DownloadTranscodeAllowed { get; set; }
 }

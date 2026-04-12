@@ -45,24 +45,34 @@ public sealed partial class LandscapeCard : UserControl
         _loadCts = new CancellationTokenSource();
         var ct = _loadCts.Token;
 
-        TitleText.Text = item.Title;
-
-        // Build subtitle: "Series Title · S1 E3"
-        var parts = new List<string>();
-        if (!string.IsNullOrEmpty(item.SeriesTitle))
-            parts.Add(item.SeriesTitle);
-        if (item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue)
-            parts.Add($"S{item.SeasonNumber} E{item.EpisodeNumber}");
-        else if (item.EpisodeNumber.HasValue)
-            parts.Add($"E{item.EpisodeNumber}");
-
-        if (parts.Count > 0)
+        // F10: attach right-click media menu. LandscapeCard is used for
+        // Continue Watching / Next Up sections, so surface-specific Dismiss
+        // entries show up automatically based on ItemSource.
+        var surface = item.ItemSource switch
         {
-            SubtitleText.Text = string.Join(" \u00B7 ", parts);
+            "continue_watching" => MediaItemMenu.Surface.ContinueWatching,
+            "next_up" => MediaItemMenu.Surface.NextUp,
+            _ => MediaItemMenu.Surface.Default,
+        };
+        this.ContextFlyout = MediaItemMenu.Build(item, surface);
+
+        // B31: Match the webui ContinueWatchingCard hierarchy. For episodes,
+        // the series title is the primary heading and the episode context
+        // ("Season 1 Episode 1 · Pilot") is the secondary line. Movies fall
+        // through to title-as-heading with no subtitle.
+        bool hasEpisodeMeta = item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue;
+        if (hasEpisodeMeta && !string.IsNullOrEmpty(item.SeriesTitle))
+        {
+            TitleText.Text = item.SeriesTitle!;
+            string epLine = $"Season {item.SeasonNumber} Episode {item.EpisodeNumber}";
+            if (!string.IsNullOrEmpty(item.Title) && item.Title != item.SeriesTitle)
+                epLine += $" \u00B7 {item.Title}";
+            SubtitleText.Text = epLine;
             SubtitleText.Visibility = Visibility.Visible;
         }
         else
         {
+            TitleText.Text = item.Title;
             SubtitleText.Visibility = Visibility.Collapsed;
         }
 
@@ -151,13 +161,28 @@ public sealed partial class LandscapeCard : UserControl
         catch { }
     }
 
-    private void OnCardTapped(object sender, TappedRoutedEventArgs e)
+    // B32: image click → play, text click → details. Mirrors the webui
+    // ContinueWatchingCard dual-link pattern (image <Link to="/watch/{id}">,
+    // text <Link to="/item/{id}">).
+
+    private void OnImageTapped(object sender, TappedRoutedEventArgs e)
     {
         if (MediaItem == null) return;
+        e.Handled = true;
+        var playerService = App.Services.GetRequiredService<Services.PlayerService>();
+        // Always play the actual content_id on the card — the server resolves
+        // episode → file; we don't rewrite to series_id here (that would break
+        // resume for the specific episode the card represents).
+        _ = playerService.PlayAsync(MediaItem.ContentId);
+    }
 
+    private void OnTextTapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (MediaItem == null) return;
+        e.Handled = true;
         var nav = App.Services.GetRequiredService<NavigationService>();
-        // For TV episodes, navigate to the series detail page (which has full cast/crew/poster)
-        // rather than the sparse episode detail
+        // For TV episodes, navigate to the series detail page (which has full
+        // cast/crew/poster) rather than the sparse episode detail.
         var targetId = !string.IsNullOrEmpty(MediaItem.SeriesId)
             ? MediaItem.SeriesId
             : MediaItem.ContentId;
@@ -168,12 +193,44 @@ public sealed partial class LandscapeCard : UserControl
     {
         CardBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["SurfaceHoverBrush"];
+        AnimateHover(scale: 1.04, borderOpacity: 1.0, dimOpacity: 1.0, playOpacity: 1.0, playScale: 1.0);
     }
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
     {
         CardBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["CardBackgroundBrush"];
+        AnimateHover(scale: 1.0, borderOpacity: 0.0, dimOpacity: 0.0, playOpacity: 0.0, playScale: 0.7);
+    }
+
+    /// <summary>
+    /// Mirrors the webui ContinueWatchingCard hover: subtle card scale, accent
+    /// border glow, dark tint overlay, and a centered Play circle that fades
+    /// and scales in. Short ease-out curve matching the webui transition timing.
+    /// </summary>
+    private void AnimateHover(double scale, double borderOpacity, double dimOpacity, double playOpacity, double playScale)
+    {
+        var storyboard = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+        var duration = new Duration(TimeSpan.FromMilliseconds(180));
+        var ease = new Microsoft.UI.Xaml.Media.Animation.CubicEase { EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut };
+
+        void Add(DependencyObject target, string prop, double to)
+        {
+            var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation { To = to, Duration = duration, EasingFunction = ease };
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(anim, target);
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(anim, prop);
+            storyboard.Children.Add(anim);
+        }
+
+        Add(HoverTransform, "ScaleX", scale);
+        Add(HoverTransform, "ScaleY", scale);
+        Add(HoverBorder, "Opacity", borderOpacity);
+        Add(HoverDim, "Opacity", dimOpacity);
+        Add(HoverPlayButton, "Opacity", playOpacity);
+        Add(HoverPlayButtonTransform, "ScaleX", playScale);
+        Add(HoverPlayButtonTransform, "ScaleY", playScale);
+
+        storyboard.Begin();
     }
 
     /// <summary>

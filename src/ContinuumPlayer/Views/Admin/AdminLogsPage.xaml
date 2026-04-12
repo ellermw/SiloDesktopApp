@@ -262,38 +262,26 @@
                     <!-- App Logs Table -->
                     <Border Style="{StaticResource TableCardStyle}">
                         <StackPanel>
-                            <!-- Column header -->
+                            <!-- Column header — matches web: Time / Level / Component / Status / Duration / Message -->
                             <Grid
                                 Padding="16,10"
                                 ColumnSpacing="8"
                                 Background="{StaticResource SurfaceBrush}"
                                 CornerRadius="24,24,0,0">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="100" />
-                                    <ColumnDefinition Width="60" />
-                                    <ColumnDefinition Width="110" />
-                                    <ColumnDefinition Width="55" />
-                                    <ColumnDefinition Width="90" />
-                                    <ColumnDefinition Width="90" />
-                                    <ColumnDefinition Width="60" />
-                                    <ColumnDefinition Width="120" />
-                                    <ColumnDefinition Width="55" />
+                                    <ColumnDefinition Width="140" />
                                     <ColumnDefinition Width="70" />
+                                    <ColumnDefinition Width="140" />
+                                    <ColumnDefinition Width="70" />
+                                    <ColumnDefinition Width="90" />
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="110" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Time" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                                 <TextBlock Grid.Column="1" Text="Level" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                                 <TextBlock Grid.Column="2" Text="Component" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="3" Text="User" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="4" Text="Session" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="5" Text="Playback" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="6" Text="Method" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="7" Text="Path" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="8" Text="Status" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="9" Text="Duration" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="10" Text="Message" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="11" Text="Request" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="Status" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="4" Text="Duration" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="5" Text="Message" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                             </Grid>
 
                             <!-- Rows -->

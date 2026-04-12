@@ -57,25 +57,44 @@
                     <TextBlock x:Name="StatusBannerText" FontSize="13" Foreground="{StaticResource AccentBrush}" />
                 </Border>
 
+                <!-- ===== Public Signups card — matches web InviteCodesTab Public Signups card ===== -->
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="22" BorderThickness="0" Padding="20,14,20,14">
+                    <StackPanel Spacing="12">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Public Signups" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock
+                                Text="When enabled, users with a valid invite code can create their own accounts."
+                                FontSize="12"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <ToggleSwitch
+                                x:Name="SignupToggle"
+                                OnContent="Enabled"
+                                OffContent="Disabled"
+                                Toggled="SignupToggle_Toggled" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
                 <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="26" BorderThickness="0" Padding="0">
                     <StackPanel>
                         <Grid Padding="20,14,20,14" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="2*" />
                                 <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="80" />
-                                <ColumnDefinition Width="80" />
-                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="100" />
+                                <ColumnDefinition Width="100" />
                                 <ColumnDefinition Width="120" />
                                 <ColumnDefinition Width="90" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="CODE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                             <TextBlock Grid.Column="1" Text="LABEL" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="MAX" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="USED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="4" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="5" Text="CREATED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="6" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="2" Text="USAGE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="3" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="4" Text="CREATED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="5" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                         </Grid>
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
                         <StackPanel x:Name="CodesPanel" Spacing="0" />

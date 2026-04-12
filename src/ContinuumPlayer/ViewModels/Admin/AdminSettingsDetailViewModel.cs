@@ -66,7 +66,13 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
             try { _sensitiveConfigured = await _adminApi.GetSensitiveStatusAsync(); }
             catch { _sensitiveConfigured = new(); }
             try { RateLimitConfig = await _adminApi.GetRateLimitConfigAsync(); }
-            catch { RateLimitConfig = null; }
+            catch
+            {
+                // Route may be disabled on servers without rate-limit middleware.
+                // Fall back to the webui DEFAULT_CONFIG so the tab still renders
+                // and the admin can at least edit + try to save.
+                RateLimitConfig = BuildDefaultRateLimitConfig();
+            }
             DirtyRateLimitConfig = null;
             _dirtySettings.Clear();
             HasDirtyChanges = false;
@@ -83,6 +89,22 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
     }
 
     public bool IsSensitiveConfigured(string key) => _sensitiveConfigured.Contains(key);
+
+    /// <summary>
+    /// Merged view of persisted settings overlaid with any unsaved edits.
+    /// Used by the connection-check endpoint so admins can test against
+    /// whatever they are about to save, not just what is on disk.
+    /// </summary>
+    public Dictionary<string, string> GetEffectiveSettings()
+    {
+        var merged = new Dictionary<string, string>(_settings);
+        foreach (var (k, v) in _dirtySettings)
+            merged[k] = v;
+        return merged;
+    }
+
+    /// <summary>Keys the user has edited since the last load/save.</summary>
+    public List<string> GetDirtyKeys() => [.. _dirtySettings.Keys];
 
     public string GetSetting(string key)
     {
@@ -156,6 +178,32 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
         RateLimitConfig = DirtyRateLimitConfig;
         DirtyRateLimitConfig = null;
     }
+
+    /// <summary>
+    /// Webui DEFAULT_CONFIG equivalent — used when the server rate-limit
+    /// endpoint is unavailable (server route not wired, or error), so the
+    /// Rate Limiting tab still renders with sensible starting values.
+    /// </summary>
+    private static RateLimitConfig BuildDefaultRateLimitConfig() => new()
+    {
+        Enabled = false,
+        Backend = "memory",
+        GlobalRequestsPerSecond = 1000,
+        IpRequestsPerSecond = 120,
+        IpRequestsPerMinute = 6000,
+        IpBurst = 120,
+        Tiers = new Dictionary<string, RateLimitTierConfig>
+        {
+            ["standard"] = new() { RequestsPerSecond = 20,  RequestsPerMinute = 1200, Burst = 20 },
+            ["elevated"] = new() { RequestsPerSecond = 100, RequestsPerMinute = 6000, Burst = 100 },
+        },
+        AuthEndpoints = new Dictionary<string, RateLimitAuthEndpointConfig>
+        {
+            ["login"]  = new() { RequestsPerMinute = 20, Burst = 10 },
+            ["signup"] = new() { RequestsPerMinute = 10, Burst = 6  },
+            ["setup"]  = new() { RequestsPerMinute = 10, Burst = 6  },
+        },
+    };
 
     [RelayCommand]
     private void Discard()

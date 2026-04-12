@@ -66,9 +66,11 @@
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
-                            Text="Organize your media into custom collections and smart lists."
+                            Text="Build personal or shared shelves around moods, series arcs, or anything else worth grouping."
                             FontSize="14"
-                            Foreground="{StaticResource SecondaryTextBrush}" />
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            TextWrapping="Wrap"
+                            MaxWidth="640" />
                     </StackPanel>
 
                     <Button
@@ -79,7 +81,7 @@
                         Click="CreateCollection_Click">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon Glyph="&#xE710;" FontSize="14" />
-                            <TextBlock Text="Create Collection" />
+                            <TextBlock Text="New Collection" />
                         </StackPanel>
                     </Button>
                 </Grid>

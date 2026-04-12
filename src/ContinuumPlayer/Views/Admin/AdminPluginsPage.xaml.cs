@@ -37,6 +37,30 @@ public sealed partial class AdminPluginsPage : Page
         UpdateTabVisuals();
     }
 
+    // ===== Check for updates =====
+    // Matches web: triggers the "check_plugin_updates" scheduled task, then reloads plugin data.
+    private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        CheckUpdatesButton.IsEnabled = false;
+        CheckUpdatesButtonText.Text = "Checking updates...";
+        try
+        {
+            var adminApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AdminApi>();
+            await adminApi.RunTaskAsync("check_plugin_updates");
+            // Reload plugin catalog + installations after the task triggers.
+            await ViewModel.LoadCommand.ExecuteAsync(null);
+        }
+        catch (Exception ex)
+        {
+            ViewModel.ErrorMessage = $"Error checking updates: {ex.Message}";
+        }
+        finally
+        {
+            CheckUpdatesButtonText.Text = "Check for updates";
+            CheckUpdatesButton.IsEnabled = true;
+        }
+    }
+
     private void ScheduleRebuild()
     {
         if (_rebuildPending) return;

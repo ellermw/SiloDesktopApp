@@ -54,6 +54,7 @@ public class ContinuumApiClient
 
     public string? AccessToken => _accessToken;
     public string? ProfileId => _profileId;
+    public string? ProfileToken => _profileToken;
 
     private string BuildUrl(string path) => _baseUrl + path;
 

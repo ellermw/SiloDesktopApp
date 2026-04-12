@@ -135,7 +135,21 @@
                 </StackPanel>
 
                 <!-- ===== Users Tab Content ===== -->
-                <StackPanel x:Name="UsersTabContent" Spacing="0">
+                <StackPanel x:Name="UsersTabContent" Spacing="12">
+                    <!-- Search box — matches web UI: search by username or email -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox
+                            x:Name="SearchBox"
+                            Grid.Column="0"
+                            PlaceholderText="Search by username or email..."
+                            CornerRadius="8"
+                            FontSize="13"
+                            TextChanged="SearchBox_TextChanged" />
+                    </Grid>
+
                     <!-- Users Table — borderless surface-panel style -->
                     <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="26" Padding="0"
                             BorderThickness="0">

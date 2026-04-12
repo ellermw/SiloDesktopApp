@@ -161,6 +161,17 @@
 
             <!-- Left: filters -->
             <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                <!-- Media Type filter (web CatalogFilterBar: All Media / Movies / Series) -->
+                <ComboBox
+                    x:Name="MediaTypeComboBox"
+                    Style="{StaticResource PillComboBoxStyle}"
+                    Width="130"
+                    SelectionChanged="MediaTypeComboBox_SelectionChanged">
+                    <ComboBoxItem Content="All Media" Tag="" IsSelected="True" />
+                    <ComboBoxItem Content="Movies" Tag="movie" />
+                    <ComboBoxItem Content="Series" Tag="series" />
+                </ComboBox>
+
                 <!-- Genre filter (web: pill select) -->
                 <ComboBox
                     x:Name="GenreComboBox"
@@ -364,12 +375,17 @@
                 Margin="0,0,0,8" />
         </Grid>
 
-        <!-- Recommended tab content (web: space-y-10 py-2 sm:space-y-12) -->
+        <!-- Recommended tab content (web LibraryRecommended.tsx: HeroBanner + SectionRows) -->
         <ScrollViewer
             x:Name="RecommendedPanel"
             Grid.Row="3"
             Padding="0,0,0,24">
             <StackPanel x:Name="RecommendedSectionsPanel" Spacing="8">
+                <!-- Hero banner built from first featured library section -->
+                <controls:HeroCarousel
+                    x:Name="RecommendedHeroCarousel"
+                    Margin="0,0,0,24"
+                    Visibility="Collapsed" />
                 <ProgressRing
                     x:Name="RecommendedLoading"
                     IsActive="False"

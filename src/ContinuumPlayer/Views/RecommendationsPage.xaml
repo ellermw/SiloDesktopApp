@@ -6,6 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:converters="using:ContinuumPlayer.Converters"
+    xmlns:controls="using:ContinuumPlayer.Controls"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}"
     Loaded="Page_Loaded">
@@ -22,7 +23,7 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Header: large title + subtitle -->
+        <!-- Header: title + subtitle on left, TasteProfile card on right (web parity) -->
         <Grid Grid.Row="0" Margin="40,24,40,20">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
@@ -36,38 +37,68 @@
                     FontWeight="Bold"
                     Foreground="{StaticResource PrimaryTextBrush}" />
                 <TextBlock
-                    Text="Personalized picks based on your viewing history and taste."
+                    Text="Personalized picks based on your viewing history and ratings."
                     FontSize="14"
                     Foreground="{StaticResource SecondaryTextBrush}" />
             </StackPanel>
 
-            <!-- Row count panel -->
+            <!-- Taste Profile card (web: TasteProfileCard) -->
             <Border
-                x:Name="CountPanel"
+                x:Name="TasteProfilePanel"
                 Grid.Column="1"
                 Background="{StaticResource SurfaceBrush}"
-                CornerRadius="20"
+                CornerRadius="16"
                 Padding="20,16"
-                MinWidth="140"
-                VerticalAlignment="Center"
+                MinWidth="260"
+                MaxWidth="360"
+                VerticalAlignment="Top"
                 Visibility="Collapsed">
-                <StackPanel HorizontalAlignment="Right">
-                    <TextBlock
-                        Text="FOR YOU"
-                        FontSize="10"
-                        FontWeight="SemiBold"
-                        CharacterSpacing="160"
-                        Foreground="{StaticResource SecondaryTextBrush}" />
-                    <TextBlock
-                        x:Name="RowCountText"
-                        FontSize="24"
-                        FontWeight="SemiBold"
-                        Foreground="{StaticResource PrimaryTextBrush}"
-                        Margin="0,4,0,0" />
-                    <TextBlock
-                        x:Name="RowCountLabel"
-                        FontSize="12"
-                        Foreground="{StaticResource SecondaryTextBrush}" />
+                <StackPanel Spacing="12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            Grid.Column="0"
+                            Text="Your Taste Profile"
+                            FontSize="14"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock
+                            x:Name="TasteSignalCountText"
+                            Grid.Column="1"
+                            FontSize="11"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                    </Grid>
+
+                    <!-- Top Genres -->
+                    <StackPanel x:Name="TopGenresPanel" Spacing="6" Visibility="Collapsed">
+                        <TextBlock
+                            Text="TOP GENRES"
+                            FontSize="10"
+                            FontWeight="SemiBold"
+                            CharacterSpacing="120"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                        <controls:WrapPanel
+                            x:Name="TopGenresList"
+                            HorizontalSpacing="6"
+                            VerticalSpacing="6" />
+                    </StackPanel>
+
+                    <!-- Favorite Directors -->
+                    <StackPanel x:Name="FavoriteDirectorsPanel" Spacing="6" Visibility="Collapsed">
+                        <TextBlock
+                            Text="FAVORITE DIRECTORS"
+                            FontSize="10"
+                            FontWeight="SemiBold"
+                            CharacterSpacing="120"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                        <controls:WrapPanel
+                            x:Name="FavoriteDirectorsList"
+                            HorizontalSpacing="6"
+                            VerticalSpacing="6" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
         </Grid>
@@ -91,41 +122,14 @@
             HorizontalAlignment="Center"
             VerticalAlignment="Center" />
 
-        <!-- All recommendation sections -->
+        <!-- All recommendation rows (web: rows.map(row => <MediaCarousel title={row.label}>)) -->
         <ScrollViewer
             Grid.Row="1"
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
-            <StackPanel x:Name="AllSectionsPanel" Spacing="8">
-
-                <!-- Hero "For You" section: larger poster cards -->
-                <StackPanel x:Name="HeroSection" Visibility="Collapsed" Margin="40,0,40,16">
-                    <TextBlock
-                        Text="Top Picks For You"
-                        FontSize="{StaticResource FontSizeTitle}"
-                        FontWeight="SemiBold"
-                        Foreground="{StaticResource PrimaryTextBrush}"
-                        Margin="0,0,0,12" />
-                    <ScrollViewer
-                        HorizontalScrollBarVisibility="Hidden"
-                        VerticalScrollBarVisibility="Disabled"
-                        HorizontalScrollMode="Enabled"
-                        VerticalScrollMode="Disabled">
-                        <StackPanel x:Name="HeroItemsPanel" Orientation="Horizontal" Spacing="16" />
-                    </ScrollViewer>
-                </StackPanel>
-
-                <!-- Popular section -->
-                <StackPanel x:Name="PopularSectionPanel" Visibility="Collapsed" />
-
-                <!-- For You rows -->
-                <StackPanel x:Name="RowsPanel" />
-
-                <!-- Recently Added section -->
-                <StackPanel x:Name="RecentlyAddedSectionPanel" Visibility="Collapsed" Margin="0,0,0,24" />
-            </StackPanel>
+            <StackPanel x:Name="RowsPanel" Spacing="8" />
         </ScrollViewer>
 
-        <!-- Empty state -->
+        <!-- Empty state (web: DiscoverEmptyState) -->
         <StackPanel
             x:Name="EmptyState"
             Grid.Row="1"
@@ -140,13 +144,13 @@
                 Foreground="{StaticResource SecondaryTextBrush}"
                 HorizontalAlignment="Center" />
             <TextBlock
-                Text="No recommendations yet"
+                Text="Not enough data yet"
                 FontSize="{StaticResource FontSizeTitle}"
                 FontWeight="SemiBold"
                 Foreground="{StaticResource PrimaryTextBrush}"
                 HorizontalAlignment="Center" />
             <TextBlock
-                Text="Watch a few things and we'll start building personalized suggestions for you."
+                Text="Watch and rate more content to unlock personalized recommendations."
                 FontSize="14"
                 Foreground="{StaticResource SecondaryTextBrush}"
                 HorizontalAlignment="Center"

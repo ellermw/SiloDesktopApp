@@ -253,6 +253,44 @@
                                 TextAlignment="Center" />
                         </Border>
 
+                        <!-- Pagination bar -->
+                        <Border x:Name="PaginationBar"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="0,1,0,0"
+                                Padding="20,14,20,14"
+                                Visibility="Collapsed">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
+                                    <TextBlock x:Name="PageRangeText"
+                                               FontSize="13"
+                                               Foreground="{StaticResource SecondaryTextBrush}"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox x:Name="PageSizeCombo"
+                                              SelectedIndex="0"
+                                              MinWidth="100"
+                                              SelectionChanged="PageSizeCombo_SelectionChanged">
+                                        <ComboBoxItem Content="25 rows" Tag="25" />
+                                        <ComboBoxItem Content="50 rows" Tag="50" />
+                                        <ComboBoxItem Content="100 rows" Tag="100" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Button x:Name="PrevPageButton"
+                                            Content="Previous"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            Click="PrevPageButton_Click" />
+                                    <Button x:Name="NextPageButton"
+                                            Content="Next"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            Click="NextPageButton_Click" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
                     </StackPanel>
                 </Border>
 

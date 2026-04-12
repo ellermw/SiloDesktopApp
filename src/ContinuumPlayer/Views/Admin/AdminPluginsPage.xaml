@@ -52,18 +52,37 @@
 
             <StackPanel Padding="40,28,40,40" Spacing="24">
 
-                <!-- Header -->
-                <StackPanel Spacing="4">
-                    <TextBlock
-                        Text="Plugins"
-                        FontSize="42"
-                        FontWeight="Bold"
-                        Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock
-                        Text="Manage installed plugins, browse the catalog, and configure repositories."
-                        FontSize="14"
-                        Foreground="{StaticResource SecondaryTextBrush}" />
-                </StackPanel>
+                <!-- Header — matches web AdminPlugins: title/subtitle left, Check for updates button right -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Spacing="4">
+                        <TextBlock
+                            Text="Plugins"
+                            FontSize="42"
+                            FontWeight="Bold"
+                            Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock
+                            Text="Extend Continuum with community and first-party plugins."
+                            FontSize="14"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+
+                    <Button
+                        x:Name="CheckUpdatesButton"
+                        Grid.Column="1"
+                        Style="{StaticResource SecondaryButtonStyle}"
+                        VerticalAlignment="Center"
+                        Click="CheckUpdatesButton_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE896;" FontSize="13" />
+                            <TextBlock x:Name="CheckUpdatesButtonText" Text="Check for updates" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
 
                 <!-- Status banner -->
                 <Border
@@ -108,62 +127,76 @@
                     </Border>
                 </StackPanel>
 
-                <!-- Available plugins -->
-                <StackPanel x:Name="AvailablePanel" Spacing="12" Visibility="Collapsed">
-                    <StackPanel x:Name="AvailableCards" Spacing="8" />
-                    <Border x:Name="AvailableEmpty" Padding="20,40" Visibility="Collapsed">
-                        <TextBlock
-                            Text="No plugins available in the catalog."
-                            FontSize="14"
-                            Foreground="{StaticResource SecondaryTextBrush}"
-                            HorizontalAlignment="Center" />
-                    </Border>
-                </StackPanel>
+                <!-- Available plugins tab content — matches web: Catalog section, then Repositories section -->
+                <StackPanel x:Name="AvailablePanel" Spacing="24" Visibility="Collapsed">
 
-                <!-- Repositories -->
-                <StackPanel Spacing="12">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
+                    <!-- Catalog section -->
+                    <StackPanel Spacing="12">
                         <TextBlock
-                            Grid.Column="0"
-                            Text="REPOSITORIES"
-                            FontSize="12"
-                            FontWeight="Normal"
-                            Foreground="{StaticResource SecondaryTextBrush}"
-                            CharacterSpacing="240"
-                            VerticalAlignment="Center" />
-                        <Button
-                            Grid.Column="1"
-                            x:Name="AddRepoButton"
-                            Click="AddRepoButton_Click"
-                            Style="{StaticResource SecondaryButtonStyle}"
-                            Padding="12,6">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon Glyph="&#xE710;" FontSize="12" />
-                                <TextBlock Text="Add Repository" FontSize="13" />
-                            </StackPanel>
-                        </Button>
-                    </Grid>
+                            Text="Catalog"
+                            FontSize="13"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource PrimaryTextBrush}" />
+                        <StackPanel x:Name="AvailableCards" Spacing="8" />
+                        <Border x:Name="AvailableEmpty" Padding="20,40" Visibility="Collapsed">
+                            <TextBlock
+                                Text="No plugins available. Add a repository to browse available plugins."
+                                FontSize="14"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                HorizontalAlignment="Center"
+                                TextAlignment="Center" />
+                        </Border>
+                    </StackPanel>
 
-                    <Border
-                        Background="{StaticResource CardBackgroundBrush}"
-                        CornerRadius="24"
-                        BorderThickness="0"
-                        Padding="0">
-                        <StackPanel>
-                            <StackPanel x:Name="RepoRows" Spacing="0" />
-                            <Border x:Name="RepoEmpty" Padding="20,30" Visibility="Collapsed">
+                    <!-- Repositories section -->
+                    <StackPanel Spacing="12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
                                 <TextBlock
-                                    Text="No repositories configured."
+                                    Text="Repositories"
                                     FontSize="13"
-                                    Foreground="{StaticResource TertiaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                            </Border>
-                        </StackPanel>
-                    </Border>
+                                    FontWeight="SemiBold"
+                                    Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock
+                                    Text="Sources for discovering plugins."
+                                    FontSize="11"
+                                    Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                            <Button
+                                Grid.Column="1"
+                                x:Name="AddRepoButton"
+                                Click="AddRepoButton_Click"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Padding="12,6">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE710;" FontSize="12" />
+                                    <TextBlock Text="Add" FontSize="13" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <Border
+                            Background="{StaticResource CardBackgroundBrush}"
+                            CornerRadius="24"
+                            BorderThickness="0"
+                            Padding="0">
+                            <StackPanel>
+                                <StackPanel x:Name="RepoRows" Spacing="0" />
+                                <Border x:Name="RepoEmpty" Padding="20,30" Visibility="Collapsed">
+                                    <TextBlock
+                                        Text="No repositories configured."
+                                        FontSize="13"
+                                        Foreground="{StaticResource TertiaryTextBrush}"
+                                        HorizontalAlignment="Center" />
+                                </Border>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
                 </StackPanel>
 
             </StackPanel>

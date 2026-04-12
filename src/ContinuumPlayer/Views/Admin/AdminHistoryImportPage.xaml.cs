@@ -132,10 +132,18 @@ public partial class AdminHistoryImportViewModel : CommunityToolkit.Mvvm.Compone
             Runs.Clear();
             foreach (var run in runs)
             {
+                var displayName = string.IsNullOrEmpty(run.SourceType)
+                    ? "import"
+                    : char.ToUpper(run.SourceType[0]) + run.SourceType[1..].ToLower() + " import";
+                var statusDisplay = $"{displayName} — {run.Status}";
+                var counts = $"Fetched {run.Fetched}  Matched {run.Matched}  Unmatched {run.Unmatched}  Skipped {run.Skipped}";
+                var when = !string.IsNullOrEmpty(run.CreatedAt)
+                    ? (DateTime.TryParse(run.CreatedAt, out var dt) ? dt.ToLocalTime().ToString("g") : run.CreatedAt)
+                    : "";
                 Runs.Add(new HistoryImportRunDisplay
                 {
-                    Display = $"{run.SourceType} — {run.Status}",
-                    SubDisplay = $"Fetched: {run.Fetched}, Matched: {run.Matched}, Skipped: {run.Skipped} — {run.CreatedAt}"
+                    Display = statusDisplay,
+                    SubDisplay = string.IsNullOrEmpty(when) ? counts : $"{counts}  \u00b7  {when}"
                 });
             }
         }

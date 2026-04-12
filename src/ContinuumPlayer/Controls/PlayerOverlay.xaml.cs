@@ -1,5 +1,3 @@
-using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -9,19 +7,9 @@ using ContinuumPlayer.Services;
 
 namespace ContinuumPlayer.Controls;
 
-/// <summary>COM interface to get raw byte pointer from IBuffer (bypasses slow managed CopyTo).</summary>
-[ComImport]
-[Guid("905a0fef-bc53-11df-8c49-001e4fc686da")]
-[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IBufferByteAccess
-{
-    void Buffer(out IntPtr buffer);
-}
-
 public sealed partial class PlayerOverlay : UserControl
 {
     private readonly PlayerService _playerService;
-    private Microsoft.UI.Xaml.Media.Imaging.SoftwareBitmapSource? _bitmapSource;
 
     private bool _statsVisible;
     private bool _suppressSeek;
@@ -48,6 +36,12 @@ public sealed partial class PlayerOverlay : UserControl
         _playerService.ContentLoaded += OnContentLoaded;
         _playerService.PlaybackEnded += OnPlaybackEnded;
         _playerService.ShowPlayingNextRequested += OnShowPlayingNextRequested;
+        _playerService.StateChanged += OnPlayerStateChanged;
+
+        // Sync the fullscreen icon eagerly so the first paint after re-activation
+        // reflects the current state (otherwise it lingers on the "exit fullscreen"
+        // glyph after a Fullscreen → Minimized → Expanded round trip).
+        SyncFullscreenIcon();
 
         // Show loading overlay if still loading
         if (_playerService.IsLoading)
@@ -111,6 +105,7 @@ public sealed partial class PlayerOverlay : UserControl
         _playerService.ContentLoaded -= OnContentLoaded;
         _playerService.PlaybackEnded -= OnPlaybackEnded;
         _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
+        _playerService.StateChanged -= OnPlayerStateChanged;
         StopPlayingNextCountdown();
         PlayingNextOverlay.Visibility = Visibility.Collapsed;
 
@@ -119,6 +114,30 @@ public sealed partial class PlayerOverlay : UserControl
         _uiTimer = null;
         _hideTimer?.Stop();
         _hideTimer = null;
+    }
+
+    /// <summary>
+    /// Fires on every PlayerService state transition. Used to keep the fullscreen
+    /// icon glyph in sync without waiting for the 250ms UI tick — otherwise the
+    /// icon stays in its "exit fullscreen" state after a
+    /// Fullscreen → Minimized → Expanded round trip.
+    /// </summary>
+    private void OnPlayerStateChanged(PlayerState newState)
+    {
+        // StateChanged may fire on a non-UI thread — marshal to the UI thread
+        // before touching XAML.
+        DispatcherQueue?.TryEnqueue(() =>
+        {
+            if (!_isActive) return;
+            SyncFullscreenIcon();
+        });
+    }
+
+    private void SyncFullscreenIcon()
+    {
+        FullscreenIcon.Glyph = _playerService.State == PlayerState.Fullscreen
+            ? "\uE73F"  // BackToWindow — "exit fullscreen"
+            : "\uE740"; // FullScreen — "enter fullscreen"
     }
 
     // ── ContentLoaded / PlaybackEnded handlers ───────────────────────────
@@ -257,100 +276,11 @@ public sealed partial class PlayerOverlay : UserControl
         catch { /* Poster is cosmetic */ }
     }
 
-    // ── Frame rendering (double buffer + native memcpy) ──────────────────
-
-    private byte[]? _snapBuffer;
-    private int _snapW, _snapH, _snapStride;
-    private volatile bool _snapReady;
-    private volatile bool _uiBusy;
-
-    // Double-buffered SoftwareBitmaps to avoid per-frame allocation (33MB at 4K)
-    private Windows.Graphics.Imaging.SoftwareBitmap?[] _swBitmaps = new Windows.Graphics.Imaging.SoftwareBitmap?[2];
-    private int _swIdx;
-    private long _lastPresentTicks;
-    private double[] _frameTimes = new double[60];
-    private int _frameTimeIdx;
-
-    private void OnFrameReady(byte[] buffer, int width, int height, int stride)
-    {
-        if (_uiBusy) return;
-
-        int size = stride * height;
-        if (_snapBuffer == null || _snapBuffer.Length < size)
-            _snapBuffer = new byte[size];
-        System.Buffer.BlockCopy(buffer, 0, _snapBuffer, 0, size);
-        _snapW = width;
-        _snapH = height;
-        _snapStride = stride;
-        _snapReady = true;
-
-        DispatcherQueue?.TryEnqueue(PresentFrameAsync);
-    }
-
-    private async void PresentFrameAsync()
-    {
-        if (!_isActive || !_snapReady || _snapBuffer == null) return;
-        _uiBusy = true;
-        _snapReady = false;
-
-        try
-        {
-            int w = _snapW, h = _snapH, stride = _snapStride;
-            var t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-
-            // Reuse SoftwareBitmap from double buffer
-            var idx = _swIdx;
-            _swIdx = 1 - _swIdx;
-            var bitmap = _swBitmaps[idx];
-            if (bitmap == null || bitmap.PixelWidth != w || bitmap.PixelHeight != h)
-            {
-                bitmap?.Dispose();
-                bitmap = new Windows.Graphics.Imaging.SoftwareBitmap(
-                    Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8, w, h,
-                    Windows.Graphics.Imaging.BitmapAlphaMode.Ignore);
-                _swBitmaps[idx] = bitmap;
-            }
-            bitmap.CopyFromBuffer(_snapBuffer.AsBuffer());
-            var t1 = System.Diagnostics.Stopwatch.GetTimestamp();
-
-            if (_bitmapSource == null)
-            {
-                _bitmapSource = new Microsoft.UI.Xaml.Media.Imaging.SoftwareBitmapSource();
-                VideoFrame.Source = _bitmapSource;
-            }
-
-            await _bitmapSource.SetBitmapAsync(bitmap);
-            var t2 = System.Diagnostics.Stopwatch.GetTimestamp();
-
-            // Per-stage timing diagnostics
-            var freq = (double)System.Diagnostics.Stopwatch.Frequency;
-            var copyMs = (t1 - t0) * 1000.0 / freq;
-            var uploadMs = (t2 - t1) * 1000.0 / freq;
-            var totalMs = (t2 - t0) * 1000.0 / freq;
-
-            _frameTimeIdx++;
-            if (_frameTimeIdx % 60 == 0)
-            {
-                double sinceLastFrame = 0;
-                if (_lastPresentTicks > 0)
-                    sinceLastFrame = (t0 - _lastPresentTicks) * 1000.0 / freq;
-                try
-                {
-                    var logPath = System.IO.Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        "ContinuumPlayer", "frame_perf.txt");
-                    System.IO.File.AppendAllText(logPath,
-                        $"[{DateTime.Now:HH:mm:ss}] copy={copyMs:F1}ms upload={uploadMs:F1}ms total={totalMs:F1}ms gap={sinceLastFrame:F1}ms size={w}x{h}\n");
-                }
-                catch { }
-            }
-            _lastPresentTicks = t2;
-        }
-        finally
-        {
-            _uiBusy = false;
-        }
-    }
+    // B53: mpv now renders directly into its own GPU popup window; the old
+    // SW frame pipeline (OnFrameReady → SoftwareBitmap double buffer →
+    // VideoFrame Image source) was dead code and has been removed. Nothing
+    // calls OnFrameReady anymore — the PlayerService/MpvVideoWindow pairing
+    // owns the video output path.
 
     // ── UI update timer (position, seek bar, play/pause icon, skip markers) ──
 

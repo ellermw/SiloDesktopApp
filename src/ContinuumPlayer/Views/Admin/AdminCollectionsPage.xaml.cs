@@ -115,6 +115,7 @@ public sealed partial class AdminCollectionsPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
 
@@ -203,6 +204,39 @@ public sealed partial class AdminCollectionsPage : Page
             MaxWidth = 220
         });
 
+        // ---- Schedule column ----
+        var schedulePanel = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        if (!string.IsNullOrEmpty(col.SyncSchedule))
+        {
+            schedulePanel.Children.Add(new TextBlock
+            {
+                Text = col.SyncSchedule,
+                FontSize = 12,
+                FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+            if (!string.IsNullOrEmpty(col.NextSyncAt) && DateTime.TryParse(col.NextSyncAt, out var nextDt))
+            {
+                schedulePanel.Children.Add(new TextBlock
+                {
+                    Text = $"Next: {nextDt.ToLocalTime():g}",
+                    FontSize = 11,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                });
+            }
+        }
+        else
+        {
+            schedulePanel.Children.Add(new TextBlock
+            {
+                Text = "\u2014",
+                FontSize = 12,
+                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
+            });
+        }
+
         // ---- Updated column ----
         string updatedText = "";
         if (DateTime.TryParse(col.UpdatedAt, out var updatedDt))
@@ -253,13 +287,15 @@ public sealed partial class AdminCollectionsPage : Page
         Grid.SetColumn(sourcePanel, 1);
         Grid.SetColumn(itemsBlock, 2);
         Grid.SetColumn(syncPanel, 3);
-        Grid.SetColumn(updatedBlock, 4);
-        Grid.SetColumn(actionsPanel, 5);
+        Grid.SetColumn(schedulePanel, 4);
+        Grid.SetColumn(updatedBlock, 5);
+        Grid.SetColumn(actionsPanel, 6);
 
         row.Children.Add(titlePanel);
         row.Children.Add(sourcePanel);
         row.Children.Add(itemsBlock);
         row.Children.Add(syncPanel);
+        row.Children.Add(schedulePanel);
         row.Children.Add(updatedBlock);
         row.Children.Add(actionsPanel);
 

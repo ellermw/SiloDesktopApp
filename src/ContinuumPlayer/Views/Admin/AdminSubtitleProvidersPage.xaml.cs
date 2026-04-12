@@ -13,6 +13,17 @@ public sealed partial class AdminSubtitleProvidersPage : Page
     public AdminSubtitleProvidersViewModel ViewModel { get; }
     private bool _rebuildPending;
 
+    // Matches web SUBTITLE_PROVIDER_NAMES map in IntegrationsSettings.tsx
+    private static readonly Dictionary<string, string> ProviderDisplayNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["opensubtitles"] = "OpenSubtitles",
+        ["subdl"] = "SubDL",
+        ["subsource"] = "SubSource",
+    };
+
+    // Matches web SUBTITLE_PROVIDER_ORDER constant
+    private static readonly List<string> ProviderOrder = new() { "opensubtitles", "subdl", "subsource" };
+
     public AdminSubtitleProvidersPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminSubtitleProvidersViewModel>();
@@ -39,7 +50,19 @@ public sealed partial class AdminSubtitleProvidersPage : Page
         if (ViewModel.Providers.Count == 0) { EmptyState.Visibility = Visibility.Visible; return; }
         EmptyState.Visibility = Visibility.Collapsed;
 
-        foreach (var provider in ViewModel.Providers)
+        // Sort by known order, putting unknown providers at end (matches web)
+        var sorted = ViewModel.Providers.ToList();
+        sorted.Sort((a, b) =>
+        {
+            int ai = ProviderOrder.IndexOf(a.ProviderName?.ToLowerInvariant() ?? "");
+            int bi = ProviderOrder.IndexOf(b.ProviderName?.ToLowerInvariant() ?? "");
+            if (ai == -1 && bi == -1) return 0;
+            if (ai == -1) return 1;
+            if (bi == -1) return -1;
+            return ai - bi;
+        });
+
+        foreach (var provider in sorted)
         {
             ProvidersPanel.Children.Add(BuildProviderCard(provider));
         }
@@ -61,25 +84,29 @@ public sealed partial class AdminSubtitleProvidersPage : Page
         headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
+        bool isOpenSubtitles = string.Equals(provider.ProviderName, "opensubtitles", StringComparison.OrdinalIgnoreCase);
+        string displayName = ProviderDisplayNames.TryGetValue(provider.ProviderName ?? "", out var dn) ? dn : provider.ProviderName ?? "";
+
         var nameRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         nameRow.Children.Add(new TextBlock
         {
-            Text = provider.ProviderName,
+            Text = displayName,
             FontSize = 16,
             FontWeight = FontWeights.SemiBold,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
 
+        // Configured/Not-configured status matches web SubtitleCredentialStatus
+        bool configured = isOpenSubtitles ? provider.HasCredentials : provider.HasApiKey;
+        if (configured)
+            nameRow.Children.Add(MakeBadge("Configured", Color.FromArgb(40, 34, 197, 94), Color.FromArgb(255, 34, 197, 94)));
+        else
+            nameRow.Children.Add(MakeBadge("Not configured", Color.FromArgb(40, 234, 179, 8), Color.FromArgb(255, 234, 179, 8)));
+
         if (provider.Enabled)
-            nameRow.Children.Add(MakeBadge("Enabled", Color.FromArgb(40, 34, 197, 94), Color.FromArgb(255, 34, 197, 94)));
+            nameRow.Children.Add(MakeBadge("Enabled", Color.FromArgb(40, 59, 130, 246), Color.FromArgb(255, 96, 165, 250)));
         else
             nameRow.Children.Add(MakeBadge("Disabled", Color.FromArgb(40, 120, 120, 120), Color.FromArgb(255, 160, 160, 160)));
-
-        if (provider.HasApiKey)
-            nameRow.Children.Add(MakeBadge("API Key", Color.FromArgb(40, 59, 130, 246), Color.FromArgb(255, 96, 165, 250)));
-
-        if (provider.HasCredentials)
-            nameRow.Children.Add(MakeBadge("Credentials", Color.FromArgb(40, 59, 130, 246), Color.FromArgb(255, 96, 165, 250)));
 
         Grid.SetColumn(nameRow, 0);
         headerRow.Children.Add(nameRow);
@@ -109,70 +136,72 @@ public sealed partial class AdminSubtitleProvidersPage : Page
         headerRow.Children.Add(testBtn);
         layout.Children.Add(headerRow);
 
-        // Config fields
-        var fieldsGrid = new Grid { ColumnSpacing = 12 };
-        fieldsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        fieldsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        fieldsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
+        // Enabled toggle (shown above credential fields to match web layout)
         var enabledToggle = new ToggleSwitch { IsOn = provider.Enabled, Header = "Enabled" };
-        Grid.SetColumn(enabledToggle, 0);
-        fieldsGrid.Children.Add(enabledToggle);
+        layout.Children.Add(enabledToggle);
 
+        // Credential fields — OpenSubtitles uses username/password, others use API key
         var apiKeyBox = new PasswordBox
         {
-            PlaceholderText = provider.HasApiKey ? "(set)" : "Enter API key",
+            PlaceholderText = provider.HasApiKey ? "Leave blank to keep current" : "Enter API key",
             CornerRadius = new CornerRadius(8), FontSize = 13
         };
-        var apiKeyGroup = new StackPanel { Spacing = 4 };
-        apiKeyGroup.Children.Add(new TextBlock
-        {
-            Text = "API Key", FontSize = 12, FontWeight = FontWeights.SemiBold,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
-        });
-        apiKeyGroup.Children.Add(apiKeyBox);
-        Grid.SetColumn(apiKeyGroup, 1);
-        fieldsGrid.Children.Add(apiKeyGroup);
-
         var usernameBox = new TextBox
         {
-            PlaceholderText = provider.HasCredentials ? "(set)" : "Username",
+            PlaceholderText = provider.HasCredentials ? "Leave blank to keep current" : "OpenSubtitles username",
             CornerRadius = new CornerRadius(8), FontSize = 13
         };
         var passwordBox = new PasswordBox
         {
-            PlaceholderText = provider.HasCredentials ? "(set)" : "Password",
+            PlaceholderText = provider.HasCredentials ? "Leave blank to keep current" : "OpenSubtitles password",
             CornerRadius = new CornerRadius(8), FontSize = 13
         };
-        var credGroup = new StackPanel { Spacing = 4 };
-        credGroup.Children.Add(new TextBlock
+
+        if (isOpenSubtitles)
         {
-            Text = "Credentials", FontSize = 12, FontWeight = FontWeights.SemiBold,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
-        });
-        credGroup.Children.Add(usernameBox);
-        credGroup.Children.Add(passwordBox);
-        Grid.SetColumn(credGroup, 2);
-        fieldsGrid.Children.Add(credGroup);
+            var userGroup = new StackPanel { Spacing = 4 };
+            userGroup.Children.Add(new TextBlock
+            {
+                Text = "Username", FontSize = 12, FontWeight = FontWeights.SemiBold,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+            });
+            userGroup.Children.Add(usernameBox);
+            layout.Children.Add(userGroup);
 
-        layout.Children.Add(fieldsGrid);
+            var passGroup = new StackPanel { Spacing = 4 };
+            passGroup.Children.Add(new TextBlock
+            {
+                Text = "Password", FontSize = 12, FontWeight = FontWeights.SemiBold,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+            });
+            passGroup.Children.Add(passwordBox);
+            layout.Children.Add(passGroup);
+        }
+        else
+        {
+            var apiKeyGroup = new StackPanel { Spacing = 4 };
+            apiKeyGroup.Children.Add(new TextBlock
+            {
+                Text = "API Key", FontSize = 12, FontWeight = FontWeights.SemiBold,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+            });
+            apiKeyGroup.Children.Add(apiKeyBox);
+            layout.Children.Add(apiKeyGroup);
+        }
 
-        // Save button
+        // Actions row — Test + Save buttons side-by-side at left (matches web)
+        var actionsRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            Margin = new Thickness(0, 4, 0, 0)
+        };
+
         var saveBtn = new Button
         {
             Style = (Style)Application.Current.Resources["AccentButtonStyle"],
             Padding = new Thickness(16, 8, 16, 8),
-            HorizontalAlignment = HorizontalAlignment.Right
-        };
-        saveBtn.Content = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 6,
-            Children =
-            {
-                new FontIcon { Glyph = "\uE74E", FontSize = 12 },
-                new TextBlock { Text = "Save" }
-            }
+            Content = new TextBlock { Text = "Save" }
         };
         saveBtn.Click += async (_, _) =>
         {
@@ -180,15 +209,18 @@ public sealed partial class AdminSubtitleProvidersPage : Page
             var request = new SubtitleProviderUpdateRequest
             {
                 Enabled = enabledToggle.IsOn,
-                ApiKey = string.IsNullOrWhiteSpace(apiKeyBox.Password) ? null : apiKeyBox.Password,
-                Username = string.IsNullOrWhiteSpace(usernameBox.Text) ? null : usernameBox.Text,
-                Password = string.IsNullOrWhiteSpace(passwordBox.Password) ? null : passwordBox.Password
+                ApiKey = isOpenSubtitles || string.IsNullOrWhiteSpace(apiKeyBox.Password) ? null : apiKeyBox.Password,
+                Username = !isOpenSubtitles || string.IsNullOrWhiteSpace(usernameBox.Text) ? null : usernameBox.Text,
+                Password = !isOpenSubtitles || string.IsNullOrWhiteSpace(passwordBox.Password) ? null : passwordBox.Password
             };
             await ViewModel.UpdateProviderAsync(capturedProvider.ProviderName, request);
-            ShowStatus($"Provider \"{capturedProvider.ProviderName}\" saved.");
+            ShowStatus($"Provider \"{displayName}\" saved.");
             saveBtn.IsEnabled = true;
         };
-        layout.Children.Add(saveBtn);
+
+        // Move test button out of header — web shows it in actions row next to Save
+        actionsRow.Children.Add(saveBtn);
+        layout.Children.Add(actionsRow);
 
         card.Child = layout;
         return card;

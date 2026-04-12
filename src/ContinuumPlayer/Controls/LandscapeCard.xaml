@@ -8,22 +8,28 @@
     mc:Ignorable="d"
     Width="280"
     PointerEntered="OnPointerEntered"
-    PointerExited="OnPointerExited"
-    Tapped="OnCardTapped">
+    PointerExited="OnPointerExited">
 
     <Grid
         x:Name="RootGrid"
         Width="280"
         Background="Transparent"
-        CacheMode="BitmapCache">
+        CacheMode="BitmapCache"
+        RenderTransformOrigin="0.5,0.5">
+
+        <Grid.RenderTransform>
+            <CompositeTransform x:Name="HoverTransform" ScaleX="1" ScaleY="1" />
+        </Grid.RenderTransform>
 
         <Grid.RowDefinitions>
             <RowDefinition Height="158" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Backdrop image area (16:9 aspect, rounded) -->
-        <Grid Grid.Row="0" CornerRadius="12">
+        <!-- Backdrop image area (16:9 aspect, rounded) —
+             B32: image click starts playback (→ PlayerService.PlayAsync),
+             text click (below) navigates to the detail page. -->
+        <Grid Grid.Row="0" CornerRadius="12" Tapped="OnImageTapped" Background="Transparent">
             <!-- Card background for hover -->
             <Border
                 x:Name="CardBackground"
@@ -82,10 +88,48 @@
                     FontWeight="SemiBold"
                     Foreground="White" />
             </Border>
+
+            <!-- Hover overlays — MUST be last so they paint on top of image/gradient/progress/badges.
+                 Z-order: background → image → gradient → progress → remaining badge → dim → play → border. -->
+            <Border
+                x:Name="HoverDim"
+                CornerRadius="12"
+                Background="#55000000"
+                Opacity="0"
+                IsHitTestVisible="False" />
+
+            <!-- Circular Play button — fades and scales in on hover. -->
+            <Grid
+                x:Name="HoverPlayButton"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Width="48" Height="48"
+                Opacity="0"
+                IsHitTestVisible="False"
+                RenderTransformOrigin="0.5,0.5">
+                <Grid.RenderTransform>
+                    <CompositeTransform x:Name="HoverPlayButtonTransform" ScaleX="0.7" ScaleY="0.7" />
+                </Grid.RenderTransform>
+                <Ellipse Fill="{StaticResource AccentBrush}" />
+                <FontIcon
+                    Glyph="&#xE768;"
+                    FontSize="18"
+                    Foreground="{StaticResource AccentForegroundBrush}"
+                    Margin="3,0,0,0" />
+            </Grid>
+
+            <!-- Hover accent border — topmost layer -->
+            <Border
+                x:Name="HoverBorder"
+                CornerRadius="12"
+                BorderBrush="{StaticResource AccentBrush}"
+                BorderThickness="2"
+                Opacity="0"
+                IsHitTestVisible="False" />
         </Grid>
 
-        <!-- Text below image -->
-        <StackPanel Grid.Row="1" Margin="4,8,4,0" Spacing="2">
+        <!-- Text below image — B32: text click navigates to details -->
+        <StackPanel Grid.Row="1" Margin="4,8,4,0" Spacing="2" Tapped="OnTextTapped" Background="Transparent">
             <!-- Title -->
             <TextBlock
                 x:Name="TitleText"
@@ -109,8 +153,9 @@
                 x:Name="BadgePill"
                 HorizontalAlignment="Left"
                 Margin="0,4,0,0"
-                Padding="8,2"
-                CornerRadius="999"
+                Height="18"
+                Padding="8,0"
+                CornerRadius="9"
                 BorderThickness="1"
                 BorderBrush="#4D34D399"
                 Background="#1A34D399"
@@ -120,7 +165,8 @@
                     FontSize="10"
                     FontWeight="SemiBold"
                     CharacterSpacing="80"
-                    Foreground="#6EE7B7" />
+                    Foreground="#6EE7B7"
+                    VerticalAlignment="Center" />
             </Border>
         </StackPanel>
     </Grid>

@@ -46,6 +46,11 @@ public sealed partial class PosterCard : UserControl
         _loadCts = new CancellationTokenSource();
         var ct = _loadCts.Token;
 
+        // F10: attach right-click media menu (mark watched / favorite /
+        // watchlist / admin refresh / view details). Rebuilt on each item
+        // change so "Remove from Favorites" vs "Add" reflects fresh state.
+        this.ContextFlyout = MediaItemMenu.Build(item, MediaItemMenu.Surface.Default);
+
         TitleText.Text = item.Title;
 
         // Build subtitle line: "2024 Series" or "2024" (web: year + type in uppercase)
@@ -168,11 +173,43 @@ public sealed partial class PosterCard : UserControl
     {
         PosterBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["SurfaceHoverBrush"];
+        AnimateHover(scale: 1.04, borderOpacity: 1.0, dimOpacity: 1.0, playOpacity: 1.0, playScale: 1.0);
     }
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
     {
         PosterBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["CardBackgroundBrush"];
+        AnimateHover(scale: 1.0, borderOpacity: 0.0, dimOpacity: 0.0, playOpacity: 0.0, playScale: 0.7);
+    }
+
+    /// <summary>
+    /// Mirrors the webui ContinueWatchingCard hover: subtle card scale, accent
+    /// border glow, dark tint overlay, and a centered Play circle that fades
+    /// and scales in. Short ease-out curve matching the webui transition timing.
+    /// </summary>
+    private void AnimateHover(double scale, double borderOpacity, double dimOpacity, double playOpacity, double playScale)
+    {
+        var storyboard = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+        var duration = new Duration(TimeSpan.FromMilliseconds(180));
+        var ease = new Microsoft.UI.Xaml.Media.Animation.CubicEase { EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut };
+
+        void Add(DependencyObject target, string prop, double to)
+        {
+            var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation { To = to, Duration = duration, EasingFunction = ease };
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(anim, target);
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(anim, prop);
+            storyboard.Children.Add(anim);
+        }
+
+        Add(HoverTransform, "ScaleX", scale);
+        Add(HoverTransform, "ScaleY", scale);
+        Add(HoverBorder, "Opacity", borderOpacity);
+        Add(HoverDim, "Opacity", dimOpacity);
+        Add(HoverPlayButton, "Opacity", playOpacity);
+        Add(HoverPlayButtonTransform, "ScaleX", playScale);
+        Add(HoverPlayButtonTransform, "ScaleY", playScale);
+
+        storyboard.Begin();
     }
 }

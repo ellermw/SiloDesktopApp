@@ -82,8 +82,15 @@ public sealed partial class PersonDetailPage : Page
         // Initials fallback for photo
         InitialsText.Text = GetInitials(person.Name);
 
-        // Admin refresh button
-        RefreshButton.Visibility = ViewModel.IsAdmin ? Visibility.Visible : Visibility.Collapsed;
+        // Refresh metadata is available to all signed-in users (web parity);
+        // admins trigger an immediate refresh, non-admins queue one.
+        RefreshButton.Visibility = Visibility.Visible;
+        if (RefreshButton.Content is StackPanel refreshStack && refreshStack.Children.Count >= 2 &&
+            refreshStack.Children[1] is TextBlock refreshLabel)
+        {
+            refreshLabel.Text = ViewModel.IsAdmin ? "Refresh now" : "Refresh metadata";
+        }
+        ToolTipService.SetToolTip(RefreshButton, ViewModel.IsAdmin ? "Refresh now" : "Refresh metadata");
 
         // Load photo
         if (!string.IsNullOrEmpty(person.PhotoUrl))

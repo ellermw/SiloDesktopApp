@@ -1,3 +1,5 @@
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media.Animation;
 using ContinuumPlayer.Core.Models.Home;
 
 namespace ContinuumPlayer.Controls;
@@ -17,6 +19,13 @@ public sealed partial class SectionRow : UserControl
         set => SetValue(SectionProperty, value);
     }
 
+    // B45: hover-reveal arrows. Arrows fade in only when the pointer is over
+    // the row AND the content is wider than the viewport. Each arrow is
+    // independently enabled based on scroll position (can-scroll-prev / next).
+    private bool _isHovered;
+    private bool _canScrollPrev;
+    private bool _canScrollNext;
+
     public SectionRow()
     {
         this.InitializeComponent();
@@ -30,42 +39,94 @@ public sealed partial class SectionRow : UserControl
         }
     }
 
-    private bool _useLandscape;
-
     private void UpdateSection(HomeSectionWithItems section)
     {
         SectionTitle.Text = section.Title;
 
-        _useLandscape = section.SectionType is "continue_watching" or "next_up";
+        // B44: swap the ItemsRepeater template by section type. Landscape for
+        // continue_watching / next_up; poster for everything else.
+        bool useLandscape = section.SectionType is "continue_watching" or "next_up";
+        string templateKey = useLandscape ? "LandscapeCardTemplate" : "PosterCardTemplate";
+        CardsRepeater.ItemTemplate = (DataTemplate)this.Resources[templateKey];
+        CardsRepeater.ItemsSource = section.Items;
 
-        if (_useLandscape)
-        {
-            PosterScrollViewer.Visibility = Visibility.Collapsed;
-            LandscapeScrollViewer.Visibility = Visibility.Visible;
-            LandscapeRepeater.ItemsSource = section.Items;
-            ItemsRepeater.ItemsSource = null;
-        }
-        else
-        {
-            PosterScrollViewer.Visibility = Visibility.Visible;
-            LandscapeScrollViewer.Visibility = Visibility.Collapsed;
-            ItemsRepeater.ItemsSource = section.Items;
-            LandscapeRepeater.ItemsSource = null;
-        }
+        // Reset scroll position on re-bind so the first item is always visible.
+        CardsScrollViewer.ChangeView(0, null, null, disableAnimation: true);
+        UpdateScrollBounds();
     }
 
-    private ScrollViewer ActiveScrollViewer => _useLandscape ? LandscapeScrollViewer : PosterScrollViewer;
+    // ─── Scroll bounds tracking ─────────────────────────────────────────
+
+    private void CardsScrollViewer_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
+        UpdateScrollBounds();
+    }
+
+    private void CardsScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateScrollBounds();
+    }
+
+    private void UpdateScrollBounds()
+    {
+        double extent = CardsScrollViewer.ExtentWidth;
+        double viewport = CardsScrollViewer.ViewportWidth;
+        double offset = CardsScrollViewer.HorizontalOffset;
+
+        _canScrollPrev = offset > 1;
+        _canScrollNext = offset < extent - viewport - 1 && extent > viewport + 1;
+
+        ScrollLeftBtn.IsEnabled = _canScrollPrev;
+        ScrollRightBtn.IsEnabled = _canScrollNext;
+        UpdateArrowsOpacity();
+    }
+
+    // ─── Hover-reveal ───────────────────────────────────────────────────
+
+    private void RootGrid_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        _isHovered = true;
+        UpdateArrowsOpacity();
+    }
+
+    private void RootGrid_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        _isHovered = false;
+        UpdateArrowsOpacity();
+    }
+
+    private void UpdateArrowsOpacity()
+    {
+        // Arrows are visible only when hovered AND there's something to scroll
+        // in at least one direction. Otherwise they fade out entirely.
+        bool show = _isHovered && (_canScrollPrev || _canScrollNext);
+        double target = show ? 1.0 : 0.0;
+        if (Math.Abs(ArrowsPanel.Opacity - target) < 0.01) return;
+
+        var anim = new DoubleAnimation
+        {
+            To = target,
+            Duration = new Duration(TimeSpan.FromMilliseconds(140)),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        };
+        Storyboard.SetTarget(anim, ArrowsPanel);
+        Storyboard.SetTargetProperty(anim, "Opacity");
+        var sb = new Storyboard();
+        sb.Children.Add(anim);
+        sb.Begin();
+    }
+
+    // ─── Scroll actions ─────────────────────────────────────────────────
 
     private void ScrollLeft_Click(object sender, RoutedEventArgs e)
     {
-        ActiveScrollViewer.ChangeView(
-            Math.Max(0, ActiveScrollViewer.HorizontalOffset - 500), null, null);
+        CardsScrollViewer.ChangeView(
+            Math.Max(0, CardsScrollViewer.HorizontalOffset - 500), null, null);
     }
 
     private void ScrollRight_Click(object sender, RoutedEventArgs e)
     {
-        ActiveScrollViewer.ChangeView(
-            ActiveScrollViewer.HorizontalOffset + 500, null, null);
+        CardsScrollViewer.ChangeView(
+            CardsScrollViewer.HorizontalOffset + 500, null, null);
     }
-
 }

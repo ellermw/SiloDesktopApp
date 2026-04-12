@@ -41,7 +41,7 @@
                                    FontSize="{StaticResource FontSizeDisplayLarge}"
                                    FontWeight="Bold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Import watch history from Plex, Emby, Jellyfin, or other sources."
+                        <TextBlock Text="Import watch history from external servers into Continuum user profiles."
                                    FontSize="14"
                                    Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
@@ -58,8 +58,8 @@
                            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                            TextWrapping="Wrap" />
 
-                <!-- Sources section -->
-                <TextBlock Text="SOURCES"
+                <!-- Source servers section -->
+                <TextBlock Text="SOURCE SERVERS"
                            Style="{StaticResource SectionHeaderTextStyle}" />
 
                 <ItemsRepeater ItemsSource="{x:Bind ViewModel.Sources, Mode=OneWay}">
@@ -107,7 +107,7 @@
                            Visibility="Collapsed" />
 
                 <!-- Runs section -->
-                <TextBlock Text="IMPORT RUNS"
+                <TextBlock Text="RECENT IMPORTS"
                            Style="{StaticResource SectionHeaderTextStyle}"
                            Margin="0,16,0,0" />
 

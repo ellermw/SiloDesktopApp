@@ -1,9 +1,11 @@
 // src/ContinuumPlayer/Services/PlayerService.cs
 using System.Runtime.InteropServices;
+using CommunityToolkit.Mvvm.Messaging;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Helpers;
 using ContinuumPlayer.Core.Models.Playback;
 using ContinuumPlayer.Core.Services;
+using ContinuumPlayer.Messaging;
 using ContinuumPlayer.Player;
 
 namespace ContinuumPlayer.Services;
@@ -136,7 +138,7 @@ public class PlayerService : IDisposable
         if (State == PlayerState.Expanded || State == PlayerState.Fullscreen)
         {
             if (State == PlayerState.Fullscreen)
-                ExitFullscreen();
+                ExitAnyFullscreen();
             SetState(PlayerState.Minimized);
         }
     }
@@ -206,6 +208,17 @@ public class PlayerService : IDisposable
         if (State != PlayerState.Fullscreen) return;
         var mw = App.MainWindowInstance;
         if (mw == null) return;
+
+        // Defensive: if _savedStyle/_savedRect were never populated (e.g. the
+        // caller accidentally hits this when the popup was the thing in
+        // fullscreen, not the main window), don't stomp the main window to a
+        // zero-sized styleless rect. Just flip state and bail.
+        if (_savedStyle == 0 || (_savedRect.Right - _savedRect.Left) <= 0)
+        {
+            SetState(PlayerState.Expanded);
+            return;
+        }
+
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(mw);
 
         SetWindowLongPtrW(hwnd, GWL_STYLE, _savedStyle);
@@ -225,6 +238,34 @@ public class PlayerService : IDisposable
             ExitFullscreen();
         else if (State == PlayerState.Expanded)
             EnterFullscreen();
+    }
+
+    /// <summary>
+    /// Exits whichever fullscreen path is currently active.
+    ///
+    /// There are two independent ways to enter fullscreen:
+    ///   1. <see cref="EnterFullscreen"/> — main window Win32 fullscreen. Saves
+    ///      <c>_savedStyle</c> / <c>_savedRect</c> on this service.
+    ///   2. <see cref="MpvVideoWindow.EnterFullscreen"/> — native popup fullscreen.
+    ///      Saves its own rect on the popup object.
+    /// Only one of these is ever active at a time. Calling the wrong
+    /// <c>ExitFullscreen</c> for the active path restores uninitialized state
+    /// (zeroed rect/style) and collapses the main window to (0,0) 0x0 — which is
+    /// how the "app disappears, mini bar lands on the wrong monitor" bug used to
+    /// manifest when minimizing from popup-fullscreen.
+    /// </summary>
+    private void ExitAnyFullscreen()
+    {
+        if (State != PlayerState.Fullscreen) return;
+        if (_videoWindow?.IsFullscreen == true)
+        {
+            _videoWindow.ExitFullscreen();
+            SetState(PlayerState.Expanded);
+        }
+        else
+        {
+            ExitFullscreen();
+        }
     }
 
     // ── Playback ─────────────────────────────────────────────────────────
@@ -500,8 +541,19 @@ public class PlayerService : IDisposable
             var manifestPath = transcodeResponse.ManifestUrl;
             if (!manifestPath.StartsWith("http") && !manifestPath.StartsWith("/api/v1"))
                 manifestPath = "/api/v1" + manifestPath;
-            var streamUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
-            return (streamUrl, transcodeResponse.PlayerStartSeconds);
+            var remoteManifestUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
+
+            // B52: route the initial transcode manifest through the local HLS
+            // proxy (same as the quality-switch path). The proxy catches 404s
+            // on segments the encoder hasn't produced yet and retries for up
+            // to ~45 s — mpv alone just fails. Without this, starting on a
+            // transcoded stream sometimes stalls on `seg_NNNNN.m4s` 404s.
+            _hlsProxy?.Stop();
+            _hlsProxy = new HlsProxy(remoteManifestUrl, _apiClient.AccessToken);
+            var localUrl = _hlsProxy.Start();
+            LogToFile("state_trace.txt", $"Initial transcode via HLS proxy: remote={remoteManifestUrl} local={localUrl} playerStart={transcodeResponse.PlayerStartSeconds}");
+
+            return (localUrl, transcodeResponse.PlayerStartSeconds);
         }
         catch (Exception ex)
         {
@@ -1358,9 +1410,12 @@ public class PlayerService : IDisposable
 
         LogToFile("state_trace.txt", $"CloseAsync called: State={State} _switchingContent={_switchingContent}");
         if (State == PlayerState.Fullscreen)
-            ExitFullscreen();
+            ExitAnyFullscreen();
 
         // Report final position to server BEFORE stopping (so resume works)
+        string? closedContentId = ContentId;
+        double closedPosition = _mpv?.Position ?? 0;
+        double closedDuration = _mpv?.Duration ?? 0;
         if (_mpv != null && _playbackManager?.SessionId != null)
         {
             var finalPos = _mpv.Position;
@@ -1373,6 +1428,22 @@ public class PlayerService : IDisposable
                 }
                 catch (Exception ex) { LogToFile("state_trace.txt", $"Final progress error: {ex.Message}"); }
             }
+        }
+
+        // B15 + F4: publish PlaybackProgressUpdated so Home / History /
+        // ItemDetail view models reflect the new position without waiting
+        // for a full refetch. "Completed" = watched past 90% of duration,
+        // matching the webui `isCompleted` heuristic.
+        if (!string.IsNullOrEmpty(closedContentId) && closedPosition > 0)
+        {
+            bool completed = closedDuration > 0 && closedPosition >= closedDuration * 0.9;
+            try
+            {
+                WeakReferenceMessenger.Default.Send(
+                    new PlaybackProgressUpdated(
+                        closedContentId, closedPosition, closedDuration, completed));
+            }
+            catch (Exception ex) { LogToFile("state_trace.txt", $"Publish progress event error: {ex.Message}"); }
         }
 
         _mpv?.Stop();
@@ -1412,12 +1483,15 @@ public class PlayerService : IDisposable
 
     public void Dispose()
     {
+        // Exit fullscreen BEFORE disposing the video window, so
+        // ExitAnyFullscreen can still see which path is active.
+        if (State == PlayerState.Fullscreen)
+            ExitAnyFullscreen();
+
         _videoWindow?.Dispose();
         _videoWindow = null;
         if (State != PlayerState.Idle)
         {
-            if (State == PlayerState.Fullscreen)
-                ExitFullscreen();
             _playbackManager?.Dispose();
         }
         _mpv?.Dispose();

@@ -110,6 +110,7 @@
                                 <ColumnDefinition Width="1.5*" />
                                 <ColumnDefinition Width="60" />
                                 <ColumnDefinition Width="1.5*" />
+                                <ColumnDefinition Width="1.2*" />
                                 <ColumnDefinition Width="120" />
                                 <ColumnDefinition Width="110" />
                             </Grid.ColumnDefinitions>
@@ -117,8 +118,9 @@
                             <TextBlock Grid.Column="1" Text="SOURCE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                             <TextBlock Grid.Column="2" Text="ITEMS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                             <TextBlock Grid.Column="3" Text="SYNC" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="4" Text="UPDATED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="5" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="4" Text="SCHEDULE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="5" Text="UPDATED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="6" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
                         </Grid>
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />

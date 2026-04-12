@@ -49,8 +49,42 @@ public sealed partial class MainWindow : Window
 
         _navigationService.Frame = ContentFrame;
 
-        // Hide the nav view initially -- it shows only after login
+        // F7: update window title on every navigation.
+        _navigationService.Navigated += OnNavigated_UpdateWindowTitle;
+        if (AppWindow != null) AppWindow.Title = DocumentTitle.AppName;
+
+        // F2: register the toast host with the ToastService so any VM/page
+        // can call App.Services.GetRequiredService<ToastService>().Success(...).
+        var toastService = App.Services.GetRequiredService<ToastService>();
+        toastService.Register(ToastHost, DispatcherQueue);
+
+        // Hide the nav view initially -- it shows only after login.
+        // Server Activity button follows the same admin-gate as AdminButton and
+        // stays hidden until ShowMainNavigation() fires post-login.
         NavView.IsPaneVisible = false;
+        MainServerActivityButton.Visibility = Visibility.Collapsed;
+
+        // Wire Server Activity "View all" callbacks. Routes navigate through
+        // AdminShellPage so the admin sidebar stays present — passing the target
+        // sub-page type as a parameter, which AdminShellPage consumes in
+        // OnNavigatedTo and opens inside its internal AdminContentFrame.
+        //
+        // HideWhenEmpty=false keeps the button visible for admins on every page
+        // (not just when something is active). Non-admin users never see it
+        // regardless — the role check inside the control handles that.
+        MainServerActivityButton.HideWhenEmpty = false;
+        MainServerActivityButton.OnViewStreams = () =>
+        {
+            _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminActivityPage));
+        };
+        MainServerActivityButton.OnViewTasks = () =>
+        {
+            _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminTasksPage));
+        };
+        MainServerActivityButton.OnViewScans = () =>
+        {
+            _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminLibrariesPage));
+        };
 
         // Listen for player state changes
         _playerService = App.Services.GetRequiredService<PlayerService>();
@@ -91,6 +125,20 @@ public sealed partial class MainWindow : Window
         _playerService.StateChanged -= OnPlayerStateChanged;
         this.SizeChanged -= OnWindowSizeChanged;
         if (AppWindow != null) AppWindow.Changed -= OnAppWindowChanged;
+        _navigationService.Navigated -= OnNavigated_UpdateWindowTitle;
+    }
+
+    /// <summary>F7: update AppWindow.Title on every page navigation.</summary>
+    private void OnNavigated_UpdateWindowTitle(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        if (AppWindow == null) return;
+        var pageType = e.SourcePageType;
+        if (pageType == null)
+        {
+            AppWindow.Title = DocumentTitle.AppName;
+            return;
+        }
+        AppWindow.Title = DocumentTitle.FromPageType(pageType);
     }
 
     private async void NavView_Loaded(object sender, RoutedEventArgs e)
@@ -171,8 +219,13 @@ public sealed partial class MainWindow : Window
         NavView.IsPaneVisible = true;
 
         // Always update admin button and profile display for current user
-        AdminButton.Visibility = _authService.CurrentUser?.Role == "admin"
-            ? Visibility.Visible : Visibility.Collapsed;
+        bool isAdmin = _authService.CurrentUser?.Role == "admin";
+        AdminButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
+        // Server Activity button uses the exact same gate as the admin sidebar
+        // button — whatever decision is made here for AdminButton applies to
+        // MainServerActivityButton too. Keeps the two controls in lock-step
+        // regardless of login/logout/navigation timing.
+        MainServerActivityButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
         _ = UpdateProfileDisplayAsync();
 
         if (!_navInitialized)
@@ -226,6 +279,10 @@ public sealed partial class MainWindow : Window
     public void HideMainNavigation()
     {
         NavView.IsPaneVisible = false;
+        // Keep the Server Activity button in sync with the rest of the shell —
+        // while the nav is hidden (login / profile select / setup), no admin
+        // chrome should be visible.
+        MainServerActivityButton.Visibility = Visibility.Collapsed;
     }
 
     public void RestoreMainPane()
@@ -407,11 +464,17 @@ public sealed partial class MainWindow : Window
                 case "Recommendations":
                     _navigationService.Navigate<RecommendationsPage>();
                     break;
+                case "Calendar":
+                    _navigationService.Navigate<CalendarPage>();
+                    break;
                 case "Favorites":
                     _navigationService.Navigate<FavoritesPage>();
                     break;
                 case "Watchlist":
                     _navigationService.Navigate<WatchlistPage>();
+                    break;
+                case "WatchParty":
+                    _navigationService.Navigate<WatchTogetherJoinPage>();
                     break;
                 case "History":
                     _navigationService.Navigate<HistoryPage>();

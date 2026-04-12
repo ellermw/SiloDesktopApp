@@ -285,22 +285,17 @@ public sealed partial class AdminLogsPage : Page
                 ? new SolidColorBrush(Color.FromArgb(12, 99, 102, 241))  // bg-primary/5
                 : new SolidColorBrush(Colors.Transparent)
         };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(55) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(55) });
+        // Web has: Time / Level / Component / Status / Duration / Message
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
 
         var defaultBg = row.Background;
 
-        // Time (whitespace-nowrap)
+        // Time
         row.Children.Add(MakeMonoCell(0, AdminLogsViewModel.FormatDateTime(entry.Timestamp), 11));
 
         // Level (uppercase)
@@ -319,58 +314,26 @@ public sealed partial class AdminLogsPage : Page
         // Component
         row.Children.Add(MakeTextCell(2, entry.Component, 12));
 
-        // User: #ID or -
-        row.Children.Add(MakeTextCell(3, entry.UserId.HasValue ? $"#{entry.UserId}" : "-", 12));
-
-        // Session (mono 12px)
-        row.Children.Add(MakeMonoCell(4, entry.SessionId ?? AdminLogsViewModel.GetAttr(entry, "session_id"), 11));
-
-        // Playback (mono 12px)
-        row.Children.Add(MakeMonoCell(5, entry.PlaybackSessionId ?? AdminLogsViewModel.GetAttr(entry, "playback_session_id"), 11));
-
-        // Method from attrs
-        row.Children.Add(MakeTextCell(6, AdminLogsViewModel.GetAttr(entry, "method"), 12));
-
-        // Path from attrs (mono 12px, max-w 260px truncated with title tooltip)
-        var pathAttr = AdminLogsViewModel.GetAttr(entry, "path");
-        var pathBlock = new TextBlock
-        {
-            Text = pathAttr,
-            FontSize = 11,
-            FontFamily = new FontFamily("Consolas"),
-            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = 260,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        ToolTipService.SetToolTip(pathBlock, pathAttr);
-        Grid.SetColumn(pathBlock, 7);
-        row.Children.Add(pathBlock);
-
         // Status from attrs
-        row.Children.Add(MakeTextCell(8, AdminLogsViewModel.GetAttr(entry, "status"), 12));
+        row.Children.Add(MakeTextCell(3, AdminLogsViewModel.GetAttr(entry, "status"), 12));
 
         // Duration from attrs (duration_ms + " ms")
-        row.Children.Add(MakeTextCell(9, AdminLogsViewModel.GetDurationAttr(entry), 11));
+        row.Children.Add(MakeTextCell(4, AdminLogsViewModel.GetDurationAttr(entry), 11));
 
-        // Message (max-w 360px truncated with title tooltip)
+        // Message (max-w truncated with title tooltip)
         var msgBlock = new TextBlock
         {
             Text = entry.Message,
             FontSize = 12,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = 360,
             VerticalAlignment = VerticalAlignment.Center
         };
         ToolTipService.SetToolTip(msgBlock, entry.Message);
-        Grid.SetColumn(msgBlock, 10);
+        Grid.SetColumn(msgBlock, 5);
         row.Children.Add(msgBlock);
 
-        // Request ID (mono 12px)
-        row.Children.Add(MakeMonoCell(11, entry.RequestId ?? "-", 11));
-
-        // Make row clickable (cursor-pointer)
+        // Make row clickable (cursor-pointer) — click opens detail sheet with full metadata
         row.PointerPressed += (_, _) => ShowAppDetail(entry);
         row.PointerEntered += (_, _) =>
             row.Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"];

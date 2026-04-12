@@ -18,31 +18,18 @@ public partial class RecommendationsViewModel : ObservableObject
         _recommendationsApi = recommendationsApi;
     }
 
+    // Rows displayed on the page (web: rows from /recommendations/discover)
     public ObservableCollection<RecommendationRowDisplay> Rows { get; } = [];
 
-    // Hero section: top "For You" picks
-    public ObservableCollection<MediaItem> HeroItems { get; } = [];
-
-    // Popular section
-    public ObservableCollection<MediaItem> PopularItems { get; } = [];
-
-    // Recently Added section
-    public ObservableCollection<MediaItem> RecentlyAddedItems { get; } = [];
+    // Taste profile shown in header (web: TasteProfileCard)
+    [ObservableProperty]
+    private TasteProfileResponse? _tasteProfile;
 
     [ObservableProperty]
     private bool _isLoading;
 
     [ObservableProperty]
     private string? _errorMessage;
-
-    [ObservableProperty]
-    private bool _hasHeroItems;
-
-    [ObservableProperty]
-    private bool _hasPopularItems;
-
-    [ObservableProperty]
-    private bool _hasRecentlyAddedItems;
 
     [RelayCommand]
     private async Task LoadAsync()
@@ -52,22 +39,14 @@ public partial class RecommendationsViewModel : ObservableObject
         IsLoading = true;
         ErrorMessage = null;
         Rows.Clear();
-        HeroItems.Clear();
-        PopularItems.Clear();
-        RecentlyAddedItems.Clear();
-        HasHeroItems = false;
-        HasPopularItems = false;
-        HasRecentlyAddedItems = false;
+        TasteProfile = null;
 
         try
         {
-            // Load all sections in parallel
-            var forYouTask = LoadForYouRowsAsync();
-            var heroTask = LoadHeroItemsAsync();
-            var popularTask = LoadPopularAsync();
-            var recentlyAddedTask = LoadRecentlyAddedAsync();
-
-            await Task.WhenAll(forYouTask, heroTask, popularTask, recentlyAddedTask);
+            // Load taste profile and recommendation rows in parallel (web parity).
+            var profileTask = LoadTasteProfileAsync();
+            var rowsTask = LoadForYouRowsAsync();
+            await Task.WhenAll(profileTask, rowsTask);
         }
         catch (Exception ex)
         {
@@ -79,10 +58,24 @@ public partial class RecommendationsViewModel : ObservableObject
         }
     }
 
+    private async Task LoadTasteProfileAsync()
+    {
+        try
+        {
+            TasteProfile = await _recommendationsApi.GetTasteProfileAsync();
+        }
+        catch
+        {
+            // Non-fatal: section is just hidden if no profile is available.
+        }
+    }
+
     private async Task LoadForYouRowsAsync()
     {
         try
         {
+            // Web uses /recommendations/discover; desktop currently exposes
+            // /recommendations/for-you/rows which returns the same row shape.
             var response = await _catalogApi.GetRecommendationsAsync();
 
             foreach (var row in response.Rows)
@@ -93,7 +86,7 @@ public partial class RecommendationsViewModel : ObservableObject
                     Type = row.Type
                 };
 
-                // Fetch item details for each recommendation (in parallel)
+                // Fetch item details for each recommendation in parallel
                 var tasks = row.Items.Select(async recItem =>
                 {
                     try
@@ -135,137 +128,6 @@ public partial class RecommendationsViewModel : ObservableObject
         catch
         {
             // For You rows load failure is non-fatal
-        }
-    }
-
-    private async Task LoadHeroItemsAsync()
-    {
-        try
-        {
-            var response = await _recommendationsApi.GetForYouMainAsync();
-            foreach (var row in response.Rows)
-            {
-                var tasks = row.Items.Take(5).Select(async recItem =>
-                {
-                    try
-                    {
-                        var detail = await _catalogApi.GetItemDetailAsync(recItem.MediaItemId);
-                        return new MediaItem
-                        {
-                            ContentId = detail.ContentId,
-                            Type = detail.Type,
-                            Title = detail.Title,
-                            Year = detail.Year,
-                            Genres = detail.Genres,
-                            Overview = detail.Overview,
-                            PosterUrl = detail.PosterUrl,
-                            PosterThumbhash = detail.PosterThumbhash,
-                            BackdropUrl = detail.BackdropUrl,
-                            BackdropThumbhash = detail.BackdropThumbhash,
-                            LogoUrl = detail.LogoUrl,
-                            UserState = detail.UserData != null ? new UserState { Played = detail.UserData.Played } : null
-                        };
-                    }
-                    catch { return null; }
-                }).ToList();
-
-                var items = await Task.WhenAll(tasks);
-                foreach (var item in items)
-                {
-                    if (item != null)
-                        HeroItems.Add(item);
-                }
-                break; // Only use first row for hero
-            }
-            HasHeroItems = HeroItems.Count > 0;
-        }
-        catch
-        {
-            // Hero items load failure is non-fatal
-        }
-    }
-
-    private async Task LoadPopularAsync()
-    {
-        try
-        {
-            var response = await _recommendationsApi.GetPopularAsync(days: 30);
-            var tasks = response.Items.Take(20).Select(async s =>
-            {
-                try
-                {
-                    var detail = await _catalogApi.GetItemDetailAsync(s.MediaItemId);
-                    return new MediaItem
-                    {
-                        ContentId = detail.ContentId,
-                        Type = detail.Type,
-                        Title = detail.Title,
-                        Year = detail.Year,
-                        Genres = detail.Genres,
-                        Overview = detail.Overview,
-                        PosterUrl = detail.PosterUrl,
-                        PosterThumbhash = detail.PosterThumbhash,
-                        BackdropUrl = detail.BackdropUrl,
-                        BackdropThumbhash = detail.BackdropThumbhash,
-                        LogoUrl = detail.LogoUrl,
-                    };
-                }
-                catch { return null; }
-            }).ToList();
-
-            var items = await Task.WhenAll(tasks);
-            foreach (var item in items)
-            {
-                if (item != null)
-                    PopularItems.Add(item);
-            }
-            HasPopularItems = PopularItems.Count > 0;
-        }
-        catch
-        {
-            // Popular items load failure is non-fatal
-        }
-    }
-
-    private async Task LoadRecentlyAddedAsync()
-    {
-        try
-        {
-            var response = await _recommendationsApi.GetRecentlyAddedAsync();
-            var tasks = response.Items.Take(20).Select(async s =>
-            {
-                try
-                {
-                    var detail = await _catalogApi.GetItemDetailAsync(s.MediaItemId);
-                    return new MediaItem
-                    {
-                        ContentId = detail.ContentId,
-                        Type = detail.Type,
-                        Title = detail.Title,
-                        Year = detail.Year,
-                        Genres = detail.Genres,
-                        Overview = detail.Overview,
-                        PosterUrl = detail.PosterUrl,
-                        PosterThumbhash = detail.PosterThumbhash,
-                        BackdropUrl = detail.BackdropUrl,
-                        BackdropThumbhash = detail.BackdropThumbhash,
-                        LogoUrl = detail.LogoUrl,
-                    };
-                }
-                catch { return null; }
-            }).ToList();
-
-            var items = await Task.WhenAll(tasks);
-            foreach (var item in items)
-            {
-                if (item != null)
-                    RecentlyAddedItems.Add(item);
-            }
-            HasRecentlyAddedItems = RecentlyAddedItems.Count > 0;
-        }
-        catch
-        {
-            // Recently added items load failure is non-fatal
         }
     }
 }

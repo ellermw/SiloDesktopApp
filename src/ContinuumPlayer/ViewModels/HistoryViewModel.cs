@@ -1,19 +1,53 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Models.Home;
+using ContinuumPlayer.Messaging;
 
 namespace ContinuumPlayer.ViewModels;
 
-public partial class HistoryViewModel : ObservableObject
+public partial class HistoryViewModel : ObservableObject,
+    IRecipient<MediaSurfaceChanged>,
+    IRecipient<PlaybackProgressUpdated>
 {
     private readonly CatalogApi _catalogApi;
 
     public HistoryViewModel(CatalogApi catalogApi)
     {
         _catalogApi = catalogApi;
+        // F4: refresh history whenever watched/progress state changes.
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
+    }
+
+    public void Receive(MediaSurfaceChanged message)
+    {
+        // Watched toggles + new playback progress should invalidate history
+        // caches. We don't have a cache timer here, but scheduling a reload
+        // next tick keeps history in sync with the rest of the app.
+        if (message.Kind is MediaSurfaceChangeKind.WatchedMarked
+            or MediaSurfaceChangeKind.WatchedCleared
+            or MediaSurfaceChangeKind.PlaybackProgress)
+        {
+            _pendingRefresh = true;
+        }
+    }
+
+    public void Receive(PlaybackProgressUpdated message)
+    {
+        _pendingRefresh = true;
+    }
+
+    /// <summary>Set by the messenger receivers; HistoryPage checks on navigation.</summary>
+    private bool _pendingRefresh;
+    public bool ConsumePendingRefresh()
+    {
+        if (!_pendingRefresh) return false;
+        _pendingRefresh = false;
+        return true;
     }
 
     public ObservableCollection<HistoryDisplayItem> Items { get; } = [];

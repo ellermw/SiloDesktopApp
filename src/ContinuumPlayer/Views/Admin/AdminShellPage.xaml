@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:ContinuumPlayer.Controls"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}">
 
@@ -807,10 +808,45 @@
         </Border>
 
         <!-- ===== Content Area ===== -->
-        <Frame
-            x:Name="AdminContentFrame"
-            Grid.Column="1"
-            Background="{StaticResource AppBackgroundBrush}" />
+        <Grid Grid.Column="1" Background="{StaticResource AppBackgroundBrush}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Header strip: server activity popover button (right-aligned).
+                 Mirrors webui AdminLayout header. -->
+            <Border
+                Grid.Row="0"
+                Padding="20,14"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,0,0,1">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Reserved left side (currently empty — mirrors webui which
+                         only shows breadcrumbs here, rarely used) -->
+
+                    <!-- Server Activity button (reusable control). Always visible in
+                         the admin header. HideWhenEmpty set in XAML so it's established
+                         before the control's OnLoaded runs — a code-behind set after
+                         Loaded would leave the button Collapsed until the next poll. -->
+                    <controls:ServerActivityButton
+                        x:Name="AdminServerActivityButton"
+                        Grid.Column="1"
+                        HideWhenEmpty="False" />
+                </Grid>
+            </Border>
+
+            <!-- Admin page content frame -->
+            <Frame
+                x:Name="AdminContentFrame"
+                Grid.Row="1"
+                Background="{StaticResource AppBackgroundBrush}" />
+        </Grid>
 
     </Grid>
 </Page>

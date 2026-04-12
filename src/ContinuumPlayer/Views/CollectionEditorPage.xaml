@@ -78,20 +78,29 @@
                         x:Name="BackButton"
                         Grid.Column="0"
                         Style="{StaticResource GhostButtonStyle}"
-                        VerticalAlignment="Center"
-                        Margin="0,0,12,0"
+                        VerticalAlignment="Top"
+                        Margin="0,8,12,0"
                         Click="BackButton_Click">
-                        <FontIcon Glyph="&#xE72B;" FontSize="18" />
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE72B;" FontSize="14" />
+                            <TextBlock Text="Back to Collections" FontSize="13" />
+                        </StackPanel>
                     </Button>
 
-                    <TextBlock
-                        x:Name="PageTitle"
-                        Grid.Column="1"
-                        Text="New Collection"
-                        FontSize="{StaticResource FontSizeDisplayLarge}"
-                        FontWeight="Bold"
-                        Foreground="{StaticResource PrimaryTextBrush}"
-                        VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                        <TextBlock
+                            x:Name="PageTitle"
+                            Text="New Collection"
+                            FontSize="{StaticResource FontSizeDisplayLarge}"
+                            FontWeight="Bold"
+                            Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock
+                            Text="Build collections in a full-page editor so sharing, rules, and preview stay visible."
+                            FontSize="14"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            TextWrapping="Wrap"
+                            MaxWidth="620" />
+                    </StackPanel>
                 </Grid>
 
                 <!-- ===== Error Message ===== -->
@@ -341,7 +350,7 @@
                                 IsActive="{x:Bind ViewModel.IsSaving, Mode=OneWay}"
                                 Visibility="{x:Bind ViewModel.IsSaving, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                                 Width="16" Height="16" />
-                            <TextBlock x:Name="SaveButtonText" Text="Create Collection" />
+                            <TextBlock x:Name="SaveButtonText" Text="Save Collection" />
                         </StackPanel>
                     </Button>
                 </StackPanel>

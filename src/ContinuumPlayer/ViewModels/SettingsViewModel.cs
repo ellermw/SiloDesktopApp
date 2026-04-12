@@ -561,24 +561,31 @@ public partial class SettingsViewModel : ObservableObject
     }
 
     // ===== Subtitle Appearance =====
+    // B55: model shape + defaults + JSON keys aligned with the webui
+    // SubtitleAppearance type in web/src/lib/subtitleAppearance.ts so the
+    // persisted `subtitle_appearance` user setting round-trips across both
+    // clients. Keys are camelCase; opacity is an integer on a 0-100 scale
+    // (NOT a 0-1 float); textOutline defaults to false and fontFamily
+    // defaults to "sans-serif".
 
     [ObservableProperty]
-    private string _subFontFamily = "default";
+    private string _subFontFamily = "sans-serif";
 
     [ObservableProperty]
     private string _subFontSize = "medium";
 
     [ObservableProperty]
-    private string _subFontColor = "#FFFFFF";
+    private string _subFontColor = "#ffffff";
 
     [ObservableProperty]
-    private bool _subOutlineEnabled = true;
+    private bool _subOutlineEnabled = false;
 
     [ObservableProperty]
     private string _subBackgroundStyle = "box";
 
+    /// <summary>Background opacity, 0-100 integer scale (matches webui).</summary>
     [ObservableProperty]
-    private double _subBackgroundOpacity = 0.8;
+    private int _subBackgroundOpacity = 75;
 
     [ObservableProperty]
     private string _subBackgroundColor = "#000000";
@@ -593,13 +600,13 @@ public partial class SettingsViewModel : ObservableObject
         {
             var settings = new Dictionary<string, object>
             {
-                ["font_family"] = SubFontFamily,
-                ["font_size"] = SubFontSize,
-                ["font_color"] = SubFontColor,
-                ["outline_enabled"] = SubOutlineEnabled,
-                ["background_style"] = SubBackgroundStyle,
-                ["background_opacity"] = SubBackgroundOpacity,
-                ["background_color"] = SubBackgroundColor,
+                ["fontFamily"] = SubFontFamily,
+                ["fontSize"] = SubFontSize,
+                ["fontColor"] = SubFontColor,
+                ["textOutline"] = SubOutlineEnabled,
+                ["backgroundStyle"] = SubBackgroundStyle,
+                ["backgroundOpacity"] = SubBackgroundOpacity,
+                ["backgroundColor"] = SubBackgroundColor,
                 ["position"] = SubPosition,
             };
             await _settingsApi.PutSettingAsync("subtitle_appearance", System.Text.Json.JsonSerializer.Serialize(settings));
@@ -611,12 +618,12 @@ public partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private void ResetSubtitleAppearance()
     {
-        SubFontFamily = "default";
+        SubFontFamily = "sans-serif";
         SubFontSize = "medium";
-        SubFontColor = "#FFFFFF";
-        SubOutlineEnabled = true;
+        SubFontColor = "#ffffff";
+        SubOutlineEnabled = false;
         SubBackgroundStyle = "box";
-        SubBackgroundOpacity = 0.8;
+        SubBackgroundOpacity = 75;
         SubBackgroundColor = "#000000";
         SubPosition = "bottom";
         _ = SaveSubtitleAppearanceAsync();

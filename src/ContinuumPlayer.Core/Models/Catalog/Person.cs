@@ -1,10 +1,17 @@
+using System.Text.Json.Serialization;
+using ContinuumPlayer.Core.Json;
+
 namespace ContinuumPlayer.Core.Models.Catalog;
 
 public class Person
 {
-    // B33: Person IDs are strings end-to-end (cast/crew person_id can be non-numeric
-    // for third-party-provider records). The /people/{id} server route accepts the
-    // string as-is. Numeric IDs still work because they round-trip as decimal strings.
+    // B33 + B59: Person IDs are strings end-to-end (cast/crew person_id can be
+    // non-numeric for third-party-provider records). BUT — the /people/{id} server
+    // route returns `id` as a JSON number (int64), not a string. Without the
+    // StringOrNumber converter, GET /people/{id} deserialization throws. The
+    // converter reads numeric id tokens, formats as decimal string, and the rest
+    // of the pipeline stays string-uniform.
+    [JsonConverter(typeof(StringOrNumberJsonConverter))]
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public string? Bio { get; set; }

@@ -144,6 +144,10 @@ public partial class App : Application
         // Navigation
         services.AddSingleton<NavigationService>();
 
+        // F2: Application-wide toast notifications. MainWindow registers its
+        // ToastContainer with this service on construction.
+        services.AddSingleton<ToastService>();
+
         // Player service (owns mpv lifecycle, not tied to page navigation)
         services.AddSingleton<PlayerService>();
 
@@ -151,6 +155,7 @@ public partial class App : Application
         services.AddTransient<ServerSelectViewModel>();
         services.AddTransient<LoginViewModel>();
         services.AddTransient<SignupViewModel>();
+        services.AddTransient<ActivateDeviceViewModel>();
         services.AddTransient<SetupWizardViewModel>();
         services.AddTransient<ProfileSelectViewModel>();
         services.AddTransient<MainViewModel>();
@@ -162,11 +167,14 @@ public partial class App : Application
         services.AddTransient<WatchlistViewModel>();
         services.AddTransient<HistoryViewModel>();
         services.AddTransient<RecommendationsViewModel>();
+        services.AddTransient<CalendarViewModel>();
         services.AddTransient<PersonDetailViewModel>();
         services.AddTransient<CollectionsViewModel>();
         services.AddTransient<CollectionEditorViewModel>();
         services.AddTransient<DownloadsViewModel>();
         services.AddTransient<SettingsViewModel>();
+        services.AddTransient<WatchTogetherJoinViewModel>();
+        services.AddTransient<WatchTogetherRoomViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminDashboardViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminActivityViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminUsersViewModel>();

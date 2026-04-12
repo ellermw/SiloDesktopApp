@@ -24,6 +24,13 @@ public class AuthService
 
     public event Action? LoggedOut;
     public event Action? TokenRefreshed;
+    /// <summary>
+    /// Fires whenever CurrentUser transitions from null (or a different user)
+    /// to a non-null authenticated user. Subscribers should re-evaluate any
+    /// role-gated UI (e.g. admin-only indicators) that may have mounted before
+    /// login completed.
+    /// </summary>
+    public event Action? UserChanged;
 
     public async Task<LoginResponse> LoginAsync(string username, string password, CancellationToken ct = default)
     {
@@ -32,6 +39,7 @@ public class AuthService
         RefreshToken = response.RefreshToken;
         CurrentUser = response.User;
         ScheduleRefresh(response.ExpiresIn);
+        UserChanged?.Invoke();
         return response;
     }
 
@@ -45,6 +53,7 @@ public class AuthService
     public void SetCurrentUser(UserInfo user)
     {
         CurrentUser = user;
+        UserChanged?.Invoke();
     }
 
     public void SelectProfile(string profileId, string? profileToken = null)
@@ -62,6 +71,7 @@ public class AuthService
         RefreshToken = null;
         SelectedProfileId = null;
         LoggedOut?.Invoke();
+        UserChanged?.Invoke();
     }
 
     public async Task<bool> TryRefreshAsync(CancellationToken ct = default)
@@ -76,14 +86,24 @@ public class AuthService
 
             // Extract user info from JWT claims if not already set (thread-safe check)
             var currentUser = CurrentUser;
+            bool userChanged = false;
             if (currentUser == null)
             {
                 var user = TryParseUserFromJwt(response.AccessToken);
                 if (user != null)
+                {
                     CurrentUser = user;
+                    userChanged = true;
+                }
             }
 
             TokenRefreshed?.Invoke();
+            // Must fire UserChanged AFTER setting CurrentUser so subscribers
+            // (e.g. ServerActivityButton) observe the new admin state — without
+            // this, auto-login leaves role-gated UI stuck at null until the next
+            // polling tick catches up.
+            if (userChanged)
+                UserChanged?.Invoke();
             return true;
         }
         catch

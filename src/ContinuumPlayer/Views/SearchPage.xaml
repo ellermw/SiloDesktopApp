@@ -141,14 +141,14 @@
                 </Border>
             </Grid>
 
-            <!-- Search bar in results view (web: same SearchBar but inline in results) -->
+            <!-- Search bar in results view (web: centered prominent SearchBar) -->
             <Border
                 Grid.Row="1"
                 Background="{StaticResource SurfaceBrush}"
                 CornerRadius="20"
                 Margin="40,0,40,20"
                 MaxWidth="600"
-                HorizontalAlignment="Left">
+                HorizontalAlignment="Center">
                 <Grid>
                     <FontIcon
                         Glyph="&#xE721;"

@@ -136,3 +136,74 @@ public class TimeRange
     public double Start { get; set; }
     public double End { get; set; }
 }
+
+// ===== Watch Together (Watch Party) =====
+// DTOs for the /api/v1/watch-together/* surface. Shadow the webui types in
+// continuum-server/web/src/lib/watchTogether.ts. Kept in this file so playback-
+// related models stay colocated; there's no separate WatchTogether folder yet.
+
+public class WatchTogetherRoomSnapshot
+{
+    public string RoomId { get; set; } = "";
+    public string Phase { get; set; } = ""; // "lobby" | "playing" | "ended"
+    public string PlaybackState { get; set; } = ""; // "idle" | "waiting" | "paused" | "playing"
+    public string SelectionMode { get; set; } = "host_pick"; // "host_pick" | "vote"
+    public int SelectionRevision { get; set; }
+    public string? SelectedContentId { get; set; }
+    public int? SelectedFileId { get; set; }
+    public int? SelectedLibraryId { get; set; }
+    public string Code { get; set; } = "";
+    public string GuestControlPolicy { get; set; } = "host_only"; // "host_only" | "guest_play_pause"
+    public bool IsPaused { get; set; }
+    public double AnchorPositionSeconds { get; set; }
+    public string? AnchorUpdatedAt { get; set; }
+    public int Generation { get; set; }
+    public int MemberCount { get; set; }
+    public bool HostConnected { get; set; }
+    public string SelfRole { get; set; } = ""; // "host" | "guest"
+    public bool SelfCanControlTransport { get; set; }
+    public bool SelfCanManageRoom { get; set; }
+    public bool SelfIgnoreWait { get; set; }
+    public string? AttachedSessionId { get; set; }
+    public string? InvitePath { get; set; }
+}
+
+public class WatchTogetherRoomResponse
+{
+    public WatchTogetherRoomSnapshot Room { get; set; } = new();
+    public string? RoomAccessToken { get; set; }
+}
+
+public class WatchTogetherSuggestion
+{
+    public string Id { get; set; } = "";
+    public string RoomId { get; set; } = "";
+    public int SuggesterUserId { get; set; }
+    public string SuggesterProfileId { get; set; } = "";
+    public string ContentId { get; set; } = "";
+    public string ContentType { get; set; } = ""; // "movie" | "episode"
+    public string Title { get; set; } = "";
+    public string Subtitle { get; set; } = "";
+    public string PosterUrl { get; set; } = "";
+    public string Note { get; set; } = "";
+    public int VoteCount { get; set; }
+    public bool VotedByMe { get; set; }
+    public string? CreatedAt { get; set; }
+}
+
+public class WatchTogetherSuggestionsResponse
+{
+    public List<WatchTogetherSuggestion> Suggestions { get; set; } = [];
+}
+
+public class WatchTogetherTransportCommand
+{
+    public string CommandId { get; set; } = "";
+    public string? SessionId { get; set; }
+    public int SelectionRevision { get; set; }
+    public string Action { get; set; } = ""; // "play" | "pause" | "seek"
+    public double PositionSeconds { get; set; }
+    public string? ExecuteAt { get; set; }
+    public string? IssuedAt { get; set; }
+    public string PlaybackState { get; set; } = "";
+}

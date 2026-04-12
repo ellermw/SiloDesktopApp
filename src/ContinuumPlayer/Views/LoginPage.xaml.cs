@@ -29,6 +29,13 @@ public sealed partial class LoginPage : Page
             ViewModel.ServerName = server.Name;
         }
 
+        // Surface the selected server's display name in the card header (web parity:
+        // web uses the server branding name as the auth card title).
+        if (!string.IsNullOrWhiteSpace(ViewModel.ServerName))
+        {
+            ServerNameTitle.Text = ViewModel.ServerName;
+        }
+
         // Load auth providers and signup status
         await ViewModel.LoadAuthInfoCommand.ExecuteAsync(null);
     }

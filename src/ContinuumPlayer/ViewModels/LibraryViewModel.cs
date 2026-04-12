@@ -285,6 +285,7 @@ public partial class LibraryViewModel : ObservableObject
                 audioLanguage: SelectedAudioLanguage,
                 yearMin: SelectedYearMin,
                 yearMax: SelectedYearMax,
+                type: SelectedType,
                 limit: PageSize,
                 offset: _offset);
 

@@ -46,17 +46,15 @@ public sealed partial class HomePage : Page
 
     private void BuildContent()
     {
-        // Populate hero carousel with featured section items
-        var featuredItems = new List<MediaItem>();
-        foreach (var section in ViewModel.FeaturedSections)
+        // Web parity (Home.tsx renderHeroSlot): the hero banner renders the FIRST
+        // featured section only, capped to that section's item_limit. It does NOT
+        // merge items from multiple featured sections.
+        var heroSection = ViewModel.FeaturedSections.FirstOrDefault(s => s.Items.Count > 0);
+        if (heroSection != null)
         {
-            foreach (var item in section.Items)
-                featuredItems.Add(item);
-        }
-
-        if (featuredItems.Count > 0)
-        {
-            HeroCarouselControl.ItemsSource = featuredItems;
+            var limit = heroSection.ItemLimit > 0 ? heroSection.ItemLimit : heroSection.Items.Count;
+            var heroItems = heroSection.Items.Take(limit).ToList();
+            HeroCarouselControl.ItemsSource = heroItems;
             HeroCarouselControl.Visibility = Visibility.Visible;
         }
         else
@@ -91,6 +89,19 @@ public sealed partial class HomePage : Page
         await ViewModel.UndoDismissalCommand.ExecuteAsync(null);
         // Rebuild content to restore the item
         BuildContent();
+    }
+
+    private async void WatchTonightButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var dialog = new WatchTonightDialog { XamlRoot = this.XamlRoot };
+            await dialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            ViewModel.ErrorMessage = $"Could not open Watch Tonight: {ex.Message}";
+        }
     }
 
     private void OnSectionsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)

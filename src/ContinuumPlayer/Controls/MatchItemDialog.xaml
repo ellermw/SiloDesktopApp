@@ -13,6 +13,18 @@
     IsPrimaryButtonEnabled="False">
 
     <StackPanel Width="520" Spacing="16">
+        <!-- Local media section (admin-only): folder/file paths for each version
+             (movies) or library roots (series). Mirrors webui MediaLocations +
+             FolderPathsList used inside MatchItemDialog. -->
+        <StackPanel x:Name="LocalMediaSection" Spacing="8" Visibility="Collapsed">
+            <TextBlock Text="Local media" FontSize="14" FontWeight="SemiBold"
+                       Foreground="{StaticResource PrimaryTextBrush}" />
+            <StackPanel x:Name="LocalMediaPanel" Spacing="6" />
+            <TextBlock x:Name="LocalMediaEmpty" FontSize="12"
+                       Foreground="{StaticResource SecondaryTextBrush}"
+                       Visibility="Collapsed" />
+        </StackPanel>
+
         <!-- Search row -->
         <Grid ColumnSpacing="8">
             <Grid.ColumnDefinitions>

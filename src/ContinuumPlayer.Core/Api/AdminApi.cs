@@ -136,6 +136,17 @@ public class AdminApi(ContinuumApiClient client)
         return new HashSet<string>(response.Configured);
     }
 
+    /// <summary>
+    /// Runs a connection check for an external service (redis, s3_metadata,
+    /// s3_operational, embeddings, plugin). POSTs the current settings values
+    /// (including unsaved dirty ones) so the server can test against whatever
+    /// the admin is about to save, not just what is persisted.
+    /// </summary>
+    public Task<ConnectionCheckResponse> CheckSettingsConnectionAsync(
+        string kind, AdminSettingsConnectionCheckRequest body, CancellationToken ct = default)
+        => client.PostAsync<ConnectionCheckResponse>(
+            $"/api/v1/admin/settings/check/{Uri.EscapeDataString(kind)}", body, ct);
+
     // ===== API Keys =====
 
     public Task<List<AdminAPIKey>> GetAPIKeysAsync(CancellationToken ct = default)

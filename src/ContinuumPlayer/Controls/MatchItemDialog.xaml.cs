@@ -3,9 +3,11 @@ using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.UI;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Admin;
+using ContinuumPlayer.Core.Models.Playback;
 
 namespace ContinuumPlayer.Controls;
 
@@ -22,6 +24,234 @@ public sealed partial class MatchItemDialog : ContentDialog
         _adminApi = App.Services.GetRequiredService<AdminApi>();
         _itemId = itemId;
         this.InitializeComponent();
+    }
+
+    /// <summary>
+    /// Extended constructor that also displays the item's on-disk locations
+    /// (mirrors the webui MediaLocations / FolderPathsList sections that
+    /// appear inside MatchItemDialog). Movies show one row per FileVersion
+    /// with folder + filename; series show one row per library root path.
+    /// </summary>
+    public MatchItemDialog(string itemId, IList<FileVersion>? versions,
+        IList<string>? folderPaths, bool isSeries)
+        : this(itemId)
+    {
+        PopulateLocalMedia(versions, folderPaths, isSeries);
+    }
+
+    private void PopulateLocalMedia(IList<FileVersion>? versions,
+        IList<string>? folderPaths, bool isSeries)
+    {
+        LocalMediaPanel.Children.Clear();
+
+        if (isSeries)
+        {
+            if (folderPaths == null || folderPaths.Count == 0)
+            {
+                LocalMediaSection.Visibility = Visibility.Visible;
+                LocalMediaEmpty.Text = "No library folder paths available.";
+                LocalMediaEmpty.Visibility = Visibility.Visible;
+                return;
+            }
+            foreach (var path in folderPaths)
+                LocalMediaPanel.Children.Add(BuildFolderRow(path));
+            LocalMediaSection.Visibility = Visibility.Visible;
+            return;
+        }
+
+        if (versions == null || versions.Count == 0)
+        {
+            LocalMediaSection.Visibility = Visibility.Visible;
+            LocalMediaEmpty.Text = "No file paths are available for this item.";
+            LocalMediaEmpty.Visibility = Visibility.Visible;
+            return;
+        }
+
+        int shown = 0;
+        foreach (var v in versions.OrderByDescending(VersionSortKey))
+        {
+            if (string.IsNullOrWhiteSpace(v.FilePath)) continue;
+            LocalMediaPanel.Children.Add(BuildVersionRow(v));
+            shown++;
+        }
+
+        if (shown == 0)
+        {
+            LocalMediaEmpty.Text = "No file paths are available for this item.";
+            LocalMediaEmpty.Visibility = Visibility.Visible;
+        }
+        LocalMediaSection.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>Resolution + HDR score for sorting versions high-to-low.</summary>
+    private static int VersionSortKey(FileVersion v)
+    {
+        int res = v.Resolution switch
+        {
+            "2160p" => 4000,
+            "1080p" => 3000,
+            "720p" => 2000,
+            "480p" => 1000,
+            _ => 0,
+        };
+        return res + (v.Hdr ? 1 : 0);
+    }
+
+    private static (string folderName, string folderPath, string fileName) SplitPath(
+        string? filePath, string? fallbackName)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+            return ("", "", fallbackName?.Trim() ?? "");
+
+        int lastSlash = Math.Max(filePath.LastIndexOf('/'), filePath.LastIndexOf('\\'));
+        if (lastSlash < 0)
+            return ("", "", filePath);
+
+        string folderPath = filePath.Substring(0, lastSlash);
+        string fileName = filePath.Substring(lastSlash + 1);
+        if (string.IsNullOrEmpty(fileName))
+            fileName = fallbackName?.Trim() ?? "Unknown file";
+
+        var segs = folderPath.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
+        string folderName = segs.Length > 0 ? segs[^1] : folderPath;
+        return (folderName, folderPath, fileName);
+    }
+
+    private static string BuildVersionLabel(FileVersion v)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(v.Resolution)) parts.Add(v.Resolution);
+        if (v.Hdr) parts.Add("HDR");
+        if (!string.IsNullOrEmpty(v.CodecVideo)) parts.Add(v.CodecVideo.ToUpperInvariant());
+        return parts.Count > 0 ? string.Join(" ", parts) : $"Version {v.FileId}";
+    }
+
+    private FrameworkElement BuildVersionRow(FileVersion v)
+    {
+        var border = new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 8, 8, 8),
+        };
+
+        var root = new Grid { ColumnSpacing = 8 };
+        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var info = new StackPanel { Spacing = 2 };
+        info.Children.Add(new TextBlock
+        {
+            Text = BuildVersionLabel(v),
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+
+        var (folderName, folderPath, fileName) = SplitPath(v.FilePath, v.FileName);
+
+        var pathRow = new TextBlock
+        {
+            FontSize = 11,
+            FontFamily = new FontFamily("Consolas"),
+            TextWrapping = TextWrapping.NoWrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        if (!string.IsNullOrEmpty(folderName))
+        {
+            pathRow.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
+            {
+                Text = $"{folderName}/",
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+        }
+        pathRow.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
+        {
+            Text = fileName,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+        ToolTipService.SetToolTip(pathRow, string.IsNullOrEmpty(folderPath) ? fileName : $"{folderPath}\\{fileName}");
+        info.Children.Add(pathRow);
+
+        Grid.SetColumn(info, 0);
+        root.Children.Add(info);
+
+        if (!string.IsNullOrEmpty(folderPath))
+        {
+            var copyBtn = new Button
+            {
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(6),
+                VerticalAlignment = VerticalAlignment.Top,
+                Content = new FontIcon { Glyph = "\uE8C8", FontSize = 13 },
+            };
+            ToolTipService.SetToolTip(copyBtn, "Copy folder path");
+            copyBtn.Click += (_, _) => CopyToClipboard(folderPath, "Copied folder path");
+            Grid.SetColumn(copyBtn, 1);
+            root.Children.Add(copyBtn);
+        }
+
+        border.Child = root;
+        return border;
+    }
+
+    private FrameworkElement BuildFolderRow(string path)
+    {
+        var border = new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 8, 8, 8),
+        };
+
+        var root = new Grid { ColumnSpacing = 8 };
+        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var text = new TextBlock
+        {
+            Text = path,
+            FontSize = 12,
+            FontFamily = new FontFamily("Consolas"),
+            TextWrapping = TextWrapping.NoWrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTipService.SetToolTip(text, path);
+        Grid.SetColumn(text, 0);
+        root.Children.Add(text);
+
+        var copyBtn = new Button
+        {
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6),
+            Content = new FontIcon { Glyph = "\uE8C8", FontSize = 13 },
+        };
+        ToolTipService.SetToolTip(copyBtn, "Copy path");
+        copyBtn.Click += (_, _) => CopyToClipboard(path, "Copied path");
+        Grid.SetColumn(copyBtn, 1);
+        root.Children.Add(copyBtn);
+
+        border.Child = root;
+        return border;
+    }
+
+    private static void CopyToClipboard(string text, string _unusedToastMessage)
+    {
+        try
+        {
+            var data = new DataPackage();
+            data.SetText(text);
+            Clipboard.SetContent(data);
+        }
+        catch { /* clipboard access can throw on locked sessions — ignore */ }
     }
 
     private void SearchBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)

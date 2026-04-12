@@ -19,6 +19,10 @@ public sealed partial class AdminPlaybackHistoryPage : Page
     private bool _rebuildUsersPending;
     private bool _rebuildProfilesPending;
 
+    // Pagination state (client-side, mirrors web UI behavior)
+    private int _page;
+    private int _pageSize = 25;
+
     public AdminPlaybackHistoryPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminPlaybackHistoryViewModel>();
@@ -176,6 +180,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         if (UserComboBox.SelectedItem is ComboBoxItem item)
         {
             ViewModel.SelectedUserId = item.Tag is int id ? id : (int?)null;
+            _page = 0;
             // Rebuild profile dropdown after ViewModel loads profiles
             await ViewModel.LoadCommand.ExecuteAsync(null);
             RebuildProfileComboBox();
@@ -189,6 +194,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         if (ProfileComboBox.SelectedItem is ComboBoxItem item)
         {
             ViewModel.SelectedProfileId = item.Tag is string sid && !string.IsNullOrEmpty(sid) ? sid : null;
+            _page = 0;
             await ViewModel.LoadCommand.ExecuteAsync(null);
             UpdateResetButton();
         }
@@ -201,6 +207,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         {
             var tag = item.Tag?.ToString();
             ViewModel.CompletionFilter = tag is "true" or "false" ? tag : null;
+            _page = 0;
             await ViewModel.LoadCommand.ExecuteAsync(null);
             UpdateResetButton();
         }
@@ -231,18 +238,28 @@ public sealed partial class AdminPlaybackHistoryPage : Page
     {
         HistoryRowsPanel.Children.Clear();
 
-        var items = ViewModel.Items;
-        if (items.Count == 0)
+        var allItems = ViewModel.Items;
+        if (allItems.Count == 0)
         {
             EmptyState.Visibility = Visibility.Visible;
+            PaginationBar.Visibility = Visibility.Collapsed;
             return;
         }
 
         EmptyState.Visibility = Visibility.Collapsed;
 
+        // Clamp page to valid range
+        int maxPage = Math.Max(0, (allItems.Count - 1) / _pageSize);
+        if (_page > maxPage) _page = maxPage;
+        if (_page < 0) _page = 0;
+
+        int start = _page * _pageSize;
+        int end = Math.Min(start + _pageSize, allItems.Count);
+
         bool first = true;
-        foreach (var item in items)
+        for (int i = start; i < end; i++)
         {
+            var item = allItems[i];
             if (!first)
             {
                 HistoryRowsPanel.Children.Add(new Border
@@ -253,6 +270,37 @@ public sealed partial class AdminPlaybackHistoryPage : Page
             }
             first = false;
             HistoryRowsPanel.Children.Add(BuildHistoryRow(item, this));
+        }
+
+        // Pagination bar
+        PaginationBar.Visibility = Visibility.Visible;
+        PageRangeText.Text = $"Showing {start + 1}-{end} of {allItems.Count}";
+        PrevPageButton.IsEnabled = _page > 0;
+        NextPageButton.IsEnabled = end < allItems.Count;
+    }
+
+    private void PrevPageButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_page > 0)
+        {
+            _page--;
+            RebuildHistoryTable();
+        }
+    }
+
+    private void NextPageButton_Click(object sender, RoutedEventArgs e)
+    {
+        _page++;
+        RebuildHistoryTable();
+    }
+
+    private void PageSizeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PageSizeCombo.SelectedItem is ComboBoxItem item && item.Tag is string tag && int.TryParse(tag, out var size))
+        {
+            _pageSize = size;
+            _page = 0;
+            RebuildHistoryTable();
         }
     }
 

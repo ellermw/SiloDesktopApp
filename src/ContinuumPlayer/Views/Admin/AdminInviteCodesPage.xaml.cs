@@ -19,11 +19,29 @@ public sealed partial class AdminInviteCodesPage : Page
         this.InitializeComponent();
     }
 
+    private bool _suppressSignupToggle;
+
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         ViewModel.InviteCodes.CollectionChanged += (_, _) => ScheduleRebuild();
+        ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(AdminInviteCodesViewModel.SignupEnabled))
+            {
+                _suppressSignupToggle = true;
+                SignupToggle.IsOn = ViewModel.SignupEnabled;
+                _suppressSignupToggle = false;
+            }
+        };
         try { await ViewModel.LoadCommand.ExecuteAsync(null); }
         catch (Exception ex) { ViewModel.ErrorMessage = $"Error: {ex.Message}"; }
+    }
+
+    private async void SignupToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressSignupToggle) return;
+        await ViewModel.SetSignupEnabledAsync(SignupToggle.IsOn);
+        if (ViewModel.StatusMessage != null) ShowStatus(ViewModel.StatusMessage);
     }
 
     private void ScheduleRebuild()
@@ -57,9 +75,8 @@ public sealed partial class AdminInviteCodesPage : Page
         var row = new Grid { Padding = new Thickness(20, 14, 20, 14), ColumnSpacing = 12 };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
 
@@ -80,32 +97,32 @@ public sealed partial class AdminInviteCodesPage : Page
 
         var label = new TextBlock
         {
-            Text = code.Label, FontSize = 13,
+            Text = string.IsNullOrEmpty(code.Label) ? "-" : code.Label,
+            FontSize = 13,
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis
         };
         Grid.SetColumn(label, 1); row.Children.Add(label);
 
-        var maxUses = new TextBlock
+        // Usage: combined "used / max" — matches web InviteCodesTab
+        bool maxedOut = code.MaxUses > 0 && code.UseCount >= code.MaxUses;
+        var usageText = code.MaxUses > 0
+            ? $"{code.UseCount} / {code.MaxUses}"
+            : $"{code.UseCount} / \u221E";
+        var usage = new TextBlock
         {
-            Text = code.MaxUses > 0 ? code.MaxUses.ToString() : "\u221E",
-            FontSize = 13, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            Text = usageText, FontSize = 13,
+            Foreground = maxedOut
+                ? (SolidColorBrush)Application.Current.Resources["ErrorBrush"]
+                : (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center
         };
-        Grid.SetColumn(maxUses, 2); row.Children.Add(maxUses);
-
-        var useCount = new TextBlock
-        {
-            Text = code.UseCount.ToString(), FontSize = 13,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(useCount, 3); row.Children.Add(useCount);
+        Grid.SetColumn(usage, 2); row.Children.Add(usage);
 
         var statusBadge = code.Enabled
             ? MakeBadge("Active", Color.FromArgb(40, 34, 197, 94), Color.FromArgb(255, 34, 197, 94))
             : MakeBadge("Disabled", Color.FromArgb(40, 120, 120, 120), Color.FromArgb(255, 160, 160, 160));
-        Grid.SetColumn(statusBadge, 4); row.Children.Add(statusBadge);
+        Grid.SetColumn(statusBadge, 3); row.Children.Add(statusBadge);
 
         string createdText = "\u2014";
         if (!string.IsNullOrEmpty(code.CreatedAt) && DateTime.TryParse(code.CreatedAt, out var dt))
@@ -116,7 +133,7 @@ public sealed partial class AdminInviteCodesPage : Page
             Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center
         };
-        Grid.SetColumn(created, 5); row.Children.Add(created);
+        Grid.SetColumn(created, 4); row.Children.Add(created);
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
         var capturedCode = code;
@@ -148,7 +165,7 @@ public sealed partial class AdminInviteCodesPage : Page
             }
         };
         actions.Children.Add(deleteBtn);
-        Grid.SetColumn(actions, 6); row.Children.Add(actions);
+        Grid.SetColumn(actions, 5); row.Children.Add(actions);
 
         return row;
     }

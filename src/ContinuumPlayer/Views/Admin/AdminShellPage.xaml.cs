@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using ContinuumPlayer.Helpers;
 
 namespace ContinuumPlayer.Views.Admin;
@@ -14,6 +15,10 @@ public sealed partial class AdminShellPage : Page
     // Pairs of (nav button, accent indicator bar, icon element, text element)
     private readonly List<(Button Button, Border Bar, FontIcon Icon, TextBlock Text)> _navItems = [];
 
+    // Starting sub-page — overrides the default Dashboard landing when AdminShellPage
+    // is navigated to with a Type parameter (e.g. deep links from Server Activity popover).
+    private Type? _startingPage;
+
     public AdminShellPage()
     {
         this.InitializeComponent();
@@ -22,6 +27,13 @@ public sealed partial class AdminShellPage : Page
 
         Loaded += AdminShellPage_Loaded;
         Unloaded += (_, _) => { _sessionTimer?.Stop(); _sessionTimer = null; };
+    }
+
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        if (e.Parameter is Type pageType)
+            _startingPage = pageType;
     }
 
     private void AdminShellPage_Loaded(object sender, RoutedEventArgs e)
@@ -49,11 +61,18 @@ public sealed partial class AdminShellPage : Page
         _navItems.Add((NavRecommendations,     NavRecommendationsBar,     NavRecommendationsIcon,     NavRecommendationsText));
         _navItems.Add((NavApiKeys,             NavApiKeysBar,             NavApiKeysIcon,             NavApiKeysText));
 
-        // Navigate to Dashboard on load
-        SetActiveNavItem(NavDashboard);
-        AdminContentFrame.Navigate(typeof(AdminDashboardPage));
+        // Navigate to the requested starting page, or Dashboard by default.
+        // Selects the matching sidebar nav item so the active indicator lines up.
+        var startType = _startingPage ?? typeof(AdminDashboardPage);
+        var startButton = GetNavButtonForPage(startType) ?? NavDashboard;
+        SetActiveNavItem(startButton);
+        AdminContentFrame.Navigate(startType);
+        _startingPage = null;
 
-        // Poll active session count for the "N live" badge
+        // Wire the top-bar Server Activity button nav callbacks
+        WireServerActivityNav();
+
+        // Poll active session count for the sidebar "N live" badge
         _ = UpdateSessionBadgeAsync();
         _sessionTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
         _sessionTimer.Tick += async (_, _) => await UpdateSessionBadgeAsync();
@@ -62,6 +81,11 @@ public sealed partial class AdminShellPage : Page
 
     // ===== SetActiveNavItem =====
 
+    /// <summary>
+    /// Polls the session count for the sidebar "N live" Activity badge.
+    /// The top-bar ServerActivityButton owns its own polling timer for the
+    /// full Streams/Tasks/Scans popover — we only drive the sidebar badge here.
+    /// </summary>
     private async Task UpdateSessionBadgeAsync()
     {
         try
@@ -72,16 +96,58 @@ public sealed partial class AdminShellPage : Page
             {
                 if (count > 0)
                 {
-                    NavActivityBadge.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                    NavActivityBadge.Visibility = Visibility.Visible;
                     NavActivityBadgeText.Text = $"{count} live";
                 }
                 else
                 {
-                    NavActivityBadge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                    NavActivityBadge.Visibility = Visibility.Collapsed;
                 }
             });
         }
         catch { }
+    }
+
+    /// <summary>
+    /// Wires the ServerActivityButton's "View all" nav callbacks to the admin
+    /// shell's own navigation handlers, so clicking View All jumps to the
+    /// right admin page without the button needing to know about routing.
+    /// Called once from AdminShellPage_Loaded.
+    /// </summary>
+    private void WireServerActivityNav()
+    {
+        // Note: HideWhenEmpty=false is set on the AdminServerActivityButton in XAML,
+        // not here — if set after Loaded has fired, the button would stay Collapsed
+        // until the next poll cycle.
+        AdminServerActivityButton.OnViewStreams = () => NavActivity_Click(NavActivity, new RoutedEventArgs());
+        AdminServerActivityButton.OnViewTasks = () => NavScheduledTasks_Click(NavScheduledTasks, new RoutedEventArgs());
+        AdminServerActivityButton.OnViewScans = () => NavLibraries_Click(NavLibraries, new RoutedEventArgs());
+    }
+
+    /// <summary>
+    /// Maps an admin page type back to the sidebar nav button that represents it.
+    /// Used when AdminShellPage is navigated to with a starting-page parameter
+    /// so the correct nav item highlights.
+    /// </summary>
+    private Button? GetNavButtonForPage(Type pageType)
+    {
+        if (pageType == typeof(AdminDashboardPage)) return NavDashboard;
+        if (pageType == typeof(AdminActivityPage)) return NavActivity;
+        if (pageType == typeof(AdminLogsPage)) return NavLogs;
+        if (pageType == typeof(AdminLibrariesPage)) return NavLibraries;
+        if (pageType == typeof(AdminCollectionsPage)) return NavCollections;
+        if (pageType == typeof(AdminSectionsPage)) return NavSections;
+        if (pageType == typeof(AdminUsersPage)) return NavUsers;
+        if (pageType == typeof(AdminPlaybackHistoryPage)) return NavPlaybackHistory;
+        if (pageType == typeof(AdminHistoryImportPage)) return NavHistoryImport;
+        if (pageType == typeof(AdminTasksPage)) return NavScheduledTasks;
+        if (pageType == typeof(AdminNodesPage)) return NavNodes;
+        if (pageType == typeof(AdminMaintenancePage)) return NavMaintenance;
+        if (pageType == typeof(AdminPluginsPage)) return NavPlugins;
+        if (pageType == typeof(AdminSettingsDetailPage)) return NavSettings;
+        if (pageType == typeof(AdminRecommendationsPage)) return NavRecommendations;
+        if (pageType == typeof(AdminApiKeysPage)) return NavApiKeys;
+        return null;
     }
 
     private void SetActiveNavItem(Button button)

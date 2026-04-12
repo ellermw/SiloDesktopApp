@@ -20,108 +20,202 @@
         <ProgressRing
             IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center" VerticalAlignment="Center" Width="48" Height="48" />
+            HorizontalAlignment="Center" VerticalAlignment="Center"
+            Width="48" Height="48" />
 
         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12"
             Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-            <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource BodyTextStyle}" HorizontalAlignment="Center" TextWrapping="Wrap" MaxWidth="400" />
-            <Button Content="Retry" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Center"
-                Command="{x:Bind ViewModel.LoadCommand}" />
+            <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                Foreground="{StaticResource ErrorBrush}"
+                Style="{StaticResource BodyTextStyle}"
+                HorizontalAlignment="Center" TextWrapping="Wrap" MaxWidth="400" />
+            <Button Content="Retry" Style="{StaticResource AccentButtonStyle}"
+                HorizontalAlignment="Center" Command="{x:Bind ViewModel.LoadCommand}" />
         </StackPanel>
 
         <ScrollViewer
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,28,40,40" Spacing="24">
-                <StackPanel Spacing="4">
-                    <TextBlock Text="Maintenance" FontSize="42" FontWeight="Bold" Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="Review stale metadata IDs, skipped library roots, and unmatched files."
-                        FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+            <StackPanel Padding="48,28,48,48" Spacing="24" MaxWidth="1200" HorizontalAlignment="Stretch">
+
+                <!-- ===== Page header ===== -->
+                <StackPanel Spacing="6">
+                    <TextBlock
+                        Text="Maintenance"
+                        FontSize="{StaticResource FontSizeDisplayLarge}"
+                        FontWeight="Bold"
+                        Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock
+                        Text="Operational tools that affect the whole catalog live here. Use this page for bulk import/export workflows and other future maintenance actions."
+                        FontSize="14"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        TextWrapping="Wrap"
+                        MaxWidth="820" />
                 </StackPanel>
 
-                <Border x:Name="StatusBanner" Background="{StaticResource AccentBackgroundBrush}" CornerRadius="8" Padding="14,10" Visibility="Collapsed">
-                    <TextBlock x:Name="StatusBannerText" FontSize="13" Foreground="{StaticResource AccentBrush}" />
+                <!-- Status banner (transient) -->
+                <Border
+                    x:Name="StatusBanner"
+                    Visibility="{x:Bind ViewModel.StatusMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
+                    Background="#22C55E"
+                    CornerRadius="10"
+                    Padding="14,10">
+                    <TextBlock
+                        Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
+                        FontSize="13"
+                        FontWeight="SemiBold"
+                        Foreground="White" />
                 </Border>
 
-                <!-- Stale IDs -->
-                <StackPanel Spacing="12">
-                    <TextBlock Text="STALE METADATA IDS" FontSize="12" FontWeight="Normal" Foreground="{StaticResource SecondaryTextBrush}" CharacterSpacing="240" />
-                    <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="26" BorderThickness="0" Padding="0">
-                        <StackPanel>
-                            <Grid Padding="20,14,20,14" ColumnSpacing="12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="2.5*" />
-                                    <ColumnDefinition Width="1.5*" />
-                                    <ColumnDefinition Width="1.5*" />
-                                    <ColumnDefinition Width="120" />
-                                    <ColumnDefinition Width="80" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="TITLE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="PROVIDER" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="2" Text="LIBRARY" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="3" Text="LAST SEEN" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="4" Text="ACTION" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            </Grid>
-                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
-                            <StackPanel x:Name="StaleIdsPanel" Spacing="0" />
-                            <Border x:Name="StaleIdsEmpty" Padding="20,30" Visibility="Collapsed">
-                                <TextBlock Text="No stale metadata IDs found." FontSize="13" Foreground="{StaticResource TertiaryTextBrush}" HorizontalAlignment="Center" />
-                            </Border>
+                <!-- ===== Catalog Import & Export — actions bar ===== -->
+                <Border
+                    Background="{StaticResource CardBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Padding="20,16">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                            <TextBlock
+                                Text="Catalog Import &amp; Export"
+                                FontSize="18"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock
+                                Text="Queue full catalog exports, import seeds from uploads or S3, and watch background job progress in one place."
+                                FontSize="13"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                TextWrapping="Wrap"
+                                MaxWidth="640" />
                         </StackPanel>
-                    </Border>
-                </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10"
+                                    VerticalAlignment="Center">
+                            <Button
+                                x:Name="StartExportButton"
+                                Click="StartExport_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE896;" FontSize="13" />
+                                    <TextBlock Text="Start Export" />
+                                </StackPanel>
+                            </Button>
+                            <Button
+                                x:Name="ImportCatalogButton"
+                                Click="ImportCatalog_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE898;" FontSize="13" />
+                                    <TextBlock Text="Import Catalog" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                </Border>
 
-                <!-- Skipped Roots -->
-                <StackPanel Spacing="12">
-                    <TextBlock Text="SKIPPED LIBRARY ROOTS" FontSize="12" FontWeight="Normal" Foreground="{StaticResource SecondaryTextBrush}" CharacterSpacing="240" />
-                    <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="26" BorderThickness="0" Padding="0">
-                        <StackPanel>
-                            <Grid Padding="20,14,20,14" ColumnSpacing="12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="3*" />
-                                    <ColumnDefinition Width="1.5*" />
-                                    <ColumnDefinition Width="2*" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="PATH" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="LIBRARY" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="2" Text="REASON" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            </Grid>
-                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
-                            <StackPanel x:Name="SkippedRootsPanel" Spacing="0" />
-                            <Border x:Name="SkippedRootsEmpty" Padding="20,30" Visibility="Collapsed">
-                                <TextBlock Text="No skipped roots." FontSize="13" Foreground="{StaticResource TertiaryTextBrush}" HorizontalAlignment="Center" />
-                            </Border>
-                        </StackPanel>
-                    </Border>
-                </StackPanel>
+                <!-- ===== Recent Catalog Imports ===== -->
+                <Border
+                    Background="{StaticResource CardBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="12">
+                    <StackPanel>
+                        <Grid Padding="20,14" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock
+                                    Text="Recent Catalog Imports"
+                                    FontSize="14"
+                                    FontWeight="SemiBold"
+                                    Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock
+                                    Text="Imports run in the background so progress stays visible while validation and writes are in flight."
+                                    FontSize="11"
+                                    Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Click="RefreshImports_Click"
+                                    Background="Transparent" BorderThickness="0" Padding="8">
+                                <FontIcon Glyph="&#xE72C;" FontSize="14"
+                                          Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Button>
+                        </Grid>
+                        <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.6" />
+                        <StackPanel x:Name="ImportJobsPanel" />
+                    </StackPanel>
+                </Border>
 
-                <!-- Unmatched Items -->
-                <StackPanel Spacing="12">
-                    <TextBlock Text="UNMATCHED ITEMS" FontSize="12" FontWeight="Normal" Foreground="{StaticResource SecondaryTextBrush}" CharacterSpacing="240" />
-                    <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="26" BorderThickness="0" Padding="0">
-                        <StackPanel>
-                            <Grid Padding="20,14,20,14" ColumnSpacing="12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="3*" />
-                                    <ColumnDefinition Width="1.5*" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="TITLE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="LIBRARY" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="2" Text="TYPE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="3" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            </Grid>
-                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
-                            <StackPanel x:Name="UnmatchedPanel" Spacing="0" />
-                            <Border x:Name="UnmatchedEmpty" Padding="20,30" Visibility="Collapsed">
-                                <TextBlock Text="No unmatched items." FontSize="13" Foreground="{StaticResource TertiaryTextBrush}" HorizontalAlignment="Center" />
-                            </Border>
-                        </StackPanel>
-                    </Border>
-                </StackPanel>
+                <!-- ===== Recent Catalog Exports ===== -->
+                <Border
+                    Background="{StaticResource CardBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="12">
+                    <StackPanel>
+                        <Grid Padding="20,14" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock
+                                    Text="Recent Catalog Exports"
+                                    FontSize="14"
+                                    FontWeight="SemiBold"
+                                    Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock
+                                    Text="Export jobs run in the background and upload finished seeds to the operational S3 bucket."
+                                    FontSize="11"
+                                    Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Click="RefreshExports_Click"
+                                    Background="Transparent" BorderThickness="0" Padding="8">
+                                <FontIcon Glyph="&#xE72C;" FontSize="14"
+                                          Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Button>
+                        </Grid>
+                        <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.6" />
+                        <StackPanel x:Name="ExportJobsPanel" />
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== Job History ===== -->
+                <Border
+                    Background="{StaticResource CardBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="12">
+                    <StackPanel>
+                        <Grid Padding="20,14" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock
+                                    Text="Job History"
+                                    FontSize="14"
+                                    FontWeight="SemiBold"
+                                    Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock
+                                    Text="Recent background jobs across all types."
+                                    FontSize="11"
+                                    Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Click="RefreshAllJobs_Click"
+                                    Background="Transparent" BorderThickness="0" Padding="8">
+                                <FontIcon Glyph="&#xE72C;" FontSize="14"
+                                          Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Button>
+                        </Grid>
+                        <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.6" />
+                        <StackPanel x:Name="AllJobsPanel" />
+                    </StackPanel>
+                </Border>
 
             </StackPanel>
         </ScrollViewer>

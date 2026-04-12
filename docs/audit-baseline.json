@@ -1,414 +1,555 @@
-{
-  "$schema": "./audit-baseline.schema.json",
-  "continuum_server_sha": "94c2f322e837a2c23e804ae38f64cc3a6de8f98d",
-  "continuum_server_short_sha": "94c2f32",
-  "continuum_server_commit_message": "Recognize ID-tagged movie folders as canonical roots",
-  "audited_at": "2026-04-10T22:05:00-05:00",
-  "notes": "Baseline expanded 2026-04-10 after scanning edf2977..c16467c (340 changed files, 70+ commits). Discovered a massive new-feature wave — Watch Party, Watch Tonight, pre-play A/V selection, chapter thumbnails, device login, webhook sync, image selector, server activity dropdown, playing next screen, and more. Tracked root SHA remains 94c2f32 until one area is actually re-synced; new areas below default to 'missing' with the fresh source files listed so the next scan catches any upstream changes to them. Parity values: 'full' (desktop matches), 'partial' (some features done), 'rebuilding' (in progress), 'missing' (not yet started), 'desktop-only' (no webui counterpart).",
-  "areas": {
-    "events/realtime-channel": {
-      "description": "WebSocket event channel protocol at /api/v1/events/ws. Backend for all live-update features (history_import, user_state, sessions, jobs, scans, tasks, watch_together, chapter_thumbnails).",
-      "web_sources": [
-        "web/src/components/RealtimeEventsProvider.tsx",
-        "web/src/components/realtimeEventsContext.ts"
-      ],
-      "server_sources": [
-        "internal/events/types.go",
-        "internal/events/publishers.go",
-        "internal/events/hub.go",
-        "internal/events/scan_registry.go",
-        "internal/api/handlers/events_ws.go",
-        "internal/api/handlers/events_publish.go",
-        "internal/api/handlers/user_state_events.go",
-        "internal/api/handlers/ws_shared.go"
-      ],
-      "desktop_files": [
-        "src/ContinuumPlayer.Core/Services/EventChannelClient.cs"
-      ],
-      "parity": "partial",
-      "notes": "Spec at docs/events-channel-spec.md. Desktop EventChannelClient built for history_import subscription. Server has since consolidated websocket surfaces (6f9be12), added events_publish.go, user_state_events.go, ws_shared.go. Other channels (user_state, sessions, jobs, scans, tasks, watch_together, chapter thumbnails) not yet wired to desktop subscribers."
-    },
-    "settings/history-import": {
-      "description": "Settings > Import tab: import watch history from Emby (Connect/Saved), Jellyfin (Direct), or Plex (OAuth/Saved) into a Continuum profile.",
-      "web_sources": [
-        "web/src/pages/settings/HistoryImportSettings.tsx",
-        "web/src/pages/settings/HistoryImportSettings.utils.ts",
-        "web/src/hooks/queries/history-import.ts",
-        "web/src/lib/plexAuth.ts"
-      ],
-      "server_sources": [
-        "internal/historyimport/types.go",
-        "internal/historyimport/service.go",
-        "internal/historyimport/repo.go",
-        "internal/historyimport/repo_admin.go",
-        "internal/historyimport/service_admin.go",
-        "internal/historyimport/observer.go",
-        "internal/api/handlers/history_import.go",
-        "internal/events/publishers.go"
-      ],
-      "line_counts": {
-        "web/src/pages/settings/HistoryImportSettings.tsx": 998,
-        "web/src/pages/settings/HistoryImportSettings.utils.ts": 65,
-        "internal/historyimport/types.go": 315
-      },
-      "desktop_files": [
-        "src/ContinuumPlayer/Views/SettingsPage.xaml",
-        "src/ContinuumPlayer/Views/SettingsPage.xaml.cs",
-        "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs",
-        "src/ContinuumPlayer.Core/Api/HistoryImportApi.cs",
-        "src/ContinuumPlayer.Core/Models/HistoryImport/",
-        "src/ContinuumPlayer.Core/Services/EventChannelClient.cs"
-      ],
-      "parity": "full",
-      "notes": "Rebuilt 2026-04-10 against 94c2f32 for v1.0.35. Full-parity Import tab with all 3 sources + sub-modes + profile picker + live run card + history list + realtime events."
-    },
-    "item-detail/pre-play-selection": {
-      "description": "ItemDetail: audio track + subtitle picker popovers BEFORE pressing Play. Selections flow through WatchRoute into the player session so the initial stream uses the chosen tracks.",
-      "web_sources": [
-        "web/src/pages/ItemDetail/components/ActionBar.tsx",
-        "web/src/pages/ItemDetail/components/AudioTracksPopover.tsx",
-        "web/src/pages/ItemDetail/components/SubtitlesPopover.tsx",
-        "web/src/pages/ItemDetail/components/SubtitleSearchDialog.tsx",
-        "web/src/pages/ItemDetail/components/VersionDropdown.tsx",
-        "web/src/pages/ItemDetail/components/prePlaySelection.ts",
-        "web/src/pages/ItemDetail/components/versionSubtitleInventory.ts",
-        "web/src/pages/ItemDetail/components/versionRankingUtils.ts",
-        "web/src/pages/WatchRoute.tsx",
-        "web/src/pages/watchRouteHelpers.ts",
-        "web/src/player/utils/effectiveAudioLanguage.ts",
-        "web/src/player/utils/subtitleSort.ts"
-      ],
-      "server_sources": [
-        "internal/catalog/detail.go"
-      ],
-      "desktop_files": [
-        "src/ContinuumPlayer/Views/ItemDetailPage.xaml",
-        "src/ContinuumPlayer/Views/ItemDetailPage.xaml.cs",
-        "src/ContinuumPlayer.Core/Services/PlaybackManager.cs"
-      ],
-      "parity": "missing",
-      "notes": "Net-new feature commits: a9deb0c (Add pre-play audio and subtitle selection), 2265d4f (Remove watch/favorite from overflow), c16467c (Expose effective audio language). Desktop has a MatchDialog + version picker but no audio/subtitle popovers on the action bar."
-    },
-    "player/watch-party": {
-      "description": "Watch Party / Watch Together: synchronized group watch rooms with WebSocket playback sync, lobby, suggestions, spotlight carousel, and auto-exit when room closes.",
-      "web_sources": [
-        "web/src/pages/WatchTogetherJoin.tsx",
-        "web/src/pages/WatchTogetherRoomPage.tsx",
-        "web/src/pages/WatchTogetherSuggestionPanel.tsx",
-        "web/src/player/components/WatchTogetherPanel.tsx",
-        "web/src/player/hooks/useWatchTogetherRoom.ts",
-        "web/src/player/hooks/useWatchTogetherRoomConnection.ts",
-        "web/src/player/hooks/useWatchTogetherPlaybackSync.ts",
-        "web/src/lib/watchTogether.ts"
-      ],
-      "server_sources": [
-        "internal/watchtogether/service.go",
-        "internal/watchtogether/repository.go",
-        "internal/watchtogether/suggestion_repository.go",
-        "internal/watchtogether/selection_resolver.go",
-        "internal/watchtogether/room_token.go",
-        "internal/watchtogether/types.go",
-        "internal/api/handlers/watch_together.go"
-      ],
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Biggest new feature in the wave. Originally 'Watch Together', renamed to 'Watch Party' late. Room-first flow with lobby, suggestions, poster grid, spotlight carousel. Backend uses the events/realtime-channel for sync. Needs new desktop pages + player integration + sync client — multi-day implementation."
-    },
-    "player/chapter-thumbnails": {
-      "description": "Chapter thumbnails: extract thumbnail images for chapter markers, stream them in realtime via event channel, display as a chapter menu in the player.",
-      "web_sources": [
-        "web/src/player/components/ChaptersMenu.tsx"
-      ],
-      "server_sources": [
-        "internal/chapterthumbs/service.go",
-        "internal/chapterthumbs/extractor.go",
-        "internal/chapterthumbs/remote.go",
-        "internal/playback/chapter_thumbnail_notifier.go",
-        "internal/api/handlers/libraries_chapter_thumbnail_test.go",
-        "internal/taskmanager/tasks/chapter_thumbnail_backfill.go"
-      ],
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Commits: 7fce54d (add embedded chapters and thumbnails), 768df9c (stream chapter thumbnails realtime), 32ecec3 (enhance processing), b1e8676 (offload extraction to transcode nodes). Desktop libmpv already knows about chapters via the mpv chapter-list property — need to wire up a ChaptersMenu in PlayerOverlay showing the thumbnails + labels."
-    },
-    "recommendations/watch-tonight": {
-      "description": "Watch Tonight: gamified swipe-to-pick recommendation experience with genre filter. Cards stack, swipe left/right to reject/accept, discover ranker picks candidates.",
-      "web_sources": [
-        "web/src/components/WatchTonightCard.tsx",
-        "web/src/components/WatchTonightDialog.tsx",
-        "web/src/components/watchtonight/CardStack.tsx",
-        "web/src/components/watchtonight/SwipeCard.tsx",
-        "web/src/components/watchtonight/GenrePicker.tsx"
-      ],
-      "server_sources": [
-        "internal/recommendations/watch_tonight.go",
-        "internal/recommendations/discover_rank.go",
-        "internal/api/handlers/watch_tonight.go",
-        "internal/api/handlers/watch_tonight_cards.go"
-      ],
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Commits: c88704b (add Watch Tonight feature), 896fe94 (add gamified swipe experience), f198e27 (enhance discover card generation). Swipe UX is inherently touch-oriented but can be adapted for mouse drag / arrow keys on desktop."
-    },
-    "player/playing-next-screen": {
-      "description": "Cinematic Playing Next screen shown at episode end with early trigger — poster, title, countdown, next/cancel buttons.",
-      "web_sources": [
-        "web/src/player/components/PlayingNextScreen.tsx"
-      ],
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Commits: d066cef. Desktop has a basic auto-next but no cinematic intro/countdown screen. Complements useNextEpisode.ts."
-    },
-    "auth/device-login": {
-      "description": "Device login approval flow: ActivateDevice page where a user enters a code from another device to approve that device's login. Uses word-based codes for usability.",
-      "web_sources": [
-        "web/src/pages/ActivateDevice.tsx",
-        "web/src/lib/authRedirect.ts"
-      ],
-      "server_sources": [
-        "internal/auth/device_login.go",
-        "internal/auth/device_login_words.go",
-        "internal/api/handlers/auth_device.go"
-      ],
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Commit: 0809c7c. Could be used from the desktop to login via the web by scanning/entering a code, or vice versa. Need a UX decision on where it fits in the desktop auth flow."
-    },
-    "settings/webhook-sync": {
-      "description": "Settings > Webhook Sync: manage inbound webhook connections from external media servers (replaces old Plex Sync). Connection list + event log with search/pagination + detail dialog.",
-      "web_sources": [
-        "web/src/pages/settings/WebhookSyncSettings.tsx",
-        "web/src/hooks/queries/webhook-sync.ts",
-        "web/src/lib/webhookSync.ts"
-      ],
-      "server_sources": [
-        "internal/webhooksync/service.go",
-        "internal/webhooksync/repo.go",
-        "internal/webhooksync/repo_events.go",
-        "internal/webhooksync/providers.go",
-        "internal/webhooksync/logging.go",
-        "internal/webhooksync/types.go",
-        "internal/api/handlers/webhook_sync.go"
-      ],
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Commit: e16a354, 17477c3 (refactor with event log). Replaces old plex_sync entirely (several internal/plexsync/ files deleted). 1281-line settings page — biggest new settings tab."
-    },
-    "admin/image-selector": {
-      "description": "Admin: poster/backdrop/logo image browsing dialog for metadata editing. Browse candidate images from providers and pick one.",
-      "web_sources": [
-        "web/src/components/ImageSelectorTab.tsx",
-        "web/src/components/EditMetadataDialog.tsx",
-        "web/src/components/MatchItemDialog.tsx"
-      ],
-      "server_sources": [
-        "internal/api/handlers/admin_images.go"
-      ],
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Commit: 18abd1d. Desktop has a MatchItemDialog but no image browser — admins currently can't change poster/backdrop/logo from desktop."
-    },
-    "admin/server-activity": {
-      "description": "Admin: real-time server activity dropdown showing live playback sessions, scans, jobs, etc. Appears in the admin header.",
-      "web_sources": [
-        "web/src/components/ServerActivity.tsx",
-        "web/src/pages/adminActivityPresentation.ts"
-      ],
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Commit: c1a5951. Subscribes to the events/realtime-channel for live updates. Desktop has a static admin dashboard — no equivalent header dropdown."
-    },
-    "admin/media-locations": {
-      "description": "Admin: folder path display for media items in MatchItemDialog — shows canonical root + file paths + source locations.",
-      "web_sources": [
-        "web/src/components/MediaLocations.tsx"
-      ],
-      "server_sources": [
-        "internal/api/handlers/catalog_resources.go"
-      ],
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Commits: 06a529a, 8a46261, c1be0e5. Improved folder path display in MatchItemDialog. Lower priority — admin/inspection UX."
-    },
-    "item-detail/inline-episodes": {
-      "description": "ItemDetail: for single-season series, show episodes inline (no season accordion) as a grid.",
-      "web_sources": [
-        "web/src/pages/ItemDetail/components/SeasonEpisodeGrid.tsx",
-        "web/src/pages/ItemDetail/SeriesContent.tsx",
-        "web/src/pages/ItemDetail/SeasonContent.tsx"
-      ],
-      "desktop_files": [
-        "src/ContinuumPlayer/Views/ItemDetailPage.xaml.cs"
-      ],
-      "parity": "missing",
-      "notes": "Commit: 7da3620. Single-season series render a flat episode grid instead of a season accordion. Desktop currently uses accordion-per-season unconditionally."
-    },
-    "collections/auto-collage": {
-      "description": "Collections: auto-generated poster collages from member items. Background task composes a 2x2 poster grid.",
-      "web_sources": [
-        "web/src/components/collections/SyncScheduleField.tsx"
-      ],
-      "server_sources": [
-        "internal/collage/collage.go",
-        "internal/catalog/collection_sync_schedule.go",
-        "internal/catalog/collection_sync_scheduler.go",
-        "internal/taskmanager/tasks/sync_collections.go"
-      ],
-      "desktop_files": [],
-      "parity": "partial",
-      "notes": "Commits: 87ba86a (auto-generate poster collages), d42ebf7 (per-collection automatic sync scheduling). The collage IMAGE appears automatically on the server side and desktop just renders whatever poster URL it gets, so desktop probably gets this free for viewing. Per-collection sync schedule needs a new editor UI in the Collections edit page."
-    },
-    "playback/series-preferences": {
-      "description": "Sticky series playback preferences: remembers audio track + subtitle mode + quality + version selections per series so subsequent episodes auto-pick them.",
-      "web_sources": [
-        "web/src/pages/ItemDetail/EpisodeContent.tsx"
-      ],
-      "server_sources": [
-        "internal/userstore/pgstore/series_playback_prefs.go",
-        "internal/userdb/series_playback_prefs.go"
-      ],
-      "desktop_files": [
-        "src/ContinuumPlayer.Core/Services/PlaybackManager.cs",
-        "src/ContinuumPlayer/Services/PlayerService.cs"
-      ],
-      "parity": "missing",
-      "notes": "Commits: d3cc99a, 4b155c6, 762cc6a (sticky version preferences on episode detail pages). Server persists the last-used audio/subtitle/quality per series, desktop needs to read+apply these when starting playback for a series it's seen before."
-    },
-    "player/ass-subtitles": {
-      "description": "Advanced SubStation Alpha subtitle rendering for anime subtitles.",
-      "web_sources": [
-        "web/src/player/hooks/useASSSubtitles.ts",
-        "web/src/player/utils/assSubtitles.ts"
-      ],
-      "desktop_files": [
-        "src/ContinuumPlayer/Controls/PlayerOverlay.xaml.cs"
-      ],
-      "parity": "full",
-      "notes": "Commit: f6c9ce4. libmpv natively renders ASS/SSA subtitles with full styling during direct play, so desktop gets this for free. Web had to build a custom renderer because browsers don't do ASS."
-    },
-    "sections/season-premiere-badge": {
-      "description": "Continue Watching cards: show a 'Season premiere' badge for new season first episodes.",
-      "web_sources": [
-        "web/src/components/ContinueWatchingCard.tsx"
-      ],
-      "desktop_files": [
-        "src/ContinuumPlayer/Controls/LandscapeCard.xaml"
-      ],
-      "parity": "missing",
-      "notes": "Commit: 7f1f836. Small visual addition — colored badge on the continue-watching card when the episode is a season premiere."
-    },
-    "admin/connection-checks": {
-      "description": "Admin settings: inline connection-check buttons for external services (Redis, S3, plugins) with status indicators.",
-      "web_sources": [
-        "web/src/components/admin/ConnectionCheckAction.tsx"
-      ],
-      "server_sources": [
-        "internal/api/handlers/admin_settings_checks.go"
-      ],
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Commit: 9b9c131. Admin settings pages have inline 'Test connection' buttons that hit /admin/settings/checks/<service> and display status."
-    },
-    "setup-wizard/new-steps": {
-      "description": "Setup wizard: new Recommendations step and new Server Storage step.",
-      "web_sources": [
-        "web/src/pages/setup-wizard/steps/RecommendationsStep.tsx",
-        "web/src/pages/setup-wizard/steps/ServerStorageStep.tsx"
-      ],
-      "desktop_files": [
-        "src/ContinuumPlayer/Views/SetupWizardPage.xaml",
-        "src/ContinuumPlayer/Views/SetupWizardPage.xaml.cs",
-        "src/ContinuumPlayer/ViewModels/SetupWizardViewModel.cs"
-      ],
-      "parity": "partial",
-      "notes": "Desktop already has a rewritten setup wizard (B47-B49). Need to compare to the new Recommendations + Server Storage steps and add them if missing."
-    },
-    "settings/playback": {
-      "description": "Settings > Playback tab: quality preference, subtitle language/mode, spoken language preference, next-up mode.",
-      "web_sources": ["web/src/pages/settings/PlaybackSettings.tsx"],
-      "line_counts": {"web/src/pages/settings/PlaybackSettings.tsx": 351},
-      "desktop_files": ["src/ContinuumPlayer/Views/SettingsPage.xaml", "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"],
-      "parity": "partial",
-      "notes": "Desktop has basic quality + subtitle language combos. Full per-field parity not yet audited against the 351-line fresh source."
-    },
-    "settings/subtitle-appearance": {
-      "description": "Settings > Subtitles tab: font size, family, color, outline, background style/opacity, position, live preview.",
-      "web_sources": ["web/src/pages/settings/SubtitleAppearanceSettings.tsx"],
-      "line_counts": {"web/src/pages/settings/SubtitleAppearanceSettings.tsx": 373},
-      "desktop_files": ["src/ContinuumPlayer/Views/SettingsPage.xaml", "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"],
-      "parity": "partial",
-      "notes": "Desktop Subtitles tab had the RangeBase.Value crash that was fixed in session #12. Not yet audited field-by-field against fresh source."
-    },
-    "settings/appearance": {
-      "description": "Settings > Appearance tab: theme picker, font family, density.",
-      "web_sources": ["web/src/pages/settings/AppearanceSettings.tsx"],
-      "line_counts": {"web/src/pages/settings/AppearanceSettings.tsx": 124},
-      "desktop_files": ["src/ContinuumPlayer/Views/SettingsPage.xaml", "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"],
-      "parity": "partial",
-      "notes": "Desktop has a 13-theme picker but design tokens/spacing don't match shadcn exactly. Not audited against fresh source yet."
-    },
-    "settings/library": {
-      "description": "Settings > Library tab: per-library playback overrides, hidden libraries.",
-      "web_sources": ["web/src/pages/settings/LibrarySettings.tsx", "web/src/pages/settings/libraryPlaybackPreferences.ts"],
-      "line_counts": {"web/src/pages/settings/LibrarySettings.tsx": 573},
-      "desktop_files": ["src/ContinuumPlayer/Views/SettingsPage.xaml", "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"],
-      "parity": "partial",
-      "notes": "Desktop has per-library cards but 573-line fresh source likely has features we're missing."
-    },
-    "settings/home-screen": {
-      "description": "Settings > Home Screen tab: section list, reorder, add/remove custom sections, reset to defaults.",
-      "web_sources": ["web/src/pages/settings/HomeScreenSettings.tsx"],
-      "line_counts": {"web/src/pages/settings/HomeScreenSettings.tsx": 606},
-      "desktop_files": ["src/ContinuumPlayer/Views/SettingsPage.xaml", "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"],
-      "parity": "partial",
-      "notes": "Desktop Home Screen tab has list + add/remove with confirm dialogs (B57/B58). 606-line fresh source likely richer."
-    },
-    "settings/accessibility": {
-      "description": "Settings > Accessibility tab.",
-      "web_sources": ["web/src/pages/settings/AccessibilitySettings.tsx"],
-      "line_counts": {"web/src/pages/settings/AccessibilitySettings.tsx": 127},
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Not implemented on desktop yet."
-    },
-    "settings/card-overlay": {
-      "description": "Settings > Card Overlay tab.",
-      "web_sources": ["web/src/pages/settings/CardOverlaySettings.tsx"],
-      "line_counts": {"web/src/pages/settings/CardOverlaySettings.tsx": 234},
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Not implemented on desktop yet."
-    },
-    "settings/plugins": {
-      "description": "Settings > Plugins tab.",
-      "web_sources": ["web/src/pages/settings/PluginSettings.tsx"],
-      "line_counts": {"web/src/pages/settings/PluginSettings.tsx": 121},
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Not implemented on desktop yet."
-    },
-    "settings/profiles": {
-      "description": "Settings > Profiles tab.",
-      "web_sources": ["web/src/pages/settings/ProfilesSettings.tsx"],
-      "line_counts": {"web/src/pages/settings/ProfilesSettings.tsx": 254},
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Not implemented on desktop yet."
-    },
-    "settings/theme-editor": {
-      "description": "Settings > Theme Editor tab: live theme token customization.",
-      "web_sources": ["web/src/pages/settings/ThemeEditorSettings.tsx"],
-      "line_counts": {"web/src/pages/settings/ThemeEditorSettings.tsx": 118},
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Not implemented on desktop yet."
-    },
-    "calendar": {
-      "description": "Calendar page (top-level nav).",
-      "web_sources": ["web/src/pages/Calendar.tsx"],
-      "desktop_files": [],
-      "parity": "missing",
-      "notes": "Brand new page. Upcoming/recently-added calendar view."
-    }
-  }
+﻿{
+    "$schema":  "./audit-baseline.schema.json",
+    "continuum_server_sha":  "4172a1622787a03e115bc304556e07ce579114e7",
+    "continuum_server_short_sha":  "4172a16",
+    "continuum_server_commit_message":  "Include viewer state in item details",
+    "audited_at":  "2026-04-11T01:04:22-05:00",
+    "notes":  "Baseline expanded 2026-04-10 after scanning edf2977..c16467c (340 changed files, 70+ commits). Discovered a massive new-feature wave â€” Watch Party, Watch Tonight, pre-play A/V selection, chapter thumbnails, device login, webhook sync, image selector, server activity dropdown, playing next screen, and more. Tracked root SHA remains 94c2f32 until one area is actually re-synced; new areas below default to \u0027missing\u0027 with the fresh source files listed so the next scan catches any upstream changes to them. Parity values: \u0027full\u0027 (desktop matches), \u0027partial\u0027 (some features done), \u0027rebuilding\u0027 (in progress), \u0027missing\u0027 (not yet started), \u0027desktop-only\u0027 (no webui counterpart).",
+    "areas":  {
+                  "events/realtime-channel":  {
+                                                  "description":  "WebSocket event channel protocol at /api/v1/events/ws. Backend for all live-update features (history_import, user_state, sessions, jobs, scans, tasks, watch_together, chapter_thumbnails).",
+                                                  "web_sources":  [
+                                                                      "web/src/components/RealtimeEventsProvider.tsx",
+                                                                      "web/src/components/realtimeEventsContext.ts"
+                                                                  ],
+                                                  "server_sources":  [
+                                                                         "internal/events/types.go",
+                                                                         "internal/events/publishers.go",
+                                                                         "internal/events/hub.go",
+                                                                         "internal/events/scan_registry.go",
+                                                                         "internal/api/handlers/events_ws.go",
+                                                                         "internal/api/handlers/events_publish.go",
+                                                                         "internal/api/handlers/user_state_events.go",
+                                                                         "internal/api/handlers/ws_shared.go"
+                                                                     ],
+                                                  "desktop_files":  [
+                                                                        "src/ContinuumPlayer.Core/Services/EventChannelClient.cs"
+                                                                    ],
+                                                  "parity":  "partial",
+                                                  "notes":  "Spec at docs/events-channel-spec.md. Desktop EventChannelClient built for history_import subscription. Server has since consolidated websocket surfaces (6f9be12), added events_publish.go, user_state_events.go, ws_shared.go. Other channels (user_state, sessions, jobs, scans, tasks, watch_together, chapter thumbnails) not yet wired to desktop subscribers."
+                                              },
+                  "settings/history-import":  {
+                                                  "description":  "Settings \u003e Import tab: import watch history from Emby (Connect/Saved), Jellyfin (Direct), or Plex (OAuth/Saved) into a Continuum profile.",
+                                                  "web_sources":  [
+                                                                      "web/src/pages/settings/HistoryImportSettings.tsx",
+                                                                      "web/src/pages/settings/HistoryImportSettings.utils.ts",
+                                                                      "web/src/hooks/queries/history-import.ts",
+                                                                      "web/src/lib/plexAuth.ts"
+                                                                  ],
+                                                  "server_sources":  [
+                                                                         "internal/historyimport/types.go",
+                                                                         "internal/historyimport/service.go",
+                                                                         "internal/historyimport/repo.go",
+                                                                         "internal/historyimport/repo_admin.go",
+                                                                         "internal/historyimport/service_admin.go",
+                                                                         "internal/historyimport/observer.go",
+                                                                         "internal/api/handlers/history_import.go",
+                                                                         "internal/events/publishers.go"
+                                                                     ],
+                                                  "line_counts":  {
+                                                                      "web/src/pages/settings/HistoryImportSettings.tsx":  998,
+                                                                      "web/src/pages/settings/HistoryImportSettings.utils.ts":  65,
+                                                                      "internal/historyimport/types.go":  315
+                                                                  },
+                                                  "desktop_files":  [
+                                                                        "src/ContinuumPlayer/Views/SettingsPage.xaml",
+                                                                        "src/ContinuumPlayer/Views/SettingsPage.xaml.cs",
+                                                                        "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs",
+                                                                        "src/ContinuumPlayer.Core/Api/HistoryImportApi.cs",
+                                                                        "src/ContinuumPlayer.Core/Models/HistoryImport/",
+                                                                        "src/ContinuumPlayer.Core/Services/EventChannelClient.cs"
+                                                                    ],
+                                                  "parity":  "full",
+                                                  "notes":  "Rebuilt 2026-04-10 against 94c2f32 for v1.0.35. Full-parity Import tab with all 3 sources + sub-modes + profile picker + live run card + history list + realtime events."
+                                              },
+                  "item-detail/pre-play-selection":  {
+                                                         "description":  "ItemDetail: audio track + subtitle picker popovers BEFORE pressing Play. Selections flow through WatchRoute into the player session so the initial stream uses the chosen tracks.",
+                                                         "web_sources":  [
+                                                                             "web/src/pages/ItemDetail/components/ActionBar.tsx",
+                                                                             "web/src/pages/ItemDetail/components/AudioTracksPopover.tsx",
+                                                                             "web/src/pages/ItemDetail/components/SubtitlesPopover.tsx",
+                                                                             "web/src/pages/ItemDetail/components/SubtitleSearchDialog.tsx",
+                                                                             "web/src/pages/ItemDetail/components/VersionDropdown.tsx",
+                                                                             "web/src/pages/ItemDetail/components/prePlaySelection.ts",
+                                                                             "web/src/pages/ItemDetail/components/versionSubtitleInventory.ts",
+                                                                             "web/src/pages/ItemDetail/components/versionRankingUtils.ts",
+                                                                             "web/src/pages/WatchRoute.tsx",
+                                                                             "web/src/pages/watchRouteHelpers.ts",
+                                                                             "web/src/player/utils/effectiveAudioLanguage.ts",
+                                                                             "web/src/player/utils/subtitleSort.ts"
+                                                                         ],
+                                                         "server_sources":  [
+                                                                                "internal/catalog/detail.go"
+                                                                            ],
+                                                         "desktop_files":  [
+                                                                               "src/ContinuumPlayer/Views/ItemDetailPage.xaml",
+                                                                               "src/ContinuumPlayer/Views/ItemDetailPage.xaml.cs",
+                                                                               "src/ContinuumPlayer.Core/Services/PlaybackManager.cs"
+                                                                           ],
+                                                         "parity":  "missing",
+                                                         "notes":  "Net-new feature commits: a9deb0c (Add pre-play audio and subtitle selection), 2265d4f (Remove watch/favorite from overflow), c16467c (Expose effective audio language). Desktop has a MatchDialog + version picker but no audio/subtitle popovers on the action bar."
+                                                     },
+                  "player/watch-party":  {
+                                             "description":  "Watch Party / Watch Together: synchronized group watch rooms with WebSocket playback sync, lobby, suggestions, spotlight carousel, and auto-exit when room closes.",
+                                             "web_sources":  [
+                                                                 "web/src/pages/WatchTogetherJoin.tsx",
+                                                                 "web/src/pages/WatchTogetherRoomPage.tsx",
+                                                                 "web/src/pages/WatchTogetherSuggestionPanel.tsx",
+                                                                 "web/src/player/components/WatchTogetherPanel.tsx",
+                                                                 "web/src/player/hooks/useWatchTogetherRoom.ts",
+                                                                 "web/src/player/hooks/useWatchTogetherRoomConnection.ts",
+                                                                 "web/src/player/hooks/useWatchTogetherPlaybackSync.ts",
+                                                                 "web/src/lib/watchTogether.ts"
+                                                             ],
+                                             "server_sources":  [
+                                                                    "internal/watchtogether/service.go",
+                                                                    "internal/watchtogether/repository.go",
+                                                                    "internal/watchtogether/suggestion_repository.go",
+                                                                    "internal/watchtogether/selection_resolver.go",
+                                                                    "internal/watchtogether/room_token.go",
+                                                                    "internal/watchtogether/types.go",
+                                                                    "internal/api/handlers/watch_together.go"
+                                                                ],
+                                             "desktop_files":  [
+
+                                                               ],
+                                             "parity":  "missing",
+                                             "notes":  "Biggest new feature in the wave. Originally \u0027Watch Together\u0027, renamed to \u0027Watch Party\u0027 late. Room-first flow with lobby, suggestions, poster grid, spotlight carousel. Backend uses the events/realtime-channel for sync. Needs new desktop pages + player integration + sync client â€” multi-day implementation."
+                                         },
+                  "player/chapter-thumbnails":  {
+                                                    "description":  "Chapter thumbnails: extract thumbnail images for chapter markers, stream them in realtime via event channel, display as a chapter menu in the player.",
+                                                    "web_sources":  [
+                                                                        "web/src/player/components/ChaptersMenu.tsx"
+                                                                    ],
+                                                    "server_sources":  [
+                                                                           "internal/chapterthumbs/service.go",
+                                                                           "internal/chapterthumbs/extractor.go",
+                                                                           "internal/chapterthumbs/remote.go",
+                                                                           "internal/playback/chapter_thumbnail_notifier.go",
+                                                                           "internal/api/handlers/libraries_chapter_thumbnail_test.go",
+                                                                           "internal/taskmanager/tasks/chapter_thumbnail_backfill.go"
+                                                                       ],
+                                                    "desktop_files":  [
+
+                                                                      ],
+                                                    "parity":  "missing",
+                                                    "notes":  "Commits: 7fce54d (add embedded chapters and thumbnails), 768df9c (stream chapter thumbnails realtime), 32ecec3 (enhance processing), b1e8676 (offload extraction to transcode nodes). Desktop libmpv already knows about chapters via the mpv chapter-list property â€” need to wire up a ChaptersMenu in PlayerOverlay showing the thumbnails + labels."
+                                                },
+                  "recommendations/watch-tonight":  {
+                                                        "description":  "Watch Tonight: gamified swipe-to-pick recommendation experience with genre filter. Cards stack, swipe left/right to reject/accept, discover ranker picks candidates.",
+                                                        "web_sources":  [
+                                                                            "web/src/components/WatchTonightCard.tsx",
+                                                                            "web/src/components/WatchTonightDialog.tsx",
+                                                                            "web/src/components/watchtonight/CardStack.tsx",
+                                                                            "web/src/components/watchtonight/SwipeCard.tsx",
+                                                                            "web/src/components/watchtonight/GenrePicker.tsx"
+                                                                        ],
+                                                        "server_sources":  [
+                                                                               "internal/recommendations/watch_tonight.go",
+                                                                               "internal/recommendations/discover_rank.go",
+                                                                               "internal/api/handlers/watch_tonight.go",
+                                                                               "internal/api/handlers/watch_tonight_cards.go"
+                                                                           ],
+                                                        "desktop_files":  [
+
+                                                                          ],
+                                                        "parity":  "missing",
+                                                        "notes":  "Commits: c88704b (add Watch Tonight feature), 896fe94 (add gamified swipe experience), f198e27 (enhance discover card generation). Swipe UX is inherently touch-oriented but can be adapted for mouse drag / arrow keys on desktop."
+                                                    },
+                  "player/playing-next-screen":  {
+                                                     "description":  "Cinematic Playing Next screen shown at episode end with early trigger â€” poster, title, countdown, next/cancel buttons.",
+                                                     "web_sources":  [
+                                                                         "web/src/player/components/PlayingNextScreen.tsx"
+                                                                     ],
+                                                     "desktop_files":  [
+
+                                                                       ],
+                                                     "parity":  "missing",
+                                                     "notes":  "Commits: d066cef. Desktop has a basic auto-next but no cinematic intro/countdown screen. Complements useNextEpisode.ts."
+                                                 },
+                  "auth/device-login":  {
+                                            "description":  "Device login approval flow: ActivateDevice page where a user enters a code from another device to approve that device\u0027s login. Uses word-based codes for usability.",
+                                            "web_sources":  [
+                                                                "web/src/pages/ActivateDevice.tsx",
+                                                                "web/src/lib/authRedirect.ts"
+                                                            ],
+                                            "server_sources":  [
+                                                                   "internal/auth/device_login.go",
+                                                                   "internal/auth/device_login_words.go",
+                                                                   "internal/api/handlers/auth_device.go"
+                                                               ],
+                                            "desktop_files":  [
+
+                                                              ],
+                                            "parity":  "missing",
+                                            "notes":  "Commit: 0809c7c. Could be used from the desktop to login via the web by scanning/entering a code, or vice versa. Need a UX decision on where it fits in the desktop auth flow."
+                                        },
+                  "settings/webhook-sync":  {
+                                                "description":  "Settings \u003e Webhook Sync: manage inbound webhook connections from external media servers (replaces old Plex Sync). Connection list + event log with search/pagination + detail dialog.",
+                                                "web_sources":  [
+                                                                    "web/src/pages/settings/WebhookSyncSettings.tsx",
+                                                                    "web/src/hooks/queries/webhook-sync.ts",
+                                                                    "web/src/lib/webhookSync.ts"
+                                                                ],
+                                                "server_sources":  [
+                                                                       "internal/webhooksync/service.go",
+                                                                       "internal/webhooksync/repo.go",
+                                                                       "internal/webhooksync/repo_events.go",
+                                                                       "internal/webhooksync/providers.go",
+                                                                       "internal/webhooksync/logging.go",
+                                                                       "internal/webhooksync/types.go",
+                                                                       "internal/api/handlers/webhook_sync.go"
+                                                                   ],
+                                                "desktop_files":  [
+
+                                                                  ],
+                                                "parity":  "missing",
+                                                "notes":  "Commit: e16a354, 17477c3 (refactor with event log). Replaces old plex_sync entirely (several internal/plexsync/ files deleted). 1281-line settings page â€” biggest new settings tab."
+                                            },
+                  "admin/image-selector":  {
+                                               "description":  "Admin: poster/backdrop/logo image browsing dialog for metadata editing. Browse candidate images from providers and pick one.",
+                                               "web_sources":  [
+                                                                   "web/src/components/ImageSelectorTab.tsx",
+                                                                   "web/src/components/EditMetadataDialog.tsx",
+                                                                   "web/src/components/MatchItemDialog.tsx"
+                                                               ],
+                                               "server_sources":  [
+                                                                      "internal/api/handlers/admin_images.go"
+                                                                  ],
+                                               "desktop_files":  [
+
+                                                                 ],
+                                               "parity":  "missing",
+                                               "notes":  "Commit: 18abd1d. Desktop has a MatchItemDialog but no image browser â€” admins currently can\u0027t change poster/backdrop/logo from desktop."
+                                           },
+                  "admin/server-activity":  {
+                                                "description":  "Admin: real-time server activity dropdown showing live playback sessions, scans, jobs, etc. Appears in the admin header.",
+                                                "web_sources":  [
+                                                                    "web/src/components/ServerActivity.tsx",
+                                                                    "web/src/pages/adminActivityPresentation.ts"
+                                                                ],
+                                                "desktop_files":  [
+
+                                                                  ],
+                                                "parity":  "missing",
+                                                "notes":  "Commit: c1a5951. Subscribes to the events/realtime-channel for live updates. Desktop has a static admin dashboard â€” no equivalent header dropdown."
+                                            },
+                  "admin/media-locations":  {
+                                                "description":  "Admin: folder path display for media items in MatchItemDialog â€” shows canonical root + file paths + source locations.",
+                                                "web_sources":  [
+                                                                    "web/src/components/MediaLocations.tsx"
+                                                                ],
+                                                "server_sources":  [
+                                                                       "internal/api/handlers/catalog_resources.go"
+                                                                   ],
+                                                "desktop_files":  [
+
+                                                                  ],
+                                                "parity":  "full",
+                                                "notes":  "Commits: 06a529a, 8a46261, c1be0e5. Improved folder path display in MatchItemDialog. Lower priority â€” admin/inspection UX.",
+                                                "line_counts":  {
+                                                                    "web/src/components/MediaLocations.tsx":  142,
+                                                                    "internal/api/handlers/catalog_resources.go":  487
+                                                                }
+                                            },
+                  "item-detail/inline-episodes":  {
+                                                      "description":  "ItemDetail: for single-season series, show episodes inline (no season accordion) as a grid.",
+                                                      "web_sources":  [
+                                                                          "web/src/pages/ItemDetail/components/SeasonEpisodeGrid.tsx",
+                                                                          "web/src/pages/ItemDetail/SeriesContent.tsx",
+                                                                          "web/src/pages/ItemDetail/SeasonContent.tsx"
+                                                                      ],
+                                                      "desktop_files":  [
+                                                                            "src/ContinuumPlayer/Views/ItemDetailPage.xaml.cs"
+                                                                        ],
+                                                      "parity":  "missing",
+                                                      "notes":  "Commit: 7da3620. Single-season series render a flat episode grid instead of a season accordion. Desktop currently uses accordion-per-season unconditionally."
+                                                  },
+                  "item-detail/viewer-state-inline":  {
+                                                          "description":  "ItemDetail response inlines favorite/watchlist/rating on the single detail fetch so the client can skip dedicated /favorites/{id}, /watchlist/{id}, /ratings/{id} round trips on page load.",
+                                                          "web_sources":  [
+                                                                              "web/src/pages/ItemDetail/MovieContent.tsx",
+                                                                              "web/src/pages/ItemDetail/SeriesContent.tsx"
+                                                                          ],
+                                                          "server_sources":  [
+                                                                                 "internal/catalog/detail.go",
+                                                                                 "internal/api/handlers/catalog_resources.go"
+                                                                             ],
+                                                          "desktop_files":  [
+                                                                                "src/ContinuumPlayer.Core/Models/Catalog/MediaItemDetail.cs",
+                                                                                "src/ContinuumPlayer/ViewModels/ItemDetailViewModel.cs",
+                                                                                "src/ContinuumPlayer/Views/ItemDetailPage.xaml.cs"
+                                                                            ],
+                                                          "parity":  "full",
+                                                          "notes":  "Commit: 4172a16 (Include viewer state in item details). Adds user_state {played, is_favorite, in_watchlist} and user_rating to ItemDetail response. Desktop implements by consuming these new fields in ItemDetailViewModel.LoadAsync â€” eliminates 3 extra API calls per page load. Dedicated endpoints kept as a fallback for older servers that do not populate user_state.",
+                                                          "line_counts":  {
+                                                                              "web/src/pages/ItemDetail/MovieContent.tsx":  293,
+                                                                              "web/src/pages/ItemDetail/SeriesContent.tsx":  214,
+                                                                              "internal/catalog/detail.go":  1565,
+                                                                              "internal/api/handlers/catalog_resources.go":  487
+                                                                          }
+                                                      },
+                  "item-detail/version-quality-summary":  {
+                                                              "description":  "Move active version quality/HDR label from the Play button into the Version dropdown trigger, so the play button no longer duplicates the quality text that the dropdown already shows.",
+                                                              "web_sources":  [
+                                                                                  "web/src/pages/ItemDetail/components/ActionBar.tsx",
+                                                                                  "web/src/pages/ItemDetail/components/VersionDropdown.tsx"
+                                                                              ],
+                                                              "desktop_files":  [
+                                                                                    "src/ContinuumPlayer/Views/ItemDetailPage.xaml",
+                                                                                    "src/ContinuumPlayer/Views/ItemDetailPage.xaml.cs"
+                                                                                ],
+                                                              "parity":  "full",
+                                                              "notes":  "Commit: a42f46b (Move version quality summary into the version dropdown). Desktop still shows PlayQualityText (e.g. \u0027Â· 4K HDR\u0027) inside SplitPlayButton. To match, hide PlayQualityText and render the active version summary beside the Version dropdown trigger. Appearance change â€” defer until Mike approves.",
+                                                              "line_counts":  {
+                                                                                  "web/src/pages/ItemDetail/components/ActionBar.tsx":  487,
+                                                                                  "web/src/pages/ItemDetail/components/VersionDropdown.tsx":  80
+                                                                              }
+                                                          },
+                  "collections/auto-collage":  {
+                                                   "description":  "Collections: auto-generated poster collages from member items. Background task composes a 2x2 poster grid.",
+                                                   "web_sources":  [
+                                                                       "web/src/components/collections/SyncScheduleField.tsx"
+                                                                   ],
+                                                   "server_sources":  [
+                                                                          "internal/collage/collage.go",
+                                                                          "internal/catalog/collection_sync_schedule.go",
+                                                                          "internal/catalog/collection_sync_scheduler.go",
+                                                                          "internal/taskmanager/tasks/sync_collections.go"
+                                                                      ],
+                                                   "desktop_files":  [
+
+                                                                     ],
+                                                   "parity":  "partial",
+                                                   "notes":  "Commits: 87ba86a (auto-generate poster collages), d42ebf7 (per-collection automatic sync scheduling). The collage IMAGE appears automatically on the server side and desktop just renders whatever poster URL it gets, so desktop probably gets this free for viewing. Per-collection sync schedule needs a new editor UI in the Collections edit page."
+                                               },
+                  "playback/series-preferences":  {
+                                                      "description":  "Sticky series playback preferences: remembers audio track + subtitle mode + quality + version selections per series so subsequent episodes auto-pick them.",
+                                                      "web_sources":  [
+                                                                          "web/src/pages/ItemDetail/EpisodeContent.tsx"
+                                                                      ],
+                                                      "server_sources":  [
+                                                                             "internal/userstore/pgstore/series_playback_prefs.go",
+                                                                             "internal/userdb/series_playback_prefs.go"
+                                                                         ],
+                                                      "desktop_files":  [
+                                                                            "src/ContinuumPlayer.Core/Services/PlaybackManager.cs",
+                                                                            "src/ContinuumPlayer/Services/PlayerService.cs"
+                                                                        ],
+                                                      "parity":  "missing",
+                                                      "notes":  "Commits: d3cc99a, 4b155c6, 762cc6a (sticky version preferences on episode detail pages). Server persists the last-used audio/subtitle/quality per series, desktop needs to read+apply these when starting playback for a series it\u0027s seen before."
+                                                  },
+                  "player/ass-subtitles":  {
+                                               "description":  "Advanced SubStation Alpha subtitle rendering for anime subtitles.",
+                                               "web_sources":  [
+                                                                   "web/src/player/hooks/useASSSubtitles.ts",
+                                                                   "web/src/player/utils/assSubtitles.ts"
+                                                               ],
+                                               "desktop_files":  [
+                                                                     "src/ContinuumPlayer/Controls/PlayerOverlay.xaml.cs"
+                                                                 ],
+                                               "parity":  "full",
+                                               "notes":  "Commit: f6c9ce4. libmpv natively renders ASS/SSA subtitles with full styling during direct play, so desktop gets this for free. Web had to build a custom renderer because browsers don\u0027t do ASS."
+                                           },
+                  "sections/season-premiere-badge":  {
+                                                         "description":  "Continue Watching cards: show a \u0027Season premiere\u0027 badge for new season first episodes.",
+                                                         "web_sources":  [
+                                                                             "web/src/components/ContinueWatchingCard.tsx"
+                                                                         ],
+                                                         "desktop_files":  [
+                                                                               "src/ContinuumPlayer/Controls/LandscapeCard.xaml"
+                                                                           ],
+                                                         "parity":  "missing",
+                                                         "notes":  "Commit: 7f1f836. Small visual addition â€” colored badge on the continue-watching card when the episode is a season premiere."
+                                                     },
+                  "admin/connection-checks":  {
+                                                  "description":  "Admin settings: inline connection-check buttons for external services (Redis, S3, plugins) with status indicators.",
+                                                  "web_sources":  [
+                                                                      "web/src/components/admin/ConnectionCheckAction.tsx"
+                                                                  ],
+                                                  "server_sources":  [
+                                                                         "internal/api/handlers/admin_settings_checks.go"
+                                                                     ],
+                                                  "desktop_files":  [
+
+                                                                    ],
+                                                  "parity":  "full",
+                                                  "notes":  "Commit: 9b9c131. Admin settings pages have inline \u0027Test connection\u0027 buttons that hit /admin/settings/checks/\u003cservice\u003e and display status.",
+                                                  "line_counts":  {
+                                                                      "web/src/components/admin/ConnectionCheckAction.tsx":  37,
+                                                                      "internal/api/handlers/admin_settings_checks.go":  250
+                                                                  }
+                                              },
+                  "setup-wizard/new-steps":  {
+                                                 "description":  "Setup wizard: new Recommendations step and new Server Storage step.",
+                                                 "web_sources":  [
+                                                                     "web/src/pages/setup-wizard/steps/RecommendationsStep.tsx",
+                                                                     "web/src/pages/setup-wizard/steps/ServerStorageStep.tsx"
+                                                                 ],
+                                                 "desktop_files":  [
+                                                                       "src/ContinuumPlayer/Views/SetupWizardPage.xaml",
+                                                                       "src/ContinuumPlayer/Views/SetupWizardPage.xaml.cs",
+                                                                       "src/ContinuumPlayer/ViewModels/SetupWizardViewModel.cs"
+                                                                   ],
+                                                 "parity":  "partial",
+                                                 "notes":  "Desktop already has a rewritten setup wizard (B47-B49). Need to compare to the new Recommendations + Server Storage steps and add them if missing."
+                                             },
+                  "settings/playback":  {
+                                            "description":  "Settings \u003e Playback tab: quality preference, subtitle language/mode, spoken language preference, next-up mode.",
+                                            "web_sources":  [
+                                                                "web/src/pages/settings/PlaybackSettings.tsx"
+                                                            ],
+                                            "line_counts":  {
+                                                                "web/src/pages/settings/PlaybackSettings.tsx":  351
+                                                            },
+                                            "desktop_files":  [
+                                                                  "src/ContinuumPlayer/Views/SettingsPage.xaml",
+                                                                  "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"
+                                                              ],
+                                            "parity":  "partial",
+                                            "notes":  "Desktop has basic quality + subtitle language combos. Full per-field parity not yet audited against the 351-line fresh source."
+                                        },
+                  "settings/subtitle-appearance":  {
+                                                       "description":  "Settings \u003e Subtitles tab: font size, family, color, outline, background style/opacity, position, live preview.",
+                                                       "web_sources":  [
+                                                                           "web/src/pages/settings/SubtitleAppearanceSettings.tsx"
+                                                                       ],
+                                                       "line_counts":  {
+                                                                           "web/src/pages/settings/SubtitleAppearanceSettings.tsx":  373
+                                                                       },
+                                                       "desktop_files":  [
+                                                                             "src/ContinuumPlayer/Views/SettingsPage.xaml",
+                                                                             "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"
+                                                                         ],
+                                                       "parity":  "partial",
+                                                       "notes":  "Desktop Subtitles tab had the RangeBase.Value crash that was fixed in session #12. Not yet audited field-by-field against fresh source."
+                                                   },
+                  "settings/appearance":  {
+                                              "description":  "Settings \u003e Appearance tab: theme picker, font family, density.",
+                                              "web_sources":  [
+                                                                  "web/src/pages/settings/AppearanceSettings.tsx"
+                                                              ],
+                                              "line_counts":  {
+                                                                  "web/src/pages/settings/AppearanceSettings.tsx":  124
+                                                              },
+                                              "desktop_files":  [
+                                                                    "src/ContinuumPlayer/Views/SettingsPage.xaml",
+                                                                    "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"
+                                                                ],
+                                              "parity":  "partial",
+                                              "notes":  "Desktop has a 13-theme picker but design tokens/spacing don\u0027t match shadcn exactly. Not audited against fresh source yet."
+                                          },
+                  "settings/library":  {
+                                           "description":  "Settings \u003e Library tab: per-library playback overrides, hidden libraries.",
+                                           "web_sources":  [
+                                                               "web/src/pages/settings/LibrarySettings.tsx",
+                                                               "web/src/pages/settings/libraryPlaybackPreferences.ts"
+                                                           ],
+                                           "line_counts":  {
+                                                               "web/src/pages/settings/LibrarySettings.tsx":  573
+                                                           },
+                                           "desktop_files":  [
+                                                                 "src/ContinuumPlayer/Views/SettingsPage.xaml",
+                                                                 "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"
+                                                             ],
+                                           "parity":  "partial",
+                                           "notes":  "Desktop has per-library cards but 573-line fresh source likely has features we\u0027re missing."
+                                       },
+                  "settings/home-screen":  {
+                                               "description":  "Settings \u003e Home Screen tab: section list, reorder, add/remove custom sections, reset to defaults.",
+                                               "web_sources":  [
+                                                                   "web/src/pages/settings/HomeScreenSettings.tsx"
+                                                               ],
+                                               "line_counts":  {
+                                                                   "web/src/pages/settings/HomeScreenSettings.tsx":  606
+                                                               },
+                                               "desktop_files":  [
+                                                                     "src/ContinuumPlayer/Views/SettingsPage.xaml",
+                                                                     "src/ContinuumPlayer/ViewModels/SettingsViewModel.cs"
+                                                                 ],
+                                               "parity":  "partial",
+                                               "notes":  "Desktop Home Screen tab has list + add/remove with confirm dialogs (B57/B58). 606-line fresh source likely richer."
+                                           },
+                  "settings/accessibility":  {
+                                                 "description":  "Settings \u003e Accessibility tab.",
+                                                 "web_sources":  [
+                                                                     "web/src/pages/settings/AccessibilitySettings.tsx"
+                                                                 ],
+                                                 "line_counts":  {
+                                                                     "web/src/pages/settings/AccessibilitySettings.tsx":  127
+                                                                 },
+                                                 "desktop_files":  [
+
+                                                                   ],
+                                                 "parity":  "missing",
+                                                 "notes":  "Not implemented on desktop yet."
+                                             },
+                  "settings/card-overlay":  {
+                                                "description":  "Settings \u003e Card Overlay tab.",
+                                                "web_sources":  [
+                                                                    "web/src/pages/settings/CardOverlaySettings.tsx"
+                                                                ],
+                                                "line_counts":  {
+                                                                    "web/src/pages/settings/CardOverlaySettings.tsx":  234
+                                                                },
+                                                "desktop_files":  [
+
+                                                                  ],
+                                                "parity":  "missing",
+                                                "notes":  "Not implemented on desktop yet."
+                                            },
+                  "settings/plugins":  {
+                                           "description":  "Settings \u003e Plugins tab.",
+                                           "web_sources":  [
+                                                               "web/src/pages/settings/PluginSettings.tsx"
+                                                           ],
+                                           "line_counts":  {
+                                                               "web/src/pages/settings/PluginSettings.tsx":  121
+                                                           },
+                                           "desktop_files":  [
+
+                                                             ],
+                                           "parity":  "missing",
+                                           "notes":  "Not implemented on desktop yet."
+                                       },
+                  "settings/profiles":  {
+                                            "description":  "Settings \u003e Profiles tab.",
+                                            "web_sources":  [
+                                                                "web/src/pages/settings/ProfilesSettings.tsx"
+                                                            ],
+                                            "line_counts":  {
+                                                                "web/src/pages/settings/ProfilesSettings.tsx":  254
+                                                            },
+                                            "desktop_files":  [
+
+                                                              ],
+                                            "parity":  "missing",
+                                            "notes":  "Not implemented on desktop yet."
+                                        },
+                  "settings/theme-editor":  {
+                                                "description":  "Settings \u003e Theme Editor tab: live theme token customization.",
+                                                "web_sources":  [
+                                                                    "web/src/pages/settings/ThemeEditorSettings.tsx"
+                                                                ],
+                                                "line_counts":  {
+                                                                    "web/src/pages/settings/ThemeEditorSettings.tsx":  118
+                                                                },
+                                                "desktop_files":  [
+
+                                                                  ],
+                                                "parity":  "missing",
+                                                "notes":  "Not implemented on desktop yet."
+                                            },
+                  "calendar":  {
+                                   "description":  "Calendar page (top-level nav).",
+                                   "web_sources":  [
+                                                       "web/src/pages/Calendar.tsx"
+                                                   ],
+                                   "desktop_files":  [
+
+                                                     ],
+                                   "parity":  "missing",
+                                   "notes":  "Brand new page. Upcoming/recently-added calendar view."
+                               }
+              }
 }

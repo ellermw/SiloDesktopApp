@@ -29,6 +29,7 @@
                     <!-- Header: Branding + subtitle -->
                     <StackPanel Spacing="8">
                         <TextBlock
+                            x:Name="ServerNameTitle"
                             Text="Continuum"
                             FontSize="30"
                             FontWeight="ExtraBold"
@@ -36,7 +37,7 @@
                             CharacterSpacing="-40" />
 
                         <TextBlock
-                            Text="Sign in with an existing account."
+                            Text="Sign in to access your media library."
                             Style="{StaticResource SecondaryTextStyle}"
                             FontSize="14" />
                     </StackPanel>

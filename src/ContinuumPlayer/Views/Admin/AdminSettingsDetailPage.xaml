@@ -73,7 +73,8 @@
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
 
-                    <!-- Outer surface panel containing tabs + content -->
+                    <!-- Outer surface panel with left sidebar nav + right content area
+                         (matches webui AdminSettingsLayout). -->
                     <Border
                         Background="{StaticResource CardBackgroundBrush}"
                         CornerRadius="28"
@@ -81,33 +82,31 @@
                         MinHeight="500">
 
                         <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="224" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
 
-                            <!-- Tab navigation row -->
+                            <!-- Left sub-nav sidebar -->
                             <Border
-                                Grid.Row="0"
+                                Grid.Column="0"
                                 BorderBrush="{StaticResource BorderBrush}"
-                                BorderThickness="0,0,0,1"
-                                Padding="8,8,8,0">
+                                BorderThickness="0,0,1,0"
+                                Padding="8,12,8,12">
                                 <ScrollViewer
-                                    HorizontalScrollBarVisibility="Auto"
-                                    VerticalScrollBarVisibility="Disabled">
+                                    VerticalScrollBarVisibility="Auto"
+                                    HorizontalScrollBarVisibility="Disabled">
                                     <StackPanel
                                         x:Name="TabBar"
-                                        Orientation="Horizontal"
-                                        Spacing="4"
-                                        Padding="4,0,4,8" />
+                                        Spacing="2" />
                                 </ScrollViewer>
                             </Border>
 
-                            <!-- Content area -->
+                            <!-- Right content area -->
                             <ScrollViewer
-                                Grid.Row="1"
+                                Grid.Column="1"
                                 VerticalScrollBarVisibility="Auto"
-                                Padding="24,20,24,24">
+                                Padding="28,24,28,28">
                                 <StackPanel
                                     x:Name="ContentPanel"
                                     Spacing="20" />

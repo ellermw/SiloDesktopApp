@@ -49,6 +49,31 @@ public class MediaItemDetail
     public List<FileVersion> Versions { get; set; } = [];
     [JsonPropertyName("user_data")]
     public ItemDetailUserData? UserData { get; set; }
+
+    // Library root paths for series items — admin-only. Populated when the
+    // requester has admin privileges so MatchItemDialog / metadata tools can
+    // show where on disk a series lives.
+    [JsonPropertyName("folder_paths")]
+    public List<string>? FolderPaths { get; set; }
+
+    // Viewer state inlined on the item detail response
+    // (server commit 4172a16 — "Include viewer state in item details").
+    // Lets the client skip separate /favorites/{id}, /watchlist/{id}, /ratings/{id}
+    // round trips on each page load.
+    [JsonPropertyName("user_state")]
+    public MediaItemUserState? UserState { get; set; }
+
+    [JsonPropertyName("user_rating")]
+    public int? UserRating { get; set; }
+}
+
+public class MediaItemUserState
+{
+    public bool Played { get; set; }
+    [JsonPropertyName("is_favorite")]
+    public bool IsFavorite { get; set; }
+    [JsonPropertyName("in_watchlist")]
+    public bool InWatchlist { get; set; }
 }
 
 public class ItemDetailUserData

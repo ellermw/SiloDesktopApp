@@ -2,17 +2,29 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.UI;
+using ContinuumPlayer.Controls;
 using ContinuumPlayer.Core.Models.Admin;
-using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.ViewModels.Admin;
 
 namespace ContinuumPlayer.Views.Admin;
 
+/// <summary>
+/// Mirror of the webui AdminMaintenance page. Shows:
+///   • Catalog Import &amp; Export header card with Start Export + Import Catalog actions
+///   • Recent Catalog Imports list
+///   • Recent Catalog Exports list (with Publish / Copy URL / Download actions)
+///   • Global Job History list
+/// Uses the existing AdminApi catalog seed and job endpoints; ViewModel
+/// collections are rebuilt into StackPanel children on change.
+/// </summary>
 public sealed partial class AdminMaintenancePage : Page
 {
     public AdminMaintenanceViewModel ViewModel { get; }
-    private bool _rebuildPending;
+    private bool _rebuildImportsPending;
+    private bool _rebuildExportsPending;
+    private bool _rebuildAllPending;
 
     public AdminMaintenancePage()
     {
@@ -22,224 +34,600 @@ public sealed partial class AdminMaintenancePage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        ViewModel.StaleIds.CollectionChanged += (_, _) => ScheduleRebuild();
-        ViewModel.SkippedRoots.CollectionChanged += (_, _) => ScheduleRebuild();
-        ViewModel.UnmatchedItems.CollectionChanged += (_, _) => ScheduleRebuild();
+        ViewModel.ImportJobs.CollectionChanged += (_, _) => ScheduleRebuildImports();
+        ViewModel.ExportJobs.CollectionChanged += (_, _) => ScheduleRebuildExports();
+        ViewModel.AllJobs.CollectionChanged += (_, _) => ScheduleRebuildAll();
         try { await ViewModel.LoadCommand.ExecuteAsync(null); }
         catch (Exception ex) { ViewModel.ErrorMessage = $"Error: {ex.Message}"; }
     }
 
-    private void ScheduleRebuild()
+    private void ScheduleRebuildImports()
     {
-        if (_rebuildPending) return;
-        _rebuildPending = true;
-        DispatcherQueue.TryEnqueue(() => { _rebuildPending = false; RebuildAll(); });
+        if (_rebuildImportsPending) return;
+        _rebuildImportsPending = true;
+        DispatcherQueue.TryEnqueue(() => { _rebuildImportsPending = false; RebuildImportJobs(); });
+    }
+    private void ScheduleRebuildExports()
+    {
+        if (_rebuildExportsPending) return;
+        _rebuildExportsPending = true;
+        DispatcherQueue.TryEnqueue(() => { _rebuildExportsPending = false; RebuildExportJobs(); });
+    }
+    private void ScheduleRebuildAll()
+    {
+        if (_rebuildAllPending) return;
+        _rebuildAllPending = true;
+        DispatcherQueue.TryEnqueue(() => { _rebuildAllPending = false; RebuildAllJobs(); });
     }
 
-    private void RebuildAll()
+    // ─── Action handlers ─────────────────────────────────────────────────
+
+    private async void StartExport_Click(object sender, RoutedEventArgs e)
     {
-        RebuildStaleIds();
-        RebuildSkippedRoots();
-        RebuildUnmatched();
+        await ViewModel.StartExportCommand.ExecuteAsync(null);
     }
 
-    private void RebuildStaleIds()
+    private async void ImportCatalog_Click(object sender, RoutedEventArgs e)
     {
-        StaleIdsPanel.Children.Clear();
-        if (ViewModel.StaleIds.Count == 0) { StaleIdsEmpty.Visibility = Visibility.Visible; return; }
-        StaleIdsEmpty.Visibility = Visibility.Collapsed;
-
-        bool first = true;
-        foreach (var item in ViewModel.StaleIds)
+        var dialog = new CatalogImportDialog(ViewModel) { XamlRoot = this.XamlRoot };
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary && dialog.BuiltRequest != null)
         {
-            if (!first) StaleIdsPanel.Children.Add(MakeSeparator());
-            first = false;
-            StaleIdsPanel.Children.Add(BuildStaleRow(item));
+            try { await ViewModel.SubmitImportAsync(dialog.BuiltRequest); }
+            catch { /* VM handles error surface */ }
         }
     }
 
-    private FrameworkElement BuildStaleRow(StaleMediaId item)
+    private async void RefreshImports_Click(object sender, RoutedEventArgs e)
     {
-        var row = new Grid { Padding = new Thickness(20, 12, 20, 12), ColumnSpacing = 12 };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.5, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+        await ViewModel.RefreshImportJobsAsync();
+    }
+    private async void RefreshExports_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.RefreshExportJobsAsync();
+    }
+    private async void RefreshAllJobs_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.RefreshAllJobsAsync();
+    }
 
-        var titlePanel = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-        titlePanel.Children.Add(new TextBlock
+    // ─── Rebuilds ────────────────────────────────────────────────────────
+
+    private void RebuildImportJobs()
+    {
+        ImportJobsPanel.Children.Clear();
+        if (ViewModel.ImportJobs.Count == 0)
         {
-            Text = $"{item.Title} ({item.Year})", FontSize = 14, FontWeight = FontWeights.SemiBold,
-            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis
+            ImportJobsPanel.Children.Add(EmptyRow("No catalog import jobs yet."));
+            return;
+        }
+        foreach (var job in ViewModel.ImportJobs)
+            ImportJobsPanel.Children.Add(BuildImportJobRow(job));
+    }
+
+    private void RebuildExportJobs()
+    {
+        ExportJobsPanel.Children.Clear();
+        if (ViewModel.ExportJobs.Count == 0)
+        {
+            ExportJobsPanel.Children.Add(EmptyRow("No catalog export jobs yet."));
+            return;
+        }
+        foreach (var job in ViewModel.ExportJobs)
+            ExportJobsPanel.Children.Add(BuildExportJobRow(job));
+    }
+
+    private void RebuildAllJobs()
+    {
+        AllJobsPanel.Children.Clear();
+        if (ViewModel.AllJobs.Count == 0)
+        {
+            AllJobsPanel.Children.Add(EmptyRow("No jobs yet."));
+            return;
+        }
+        foreach (var job in ViewModel.AllJobs)
+            AllJobsPanel.Children.Add(BuildAllJobRow(job));
+    }
+
+    // ─── Job rows ────────────────────────────────────────────────────────
+
+    private FrameworkElement BuildImportJobRow(AdminJob job)
+    {
+        var container = new StackPanel
+        {
+            Spacing = 6,
+            Padding = new Thickness(20, 14, 20, 14),
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(0, 1, 0, 0),
+        };
+
+        // Badge row: status + description + requested timestamp
+        var headRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        headRow.Children.Add(BuildStatusBadge(job.Status));
+        headRow.Children.Add(new TextBlock
+        {
+            Text = DescribeImportJob(job),
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
         });
-        Grid.SetColumn(titlePanel, 0); row.Children.Add(titlePanel);
-
-        var provider = new TextBlock
+        headRow.Children.Add(new TextBlock
         {
-            Text = $"{item.Provider}: {item.ProviderId}", FontSize = 13,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis
-        };
-        Grid.SetColumn(provider, 1); row.Children.Add(provider);
+            Text = $"requested {FormatLocalTime(job.RequestedAt)}",
+            FontSize = 11,
+            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        container.Children.Add(headRow);
 
-        var library = new TextBlock
+        // Message line
+        if (!string.IsNullOrEmpty(job.Message))
         {
-            Text = item.LibraryName, FontSize = 13,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(library, 2); row.Children.Add(library);
-
-        string lastSeenText = "\u2014";
-        if (!string.IsNullOrEmpty(item.LastSeenAt) && DateTime.TryParse(item.LastSeenAt, out var dt))
-            lastSeenText = dt.ToLocalTime().ToString("d");
-        var lastSeen = new TextBlock
-        {
-            Text = lastSeenText, FontSize = 12,
-            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(lastSeen, 3); row.Children.Add(lastSeen);
-
-        var capturedItem = item;
-        var rematchBtn = new Button
-        {
-            Content = "Rematch",
-            Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
-            Padding = new Thickness(10, 4, 10, 4), FontSize = 12,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        rematchBtn.Click += async (_, _) =>
-        {
-            rematchBtn.IsEnabled = false;
-            await ViewModel.RematchStaleIdCommand.ExecuteAsync(capturedItem.ContentId);
-            ShowStatus("Rematch initiated.");
-        };
-        Grid.SetColumn(rematchBtn, 4); row.Children.Add(rematchBtn);
-
-        return row;
-    }
-
-    private void RebuildSkippedRoots()
-    {
-        SkippedRootsPanel.Children.Clear();
-        if (ViewModel.SkippedRoots.Count == 0) { SkippedRootsEmpty.Visibility = Visibility.Visible; return; }
-        SkippedRootsEmpty.Visibility = Visibility.Collapsed;
-
-        bool first = true;
-        foreach (var root in ViewModel.SkippedRoots)
-        {
-            if (!first) SkippedRootsPanel.Children.Add(MakeSeparator());
-            first = false;
-
-            var row = new Grid { Padding = new Thickness(20, 12, 20, 12), ColumnSpacing = 12 };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-
-            var path = new TextBlock
+            container.Children.Add(new TextBlock
             {
-                Text = root.RootPath, FontSize = 13, FontFamily = new FontFamily("Consolas, Courier New"),
-                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-                VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis
-            };
-            Grid.SetColumn(path, 0); row.Children.Add(path);
-
-            var lib = new TextBlock
-            {
-                Text = root.LibraryName, FontSize = 13,
-                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            Grid.SetColumn(lib, 1); row.Children.Add(lib);
-
-            var reason = new TextBlock
-            {
-                Text = root.Reason, FontSize = 13,
-                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
-                VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap
-            };
-            Grid.SetColumn(reason, 2); row.Children.Add(reason);
-
-            SkippedRootsPanel.Children.Add(row);
+                Text = job.Message,
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
         }
-    }
 
-    private void RebuildUnmatched()
-    {
-        UnmatchedPanel.Children.Clear();
-        if (ViewModel.UnmatchedItems.Count == 0) { UnmatchedEmpty.Visibility = Visibility.Visible; return; }
-        UnmatchedEmpty.Visibility = Visibility.Collapsed;
+        // Progress bar
+        container.Children.Add(BuildProgressBar(AdminMaintenanceViewModel.GetJobProgressPercent(job)));
 
-        bool first = true;
-        foreach (var item in ViewModel.UnmatchedItems)
+        // Meta line: progress + finished + counts
+        var metaRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
+        metaRow.Children.Add(MetaText($"Progress: {FormatJobProgress(job)}"));
+        if (!string.IsNullOrEmpty(job.CompletedAt))
+            metaRow.Children.Add(MetaText($"Finished: {FormatLocalTime(job.CompletedAt!)}"));
+        if (job.Status == "completed" && job.ResultPayload != null)
         {
-            if (!first) UnmatchedPanel.Children.Add(MakeSeparator());
-            first = false;
-
-            var row = new Grid { Padding = new Thickness(20, 12, 20, 12), ColumnSpacing = 12 };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-            var title = new TextBlock
-            {
-                Text = $"{item.Title} ({item.Year})", FontSize = 14, FontWeight = FontWeights.SemiBold,
-                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-                VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis
-            };
-            Grid.SetColumn(title, 0); row.Children.Add(title);
-
-            var lib = new TextBlock
-            {
-                Text = item.LibraryName, FontSize = 13,
-                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            Grid.SetColumn(lib, 1); row.Children.Add(lib);
-
-            var typeBlock = new TextBlock
-            {
-                Text = item.ContentType, FontSize = 13,
-                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            Grid.SetColumn(typeBlock, 2); row.Children.Add(typeBlock);
-
-            var statusBadge = MakeBadge(item.Status,
-                Color.FromArgb(40, 234, 179, 8), Color.FromArgb(255, 234, 179, 8));
-            Grid.SetColumn(statusBadge, 3); row.Children.Add(statusBadge);
-
-            UnmatchedPanel.Children.Add(row);
+            var items = ExtractInt(job.ResultPayload, "items_created");
+            var files = ExtractInt(job.ResultPayload, "files_created");
+            metaRow.Children.Add(MetaText($"Imported {items} items and {files} files"));
         }
+        container.Children.Add(metaRow);
+
+        if (!string.IsNullOrEmpty(job.ErrorMessage))
+        {
+            container.Children.Add(new TextBlock
+            {
+                Text = job.ErrorMessage,
+                FontSize = 11,
+                Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        return container;
     }
 
-    private static Border MakeSeparator() => new Border
+    private FrameworkElement BuildExportJobRow(AdminJob job)
     {
-        BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
-        BorderThickness = new Thickness(0, 1, 0, 0)
+        var container = new Grid
+        {
+            Padding = new Thickness(20, 14, 20, 14),
+            ColumnSpacing = 12,
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(0, 1, 0, 0),
+        };
+        container.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        container.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var info = new StackPanel { Spacing = 6 };
+
+        // Header row
+        var headRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        headRow.Children.Add(BuildStatusBadge(job.Status));
+        headRow.Children.Add(new TextBlock
+        {
+            Text = DescribeExportScope(job),
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        headRow.Children.Add(new TextBlock
+        {
+            Text = $"requested {FormatLocalTime(job.RequestedAt)}",
+            FontSize = 11,
+            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        info.Children.Add(headRow);
+
+        if (!string.IsNullOrEmpty(job.Message))
+        {
+            info.Children.Add(new TextBlock
+            {
+                Text = job.Message,
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        var metaRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
+        metaRow.Children.Add(MetaText($"Progress: {FormatJobProgress(job)}"));
+        if (!string.IsNullOrEmpty(job.CompletedAt))
+            metaRow.Children.Add(MetaText($"Finished: {FormatLocalTime(job.CompletedAt!)}"));
+        if (job.Status == "completed" && job.ResultPayload != null)
+        {
+            var items = ExtractInt(job.ResultPayload, "items_exported");
+            var files = ExtractInt(job.ResultPayload, "files_exported");
+            if (items > 0)
+                metaRow.Children.Add(MetaText($"Exported {items} items and {files} files"));
+        }
+        info.Children.Add(metaRow);
+
+        if (!string.IsNullOrEmpty(job.ErrorMessage))
+        {
+            info.Children.Add(new TextBlock
+            {
+                Text = job.ErrorMessage,
+                FontSize = 11,
+                Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        Grid.SetColumn(info, 0);
+        container.Children.Add(info);
+
+        // Actions (right column): Download / Publish / Copy URL
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        if (!string.IsNullOrEmpty(job.DownloadUrl))
+        {
+            var dlBtn = new Button { Padding = new Thickness(10, 6, 10, 6), FontSize = 12 };
+            var dlContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            dlContent.Children.Add(new FontIcon { Glyph = "\uE896", FontSize = 12 });
+            dlContent.Children.Add(new TextBlock { Text = "Download" });
+            dlBtn.Content = dlContent;
+            dlBtn.Click += (_, _) => OpenUrl(job.DownloadUrl!);
+            actions.Children.Add(dlBtn);
+        }
+
+        if (job.Status == "completed" && string.IsNullOrEmpty(job.PublicUrl))
+        {
+            var publishBtn = new Button { Content = "Publish", Padding = new Thickness(10, 6, 10, 6), FontSize = 12 };
+            var capturedId = job.Id;
+            publishBtn.Click += async (_, _) => await ViewModel.PublishExportAsync(capturedId);
+            actions.Children.Add(publishBtn);
+        }
+
+        if (!string.IsNullOrEmpty(job.PublicUrl))
+        {
+            var copyBtn = new Button { Content = "Copy URL", Padding = new Thickness(10, 6, 10, 6), FontSize = 12 };
+            var capturedUrl = job.PublicUrl!;
+            copyBtn.Click += (_, _) => CopyToClipboard(capturedUrl);
+            actions.Children.Add(copyBtn);
+        }
+
+        Grid.SetColumn(actions, 1);
+        container.Children.Add(actions);
+
+        return container;
+    }
+
+    private FrameworkElement BuildAllJobRow(AdminJob job)
+    {
+        var container = new StackPanel
+        {
+            Spacing = 4,
+            Padding = new Thickness(20, 12, 20, 12),
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(0, 1, 0, 0),
+        };
+
+        var headRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        headRow.Children.Add(BuildStatusBadge(job.Status));
+        headRow.Children.Add(BuildTypeBadge(JobTypeLabel(job.JobType)));
+        var desc = JobDescription(job);
+        if (!string.IsNullOrEmpty(desc))
+        {
+            headRow.Children.Add(new TextBlock
+            {
+                Text = desc,
+                FontSize = 12,
+                FontWeight = FontWeights.Medium,
+                Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+        }
+        headRow.Children.Add(new TextBlock
+        {
+            Text = FormatLocalTime(job.RequestedAt),
+            FontSize = 11,
+            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        container.Children.Add(headRow);
+
+        var metaRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        if (!string.IsNullOrEmpty(job.Message))
+            metaRow.Children.Add(MetaText(job.Message));
+        if (job.Status is "running" or "queued")
+            metaRow.Children.Add(MetaText($"Progress: {FormatJobProgress(job)}"));
+        var result = JobResult(job);
+        if (!string.IsNullOrEmpty(result))
+            metaRow.Children.Add(MetaText(result));
+        if (!string.IsNullOrEmpty(job.CompletedAt))
+            metaRow.Children.Add(MetaText($"Finished: {FormatLocalTime(job.CompletedAt!)}"));
+        if (metaRow.Children.Count > 0)
+            container.Children.Add(metaRow);
+
+        if (!string.IsNullOrEmpty(job.ErrorMessage))
+        {
+            container.Children.Add(new TextBlock
+            {
+                Text = job.ErrorMessage,
+                FontSize = 11,
+                Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        return container;
+    }
+
+    // ─── Small UI helpers ────────────────────────────────────────────────
+
+    private FrameworkElement EmptyRow(string text) => new TextBlock
+    {
+        Text = text,
+        FontSize = 12,
+        Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        Margin = new Thickness(20, 18, 20, 18),
     };
 
-    private static Border MakeBadge(string text, Color bg, Color fg)
+    private FrameworkElement BuildStatusBadge(string status)
+    {
+        var (bg, fg) = status switch
+        {
+            "completed" => (Color.FromArgb(0x33, 0x4A, 0xDE, 0x80), Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80)),
+            "running"   => (Color.FromArgb(0x33, 0x60, 0xA5, 0xFA), Color.FromArgb(0xFF, 0x60, 0xA5, 0xFA)),
+            "queued"    => (Color.FromArgb(0x33, 0xFB, 0xBF, 0x24), Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24)),
+            "failed"    => (Color.FromArgb(0x33, 0xEF, 0x6B, 0x73), Color.FromArgb(0xFF, 0xEF, 0x6B, 0x73)),
+            _           => (Color.FromArgb(0x33, 0x9C, 0xA3, 0xAF), Color.FromArgb(0xFF, 0x9C, 0xA3, 0xAF)),
+        };
+        return new Border
+        {
+            Background = new SolidColorBrush(bg),
+            Height = 20,
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(9, 0, 9, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = status,
+                FontSize = 10,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(fg),
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
+    }
+
+    private FrameworkElement BuildTypeBadge(string label)
     {
         return new Border
         {
-            Background = new SolidColorBrush(bg), CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(8, 2, 8, 2), VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Child = new TextBlock { Text = text, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(fg) }
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            Height = 20,
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(9, 0, 9, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = label,
+                FontSize = 10,
+                FontWeight = FontWeights.Medium,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+            },
         };
     }
 
-    private void ShowStatus(string message)
+    private FrameworkElement BuildProgressBar(double percent)
     {
-        StatusBannerText.Text = message;
-        StatusBanner.Visibility = Visibility.Visible;
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
-        timer.Tick += (_, _) => { StatusBanner.Visibility = Visibility.Collapsed; timer.Stop(); };
-        timer.Start();
+        var track = new Border
+        {
+            Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
+            Height = 6,
+            CornerRadius = new CornerRadius(3),
+        };
+        var grid = new Grid();
+        double pct = Math.Clamp(percent, 2.0, 100.0);
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(pct, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100 - pct, GridUnitType.Star) });
+        var fill = new Border
+        {
+            Background = (Brush)Application.Current.Resources["AccentBrush"],
+            CornerRadius = new CornerRadius(3),
+        };
+        Grid.SetColumn(fill, 0);
+        grid.Children.Add(fill);
+        track.Child = grid;
+        return track;
+    }
+
+    private TextBlock MetaText(string text) => new()
+    {
+        Text = text,
+        FontSize = 11,
+        Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+    };
+
+    // ─── Formatters ──────────────────────────────────────────────────────
+
+    private static string FormatLocalTime(string iso)
+    {
+        if (string.IsNullOrEmpty(iso)) return "";
+        if (DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
+            return dt.ToLocalTime().ToString("g");
+        return iso;
+    }
+
+    private static string FormatJobProgress(AdminJob job)
+    {
+        if (job.ProgressTotal > 0)
+            return $"{job.ProgressCurrent} / {job.ProgressTotal}";
+        return job.Status switch
+        {
+            "completed" => "Done",
+            "running" => "In progress",
+            _ => job.Status,
+        };
+    }
+
+    private static string DescribeImportJob(AdminJob job)
+    {
+        if (job.RequestPayload == null) return "Catalog seed";
+        if (job.RequestPayload.TryGetValue("source_label", out var label) && label is string s1 && !string.IsNullOrEmpty(s1))
+            return s1;
+        if (job.RequestPayload.TryGetValue("source_key", out var key) && key is string s2 && !string.IsNullOrEmpty(s2))
+            return s2;
+        return "Catalog seed";
+    }
+
+    private static string DescribeExportScope(AdminJob job)
+    {
+        if (job.RequestPayload == null) return "All libraries";
+        if (job.RequestPayload.TryGetValue("library_ids", out var raw) && raw != null)
+        {
+            int count = CountJsonArray(raw);
+            if (count > 0)
+                return count == 1 ? "1 library" : $"{count} libraries";
+        }
+        return "All libraries";
+    }
+
+    private static string JobTypeLabel(string jobType) => jobType switch
+    {
+        "delete_library"   => "Library Delete",
+        "catalog_export"   => "Catalog Export",
+        "catalog_import"   => "Catalog Import",
+        "item_refresh"     => "Item Refresh",
+        "library_refresh"  => "Library Refresh",
+        _ => jobType,
+    };
+
+    private static string JobDescription(AdminJob job)
+    {
+        if (job.RequestPayload == null) return "";
+        switch (job.JobType)
+        {
+            case "delete_library":
+                if (job.RequestPayload.TryGetValue("library_name", out var ln) && ln is string lns && !string.IsNullOrEmpty(lns))
+                    return $"\"{lns}\"";
+                if (job.RequestPayload.TryGetValue("library_id", out var li) && li != null)
+                    return $"Library #{li}";
+                return "";
+            case "item_refresh":
+            case "library_refresh":
+                if (job.RequestPayload.TryGetValue("library_name", out var rn) && rn is string rns && !string.IsNullOrEmpty(rns))
+                    return $"\"{rns}\"";
+                if (job.RequestPayload.TryGetValue("library_id", out var ri) && ri != null)
+                    return $"Library #{ri}";
+                return "All libraries";
+            case "catalog_export":
+                return DescribeExportScope(job);
+            case "catalog_import":
+                return DescribeImportJob(job);
+            default:
+                return "";
+        }
+    }
+
+    private static string JobResult(AdminJob job)
+    {
+        if (job.Status != "completed" || job.ResultPayload == null) return "";
+        switch (job.JobType)
+        {
+            case "library_refresh":
+                {
+                    var total = ExtractInt(job.ResultPayload, "total_items");
+                    if (total == 0) return "No library items to refresh";
+                    var withIds = ExtractInt(job.ResultPayload, "items_with_ids");
+                    var without = ExtractInt(job.ResultPayload, "items_without_ids");
+                    var refOk = ExtractInt(job.ResultPayload, "refreshed_ok");
+                    var refFail = ExtractInt(job.ResultPayload, "refreshed_failed");
+                    return $"Total {total}, {withIds} direct, {without} unmatched, direct {refOk} ok/{refFail} failed";
+                }
+            case "delete_library":
+                {
+                    var files = ExtractInt(job.ResultPayload, "deleted_media_files");
+                    var items = ExtractInt(job.ResultPayload, "deleted_orphaned_items");
+                    var parts = new List<string>();
+                    if (files > 0) parts.Add($"{files} files");
+                    if (items > 0) parts.Add($"{items} items");
+                    return parts.Count > 0 ? $"Deleted {string.Join(", ", parts)}" : "Deleted (empty)";
+                }
+            case "catalog_export":
+                {
+                    var items = ExtractInt(job.ResultPayload, "items_exported");
+                    if (items == 0) return "";
+                    var files = ExtractInt(job.ResultPayload, "files_exported");
+                    return $"Exported {items} items, {files} files";
+                }
+            case "catalog_import":
+                {
+                    var items = ExtractInt(job.ResultPayload, "items_created");
+                    if (items == 0) return "";
+                    var files = ExtractInt(job.ResultPayload, "files_created");
+                    return $"Imported {items} items, {files} files";
+                }
+            default:
+                return "";
+        }
+    }
+
+    private static int ExtractInt(Dictionary<string, object> dict, string key)
+    {
+        if (!dict.TryGetValue(key, out var raw) || raw == null) return 0;
+        if (raw is int i) return i;
+        if (raw is long l) return (int)l;
+        if (raw is double d) return (int)d;
+        if (raw is System.Text.Json.JsonElement je)
+        {
+            if (je.ValueKind == System.Text.Json.JsonValueKind.Number && je.TryGetInt32(out var ji)) return ji;
+        }
+        if (int.TryParse(raw.ToString(), out var parsed)) return parsed;
+        return 0;
+    }
+
+    private static int CountJsonArray(object raw)
+    {
+        if (raw is System.Collections.IList list) return list.Count;
+        if (raw is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Array)
+            return je.GetArrayLength();
+        return 0;
+    }
+
+    // ─── Clipboard / open URL ────────────────────────────────────────────
+
+    private static void CopyToClipboard(string text)
+    {
+        try
+        {
+            var data = new DataPackage();
+            data.SetText(text);
+            Clipboard.SetContent(data);
+        }
+        catch { }
+    }
+
+    private static async void OpenUrl(string url)
+    {
+        try { await Windows.System.Launcher.LaunchUriAsync(new Uri(url)); }
+        catch { }
     }
 }

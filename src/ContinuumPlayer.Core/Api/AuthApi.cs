@@ -40,6 +40,46 @@ public class AuthApi(ContinuumApiClient client)
     public Task<AuthProvidersResponse> GetAuthProvidersAsync(CancellationToken ct = default)
         => client.GetAsync<AuthProvidersResponse>("/api/v1/auth/providers", ct);
 
+    // ===== Device Login (approver-side flow) =====
+    //
+    // Used by the Activate Device page. Device A calls /device/start, displays a
+    // short user_code (e.g. "ABCD-EFGH") to the user, then polls /device/poll until
+    // an approver signs in on device B, calls /device (lookup) to review the pending
+    // request, and confirms with /device/approve or /device/deny.
+    //
+    // This client acts as the approver: lookup + approve/deny. DeviceStart/Poll are
+    // included for completeness so the same AuthApi covers the whole flow.
+
+    public Task<DeviceLoginStartResponse> DeviceStartAsync(string? deviceName = null, string? devicePlatform = null, CancellationToken ct = default)
+        => client.PostAsync<DeviceLoginStartResponse>("/api/v1/auth/device/start",
+            new { device_name = deviceName ?? "", device_platform = devicePlatform ?? "" }, ct);
+
+    /// <summary>
+    /// Look up a pending device login request. Exactly one of <paramref name="token"/>
+    /// (browser_code from a deep link) or <paramref name="code"/> (user-typed short code)
+    /// should be provided. Mirrors the web ActivateDevice query params.
+    /// </summary>
+    public Task<DeviceLoginLookupResponse> DeviceLookupAsync(string? token, string? code, CancellationToken ct = default)
+    {
+        var qs = new List<string>();
+        if (!string.IsNullOrEmpty(token)) qs.Add($"token={Uri.EscapeDataString(token)}");
+        else if (!string.IsNullOrEmpty(code)) qs.Add($"code={Uri.EscapeDataString(code)}");
+        var query = qs.Count > 0 ? "?" + string.Join("&", qs) : "";
+        return client.GetAsync<DeviceLoginLookupResponse>($"/api/v1/auth/device{query}", ct);
+    }
+
+    public Task<DeviceLoginPollResponse> DevicePollAsync(string deviceCode, CancellationToken ct = default)
+        => client.PostAsync<DeviceLoginPollResponse>("/api/v1/auth/device/poll",
+            new { device_code = deviceCode }, ct);
+
+    public Task DeviceApproveAsync(string? token, string? code, CancellationToken ct = default)
+        => client.PostNoContentAsync("/api/v1/auth/device/approve",
+            new DeviceDecisionRequest { Token = token, Code = code }, ct);
+
+    public Task DeviceDenyAsync(string? token, string? code, CancellationToken ct = default)
+        => client.PostNoContentAsync("/api/v1/auth/device/deny",
+            new DeviceDecisionRequest { Token = token, Code = code }, ct);
+
     // ===== Session Management =====
 
     public Task LogoutAsync(CancellationToken ct = default)

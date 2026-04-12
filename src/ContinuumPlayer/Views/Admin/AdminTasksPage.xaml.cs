@@ -178,14 +178,28 @@ public sealed partial class AdminTasksPage : Page
         // Metadata / progress (idle shows meta line; running shows progress bar)
         if (!isRunning)
         {
-            // Meta line: "Last run: Xm ago · Next: in Xm" or "Never run"
-            string lastRunPart = task.LastExecution != null && !string.IsNullOrEmpty(task.LastExecution.CompletedAt)
-                ? $"Last run: {FormatRelativeTime(task.LastExecution.CompletedAt)}"
-                : "Never run";
+            // Meta line matches web AdminTasks:
+            //   "<schedule>" | "No schedule"
+            //   " · Last run: {rel}" (if any)
+            //   " · Never run" (only if no schedule AND no last execution)
+            //   " · Next: in X" (if next_run_at)
+            var parts = new List<string>();
 
-            string metaText = !string.IsNullOrEmpty(task.NextRunAt)
-                ? $"{lastRunPart} · Next: {FormatNextRun(task.NextRunAt)}"
-                : lastRunPart;
+            string? scheduleDesc = DescribeSchedule(task.Triggers);
+            if (!string.IsNullOrEmpty(scheduleDesc))
+                parts.Add(scheduleDesc);
+            else
+                parts.Add("No schedule");
+
+            if (task.LastExecution != null && !string.IsNullOrEmpty(task.LastExecution.CompletedAt))
+                parts.Add($"Last run: {FormatRelativeTime(task.LastExecution.CompletedAt)}");
+            else if (string.IsNullOrEmpty(scheduleDesc))
+                parts.Add("Never run");
+
+            if (!string.IsNullOrEmpty(task.NextRunAt))
+                parts.Add($"Next: {FormatNextRun(task.NextRunAt)}");
+
+            string metaText = string.Join(" \u00B7 ", parts);
 
             leftPanel.Children.Add(new TextBlock
             {
@@ -197,11 +211,12 @@ public sealed partial class AdminTasksPage : Page
         }
         else
         {
-            // Progress bar container — bg-muted h-2 rounded-full (h-2 = 8px)
+            // Progress bar container — bg-muted h-2 rounded-full (h-2 = 8px).
+            // CornerRadius = height/2 gives a clean capsule fill.
             var progressTrack = new Border
             {
                 Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
-                CornerRadius = new CornerRadius(999),
+                CornerRadius = new CornerRadius(4),
                 Height = 8,
                 Margin = new Thickness(0, 6, 0, 0)
             };
@@ -212,7 +227,7 @@ public sealed partial class AdminTasksPage : Page
                 Background = task.State == "cancelling"
                     ? new SolidColorBrush(Color.FromArgb(255, 234, 179, 8))
                     : (SolidColorBrush)Application.Current.Resources["AccentBrush"],
-                CornerRadius = new CornerRadius(999),
+                CornerRadius = new CornerRadius(4),
             };
 
             // Use a Grid to simulate percentage width
@@ -368,5 +383,42 @@ public sealed partial class AdminTasksPage : Page
         if (hours < 24) return $"in {hours}h";
         int days = (int)diff.TotalDays;
         return $"in {days}d";
+    }
+
+    // Matches web AdminTasks describeTrigger / describeSchedule.
+    private static string? DescribeSchedule(System.Collections.Generic.List<TriggerConfig>? triggers)
+    {
+        if (triggers == null || triggers.Count == 0) return null;
+        var parts = new System.Collections.Generic.List<string>();
+        foreach (var t in triggers) parts.Add(DescribeTrigger(t));
+        return string.Join(", ", parts);
+    }
+
+    private static string DescribeTrigger(TriggerConfig t)
+    {
+        switch (t.Type)
+        {
+            case "interval":
+            {
+                long ms = t.IntervalMs ?? 0;
+                if (ms >= 86_400_000) return $"Every {Math.Round(ms / 86_400_000.0)}d";
+                if (ms >= 3_600_000) return $"Every {Math.Round(ms / 3_600_000.0)}h";
+                if (ms >= 60_000)    return $"Every {Math.Round(ms / 60_000.0)}m";
+                return $"Every {Math.Round(ms / 1000.0)}s";
+            }
+            case "daily":
+                return $"Daily at {t.TimeOfDay ?? "00:00"}";
+            case "weekly":
+            {
+                var days = new[] { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+                int d = t.DayOfWeek ?? 0;
+                if (d < 0 || d > 6) d = 0;
+                return $"{days[d]} at {t.TimeOfDay ?? "00:00"}";
+            }
+            case "startup":
+                return "On startup";
+            default:
+                return t.Type;
+        }
     }
 }

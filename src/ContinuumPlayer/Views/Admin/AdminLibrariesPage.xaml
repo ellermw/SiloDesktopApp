@@ -82,6 +82,16 @@
                             </StackPanel>
                         </Button>
                         <Button
+                            x:Name="CatalogMaintenanceButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Click="CatalogMaintenanceButton_Click"
+                            ToolTipService.ToolTip="Open Catalog Maintenance">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE90F;" FontSize="14" />
+                                <TextBlock Text="Catalog Maintenance" />
+                            </StackPanel>
+                        </Button>
+                        <Button
                             x:Name="AddLibraryButton"
                             Style="{StaticResource AccentButtonStyle}"
                             Click="AddLibraryButton_Click">

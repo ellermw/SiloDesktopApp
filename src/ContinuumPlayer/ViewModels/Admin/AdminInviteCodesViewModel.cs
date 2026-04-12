@@ -20,6 +20,7 @@ public partial class AdminInviteCodesViewModel : ObservableObject
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private string? _statusMessage;
+    [ObservableProperty] private bool _signupEnabled;
 
     // ===== Load =====
 
@@ -30,12 +31,31 @@ public partial class AdminInviteCodesViewModel : ObservableObject
         ErrorMessage = null;
         try
         {
-            var codes = await _adminApi.GetInviteCodesAsync();
+            var codesTask = _adminApi.GetInviteCodesAsync();
+            var settingsTask = _adminApi.GetAdminSettingsAsync();
+            await Task.WhenAll(codesTask, settingsTask);
+
             InviteCodes.Clear();
-            foreach (var c in codes) InviteCodes.Add(c);
+            foreach (var c in codesTask.Result) InviteCodes.Add(c);
+
+            if (settingsTask.Result.TryGetValue("signup.enabled", out var signupVal))
+                SignupEnabled = signupVal == "true";
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsLoading = false; }
+    }
+
+    // ===== Public Signups Toggle =====
+
+    public async Task SetSignupEnabledAsync(bool enabled)
+    {
+        try
+        {
+            await _adminApi.UpdateAdminSettingAsync("signup.enabled", enabled ? "true" : "false");
+            SignupEnabled = enabled;
+            StatusMessage = enabled ? "Public signups enabled." : "Public signups disabled.";
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
     }
 
     // ===== Create =====

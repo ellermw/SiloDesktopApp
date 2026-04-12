@@ -42,8 +42,8 @@ public sealed partial class CollectionEditorPage : Page
         {
             // Editing existing collection
             await ViewModel.LoadExistingCommand.ExecuteAsync(collectionId);
-            PageTitle.Text = $"Edit \u201c{ViewModel.Name}\u201d";
-            SaveButtonText.Text = "Save Changes";
+            PageTitle.Text = $"Edit {ViewModel.Name}";
+            SaveButtonText.Text = "Save Collection";
             // Disable type switching when editing
             ManualTypeButton.IsEnabled = false;
             SmartTypeButton.IsEnabled = false;

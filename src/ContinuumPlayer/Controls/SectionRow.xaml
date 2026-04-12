@@ -9,8 +9,25 @@
     xmlns:models="using:ContinuumPlayer.Core.Models.Home"
     mc:Ignorable="d">
 
+    <UserControl.Resources>
+        <!-- B44: Poster vs landscape cards live in DataTemplate resources and
+             get swapped onto the single ItemsRepeater at runtime based on the
+             section type. Removes the duplicate ScrollViewer that shipped before. -->
+        <DataTemplate x:Key="PosterCardTemplate" x:DataType="models:MediaItem">
+            <controls:PosterCard MediaItem="{x:Bind}" />
+        </DataTemplate>
+        <DataTemplate x:Key="LandscapeCardTemplate" x:DataType="models:MediaItem">
+            <controls:LandscapeCard MediaItem="{x:Bind}" />
+        </DataTemplate>
+    </UserControl.Resources>
+
     <!-- Web: space-y-3 (12px) between title and cards, px-4 lg:px-12 (48px side padding) -->
-    <Grid Margin="0,0,0,40">
+    <Grid
+        x:Name="RootGrid"
+        Margin="0,0,0,40"
+        Background="Transparent"
+        PointerEntered="RootGrid_PointerEntered"
+        PointerExited="RootGrid_PointerExited">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -25,14 +42,17 @@
                 Foreground="{StaticResource PrimaryTextBrush}"
                 VerticalAlignment="Center" />
             <StackPanel
+                x:Name="ArrowsPanel"
                 Orientation="Horizontal"
                 HorizontalAlignment="Right"
-                Spacing="4">
+                Spacing="4"
+                Opacity="0">
                 <Button
                     x:Name="ScrollLeftBtn"
                     Style="{StaticResource GhostButtonStyle}"
                     Width="32" Height="32"
                     Padding="0"
+                    IsEnabled="False"
                     Click="ScrollLeft_Click">
                     <FontIcon Glyph="&#xE76B;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
                 </Button>
@@ -41,53 +61,29 @@
                     Style="{StaticResource GhostButtonStyle}"
                     Width="32" Height="32"
                     Padding="0"
+                    IsEnabled="False"
                     Click="ScrollRight_Click">
                     <FontIcon Glyph="&#xE76C;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
                 </Button>
             </StackPanel>
         </Grid>
 
-        <!-- Horizontal scrolling row of posters (web: gap-4 = 16px) -->
+        <!-- B44: Single ScrollViewer + ItemsRepeater hosts both poster and
+             landscape layouts. The ItemTemplate swaps based on section type. -->
         <ScrollViewer
-            x:Name="PosterScrollViewer"
+            x:Name="CardsScrollViewer"
             Grid.Row="1"
             HorizontalScrollBarVisibility="Hidden"
             VerticalScrollBarVisibility="Disabled"
-            HorizontalScrollMode="Disabled"
-            VerticalScrollMode="Disabled">
-
-            <!-- Default poster card repeater -->
-            <ItemsRepeater x:Name="ItemsRepeater" Margin="48,0,48,0">
-                <ItemsRepeater.Layout>
-                    <StackLayout Orientation="Horizontal" Spacing="16" />
-                </ItemsRepeater.Layout>
-                <ItemsRepeater.ItemTemplate>
-                    <DataTemplate x:DataType="models:MediaItem">
-                        <controls:PosterCard MediaItem="{x:Bind}" />
-                    </DataTemplate>
-                </ItemsRepeater.ItemTemplate>
-            </ItemsRepeater>
-        </ScrollViewer>
-
-        <!-- Landscape card repeater for continue_watching / next_up -->
-        <ScrollViewer
-            x:Name="LandscapeScrollViewer"
-            Grid.Row="1"
-            HorizontalScrollBarVisibility="Hidden"
-            VerticalScrollBarVisibility="Disabled"
-            HorizontalScrollMode="Disabled"
+            HorizontalScrollMode="Enabled"
             VerticalScrollMode="Disabled"
-            Visibility="Collapsed">
+            ViewChanged="CardsScrollViewer_ViewChanged"
+            SizeChanged="CardsScrollViewer_SizeChanged">
 
-            <ItemsRepeater x:Name="LandscapeRepeater" Margin="48,0,48,0">
+            <ItemsRepeater x:Name="CardsRepeater" Margin="48,0,48,0">
                 <ItemsRepeater.Layout>
                     <StackLayout Orientation="Horizontal" Spacing="16" />
                 </ItemsRepeater.Layout>
-                <ItemsRepeater.ItemTemplate>
-                    <DataTemplate x:DataType="models:MediaItem">
-                        <controls:LandscapeCard MediaItem="{x:Bind}" />
-                    </DataTemplate>
-                </ItemsRepeater.ItemTemplate>
             </ItemsRepeater>
         </ScrollViewer>
     </Grid>

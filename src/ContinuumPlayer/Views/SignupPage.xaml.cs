@@ -33,6 +33,12 @@ public sealed partial class SignupPage : Page
             ViewModel.ServerUrl = serverUrl;
         }
 
+        // Surface the selected server's display name in the card header (web parity).
+        if (!string.IsNullOrWhiteSpace(ViewModel.ServerName))
+        {
+            ServerNameTitle.Text = ViewModel.ServerName;
+        }
+
         await ViewModel.CheckSignupStatusCommand.ExecuteAsync(null);
     }
 

@@ -123,18 +123,18 @@
                                 Foreground="{StaticResource TertiaryTextBrush}"
                                 VerticalAlignment="Center" />
 
-                            <!-- Admin refresh button -->
+                            <!-- Refresh metadata (all users; admins refresh immediately, others queue) -->
                             <Button
                                 x:Name="RefreshButton"
                                 Style="{StaticResource SecondaryButtonStyle}"
                                 CornerRadius="16"
                                 Padding="12,6"
                                 Click="RefreshButton_Click"
-                                ToolTipService.ToolTip="Refresh Metadata"
+                                ToolTipService.ToolTip="Refresh metadata"
                                 Visibility="Collapsed">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon Glyph="&#xE72C;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBlock Text="Refresh Metadata" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Text="Refresh metadata" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
 

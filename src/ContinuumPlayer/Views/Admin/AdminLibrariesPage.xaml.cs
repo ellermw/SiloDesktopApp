@@ -663,6 +663,13 @@ public sealed partial class AdminLibrariesPage : Page
         await OpenCreateDialogAsync();
     }
 
+    private void CatalogMaintenanceButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Matches web UI: <Link to="/admin/maintenance"> in Libraries header.
+        try { Frame.Navigate(typeof(AdminMaintenancePage)); }
+        catch { /* navigation may fail if frame is not ready */ }
+    }
+
     // ===================================================================
     //  Create Dialog
     // ===================================================================

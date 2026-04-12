@@ -197,11 +197,19 @@ public sealed partial class CollectionsPage : Page
                 b.Background = null;
         };
 
-        // Click opens editor for the collection
+        // B40: card click opens the browse view (catalog grid of the
+        // collection's items), NOT the editor. The editor is accessible via
+        // right-click context menu (Edit) to match the webui dual-path.
         card.Tapped += (s, _) =>
         {
             var nav = App.Services.GetRequiredService<NavigationService>();
-            nav.Navigate<CollectionEditorPage>(collection.Id);
+            nav.Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
+            {
+                CollectionId = collection.Id,
+                Title = collection.Name,
+                Subtitle = collection.IsShared ? "Shared collection" : "Personal collection",
+                IsUserCollection = true,
+            });
         };
 
         // Right-click context menu

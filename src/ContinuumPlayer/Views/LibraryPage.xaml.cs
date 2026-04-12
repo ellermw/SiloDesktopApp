@@ -22,6 +22,7 @@ public sealed partial class LibraryPage : Page
         public string Tab { get; set; } = "Recommended";
         public string Sort { get; set; } = "sort_title";
         public string Order { get; set; } = "asc";
+        public string? MediaType { get; set; }
         public string? Genre { get; set; }
         public string? ContentRating { get; set; }
         public string? Studio { get; set; }
@@ -97,6 +98,7 @@ public sealed partial class LibraryPage : Page
 
             _suppressFilterEvents = true;
             SortComboBox.SelectedIndex = IndexOfSortTag(state.Sort);
+            MediaTypeComboBox.SelectedIndex = IndexOfMediaType(state.MediaType);
             GenreComboBox.SelectedIndex = -1;
             ContentRatingComboBox.SelectedIndex = -1;
             StudioComboBox.SelectedIndex = -1;
@@ -109,6 +111,7 @@ public sealed partial class LibraryPage : Page
             UpdateOrderButton();
             ViewModel.SelectedSort = state.Sort;
             ViewModel.SelectedOrder = state.Order;
+            ViewModel.SelectedType = state.MediaType;
             ViewModel.SelectedGenre = state.Genre;
             ViewModel.SelectedContentRating = state.ContentRating;
             ViewModel.SelectedStudio = state.Studio;
@@ -140,6 +143,13 @@ public sealed partial class LibraryPage : Page
         _ => 0,
     };
 
+    private static int IndexOfMediaType(string? type) => type switch
+    {
+        "movie" => 1,
+        "series" => 2,
+        _ => 0,
+    };
+
     /// <summary>B42: Persist current page state for this library.</summary>
     private void SaveViewState(string tab)
     {
@@ -149,6 +159,7 @@ public sealed partial class LibraryPage : Page
             Tab = tab,
             Sort = ViewModel.SelectedSort ?? "sort_title",
             Order = ViewModel.SelectedOrder ?? "asc",
+            MediaType = ViewModel.SelectedType,
             Genre = ViewModel.SelectedGenre,
             ContentRating = ViewModel.SelectedContentRating,
             Studio = ViewModel.SelectedStudio,
@@ -274,6 +285,19 @@ public sealed partial class LibraryPage : Page
         SaveViewState(_currentTab); // B42
     }
 
+    private async void MediaTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressFilterEvents) return;
+        if (MediaTypeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string type)
+        {
+            ViewModel.SelectedType = string.IsNullOrEmpty(type) ? null : type;
+            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+            await FillViewportAsync();
+            UpdateActiveFilterBadges();
+            SaveViewState(_currentTab); // B42
+        }
+    }
+
     private async void GenreComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressFilterEvents) return;
@@ -353,8 +377,9 @@ public sealed partial class LibraryPage : Page
         RecommendedLoading.IsActive = true;
         RecommendedLoading.Visibility = Visibility.Visible;
         RecommendedError.Visibility = Visibility.Collapsed;
+        RecommendedHeroCarousel.Visibility = Visibility.Collapsed;
 
-        // Clear any previous section rows (keep loading ring and error text)
+        // Clear any previous section rows (keep loading ring, error text, hero carousel)
         for (int i = RecommendedSectionsPanel.Children.Count - 1; i >= 0; i--)
         {
             if (RecommendedSectionsPanel.Children[i] is SectionRow)
@@ -377,9 +402,29 @@ public sealed partial class LibraryPage : Page
                 return;
             }
 
+            // Web parity (LibraryRecommended.tsx/splitLibrarySections): first featured
+            // section becomes the HeroBanner, the rest render as SectionRows.
+            HomeSectionWithItems? heroSection = null;
+            var rowSections = new List<HomeSectionWithItems>();
             foreach (var section in response.Sections)
             {
                 if (section.Items.Count == 0) continue;
+                if (heroSection == null && section.Featured)
+                    heroSection = section;
+                else
+                    rowSections.Add(section);
+            }
+
+            if (heroSection != null)
+            {
+                var limit = heroSection.ItemLimit > 0 ? heroSection.ItemLimit : heroSection.Items.Count;
+                var heroItems = heroSection.Items.Take(limit).ToList();
+                RecommendedHeroCarousel.ItemsSource = heroItems;
+                RecommendedHeroCarousel.Visibility = Visibility.Visible;
+            }
+
+            foreach (var section in rowSections)
+            {
                 RecommendedSectionsPanel.Children.Add(new SectionRow { Section = section });
             }
         }
@@ -562,23 +607,19 @@ public sealed partial class LibraryPage : Page
                 b.Background = null;
         };
 
-        // Click navigates to catalog filtered by collection
-        card.Tapped += async (s, _) =>
+        // B41: navigate to a standalone collection browse page instead of
+        // mutating the library tab items in place. Preserves back navigation
+        // and mirrors the webui /catalog?source=library_collection route.
+        card.Tapped += (s, _) =>
         {
-            var catalogApi = App.Services.GetRequiredService<CatalogApi>();
-            try
+            var nav = App.Services.GetRequiredService<NavigationService>();
+            nav.Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
             {
-                var response = await catalogApi.GetLibraryCollectionItemsAsync(
-                    ViewModel.Library!.Id, collection.Id);
-
-                ViewModel.Items.Clear();
-                ViewModel.Items.AddRange(response.Items);
-
-                // Switch to library tab to show results
-                ShowTab("Library");
-                LibraryTitle.Text = $"{ViewModel.Library.Name} — {collection.Title}";
-            }
-            catch { }
+                CollectionId = collection.Id,
+                Title = collection.Title,
+                Subtitle = ViewModel.Library?.Name,
+                IsUserCollection = false,
+            });
         };
 
         return card;
@@ -729,6 +770,11 @@ public sealed partial class LibraryPage : Page
 
         var filters = new List<(string Label, string Value, Action ClearAction)>();
 
+        if (!string.IsNullOrEmpty(ViewModel.SelectedType))
+        {
+            var label = ViewModel.SelectedType == "movie" ? "Movies" : "Series";
+            filters.Add(("Type", label, () => { ViewModel.SelectedType = null; MediaTypeComboBox.SelectedIndex = 0; }));
+        }
         if (!string.IsNullOrEmpty(ViewModel.SelectedGenre))
             filters.Add(("Genre", ViewModel.SelectedGenre, () => { ViewModel.SelectedGenre = null; GenreComboBox.SelectedIndex = 0; }));
         if (!string.IsNullOrEmpty(ViewModel.SelectedContentRating))
@@ -816,6 +862,7 @@ public sealed partial class LibraryPage : Page
     private async void ClearAllFilters_Click(object sender, RoutedEventArgs e)
     {
         _suppressFilterEvents = true;
+        ViewModel.SelectedType = null;
         ViewModel.SelectedGenre = null;
         ViewModel.SelectedContentRating = null;
         ViewModel.SelectedStudio = null;
@@ -824,6 +871,7 @@ public sealed partial class LibraryPage : Page
         ViewModel.SelectedAudioLanguage = null;
         ViewModel.SelectedYearMin = null;
         ViewModel.SelectedYearMax = null;
+        MediaTypeComboBox.SelectedIndex = 0;
         GenreComboBox.SelectedIndex = 0;
         ContentRatingComboBox.SelectedIndex = 0;
         StudioComboBox.SelectedIndex = 0;

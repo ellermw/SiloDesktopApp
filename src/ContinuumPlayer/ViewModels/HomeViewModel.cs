@@ -1,18 +1,101 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Home;
+using ContinuumPlayer.Messaging;
 
 namespace ContinuumPlayer.ViewModels;
 
-public partial class HomeViewModel : ObservableObject
+public partial class HomeViewModel : ObservableObject,
+    IRecipient<MediaSurfaceChanged>,
+    IRecipient<PlaybackProgressUpdated>
 {
     private readonly HomeApi _homeApi;
 
     public HomeViewModel(HomeApi homeApi)
     {
         _homeApi = homeApi;
+        // F4: subscribe to media state changes + playback progress so the
+        // home screen's Continue Watching / Next Up rows reflect activity
+        // from anywhere in the app without a full reload.
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
+    }
+
+    // F4 — messenger receivers.
+    public void Receive(MediaSurfaceChanged message)
+    {
+        // Any favorite/watchlist/watched/rating change could affect downstream
+        // recommendations + continue-watching positioning. Invalidate cache so
+        // the next navigation back to home triggers a fresh fetch.
+        switch (message.Kind)
+        {
+            case MediaSurfaceChangeKind.WatchedMarked:
+                // Mark-watched should also drop the item from Continue Watching
+                // and Next Up immediately, not wait for a fetch.
+                RemoveFromProgressRows(message.ContentId, message.SeriesId);
+                InvalidateCache();
+                break;
+            case MediaSurfaceChangeKind.WatchedCleared:
+            case MediaSurfaceChangeKind.FavoriteAdded:
+            case MediaSurfaceChangeKind.FavoriteRemoved:
+            case MediaSurfaceChangeKind.WatchlistAdded:
+            case MediaSurfaceChangeKind.WatchlistRemoved:
+            case MediaSurfaceChangeKind.RatingChanged:
+                InvalidateCache();
+                break;
+        }
+    }
+
+    public void Receive(PlaybackProgressUpdated message)
+    {
+        // Update the Continue Watching row in place so returning from the
+        // player shows the latest progress. If the user actually finished
+        // the item, drop it from CW / Next Up.
+        foreach (var section in FeaturedSections.Concat(Sections))
+        {
+            if (section.SectionType is not ("continue_watching" or "next_up")) continue;
+            for (int i = 0; i < section.Items.Count; i++)
+            {
+                var item = section.Items[i];
+                if (item.ContentId != message.ContentId) continue;
+
+                if (message.Completed)
+                {
+                    section.Items.RemoveAt(i);
+                }
+                else
+                {
+                    item.PositionSeconds = message.PositionSeconds;
+                    if (message.DurationSeconds > 0)
+                        item.DurationSeconds = message.DurationSeconds;
+                    item.ProgressUpdatedAt = message.UpdatedAt.ToString("o");
+                }
+                break;
+            }
+        }
+
+        // Next-refresh fetches the authoritative ordering.
+        InvalidateCache();
+    }
+
+    private void RemoveFromProgressRows(string contentId, string? seriesId)
+    {
+        foreach (var section in FeaturedSections.Concat(Sections))
+        {
+            if (section.SectionType is not ("continue_watching" or "next_up")) continue;
+            for (int i = section.Items.Count - 1; i >= 0; i--)
+            {
+                var item = section.Items[i];
+                if (item.ContentId == contentId
+                    || (seriesId != null && item.SeriesId == seriesId))
+                {
+                    section.Items.RemoveAt(i);
+                }
+            }
+        }
     }
 
     public ObservableCollection<HomeSectionWithItems> FeaturedSections { get; } = [];
@@ -40,6 +123,11 @@ public partial class HomeViewModel : ObservableObject
     private DateTime _lastLoadedAt = DateTime.MinValue;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
+    // F12: maximum number of concurrent per-section fetches. Matches the
+    // webui `MAX_CONCURRENT_SECTION_REQUESTS = 5` limit so we don't overwhelm
+    // the server with 15+ parallel section requests.
+    private const int MaxConcurrentSectionRequests = 5;
+
     [RelayCommand]
     private async Task LoadAsync()
     {
@@ -57,28 +145,105 @@ public partial class HomeViewModel : ObservableObject
 
         try
         {
-            var response = await _homeApi.GetSectionsAsync();
+            // F12: phase 1 — fetch layout (metadata only, no items). Renders
+            // the section skeleton immediately so the user sees structure
+            // while items fetch in the background.
+            var layout = await _homeApi.GetLayoutAsync();
 
             FeaturedSections.Clear();
             Sections.Clear();
 
-            foreach (var section in response.Sections)
+            // Seed empty HomeSectionWithItems placeholders so the UI can
+            // render loading rows with real titles. Items list stays empty
+            // until phase 2 fills it.
+            foreach (var meta in layout.Sections)
             {
-                if (section.Featured)
-                    FeaturedSections.Add(section);
+                var placeholder = new HomeSectionWithItems
+                {
+                    Id = meta.Id,
+                    SectionType = meta.SectionType,
+                    Title = meta.Title,
+                    Featured = meta.Featured,
+                    ItemLimit = meta.ItemLimit,
+                    IsCustom = meta.IsCustom,
+                    Customized = meta.Customized,
+                    Items = new List<MediaItem>(),
+                };
+                if (meta.Featured)
+                    FeaturedSections.Add(placeholder);
                 else
-                    Sections.Add(section);
+                    Sections.Add(placeholder);
             }
 
             _lastLoadedAt = DateTime.UtcNow;
+            IsLoading = false;  // Skeleton is showing; background fetch fills it in.
+
+            // F12: phase 2 — fetch each section's items with a concurrency
+            // cap so slow sections don't block fast ones. Each section is a
+            // fire-and-forget task that patches its placeholder when done.
+            _ = FetchSectionItemsInBatchesAsync();
         }
         catch (Exception ex)
         {
             ErrorMessage = $"Failed to load home: {ex.Message}";
-        }
-        finally
-        {
             IsLoading = false;
+        }
+    }
+
+    private async Task FetchSectionItemsInBatchesAsync()
+    {
+        // Gather all placeholder sections in display order (featured first).
+        var targets = FeaturedSections.Concat(Sections).ToList();
+        if (targets.Count == 0) return;
+
+        using var gate = new SemaphoreSlim(MaxConcurrentSectionRequests);
+        var tasks = targets.Select(async section =>
+        {
+            await gate.WaitAsync();
+            try
+            {
+                var resp = await _homeApi.GetSectionItemsAsync(section.Id);
+                if (resp.Section?.Items != null && resp.Section.Items.Count > 0)
+                {
+                    // Replace the empty placeholder items list in place.
+                    // Find the placeholder by reference so we mutate the
+                    // collection already bound to the UI.
+                    section.Items = resp.Section.Items;
+                    // Reassign the reference in the ObservableCollection so
+                    // WinUI picks up the new items (HomeSectionWithItems is
+                    // not itself observable — HomePage rebuilds rows when
+                    // the collection changes).
+                    ReplaceInBoundCollection(section);
+                }
+            }
+            catch { /* per-section failure is non-fatal; leave empty. */ }
+            finally { gate.Release(); }
+        }).ToList();
+
+        await Task.WhenAll(tasks);
+    }
+
+    private void ReplaceInBoundCollection(HomeSectionWithItems updated)
+    {
+        // Home sections are observed as a whole via CollectionChanged on
+        // FeaturedSections / Sections. Replacing the item at its current
+        // index fires Replace notifications so HomePage can re-render just
+        // that row. This is still O(N) but N is ≤ ~20 for home sections.
+        for (int i = 0; i < FeaturedSections.Count; i++)
+        {
+            if (FeaturedSections[i].Id == updated.Id)
+            {
+                FeaturedSections[i] = updated;
+                return;
+            }
+        }
+        for (int i = 0; i < Sections.Count; i++)
+        {
+            if (Sections[i].Id == updated.Id)
+            {
+                Sections[i] = updated;
+                return;
+            }
         }
     }
 

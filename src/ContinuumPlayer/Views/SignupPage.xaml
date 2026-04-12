@@ -29,6 +29,7 @@
                     <!-- Header: Branding + subtitle -->
                     <StackPanel Spacing="8">
                         <TextBlock
+                            x:Name="ServerNameTitle"
                             Text="Continuum"
                             FontSize="30"
                             FontWeight="ExtraBold"
@@ -36,7 +37,7 @@
                             CharacterSpacing="-40" />
 
                         <TextBlock
-                            Text="Create a new account."
+                            Text="Create a new account to get started."
                             Style="{StaticResource SecondaryTextStyle}"
                             FontSize="14" />
                     </StackPanel>
@@ -93,6 +94,10 @@
                                 FontSize="14"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock
+                                Text="At least 8 characters"
+                                FontSize="12"
+                                Foreground="{StaticResource SecondaryTextBrush}" />
                             <PasswordBox
                                 x:Name="PasswordBox"
                                 Style="{StaticResource DarkPasswordBoxStyle}"

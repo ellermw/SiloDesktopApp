@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using ContinuumPlayer.Controls;
@@ -133,8 +134,14 @@ public sealed partial class ItemDetailPage : Page
 
             UpdateUI();
 
-            // Load rating (non-blocking)
-            _ = ViewModel.LoadRatingCommand.ExecuteAsync(null);
+            // Rating is inlined on the item detail response via `user_rating`
+            // (server commit 4172a16). Only fire the dedicated /ratings/{id}
+            // endpoint if the server didn't populate it — keeps older servers
+            // working while avoiding an extra round trip on current ones.
+            if (ViewModel.Item?.UserRating == null && ViewModel.UserRating == null)
+            {
+                _ = ViewModel.LoadRatingCommand.ExecuteAsync(null);
+            }
 
             // Load similar items (non-blocking)
             _ = LoadSimilarItemsAsync();
@@ -182,6 +189,117 @@ public sealed partial class ItemDetailPage : Page
         }
     }
 
+    /// <summary>
+    /// Builds the Series › Season › Episode breadcrumb for an episode page.
+    /// Mirrors webui DetailBreadcrumb in ItemDetail/EpisodeContent.tsx.
+    /// Series link is available immediately (from item.series_id); the season link
+    /// is resolved async by fetching the series' seasons and matching season_number.
+    /// </summary>
+    private void BuildEpisodeBreadcrumb(MediaItemDetail item)
+    {
+        if (string.IsNullOrEmpty(item.SeriesId) || string.IsNullOrEmpty(item.SeriesTitle))
+            return;
+
+        var seriesTitle = item.SeriesTitle;
+        var seriesId = item.SeriesId;
+        var seasonNum = item.SeasonNumber;
+        var episodeNum = item.EpisodeNumber;
+
+        // 1. Series link (always clickable)
+        BreadcrumbPanel.Children.Add(MakeBreadcrumbLink(seriesTitle, seriesId!));
+
+        // 2. Season separator + link (season content_id resolved async)
+        if (seasonNum.HasValue)
+        {
+            BreadcrumbPanel.Children.Add(MakeBreadcrumbSeparator());
+
+            var seasonLabel = seasonNum.Value == 0 ? "Specials" : $"Season {seasonNum.Value}";
+            var seasonLink = MakeBreadcrumbLink(seasonLabel, contentId: null);
+            seasonLink.IsEnabled = false; // enabled once we resolve content_id
+            BreadcrumbPanel.Children.Add(seasonLink);
+
+            _ = ResolveSeasonLinkAsync(seasonLink, seriesId!, seasonNum.Value);
+        }
+
+        // 3. Episode (terminal, not clickable)
+        if (episodeNum.HasValue)
+        {
+            BreadcrumbPanel.Children.Add(MakeBreadcrumbSeparator());
+            BreadcrumbPanel.Children.Add(new TextBlock
+            {
+                Text = $"Episode {episodeNum.Value}",
+                FontSize = 13,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            });
+        }
+
+        BreadcrumbPanel.Visibility = Visibility.Visible;
+    }
+
+    private HyperlinkButton MakeBreadcrumbLink(string label, string? contentId)
+    {
+        var btn = new HyperlinkButton
+        {
+            Content = new TextBlock
+            {
+                Text = label,
+                FontSize = 13,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxLines = 1,
+            },
+            Padding = new Thickness(0, 2, 0, 2),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        if (!string.IsNullOrEmpty(contentId))
+        {
+            btn.Click += (_, _) =>
+            {
+                var nav = App.Services.GetRequiredService<NavigationService>();
+                nav.Navigate<ItemDetailPage>(contentId);
+            };
+        }
+        return btn;
+    }
+
+    private TextBlock MakeBreadcrumbSeparator()
+    {
+        return new TextBlock
+        {
+            Text = " \u203A ",
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+        };
+    }
+
+    /// <summary>
+    /// Fetches the season list for the series and flips the season breadcrumb
+    /// link to navigate to the matching season's content_id.
+    /// </summary>
+    private async Task ResolveSeasonLinkAsync(HyperlinkButton seasonLink, string seriesId, int seasonNumber)
+    {
+        try
+        {
+            var catalogApi = App.Services.GetRequiredService<CatalogApi>();
+            var resp = await catalogApi.GetSeasonsAsync(seriesId);
+            var season = resp?.Seasons?.FirstOrDefault(s => s.SeasonNumber == seasonNumber);
+            if (season == null || string.IsNullOrEmpty(season.ContentId)) return;
+
+            var seasonContentId = season.ContentId;
+            seasonLink.Click += (_, _) =>
+            {
+                var nav = App.Services.GetRequiredService<NavigationService>();
+                nav.Navigate<ItemDetailPage>(seasonContentId);
+            };
+            seasonLink.IsEnabled = true;
+        }
+        catch
+        {
+            // Season link will just stay disabled — non-critical
+        }
+    }
+
     private async Task EnrichEpisodeWithSeriesDataAsync(string seriesId)
     {
         try
@@ -223,15 +341,19 @@ public sealed partial class ItemDetailPage : Page
         var item = ViewModel.Item;
         if (item == null) return;
 
+        // Reset breadcrumb visibility by default; episode case repopulates it
+        BreadcrumbPanel.Children.Clear();
+        BreadcrumbPanel.Visibility = Visibility.Collapsed;
+
         // Episode context: show series title and S##E## above/below episode title
         if (item.Type == "episode")
         {
-            // Show series title as a subtitle/breadcrumb
-            if (!string.IsNullOrEmpty(item.SeriesTitle))
-            {
-                TaglineText.Text = item.SeriesTitle;
-                TaglineText.Visibility = Visibility.Visible;
-            }
+            // Clickable breadcrumb: Series › Season N › Episode M
+            // The season link navigates by season content_id (resolved async below).
+            BuildEpisodeBreadcrumb(item);
+
+            // Hide the plain tagline — breadcrumb replaces it
+            TaglineText.Visibility = Visibility.Collapsed;
 
             // Show season/episode info in the year/metadata slot
             var episodeInfo = "";
@@ -601,7 +723,14 @@ public sealed partial class ItemDetailPage : Page
         var item = ViewModel.Item;
         if (item == null) return;
 
-        var dialog = new MatchItemDialog(item.ContentId)
+        // Pass the loaded watch-detail versions so the dialog can show on-disk
+        // paths (webui parity — admin/media-locations). Watch detail is the
+        // source of file_path/file_name; if it hasn't loaded yet, fall back to
+        // the item-detail versions which may lack file_path for non-admins.
+        var versions = _watchDetail?.Versions ?? item.Versions;
+        bool isSeries = item.Type == "series";
+
+        var dialog = new MatchItemDialog(item.ContentId, versions, item.FolderPaths, isSeries)
         {
             XamlRoot = this.XamlRoot
         };
@@ -946,14 +1075,16 @@ public sealed partial class ItemDetailPage : Page
                 qualityParts.Add(best.Resolution);
             if (best.Hdr) qualityParts.Add("HDR");
         }
+        // Quality/HDR summary shows beside the version dropdown chevron
+        // (webui commit a42f46b — no longer duplicated on the Play button).
         if (qualityParts.Count > 0)
         {
-            PlayQualityText.Text = $"\u00B7 {string.Join(" ", qualityParts)}";
-            PlayQualityText.Visibility = Visibility.Visible;
+            VersionSummaryText.Text = string.Join(" ", qualityParts);
         }
 
-        // Show version dropdown if multiple versions
-        if (item.Versions?.Count > 1)
+        // Show version dropdown if multiple versions, OR if we have a quality
+        // summary to display (so the single-version case still shows "4K HDR").
+        if (item.Versions?.Count > 1 || qualityParts.Count > 0)
         {
             VersionDropdownButton.Visibility = Visibility.Visible;
             VersionSeparator.Visibility = Visibility.Visible;
@@ -1136,6 +1267,7 @@ public sealed partial class ItemDetailPage : Page
             BuildAudioTracksFlyout(best);
             BuildSubtitlesPopoverFlyout(best);
 
+            bool hasQualitySummary = false;
             if (best != null)
             {
                 var qualityParts = new List<string>();
@@ -1146,13 +1278,16 @@ public sealed partial class ItemDetailPage : Page
 
                 if (qualityParts.Count > 0)
                 {
-                    PlayQualityText.Text = $"\u00B7 {string.Join(" ", qualityParts)}";
-                    PlayQualityText.Visibility = Visibility.Visible;
+                    // Quality summary now lives beside the version dropdown chevron
+                    // (webui commit a42f46b — removed from the Play button).
+                    VersionSummaryText.Text = string.Join(" ", qualityParts);
+                    hasQualitySummary = true;
                 }
             }
 
             // Show version dropdown if multiple versions OR if resuming (for "Play from Start")
-            if (versions.Count > 1 || isResuming)
+            // OR if we have a quality summary to show beside it.
+            if (versions.Count > 1 || isResuming || hasQualitySummary)
             {
                 VersionDropdownButton.Visibility = Visibility.Visible;
                 VersionSeparator.Visibility = Visibility.Visible;

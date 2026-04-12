@@ -3,6 +3,7 @@ using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
+using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.ViewModels.Admin;
 
 namespace ContinuumPlayer.Views.Admin;
@@ -18,19 +19,22 @@ public sealed partial class AdminSettingsDetailPage : Page
     // Lookup for rebuilding fields after discard
     private readonly List<Action> _fieldRebuilders = [];
 
-    private static readonly string[] TabNames =
+    // Settings sub-nav — matches web/src/pages/admin-settings/AdminSettingsLayout.tsx
+    // order and labeling. Each item is (label, Segoe Fluent icon glyph).
+    private static readonly (string Label, string Glyph)[] SettingsTabs =
     [
-        "General",
-        "Theming",
-        "Playback",
-        "Scanner & Matcher",
-        "Rate Limiting",
-        "Downloads",
-        "Integrations",
-        "Jellyfin Compat",
-        "Database",
-        "Storage",
-        "Log Retention"
+        ("General",          "\uE713"), // Settings
+        ("Theming",          "\uE790"), // Brush
+        ("Playback",         "\uE768"), // Play
+        ("Scanner & Matcher","\uE721"), // Zoom/Find
+        ("Rate Limiting",    "\uE9D9"), // Gauge/Speed
+        ("Downloads",        "\uE896"), // Download
+        ("Integrations",     "\uEA86"), // Puzzle
+        ("Jellyfin Compat",  "\uE7F4"), // TVMonitor
+        ("Database",         "\uEBD2"), // Database/Drive
+        ("Storage",          "\uEDA2"), // HardDrive
+        ("Log Retention",    "\uE81C"), // Document
+        ("Card Overlays",    "\uE81E"), // Layers/stack
     ];
 
     public AdminSettingsDetailPage()
@@ -55,28 +59,18 @@ public sealed partial class AdminSettingsDetailPage : Page
         }
     }
 
-    // ===== Tab Bar =====
+    // ===== Sidebar Nav =====
 
     private void BuildTabBar()
     {
         TabBar.Children.Clear();
         _tabButtons.Clear();
 
-        foreach (var tabName in TabNames)
+        foreach (var (label, glyph) in SettingsTabs)
         {
-            var btn = new Button
-            {
-                Content = tabName,
-                Background = new SolidColorBrush(Colors.Transparent),
-                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-                BorderThickness = new Thickness(0),
-                Padding = new Thickness(14, 8, 14, 8),
-                CornerRadius = new CornerRadius(10),
-                FontSize = 13,
-                FontWeight = FontWeights.Medium
-            };
+            var btn = BuildSidebarNavButton(label, glyph);
             btn.Click += TabButton_Click;
-            _tabButtons.Add((btn, tabName));
+            _tabButtons.Add((btn, label));
             TabBar.Children.Add(btn);
         }
 
@@ -85,6 +79,50 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             SetActiveTab(_tabButtons[0].Button, _tabButtons[0].TabName);
         }
+    }
+
+    /// <summary>
+    /// Builds a single left-sidebar nav button matching the webui layout:
+    /// icon + label, full-width, rounded, with an accent pill when active.
+    /// </summary>
+    private Button BuildSidebarNavButton(string label, string glyph)
+    {
+        var content = new Grid { ColumnSpacing = 10 };
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var icon = new FontIcon
+        {
+            Glyph = glyph,
+            FontSize = 14,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        };
+        Grid.SetColumn(icon, 0);
+        content.Children.Add(icon);
+
+        var text = new TextBlock
+        {
+            Text = label,
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        };
+        Grid.SetColumn(text, 1);
+        content.Children.Add(text);
+
+        return new Button
+        {
+            Content = content,
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(14, 9, 12, 9),
+            Margin = new Thickness(0, 0, 0, 2),
+            CornerRadius = new CornerRadius(10),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+        };
     }
 
     private void TabButton_Click(object sender, RoutedEventArgs e)
@@ -104,16 +142,26 @@ public sealed partial class AdminSettingsDetailPage : Page
     {
         var accentBg = (SolidColorBrush)Application.Current.Resources["AccentBackgroundBrush"];
         var accentFg = (SolidColorBrush)Application.Current.Resources["AccentBrush"];
+        var primaryFg = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"];
         var secondaryFg = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
 
         foreach (var (btn, _) in _tabButtons)
         {
             btn.Background = new SolidColorBrush(Colors.Transparent);
-            btn.Foreground = secondaryFg;
+            // Restore secondary colors on the inner Grid's icon + text
+            if (btn.Content is Grid g)
+            {
+                if (g.Children.Count > 0 && g.Children[0] is FontIcon ico) ico.Foreground = secondaryFg;
+                if (g.Children.Count > 1 && g.Children[1] is TextBlock tb) tb.Foreground = secondaryFg;
+            }
         }
 
         button.Background = accentBg;
-        button.Foreground = accentFg;
+        if (button.Content is Grid ag)
+        {
+            if (ag.Children.Count > 0 && ag.Children[0] is FontIcon aico) aico.Foreground = accentFg;
+            if (ag.Children.Count > 1 && ag.Children[1] is TextBlock atb) atb.Foreground = primaryFg;
+        }
         _activeTabButton = button;
         _activeTab = tabName;
     }
@@ -138,6 +186,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             case "Database": BuildDatabaseTab(); break;
             case "Storage": BuildStorageTab(); break;
             case "Log Retention": BuildLogRetentionTab(); break;
+            case "Card Overlays": BuildOverlaysTab(); break;
         }
     }
 
@@ -147,31 +196,146 @@ public sealed partial class AdminSettingsDetailPage : Page
     {
         AddTabHeader("Theming", "Customize server branding, catalog themes, and login page appearance.");
 
+        // Warning banner — matches webui ThemeSettings top banner about server-wide scope.
+        var warnBorder = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFB, 0xBF, 0x24)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x33, 0xFB, 0xBF, 0x24)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(14, 12, 14, 12),
+            Margin = new Thickness(0, 0, 0, 4),
+        };
+        var warnRow = new Grid { ColumnSpacing = 10 };
+        warnRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        warnRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var warnIcon = new FontIcon
+        {
+            Glyph = "\uE7BA",
+            FontSize = 16,
+            Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24)),
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 2, 0, 0),
+        };
+        Grid.SetColumn(warnIcon, 0);
+        warnRow.Children.Add(warnIcon);
+        var warnText = new StackPanel { Spacing = 2 };
+        warnText.Children.Add(new TextBlock
+        {
+            Text = "Server-wide theme customization",
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24)),
+        });
+        warnText.Children.Add(new TextBlock
+        {
+            Text = "These overrides apply to all users as a base layer. Individual users can further customize on top of these settings.",
+            FontSize = 12,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+        Grid.SetColumn(warnText, 1);
+        warnRow.Children.Add(warnText);
+        warnBorder.Child = warnRow;
+        ContentPanel.Children.Add(warnBorder);
+
         AddSectionHeader("Branding");
         var brandCard = BeginCard();
-        AddTextField(brandCard, "Server Name", "branding.server_name", "e.g. My Media Server");
-        AddTextField(brandCard, "Login Subtitle", "branding.login_subtitle", "Shown below server name on login page");
+        AddTextBlock(brandCard, "Customize the server name and login page text. Leave blank for defaults.");
+        AddTextField(brandCard, "Server Name", "branding.server_name", "Continuum");
+        AddTextField(brandCard, "Login Subtitle", "branding.login_subtitle", "Sign in with an existing account.");
         EndCard(brandCard);
 
-        AddSectionHeader("Catalog Theme");
-        var themeCard = BeginCard();
-        AddTextField(themeCard, "Theme Catalog URL", "theme.catalog_url", "URL to a remote theme catalog JSON");
-        EndCard(themeCard);
+        AddSectionHeader("Theme Catalog");
+        var catalogCard = BeginCard();
+        AddTextBlock(catalogCard, "URL of the community theme catalog JSON index. Users browse this in their settings.");
+        AddTextField(catalogCard, "Theme Catalog URL", "theme.catalog_url",
+            "https://raw.githubusercontent.com/ContinuumApp/continuum-themes/main/catalog.json");
+        EndCard(catalogCard);
+
+        AddSectionHeader("Custom CSS");
+        var cssCard = BeginCard();
+        AddTextBlock(cssCard, "Raw CSS appended to the admin UI. Use with caution — invalid CSS can break layouts.");
+        AddMultilineTextField(cssCard, "Custom CSS", "ui.admin_custom_css",
+            "/* Custom CSS applied to every page */\n");
+        EndCard(cssCard);
+
+        AddSectionHeader("Token Overrides");
+        var tokenCard = BeginCard();
+        AddTextBlock(tokenCard,
+            "Per-token theme variables are stored as a JSON object in ui.admin_theme_vars. The visual token editor is only available in the web UI.");
+        AddMultilineTextField(tokenCard, "Theme Vars JSON", "ui.admin_theme_vars",
+            "{\"--accent\": \"oklch(0.6 0.2 250)\"}");
+        EndCard(tokenCard);
+    }
+
+    /// <summary>
+    /// Multi-line text area field for larger content like raw CSS / JSON.
+    /// Dirty-tracks via ViewModel.SetSetting.
+    /// </summary>
+    private void AddMultilineTextField(StackPanel parent, string label, string key, string? placeholder = null)
+    {
+        if (parent.Children.Count > 0) AddDivider(parent);
+
+        var field = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 8) };
+        field.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+
+        var box = new TextBox
+        {
+            Text = ViewModel.GetSetting(key),
+            PlaceholderText = placeholder ?? "",
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 140,
+            MaxHeight = 260,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 12,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        ScrollViewer.SetVerticalScrollBarVisibility(box, ScrollBarVisibility.Auto);
+        box.TextChanged += (_, _) =>
+        {
+            ViewModel.SetSetting(key, box.Text ?? "");
+            UpdateDirtyCountText();
+        };
+        field.Children.Add(box);
+
+        _fieldRebuilders.Add(() => box.Text = ViewModel.GetSetting(key));
+        parent.Children.Add(field);
     }
 
     private void BuildDownloadsTab()
     {
-        AddTabHeader("Downloads", "Control offline download availability, bandwidth limits, and concurrency.");
+        AddTabHeader("Downloads", "Configure download permissions, bandwidth limits, and quotas.");
 
-        AddSectionHeader("Downloads");
-        var dlCard = BeginCard();
-        AddToggleField(dlCard, "Enable Downloads", "download.enabled");
-        AddTextField(dlCard, "Server Bandwidth (Mbps)", "download.server_bandwidth_mbps", "Total server bandwidth for downloads");
-        AddTextField(dlCard, "User Bandwidth (Mbps)", "download.user_bandwidth_mbps", "Per-user bandwidth limit");
-        AddTextField(dlCard, "Max Concurrent Per User", "download.max_concurrent_per_user", "Simultaneous downloads per user");
-        AddTextField(dlCard, "Max Per Period", "download.max_per_period", "Download count limit per period");
-        AddTextField(dlCard, "Period Duration", "download.period_duration", "e.g. 24h, 7d");
-        EndCard(dlCard);
+        AddSectionHeader("General");
+        var genCard = BeginCard();
+        AddToggleField(genCard, "Downloads Enabled", "download.enabled", "Allow users to download media files");
+        EndCard(genCard);
+
+        AddSectionHeader("Bandwidth Limits");
+        var bwCard = BeginCard();
+        AddTextField(bwCard, "Server Bandwidth (Mbps)", "download.server_bandwidth_mbps",
+            "Total download bandwidth for the entire server in megabits/sec. 0 = unlimited.");
+        AddTextField(bwCard, "Per-User Bandwidth (Mbps)", "download.user_bandwidth_mbps",
+            "Max download bandwidth per user, shared across active downloads. 0 = unlimited.");
+        EndCard(bwCard);
+
+        AddSectionHeader("Quantity Limits");
+        var qtyCard = BeginCard();
+        AddTextField(qtyCard, "Max Concurrent Downloads Per User", "download.max_concurrent_per_user",
+            "How many downloads a user can have active at once. 0 = unlimited.");
+        AddTextField(qtyCard, "Max Downloads Per Period", "download.max_per_period",
+            "Total downloads a user can create per period. 0 = unlimited.");
+        AddTextField(qtyCard, "Period Duration", "download.period_duration",
+            "Rolling window for the per-period limit (e.g., 24h, 168h, 720h)");
+        EndCard(qtyCard);
     }
 
     private void BuildGeneralTab()
@@ -199,7 +363,8 @@ public sealed partial class AdminSettingsDetailPage : Page
         var tcCard = BeginCard();
         AddTextField(tcCard, "FFmpeg Path", "playback.ffmpeg_path");
         AddTextField(tcCard, "Transcode Directory", "playback.transcode_dir");
-        AddTextField(tcCard, "Hardware Acceleration", "playback.hw_accel", "auto, vaapi, nvenc, qsv, none");
+        AddSelectField(tcCard, "Hardware Acceleration", "playback.hw_accel",
+            ["auto", "qsv", "vaapi", "none"]);
         AddToggleField(tcCard, "Transcoding Enabled", "playback.transcode_enabled");
         AddToggleField(tcCard, "Allow HEVC Encoding", "playback.allow_hevc_encoding");
         AddToggleField(tcCard, "Allow 4K Transcoding", "allow_4k_transcode");
@@ -214,21 +379,34 @@ public sealed partial class AdminSettingsDetailPage : Page
         var segCard = BeginCard();
         AddNumberField(segCard, "Transcode Ahead Segments", "playback.transcode_ahead_segments");
         AddNumberField(segCard, "Segment Duration", "playback.segment_duration");
+        AddNumberField(segCard, "Chapter Thumbnail Workers", "playback.chapter_thumbnail_workers",
+            "Global chapter thumbnail dispatcher concurrency. Higher values improve throughput but can drive more local or remote extraction work at once.");
+        AddSelectField(segCard, "Chapter Thumbnail Execution", "playback.chapter_thumbnail_execution",
+            ["local", "prefer_transcode_nodes", "transcode_nodes_only"],
+            "Controls whether chapter thumbnails run on the API node or are offloaded to available transcode nodes.");
+        AddNumberField(segCard, "Chapter Thumbnail Node Capacity", "playback.chapter_thumbnail_node_capacity",
+            "Per transcode-node budget for chapter thumbnail jobs when remote execution is enabled.");
+        AddSelectField(segCard, "HDR Chapter Thumbnail Policy", "playback.chapter_thumbnail_hdr_policy",
+            ["best_effort", "disabled"],
+            "Controls whether chapter thumbnails are generated for HDR or Dolby Vision sources. SDR files are unaffected.");
         EndCard(segCard);
 
         AddSectionHeader("Behavior");
         var behCard = BeginCard();
-        AddNumberField(behCard, "Watched Threshold (%)", "playback.watched_threshold", "Mark as watched after this % is played (default: 90)");
+        AddNumberField(behCard, "Watched Threshold (%)", "playback.watched_threshold",
+            "Mark as watched after this % is played (default: 90)");
+        AddNumberField(behCard, "Min Resume Threshold (%)", "playback.min_resume_threshold",
+            "Ignore progress below this % of duration (default: 5)");
         EndCard(behCard);
     }
 
     private void BuildScannerTab()
     {
-        AddTabHeader("Scanner & Matcher", "Schedule library scans and control how aggressively metadata matching runs.");
+        AddTabHeader("Scanner & Matcher",
+            "Configure scanner performance and metadata matching. Startup and recurring scans are managed in Scheduled Tasks.");
 
         AddSectionHeader("Scanner");
         var scanCard = BeginCard();
-        AddTextField(scanCard, "Scanner Schedule", "scanner.schedule", "Cron expression, e.g. */15 * * * *");
         AddNumberField(scanCard, "Scanner Workers", "scanner.workers");
         AddDurationField(scanCard, "File Removal Grace", "scanner.file_removal_grace", "e.g. 24h");
         EndCard(scanCard);
@@ -238,6 +416,12 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddNumberField(matchCard, "Matcher Workers", "matcher.workers");
         AddNumberField(matchCard, "Matcher Batch Size", "matcher.batch_size");
         EndCard(matchCard);
+
+        AddSectionHeader("Metadata");
+        var metaCard = BeginCard();
+        AddToggleField(metaCard, "Cache Images to S3", "metadata.cache_images",
+            "Download artwork from metadata providers and store resized variants in S3. Requires General Purpose S3 storage to be configured.");
+        EndCard(metaCard);
     }
 
     private void BuildRateLimitTab()
@@ -447,20 +631,287 @@ public sealed partial class AdminSettingsDetailPage : Page
         }
     }
 
+    private static readonly Dictionary<string, string> SubtitleProviderDisplayNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["opensubtitles"] = "OpenSubtitles",
+        ["subdl"] = "SubDL",
+        ["subsource"] = "SubSource",
+    };
+    private static readonly List<string> SubtitleProviderOrder = ["opensubtitles", "subdl", "subsource"];
+
+    private AdminSubtitleProvidersViewModel? _subsVm;
+    private StackPanel? _subsHost;
+
     private void BuildIntegrationsTab()
     {
-        AddTabHeader("Integrations", "External services, subtitle providers, and metadata providers.");
+        AddTabHeader("Integrations", "Subtitle providers");
 
-        AddSectionHeader("MetaDB");
-        var metaCard = BeginCard();
-        AddTextField(metaCard, "URL", "metadb.url");
-        AddPasswordField(metaCard, "API Key", "metadb.api_key");
-        EndCard(metaCard);
+        AddSectionHeader("Subtitle Providers");
+        var card = BeginCard();
+        AddTextBlock(card,
+            "Configure external subtitle search providers. Credentials are stored securely and never returned by the API.");
 
-        AddSectionHeader("TMDB");
-        var tmdbCard = BeginCard();
-        AddPasswordField(tmdbCard, "API Key", "tmdb.api_key", "Shared by TMDB metadata providers and TMDB collection/trending features.");
-        EndCard(tmdbCard);
+        _subsHost = new StackPanel { Spacing = 12 };
+        card.Children.Add(_subsHost);
+
+        // Placeholder while we load
+        var loadingText = new TextBlock
+        {
+            Text = "Loading providers...",
+            FontSize = 12,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            Margin = new Thickness(0, 6, 0, 0),
+        };
+        _subsHost.Children.Add(loadingText);
+
+        EndCard(card);
+
+        // Load providers async
+        _subsVm ??= App.Services.GetRequiredService<AdminSubtitleProvidersViewModel>();
+        _ = LoadSubtitleProvidersAsync();
+    }
+
+    private async Task LoadSubtitleProvidersAsync()
+    {
+        if (_subsVm == null || _subsHost == null) return;
+        try
+        {
+            await _subsVm.LoadCommand.ExecuteAsync(null);
+            RebuildSubtitleProviderCards();
+        }
+        catch (Exception ex)
+        {
+            if (_subsHost == null) return;
+            _subsHost.Children.Clear();
+            _subsHost.Children.Add(new TextBlock
+            {
+                Text = $"Failed to load providers: {ex.Message}",
+                FontSize = 12,
+                Foreground = (SolidColorBrush)Application.Current.Resources["ErrorBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+    }
+
+    private void RebuildSubtitleProviderCards()
+    {
+        if (_subsVm == null || _subsHost == null) return;
+
+        _subsHost.Children.Clear();
+        var providers = _subsVm.Providers.ToList();
+        if (providers.Count == 0)
+        {
+            _subsHost.Children.Add(new TextBlock
+            {
+                Text = "No subtitle providers configured.",
+                FontSize = 12,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+            return;
+        }
+
+        providers.Sort((a, b) =>
+        {
+            int ai = SubtitleProviderOrder.IndexOf(a.ProviderName?.ToLowerInvariant() ?? "");
+            int bi = SubtitleProviderOrder.IndexOf(b.ProviderName?.ToLowerInvariant() ?? "");
+            if (ai == -1 && bi == -1) return 0;
+            if (ai == -1) return 1;
+            if (bi == -1) return -1;
+            return ai - bi;
+        });
+
+        foreach (var p in providers)
+            _subsHost.Children.Add(BuildInlineSubtitleProviderCard(p));
+    }
+
+    private FrameworkElement BuildInlineSubtitleProviderCard(Core.Models.Admin.SubtitleProviderConfig provider)
+    {
+        var border = new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(16, 12, 16, 14),
+        };
+        var layout = new StackPanel { Spacing = 10 };
+
+        bool isOpenSubtitles = string.Equals(provider.ProviderName, "opensubtitles", StringComparison.OrdinalIgnoreCase);
+        string displayName = SubtitleProviderDisplayNames.TryGetValue(provider.ProviderName ?? "", out var dn) ? dn : provider.ProviderName ?? "";
+
+        // Header: name + status pill + enabled toggle (right aligned)
+        var header = new Grid { ColumnSpacing = 10 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var nameRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        nameRow.Children.Add(new TextBlock
+        {
+            Text = displayName,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        bool configured = isOpenSubtitles ? provider.HasCredentials : provider.HasApiKey;
+        nameRow.Children.Add(BuildProviderStatusPill(configured));
+        Grid.SetColumn(nameRow, 0);
+        header.Children.Add(nameRow);
+
+        var enabledToggle = new ToggleSwitch
+        {
+            IsOn = provider.Enabled,
+            OnContent = "Enabled",
+            OffContent = "Disabled",
+            VerticalAlignment = VerticalAlignment.Center,
+            MinWidth = 0,
+        };
+        Grid.SetColumn(enabledToggle, 1);
+        header.Children.Add(enabledToggle);
+        layout.Children.Add(header);
+
+        // Credential fields
+        TextBox? usernameBox = null;
+        PasswordBox? passwordBox = null;
+        PasswordBox? apiKeyBox = null;
+
+        if (isOpenSubtitles)
+        {
+            var userGroup = new StackPanel { Spacing = 3 };
+            userGroup.Children.Add(new TextBlock { Text = "Username", FontSize = 12, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] });
+            usernameBox = new TextBox { PlaceholderText = provider.HasCredentials ? "Leave blank to keep current" : "OpenSubtitles username", FontSize = 13 };
+            userGroup.Children.Add(usernameBox);
+            layout.Children.Add(userGroup);
+
+            var passGroup = new StackPanel { Spacing = 3 };
+            passGroup.Children.Add(new TextBlock { Text = "Password", FontSize = 12, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] });
+            passwordBox = new PasswordBox { PlaceholderText = provider.HasCredentials ? "Leave blank to keep current" : "OpenSubtitles password", FontSize = 13 };
+            passGroup.Children.Add(passwordBox);
+            layout.Children.Add(passGroup);
+        }
+        else
+        {
+            var group = new StackPanel { Spacing = 3 };
+            group.Children.Add(new TextBlock { Text = "API Key", FontSize = 12, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] });
+            apiKeyBox = new PasswordBox { PlaceholderText = provider.HasApiKey ? "Leave blank to keep current" : "Enter API key", FontSize = 13 };
+            group.Children.Add(apiKeyBox);
+            layout.Children.Add(group);
+        }
+
+        // Actions row: Test + Save + result
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Margin = new Thickness(0, 4, 0, 0) };
+
+        var testBtn = new Button { Content = "Test Connection", FontSize = 12, Padding = new Thickness(12, 6, 12, 6), CornerRadius = new CornerRadius(6) };
+        var saveBtn = new Button
+        {
+            Content = "Save",
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+            FontSize = 12,
+            Padding = new Thickness(12, 6, 12, 6),
+            CornerRadius = new CornerRadius(6),
+        };
+        var resultText = new TextBlock
+        {
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+        };
+
+        var capturedProvider = provider;
+        testBtn.Click += async (_, _) =>
+        {
+            if (_subsVm == null) return;
+            testBtn.IsEnabled = false;
+            testBtn.Content = "Testing...";
+            resultText.Visibility = Visibility.Collapsed;
+            try
+            {
+                var r = await _subsVm.TestProviderAsync(capturedProvider.ProviderName);
+                resultText.Text = r?.Success == true ? "Connection successful" : (r?.Error ?? "Connection failed");
+                resultText.Foreground = new SolidColorBrush(r?.Success == true
+                    ? Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80)
+                    : Color.FromArgb(0xFF, 0xEF, 0x6B, 0x73));
+                resultText.Visibility = Visibility.Visible;
+            }
+            catch (Exception ex)
+            {
+                resultText.Text = $"Test failed: {ex.Message}";
+                resultText.Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xEF, 0x6B, 0x73));
+                resultText.Visibility = Visibility.Visible;
+            }
+            finally
+            {
+                testBtn.IsEnabled = true;
+                testBtn.Content = "Test Connection";
+            }
+        };
+
+        saveBtn.Click += async (_, _) =>
+        {
+            if (_subsVm == null) return;
+            saveBtn.IsEnabled = false;
+            try
+            {
+                var req = new Core.Models.Admin.SubtitleProviderUpdateRequest
+                {
+                    Enabled = enabledToggle.IsOn,
+                    ApiKey = isOpenSubtitles || string.IsNullOrWhiteSpace(apiKeyBox?.Password) ? null : apiKeyBox.Password,
+                    Username = !isOpenSubtitles || string.IsNullOrWhiteSpace(usernameBox?.Text) ? null : usernameBox.Text,
+                    Password = !isOpenSubtitles || string.IsNullOrWhiteSpace(passwordBox?.Password) ? null : passwordBox.Password,
+                };
+                await _subsVm.UpdateProviderAsync(capturedProvider.ProviderName, req);
+                resultText.Text = "Saved.";
+                resultText.Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80));
+                resultText.Visibility = Visibility.Visible;
+                // Refresh
+                await _subsVm.LoadCommand.ExecuteAsync(null);
+                RebuildSubtitleProviderCards();
+            }
+            catch (Exception ex)
+            {
+                resultText.Text = $"Save failed: {ex.Message}";
+                resultText.Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xEF, 0x6B, 0x73));
+                resultText.Visibility = Visibility.Visible;
+            }
+            finally
+            {
+                saveBtn.IsEnabled = true;
+            }
+        };
+
+        actions.Children.Add(testBtn);
+        actions.Children.Add(saveBtn);
+        actions.Children.Add(resultText);
+        layout.Children.Add(actions);
+
+        border.Child = layout;
+        return border;
+    }
+
+    private Border BuildProviderStatusPill(bool configured)
+    {
+        var bg = configured
+            ? Color.FromArgb(0x33, 0x4A, 0xDE, 0x80)
+            : Color.FromArgb(0x33, 0xFB, 0xBF, 0x24);
+        var fg = configured
+            ? Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80)
+            : Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24);
+        return new Border
+        {
+            Background = new SolidColorBrush(bg),
+            Height = 18,
+            CornerRadius = new CornerRadius(9),
+            Padding = new Thickness(9, 0, 9, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = configured ? "Configured" : "Not configured",
+                FontSize = 10,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(fg),
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
     }
 
     private void BuildJellyfinTab()
@@ -494,6 +945,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddSectionHeader("Redis");
         var redisCard = BeginCard();
         AddRedisSection(redisCard);
+        AddConnectionCheckButton(redisCard, "redis", "Check Connection");
         EndCard(redisCard);
 
         AddSectionHeader("User Database");
@@ -646,46 +1098,881 @@ public sealed partial class AdminSettingsDetailPage : Page
     {
         AddTabHeader("Storage", "S3-compatible object storage for artwork, operational exports, and future replicated data.");
 
-        AddSectionHeader("MetaDB Posters");
-        var metaCard = BeginCard();
-        AddTextBlock(metaCard, "Used by MetaDB for storing and serving poster/artwork images. Generates presigned URLs for clients to fetch images directly from S3.");
-        AddTextField(metaCard, "Endpoint", "s3.metadata_endpoint");
-        AddTextField(metaCard, "Region", "s3.metadata_region");
-        AddToggleField(metaCard, "Path Style", "s3.metadata_path_style");
-        AddTextField(metaCard, "Bucket", "s3.metadata_bucket");
-        AddPasswordField(metaCard, "Access Key", "s3.metadata_access_key");
-        AddPasswordField(metaCard, "Secret Key", "s3.metadata_secret_key");
-        AddDurationField(metaCard, "Presign Expiry", "s3.metadata_presign_expiry", "e.g. 4h");
-        EndCard(metaCard);
+        // Sub-tab switcher: General Purpose (active) | User DB (disabled, reserved)
+        // MetaDB section was removed — poster storage is now handled by a plugin,
+        // not server-level S3 config.
+        var subTabBar = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            Margin = new Thickness(0, 4, 0, 8),
+        };
 
-        AddSectionHeader("General Purpose");
+        var opSubTab = MakeSubTabButton("General Purpose", active: true);
+        var udbSubTab = MakeSubTabButton("User DB", active: false, disabled: true,
+            tooltip: "Reserved for future Litestream replication");
+
+        subTabBar.Children.Add(opSubTab);
+        subTabBar.Children.Add(udbSubTab);
+        ContentPanel.Children.Add(subTabBar);
+
+        // General Purpose content
         var opCard = BeginCard();
         AddTextBlock(opCard, "General-purpose storage for operational tasks such as catalog import/export.");
         AddTextField(opCard, "Endpoint", "s3.operational_endpoint");
         AddTextField(opCard, "Region", "s3.operational_region");
         AddToggleField(opCard, "Path Style", "s3.operational_path_style");
         AddTextField(opCard, "Bucket", "s3.operational_bucket");
+        AddTextField(opCard, "Key Prefix", "s3.operational_key_prefix",
+            "Optional. Stores all Continuum objects under this folder inside the bucket. Leave blank for bucket root.");
         AddPasswordField(opCard, "Access Key", "s3.operational_access_key");
         AddPasswordField(opCard, "Secret Key", "s3.operational_secret_key");
+        AddConnectionCheckButton(opCard, "s3_operational", "Check Connection");
         EndCard(opCard);
+
+        // Public URL Authentication section (inside General Purpose)
+        AddSectionHeader("Public URL Authentication");
+        var urlAuthCard = BeginCard();
+        AddTextBlock(urlAuthCard,
+            "Controls how read URLs are generated for cached images. Use Cloudflare Token for R2 custom domains.");
+        AddS3UrlAuthFields(urlAuthCard);
+        EndCard(urlAuthCard);
     }
+
+    /// <summary>
+    /// Builds a pill-style sub-tab button that matches the webui Tabs component.
+    /// Used inside tab panels that have multiple views (e.g. Storage: General Purpose | User DB).
+    /// </summary>
+    private Button MakeSubTabButton(string label, bool active, bool disabled = false, string? tooltip = null)
+    {
+        var btn = new Button
+        {
+            Content = new TextBlock
+            {
+                Text = label,
+                FontSize = 12,
+                FontWeight = FontWeights.Medium,
+            },
+            Padding = new Thickness(14, 6, 14, 6),
+            CornerRadius = new CornerRadius(14),
+            Background = active
+                ? (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"]
+                : new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(active ? 1 : 0),
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            IsEnabled = !disabled,
+            Opacity = disabled ? 0.5 : 1.0,
+        };
+        if (!string.IsNullOrEmpty(tooltip))
+            ToolTipService.SetToolTip(btn, tooltip);
+        return btn;
+    }
+
+    /// <summary>
+    /// URL auth method + conditional fields (Public Endpoint, Cloudflare token fields).
+    /// Mirrors the webui "Public URL Authentication" section inside StorageSettings.
+    /// </summary>
+    private void AddS3UrlAuthFields(StackPanel parent)
+    {
+        // URL Auth Method dropdown with custom labels
+        var authField = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 8) };
+        authField.Children.Add(new TextBlock
+        {
+            Text = "URL Auth Method",
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+
+        var authCombo = new ComboBox
+        {
+            Width = 240,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        authCombo.Items.Add(new ComboBoxItem { Content = "S3 Presigned URLs", Tag = "presigned" });
+        authCombo.Items.Add(new ComboBoxItem { Content = "Public (no auth)", Tag = "public" });
+        authCombo.Items.Add(new ComboBoxItem { Content = "Cloudflare Token Auth", Tag = "cloudflare_token" });
+
+        string currentAuth = ViewModel.GetSetting("s3.operational_url_auth");
+        if (string.IsNullOrEmpty(currentAuth)) currentAuth = "presigned";
+        for (int i = 0; i < authCombo.Items.Count; i++)
+        {
+            if (authCombo.Items[i] is ComboBoxItem item && (item.Tag as string) == currentAuth)
+            {
+                authCombo.SelectedIndex = i;
+                break;
+            }
+        }
+        if (authCombo.SelectedIndex < 0) authCombo.SelectedIndex = 0;
+
+        authField.Children.Add(authCombo);
+        parent.Children.Add(authField);
+
+        // Conditional container — shown for "public" or "cloudflare_token"
+        var publicFieldsContainer = new StackPanel
+        {
+            Spacing = 0,
+            Visibility = currentAuth != "presigned" ? Visibility.Visible : Visibility.Collapsed,
+        };
+        AddTextField(publicFieldsContainer, "Public Endpoint", "s3.operational_public_endpoint", "https://cdn.example.com");
+        parent.Children.Add(publicFieldsContainer);
+
+        // Cloudflare-only fields
+        var cloudflareFieldsContainer = new StackPanel
+        {
+            Spacing = 0,
+            Visibility = currentAuth == "cloudflare_token" ? Visibility.Visible : Visibility.Collapsed,
+        };
+        AddPasswordField(cloudflareFieldsContainer, "Token Secret", "s3.operational_token_secret");
+        AddTextField(cloudflareFieldsContainer, "Token Param", "s3.operational_token_param", "verify");
+        AddNumberField(cloudflareFieldsContainer, "Token TTL (seconds)", "s3.operational_token_ttl", "10800");
+        parent.Children.Add(cloudflareFieldsContainer);
+
+        // Wire selection change: update setting + toggle visibility of conditional sections
+        authCombo.SelectionChanged += (_, _) =>
+        {
+            if (authCombo.SelectedItem is not ComboBoxItem sel) return;
+            var newVal = (sel.Tag as string) ?? "presigned";
+            ViewModel.SetSetting("s3.operational_url_auth", newVal);
+            publicFieldsContainer.Visibility = newVal != "presigned" ? Visibility.Visible : Visibility.Collapsed;
+            cloudflareFieldsContainer.Visibility = newVal == "cloudflare_token" ? Visibility.Visible : Visibility.Collapsed;
+            UpdateDirtyCountText();
+        };
+
+        _fieldRebuilders.Add(() =>
+        {
+            var v = ViewModel.GetSetting("s3.operational_url_auth");
+            if (string.IsNullOrEmpty(v)) v = "presigned";
+            for (int i = 0; i < authCombo.Items.Count; i++)
+            {
+                if (authCombo.Items[i] is ComboBoxItem item && (item.Tag as string) == v)
+                {
+                    authCombo.SelectedIndex = i;
+                    break;
+                }
+            }
+            publicFieldsContainer.Visibility = v != "presigned" ? Visibility.Visible : Visibility.Collapsed;
+            cloudflareFieldsContainer.Visibility = v == "cloudflare_token" ? Visibility.Visible : Visibility.Collapsed;
+        });
+    }
+
+    // ─── Log Retention ───────────────────────────────────────────────────
+
+    private class BucketRow
+    {
+        public string Component = "";
+        public string Level = "info";
+        public int RetentionDays = 1;
+        public int MaxRows = 100000;
+        public int MaxSizeMb = 128;
+    }
+
+    private static readonly (string Component, string Level, int RetentionDays, int MaxRows, int MaxSizeMb)[] DefaultBucketPolicies =
+    [
+        ("metadata",  "info",  1, 100000, 128),
+        ("playback",  "info",  7, 500000, 256),
+        ("scanner",   "info",  3, 300000, 256),
+        ("scanner",   "warn", 30, 100000, 128),
+        ("scanner",   "error", 90, 50000,  64),
+    ];
+
+    private List<BucketRow> _bucketRows = [];
 
     private void BuildLogRetentionTab()
     {
-        AddTabHeader("Log Retention", "Prune oldest operational logs by global caps and per-bucket overrides. Bucket rules match on component and level.");
+        AddTabHeader("Log Retention",
+            "Prune oldest operational logs by global caps and per-bucket overrides. Bucket rules match on component and level.");
 
         AddSectionHeader("Global Limits");
         var globalCard = BeginCard();
-        AddNumberField(globalCard, "Retention Days", "opslog.retention_days", "Logs older than this are pruned first.");
-        AddNumberField(globalCard, "Cleanup Interval (Minutes)", "opslog.cleanup_interval_minutes", "How often the retention worker checks caps and prunes oldest rows.");
-        AddNumberField(globalCard, "Max Rows", "opslog.max_rows", "Keeps only the newest rows once this total is exceeded.");
-        AddNumberField(globalCard, "Max Size (MB)", "opslog.max_size_mb", "Uses estimated log row size. Oldest rows are pruned when the budget is exceeded.");
+        AddNumberField(globalCard, "Retention Days", "opslog.retention_days",
+            "Logs older than this are pruned first.");
+        AddNumberField(globalCard, "Max Rows", "opslog.max_rows",
+            "Keeps only the newest rows once this total is exceeded.");
+        AddNumberField(globalCard, "Max Size (MB)", "opslog.max_size_mb",
+            "Uses estimated log row size. Oldest rows are pruned when the budget is exceeded.");
         EndCard(globalCard);
+
+        // Parse bucket rules from current setting
+        _bucketRows = ParseBucketPolicies(ViewModel.GetSetting("opslog.bucket_policies"));
 
         AddSectionHeader("Bucket Overrides");
         var bucketCard = BeginCard();
-        AddTextBlock(bucketCard, "Per-bucket overrides are stored as a JSON array in the setting key opslog.bucket_policies. Edit the server settings directly to configure bucket-level rules, or use the web UI for the full bucket rule editor.");
+
+        var headerRow = new Grid { ColumnSpacing = 12, Margin = new Thickness(0, 4, 0, 4) };
+        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var headerText = new TextBlock
+        {
+            Text = "Use tighter rules for noisy buckets like metadata/info. Set a bucket limit to 0 to disable that bucket-specific cap.",
+            FontSize = 12,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(headerText, 0);
+        headerRow.Children.Add(headerText);
+
+        var headerBtns = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var restoreBtn = new Button
+        {
+            Padding = new Thickness(10, 5, 10, 5),
+            FontSize = 12,
+            CornerRadius = new CornerRadius(6),
+        };
+        var restoreContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        restoreContent.Children.Add(new FontIcon { Glyph = "\uE72C", FontSize = 11 });
+        restoreContent.Children.Add(new TextBlock { Text = "Restore Recommended" });
+        restoreBtn.Content = restoreContent;
+        headerBtns.Children.Add(restoreBtn);
+
+        var addBtn = new Button
+        {
+            Padding = new Thickness(10, 5, 10, 5),
+            FontSize = 12,
+            CornerRadius = new CornerRadius(6),
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+        };
+        var addContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        addContent.Children.Add(new FontIcon { Glyph = "\uE710", FontSize = 11 });
+        addContent.Children.Add(new TextBlock { Text = "Add Rule" });
+        addBtn.Content = addContent;
+        headerBtns.Children.Add(addBtn);
+
+        Grid.SetColumn(headerBtns, 1);
+        headerRow.Children.Add(headerBtns);
+        bucketCard.Children.Add(headerRow);
+
+        // Rules table
+        var tableHost = new StackPanel { Spacing = 0, Margin = new Thickness(0, 8, 0, 0) };
+
+        // Column headers
+        var columnHeader = BuildBucketRowGrid(isHeader: true);
+        var colHeaderBorder = new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1, 1, 1, 0),
+            CornerRadius = new CornerRadius(8, 8, 0, 0),
+            Padding = new Thickness(10, 6, 10, 6),
+            Child = columnHeader,
+        };
+        tableHost.Children.Add(colHeaderBorder);
+
+        // Rows container — rebuilt on changes
+        var rowsHost = new StackPanel { Spacing = 0 };
+        var rowsBorder = new Border
+        {
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1, 0, 1, 1),
+            CornerRadius = new CornerRadius(0, 0, 8, 8),
+            Child = rowsHost,
+        };
+        tableHost.Children.Add(rowsBorder);
+
+        Action refreshRows = null!;
+        refreshRows = () =>
+        {
+            rowsHost.Children.Clear();
+            if (_bucketRows.Count == 0)
+            {
+                rowsHost.Children.Add(new TextBlock
+                {
+                    Text = "No bucket overrides configured.",
+                    FontSize = 12,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 18, 0, 18),
+                    Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                });
+            }
+            else
+            {
+                for (int i = 0; i < _bucketRows.Count; i++)
+                {
+                    int capturedIndex = i;
+                    var rowGrid = BuildBucketRowEditor(_bucketRows[i], () =>
+                    {
+                        ViewModel.SetSetting("opslog.bucket_policies", SerializeBucketPolicies(_bucketRows));
+                        UpdateDirtyCountText();
+                    }, () =>
+                    {
+                        _bucketRows.RemoveAt(capturedIndex);
+                        ViewModel.SetSetting("opslog.bucket_policies", SerializeBucketPolicies(_bucketRows));
+                        UpdateDirtyCountText();
+                        refreshRows();
+                    });
+                    rowsHost.Children.Add(rowGrid);
+                }
+            }
+        };
+        refreshRows();
+
+        addBtn.Click += (_, _) =>
+        {
+            _bucketRows.Add(new BucketRow());
+            ViewModel.SetSetting("opslog.bucket_policies", SerializeBucketPolicies(_bucketRows));
+            UpdateDirtyCountText();
+            refreshRows();
+        };
+        restoreBtn.Click += (_, _) =>
+        {
+            _bucketRows.Clear();
+            foreach (var d in DefaultBucketPolicies)
+                _bucketRows.Add(new BucketRow
+                {
+                    Component = d.Component, Level = d.Level,
+                    RetentionDays = d.RetentionDays, MaxRows = d.MaxRows, MaxSizeMb = d.MaxSizeMb,
+                });
+            ViewModel.SetSetting("opslog.bucket_policies", SerializeBucketPolicies(_bucketRows));
+            UpdateDirtyCountText();
+            refreshRows();
+        };
+
+        bucketCard.Children.Add(tableHost);
+        AddTextBlock(bucketCard,
+            "Matching rows are pruned oldest-first when they exceed the bucket rule. Global caps still apply afterward, so noisy buckets cannot crowd out playback or error logs.");
         EndCard(bucketCard);
+    }
+
+    private FrameworkElement BuildBucketRowGrid(bool isHeader)
+    {
+        var grid = new Grid { ColumnSpacing = 8 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36) });
+
+        if (isHeader)
+        {
+            string[] labels = ["Component", "Level", "Days", "Max Rows", "Max Size (MB)", ""];
+            for (int i = 0; i < labels.Length; i++)
+            {
+                var tb = new TextBlock
+                {
+                    Text = labels[i],
+                    FontSize = 11,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                };
+                Grid.SetColumn(tb, i);
+                grid.Children.Add(tb);
+            }
+        }
+        return grid;
+    }
+
+    private FrameworkElement BuildBucketRowEditor(BucketRow row, Action onChange, Action onRemove)
+    {
+        var grid = new Grid { ColumnSpacing = 8 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36) });
+
+        var comp = new TextBox { Text = row.Component, PlaceholderText = "metadata" };
+        comp.TextChanged += (_, _) => { row.Component = comp.Text ?? ""; onChange(); };
+        Grid.SetColumn(comp, 0);
+        grid.Children.Add(comp);
+
+        var level = new ComboBox { Width = 110 };
+        foreach (var lv in new[] { "debug", "info", "warn", "error" })
+            level.Items.Add(new ComboBoxItem { Content = lv, Tag = lv });
+        for (int i = 0; i < level.Items.Count; i++)
+            if (level.Items[i] is ComboBoxItem ci && (string)ci.Tag == row.Level) { level.SelectedIndex = i; break; }
+        if (level.SelectedIndex < 0) level.SelectedIndex = 1;
+        level.SelectionChanged += (_, _) =>
+        {
+            if (level.SelectedItem is ComboBoxItem sel) { row.Level = (string)sel.Tag; onChange(); }
+        };
+        Grid.SetColumn(level, 1);
+        grid.Children.Add(level);
+
+        var days = new Microsoft.UI.Xaml.Controls.NumberBox
+        {
+            Value = row.RetentionDays, Minimum = 0,
+            SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Hidden,
+        };
+        days.ValueChanged += (_, _) => { if (!double.IsNaN(days.Value)) { row.RetentionDays = (int)days.Value; onChange(); } };
+        Grid.SetColumn(days, 2);
+        grid.Children.Add(days);
+
+        var maxRows = new Microsoft.UI.Xaml.Controls.NumberBox
+        {
+            Value = row.MaxRows, Minimum = 0,
+            SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Hidden,
+        };
+        maxRows.ValueChanged += (_, _) => { if (!double.IsNaN(maxRows.Value)) { row.MaxRows = (int)maxRows.Value; onChange(); } };
+        Grid.SetColumn(maxRows, 3);
+        grid.Children.Add(maxRows);
+
+        var maxSize = new Microsoft.UI.Xaml.Controls.NumberBox
+        {
+            Value = row.MaxSizeMb, Minimum = 0,
+            SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Hidden,
+        };
+        maxSize.ValueChanged += (_, _) => { if (!double.IsNaN(maxSize.Value)) { row.MaxSizeMb = (int)maxSize.Value; onChange(); } };
+        Grid.SetColumn(maxSize, 4);
+        grid.Children.Add(maxSize);
+
+        var delBtn = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE74D", FontSize = 12 },
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6),
+        };
+        ToolTipService.SetToolTip(delBtn, "Remove rule");
+        delBtn.Click += (_, _) => onRemove();
+        Grid.SetColumn(delBtn, 5);
+        grid.Children.Add(delBtn);
+
+        return new Border
+        {
+            Padding = new Thickness(10, 6, 10, 6),
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Child = grid,
+        };
+    }
+
+    private static List<BucketRow> ParseBucketPolicies(string? json)
+    {
+        var rows = new List<BucketRow>();
+        if (string.IsNullOrWhiteSpace(json)) return rows;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array) return rows;
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                var row = new BucketRow();
+                if (el.TryGetProperty("component", out var c) && c.ValueKind == System.Text.Json.JsonValueKind.String)
+                    row.Component = c.GetString() ?? "";
+                if (el.TryGetProperty("level", out var l) && l.ValueKind == System.Text.Json.JsonValueKind.String)
+                    row.Level = l.GetString() ?? "info";
+                if (el.TryGetProperty("retention_days", out var rd) && rd.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    row.RetentionDays = rd.GetInt32();
+                if (el.TryGetProperty("max_rows", out var mr) && mr.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    row.MaxRows = mr.GetInt32();
+                if (el.TryGetProperty("max_size_mb", out var ms) && ms.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    row.MaxSizeMb = ms.GetInt32();
+                rows.Add(row);
+            }
+        }
+        catch { /* malformed — caller gets an empty list, Restore Recommended recovers */ }
+        return rows;
+    }
+
+    private static string SerializeBucketPolicies(List<BucketRow> rows)
+    {
+        var sb = new System.Text.StringBuilder("[");
+        bool first = true;
+        foreach (var r in rows)
+        {
+            if (!first) sb.Append(',');
+            first = false;
+            sb.Append("{\"component\":\"").Append(EscapeJsonString(r.Component)).Append("\",\"level\":\"").Append(r.Level).Append("\",");
+            sb.Append("\"retention_days\":").Append(r.RetentionDays).Append(',');
+            sb.Append("\"max_rows\":").Append(r.MaxRows).Append(',');
+            sb.Append("\"max_size_mb\":").Append(r.MaxSizeMb).Append('}');
+        }
+        sb.Append(']');
+        return sb.ToString();
+    }
+
+    private static string EscapeJsonString(string s)
+    {
+        return (s ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
+    }
+
+    // ─── Card Overlays ────────────────────────────────────────────────────
+
+    // Registry mirrors web/src/lib/cardOverlays.ts OVERLAY_REGISTRY.
+    // Each entry: (id, label, description, sample badge text).
+    private static readonly (string Id, string Label, string Description, string Sample)[] OverlayRegistry =
+    [
+        ("resolution",       "Resolution",       "Show video resolution (e.g. 2160P, 1080P).",                 "2160P"),
+        ("hdr",              "HDR",              "Show HDR / Dolby Vision badge.",                              "DV HDR10"),
+        ("audio",            "Audio",            "Show Atmos / DTS:X / TrueHD when present.",                  "Atmos"),
+        ("release_type",     "Release Type",     "Show REMUX / WEB-DL / Blu-ray-style release tag.",           "REMUX"),
+        ("rating_imdb",      "IMDb Rating",      "Show IMDb audience rating.",                                  "8.7"),
+        ("rating_tmdb",      "TMDb Rating",      "Show TMDb audience rating.",                                  "8.5"),
+        ("rating_rt",        "Rotten Tomatoes",  "Show Rotten Tomatoes critic score.",                          "96%"),
+        ("rating_rt_audience","RT Audience",     "Show Rotten Tomatoes audience score.",                        "92%"),
+        ("original_language","Language",         "Show the original language code (e.g. EN, FR).",              "EN"),
+    ];
+
+    private static readonly (string Value, string Label)[] OverlayPositions =
+    [
+        ("top-left",     "Top Left"),
+        ("top-right",    "Top Right"),
+        ("bottom-left",  "Bottom Left"),
+        ("bottom-right", "Bottom Right"),
+    ];
+
+    // Parsed per-badge prefs, held in memory while the tab is visible.
+    // Shape: { id -> (enabled, position) }
+    private Dictionary<string, (bool Enabled, string Position)> _overlayPrefs = new();
+
+    private void BuildOverlaysTab()
+    {
+        AddTabHeader("Card Overlays",
+            "Configure the default overlay badges shown on poster cards. Users can override these in their personal settings.");
+
+        AddSectionHeader("General");
+        var genCard = BeginCard();
+        AddToggleField(genCard, "Card Overlays Enabled", "overlays.enabled",
+            "When disabled, no overlay badges appear for any user regardless of their personal settings.");
+        EndCard(genCard);
+
+        AddSectionHeader("Default Configuration");
+        var defCard = BeginCard();
+        AddTextBlock(defCard,
+            "These defaults apply to users who have not customized their overlay settings.");
+
+        // Parse current prefs from the setting value
+        _overlayPrefs = ParseOverlayPrefs(ViewModel.GetSetting("defaults.card_overlays"));
+
+        // Two-column layout: per-badge editor on left, preview poster on right
+        var layout = new Grid { ColumnSpacing = 20, Margin = new Thickness(0, 6, 0, 0) };
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
+
+        var editor = new StackPanel { Spacing = 10 };
+        var previewHost = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top };
+        Action? refreshPreview = null;
+
+        foreach (var def in OverlayRegistry)
+        {
+            var row = BuildOverlayDefRow(def, () =>
+            {
+                // Persist back into dirty setting + refresh preview
+                ViewModel.SetSetting("defaults.card_overlays", SerializeOverlayPrefs(_overlayPrefs));
+                UpdateDirtyCountText();
+                refreshPreview?.Invoke();
+            });
+            editor.Children.Add(row);
+        }
+        Grid.SetColumn(editor, 0);
+        layout.Children.Add(editor);
+
+        // Preview poster (2:3 ratio, 140x210)
+        refreshPreview = () =>
+        {
+            previewHost.Children.Clear();
+            previewHost.Children.Add(BuildOverlayPreview());
+        };
+        refreshPreview();
+        Grid.SetColumn(previewHost, 1);
+        layout.Children.Add(previewHost);
+
+        defCard.Children.Add(layout);
+        EndCard(defCard);
+    }
+
+    private FrameworkElement BuildOverlayDefRow((string Id, string Label, string Description, string Sample) def, Action onChange)
+    {
+        var row = new Grid { ColumnSpacing = 12, Margin = new Thickness(0, 4, 0, 4) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var info = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
+        info.Children.Add(new TextBlock
+        {
+            Text = def.Label,
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+        info.Children.Add(new TextBlock
+        {
+            Text = def.Description,
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+        Grid.SetColumn(info, 0);
+        row.Children.Add(info);
+
+        var current = _overlayPrefs.TryGetValue(def.Id, out var p) ? p : (Enabled: true, Position: "top-left");
+
+        var posCombo = new ComboBox
+        {
+            Width = 130,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsEnabled = current.Enabled,
+        };
+        foreach (var (value, label) in OverlayPositions)
+            posCombo.Items.Add(new ComboBoxItem { Content = label, Tag = value });
+        for (int i = 0; i < posCombo.Items.Count; i++)
+        {
+            if (posCombo.Items[i] is ComboBoxItem ci && (string)ci.Tag == current.Position)
+            {
+                posCombo.SelectedIndex = i;
+                break;
+            }
+        }
+        if (posCombo.SelectedIndex < 0) posCombo.SelectedIndex = 0;
+        Grid.SetColumn(posCombo, 1);
+        row.Children.Add(posCombo);
+
+        var toggle = new ToggleSwitch
+        {
+            IsOn = current.Enabled,
+            OnContent = "",
+            OffContent = "",
+            VerticalAlignment = VerticalAlignment.Center,
+            MinWidth = 0,
+        };
+        Grid.SetColumn(toggle, 2);
+        row.Children.Add(toggle);
+
+        posCombo.SelectionChanged += (_, _) =>
+        {
+            if (posCombo.SelectedItem is ComboBoxItem sel)
+            {
+                var existing = _overlayPrefs.TryGetValue(def.Id, out var cur) ? cur : (Enabled: true, Position: "top-left");
+                _overlayPrefs[def.Id] = (existing.Enabled, (string)sel.Tag);
+                onChange();
+            }
+        };
+        toggle.Toggled += (_, _) =>
+        {
+            var existing = _overlayPrefs.TryGetValue(def.Id, out var cur) ? cur : (Enabled: true, Position: "top-left");
+            _overlayPrefs[def.Id] = (toggle.IsOn, existing.Position);
+            posCombo.IsEnabled = toggle.IsOn;
+            onChange();
+        };
+
+        return row;
+    }
+
+    private FrameworkElement BuildOverlayPreview()
+    {
+        // Outer container: 2:3 poster-shaped card with a dark gradient fill so
+        // overlay badges have realistic contrast to sit against.
+        var container = new Grid
+        {
+            Width = 140,
+            Height = 210,
+            CornerRadius = new CornerRadius(12),
+        };
+
+        // Poster-like gradient background (dark teal → near-black, mimicking an
+        // actual poster backdrop), with a subtle inner border.
+        var bg = new Border
+        {
+            CornerRadius = new CornerRadius(12),
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new Windows.Foundation.Point(0, 0),
+                EndPoint = new Windows.Foundation.Point(1, 1),
+                GradientStops =
+                {
+                    new GradientStop { Offset = 0.0, Color = Color.FromArgb(0xFF, 0x1F, 0x29, 0x3A) },
+                    new GradientStop { Offset = 0.5, Color = Color.FromArgb(0xFF, 0x14, 0x19, 0x24) },
+                    new GradientStop { Offset = 1.0, Color = Color.FromArgb(0xFF, 0x09, 0x0B, 0x10) },
+                },
+            },
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+        };
+        container.Children.Add(bg);
+
+        // Centered film icon + "Preview" caption so it's clearly a mock poster.
+        var centerStack = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Spacing = 4,
+        };
+        centerStack.Children.Add(new FontIcon
+        {
+            Glyph = "\uE714", // Video / filmstrip-ish
+            FontSize = 26,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Foreground = new SolidColorBrush(Color.FromArgb(0x80, 0x9C, 0xA3, 0xAF)),
+        });
+        centerStack.Children.Add(new TextBlock
+        {
+            Text = "PREVIEW",
+            FontSize = 9,
+            FontWeight = FontWeights.SemiBold,
+            CharacterSpacing = 200,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Foreground = new SolidColorBrush(Color.FromArgb(0x80, 0x9C, 0xA3, 0xAF)),
+        });
+        container.Children.Add(centerStack);
+
+        // Four corner hosts
+        var corners = new Dictionary<string, StackPanel>
+        {
+            ["top-left"]     = new() { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Left,  VerticalAlignment = VerticalAlignment.Top,    Margin = new Thickness(6) },
+            ["top-right"]    = new() { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,    Margin = new Thickness(6) },
+            ["bottom-left"]  = new() { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Left,  VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(6) },
+            ["bottom-right"] = new() { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(6) },
+        };
+        foreach (var panel in corners.Values) container.Children.Add(panel);
+
+        foreach (var def in OverlayRegistry)
+        {
+            var cur = _overlayPrefs.TryGetValue(def.Id, out var p) ? p : (Enabled: true, Position: "top-left");
+            if (!cur.Enabled) continue;
+            if (!corners.TryGetValue(cur.Position, out var host)) continue;
+
+            host.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(0xCC, 0x00, 0x00, 0x00)),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(5, 2, 5, 2),
+                Child = new TextBlock
+                {
+                    Text = def.Sample,
+                    FontSize = 9,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = new SolidColorBrush(Colors.White),
+                },
+            });
+        }
+
+        return container;
+    }
+
+    /// <summary>
+    /// Parses the defaults.card_overlays setting value (JSON object) into a
+    /// dictionary of id -> (enabled, position). Accepts the same shape as the
+    /// webui serializer: { id: { enabled: bool, position: string } }.
+    /// </summary>
+    private static Dictionary<string, (bool Enabled, string Position)> ParseOverlayPrefs(string? json)
+    {
+        var result = new Dictionary<string, (bool, string)>();
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            // Default: everything enabled at top-left
+            foreach (var def in OverlayRegistry) result[def.Id] = (true, "top-left");
+            return result;
+        }
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                bool enabled = true;
+                string position = "top-left";
+                if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    if (prop.Value.TryGetProperty("enabled", out var e) && e.ValueKind == System.Text.Json.JsonValueKind.False) enabled = false;
+                    if (prop.Value.TryGetProperty("position", out var pos) && pos.ValueKind == System.Text.Json.JsonValueKind.String)
+                        position = pos.GetString() ?? "top-left";
+                }
+                result[prop.Name] = (enabled, position);
+            }
+        }
+        catch
+        {
+            // Fall through — any id without an entry defaults to enabled/top-left below
+        }
+        foreach (var def in OverlayRegistry)
+            if (!result.ContainsKey(def.Id)) result[def.Id] = (true, "top-left");
+        return result;
+    }
+
+    private static string SerializeOverlayPrefs(Dictionary<string, (bool Enabled, string Position)> prefs)
+    {
+        var sb = new System.Text.StringBuilder("{");
+        bool first = true;
+        foreach (var (id, (enabled, position)) in prefs)
+        {
+            if (!first) sb.Append(',');
+            first = false;
+            sb.Append('"').Append(id).Append("\":{\"enabled\":");
+            sb.Append(enabled ? "true" : "false");
+            sb.Append(",\"position\":\"").Append(position).Append("\"}");
+        }
+        sb.Append('}');
+        return sb.ToString();
+    }
+
+    // ===== Connection Check Helper =====
+
+    /// <summary>
+    /// Adds an inline "Check Connection" button that POSTs the current (including
+    /// unsaved) settings to /admin/settings/check/{kind} and displays the result
+    /// inline. Mirrors the webui ConnectionCheckAction component.
+    /// </summary>
+    private void AddConnectionCheckButton(StackPanel parent, string kind, string label)
+    {
+        AddDivider(parent);
+
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            Margin = new Thickness(0, 8, 0, 4),
+        };
+
+        var button = new Button
+        {
+            Content = label,
+            Padding = new Thickness(14, 6, 14, 6),
+            CornerRadius = new CornerRadius(6),
+            FontSize = 12,
+        };
+
+        var result = new TextBlock
+        {
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 360,
+            Visibility = Visibility.Collapsed,
+        };
+
+        button.Click += async (_, _) =>
+        {
+            button.IsEnabled = false;
+            var originalContent = button.Content;
+            button.Content = "Checking...";
+            result.Visibility = Visibility.Collapsed;
+
+            try
+            {
+                var request = new Core.Models.Admin.AdminSettingsConnectionCheckRequest
+                {
+                    Values = ViewModel.GetEffectiveSettings(),
+                    DirtyKeys = ViewModel.GetDirtyKeys(),
+                };
+
+                var adminApi = App.Services.GetRequiredService<AdminApi>();
+                var response = await adminApi.CheckSettingsConnectionAsync(kind, request);
+
+                result.Text = response.Message;
+                result.Foreground = new SolidColorBrush(response.Success
+                    ? Windows.UI.Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80)  // green-400
+                    : Windows.UI.Color.FromArgb(0xFF, 0xEF, 0x6B, 0x73)); // error red
+                result.Visibility = Visibility.Visible;
+            }
+            catch (Exception ex)
+            {
+                result.Text = $"Check failed: {ex.Message}";
+                result.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xEF, 0x6B, 0x73));
+                result.Visibility = Visibility.Visible;
+            }
+            finally
+            {
+                button.Content = originalContent;
+                button.IsEnabled = true;
+            }
+        };
+
+        row.Children.Add(button);
+        row.Children.Add(result);
+        parent.Children.Add(row);
     }
 
     // ===== UI Builder Helpers =====
@@ -713,30 +2000,44 @@ public sealed partial class AdminSettingsDetailPage : Page
         ContentPanel.Children.Add(header);
     }
 
+    // Section headers are rendered INSIDE the next card as an UPPERCASE
+    // tracked-wide label — matches the webui FieldGroup component layout.
+    // AddSectionHeader stashes the label; BeginCard picks it up and uses it
+    // as the first child of the card stack panel.
+    private string? _pendingSectionHeader;
+
     private void AddSectionHeader(string text)
     {
-        var header = new TextBlock
-        {
-            Text = text,
-            Style = (Style)Application.Current.Resources["SectionHeaderTextStyle"],
-            Margin = new Thickness(4, 8, 0, 0)
-        };
-        ContentPanel.Children.Add(header);
+        _pendingSectionHeader = text;
     }
 
     private StackPanel BeginCard()
     {
-        return new StackPanel { Spacing = 0 };
+        var panel = new StackPanel { Spacing = 0 };
+        if (!string.IsNullOrEmpty(_pendingSectionHeader))
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = _pendingSectionHeader.ToUpperInvariant(),
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                CharacterSpacing = 220,
+                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                Margin = new Thickness(0, 0, 0, 10),
+            });
+            _pendingSectionHeader = null;
+        }
+        return panel;
     }
 
     private void EndCard(StackPanel cardContent)
     {
         var border = new Border
         {
-            Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
-            CornerRadius = new CornerRadius(26),
-            Padding = new Thickness(20, 16, 20, 16),
-            Child = cardContent
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+            CornerRadius = new CornerRadius(16),
+            Padding = new Thickness(20, 18, 20, 18),
+            Child = cardContent,
         };
         ContentPanel.Children.Add(border);
     }

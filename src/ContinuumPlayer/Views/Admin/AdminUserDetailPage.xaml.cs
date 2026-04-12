@@ -269,6 +269,7 @@ public sealed partial class AdminUserDetailPage : Page
         AddDetailRow(PermissionsRows, "Max Playback Quality", FormatPlaybackQualityPreset(user.MaxPlaybackQuality));
         AddDetailRow(PermissionsRows, "Max Streams",          user.MaxStreams == 0 ? "Unlimited" : user.MaxStreams.ToString());
         AddDetailRow(PermissionsRows, "Max Transcodes",       user.MaxTranscodes == 0 ? "Unlimited" : user.MaxTranscodes.ToString());
+        AddDetailRow(PermissionsRows, "Max Profiles",         user.MaxProfiles == 0 ? "Unlimited" : user.MaxProfiles.ToString());
         AddDetailRow(PermissionsRows, "Downloads",            user.DownloadAllowed ? "Allowed" : "Not allowed");
         AddDetailRow(PermissionsRows, "Download Transcode",   user.DownloadTranscodeAllowed ? "Allowed" : "Not allowed");
     }
@@ -1009,6 +1010,16 @@ public sealed partial class AdminUserDetailPage : Page
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
 
+        var maxProfilesBox = new NumberBox
+        {
+            Value = user.MaxProfiles,
+            Minimum = 0,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
+            CornerRadius = new CornerRadius(8),
+            FontSize = 13,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+
         // Max Playback Quality dropdown
         var qualityCombo = new ComboBox
         {
@@ -1071,6 +1082,18 @@ public sealed partial class AdminUserDetailPage : Page
         limitsGrid.Children.Add(transcodesGroup);
         limitsTab.Children.Add(limitsGrid);
 
+        // Max Profiles — full width
+        var profilesGroup = new StackPanel { Spacing = 4 };
+        profilesGroup.Children.Add(MakeFormLabel("Max Profiles"));
+        profilesGroup.Children.Add(maxProfilesBox);
+        profilesGroup.Children.Add(new TextBlock
+        {
+            Text = "0 = unlimited",
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
+        });
+        limitsTab.Children.Add(profilesGroup);
+
         // Max Playback Quality - full width
         var qualityGroup = new StackPanel { Spacing = 4 };
         qualityGroup.Children.Add(MakeFormLabel("Max Playback Quality"));
@@ -1120,6 +1143,7 @@ public sealed partial class AdminUserDetailPage : Page
                 Enabled                  = enabledSwitch.IsOn,
                 MaxStreams                = double.IsNaN(maxStreamsBox.Value) ? 0 : (int)maxStreamsBox.Value,
                 MaxTranscodes            = double.IsNaN(maxTranscodesBox.Value) ? 0 : (int)maxTranscodesBox.Value,
+                MaxProfiles              = double.IsNaN(maxProfilesBox.Value) ? 0 : (int)maxProfilesBox.Value,
                 MaxPlaybackQuality       = qualityValue,
                 DownloadAllowed          = downloadSwitch.IsOn,
                 DownloadTranscodeAllowed = downloadTranscodeSwitch.IsOn,

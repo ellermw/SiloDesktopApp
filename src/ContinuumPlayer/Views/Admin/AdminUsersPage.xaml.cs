@@ -95,11 +95,30 @@ public sealed partial class AdminUsersPage : Page
 
     // ===== Table Builder =====
 
+    private string _searchQuery = "";
+
+    private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _searchQuery = SearchBox.Text ?? "";
+        BuildUserRows();
+    }
+
     private void BuildUserRows()
     {
         UsersPanel.Children.Clear();
 
-        if (ViewModel.Users.Count == 0)
+        // Filter by search (username or email, case-insensitive) — matches web UI
+        IEnumerable<AdminUser> filtered = ViewModel.Users;
+        if (!string.IsNullOrWhiteSpace(_searchQuery))
+        {
+            var q = _searchQuery.ToLowerInvariant();
+            filtered = ViewModel.Users.Where(u =>
+                (!string.IsNullOrEmpty(u.Username) && u.Username.ToLowerInvariant().Contains(q)) ||
+                (!string.IsNullOrEmpty(u.Email) && u.Email.ToLowerInvariant().Contains(q)));
+        }
+        var list = filtered.ToList();
+
+        if (list.Count == 0)
         {
             EmptyState.Visibility = Visibility.Visible;
             return;
@@ -108,7 +127,7 @@ public sealed partial class AdminUsersPage : Page
         EmptyState.Visibility = Visibility.Collapsed;
 
         bool isFirst = true;
-        foreach (var user in ViewModel.Users)
+        foreach (var user in list)
         {
             if (!isFirst)
             {
@@ -626,6 +645,16 @@ public sealed partial class AdminUsersPage : Page
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
 
+        var maxProfilesBox = new NumberBox
+        {
+            Value = editingUser?.MaxProfiles ?? 0,
+            Minimum = 0,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
+            CornerRadius = new CornerRadius(8),
+            FontSize = 13,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+
         // Max Playback Quality dropdown
         var qualityCombo = new ComboBox
         {
@@ -688,6 +717,18 @@ public sealed partial class AdminUsersPage : Page
         limitsGrid.Children.Add(transcodesGroup);
         limitsTab.Children.Add(limitsGrid);
 
+        // Max Profiles — full width
+        var profilesGroup = new StackPanel { Spacing = 4 };
+        profilesGroup.Children.Add(MakeFormLabel("Max Profiles"));
+        profilesGroup.Children.Add(maxProfilesBox);
+        profilesGroup.Children.Add(new TextBlock
+        {
+            Text = "0 = unlimited",
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
+        });
+        limitsTab.Children.Add(profilesGroup);
+
         // Max Playback Quality — full width
         var qualityGroup = new StackPanel { Spacing = 4 };
         qualityGroup.Children.Add(MakeFormLabel("Max Playback Quality"));
@@ -722,6 +763,7 @@ public sealed partial class AdminUsersPage : Page
             string role = roleCombo.SelectedItem as string ?? "user";
             int maxStreams = double.IsNaN(maxStreamsBox.Value) ? 0 : (int)maxStreamsBox.Value;
             int maxTranscodes = double.IsNaN(maxTranscodesBox.Value) ? 0 : (int)maxTranscodesBox.Value;
+            int maxProfiles = double.IsNaN(maxProfilesBox.Value) ? 0 : (int)maxProfilesBox.Value;
             bool downloadAllowed = downloadSwitch.IsOn;
             bool downloadTranscodeAllowed = downloadTranscodeSwitch.IsOn;
 
@@ -750,6 +792,7 @@ public sealed partial class AdminUsersPage : Page
                     LibraryIds = libraryIds,
                     MaxStreams = maxStreams,
                     MaxTranscodes = maxTranscodes,
+                    MaxProfiles = maxProfiles,
                     MaxPlaybackQuality = qualityValue,
                     DownloadAllowed = downloadAllowed,
                     DownloadTranscodeAllowed = downloadTranscodeAllowed
@@ -768,6 +811,7 @@ public sealed partial class AdminUsersPage : Page
                     LibraryIds = libraryIds,
                     MaxStreams = maxStreams,
                     MaxTranscodes = maxTranscodes,
+                    MaxProfiles = maxProfiles,
                     MaxPlaybackQuality = string.IsNullOrEmpty(qualityValue) ? null : qualityValue,
                     DownloadAllowed = downloadAllowed,
                     DownloadTranscodeAllowed = downloadTranscodeAllowed
@@ -796,6 +840,16 @@ public sealed partial class AdminUsersPage : Page
         var maxTranscodesBox = new NumberBox
         {
             Value = 2,
+            Minimum = 0,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
+            CornerRadius = new CornerRadius(8),
+            FontSize = 13,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+
+        var maxProfilesBox = new NumberBox
+        {
+            Value = 0,
             Minimum = 0,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
             CornerRadius = new CornerRadius(8),
@@ -870,6 +924,13 @@ public sealed partial class AdminUsersPage : Page
         limitsGrid.Children.Add(streamsGroup);
         limitsGrid.Children.Add(transcodesGroup);
         form.Children.Add(limitsGrid);
+
+        // Max Profiles — full width
+        var profilesGroup = new StackPanel { Spacing = 4 };
+        profilesGroup.Children.Add(MakeFormLabel("Max Profiles"));
+        profilesGroup.Children.Add(maxProfilesBox);
+        profilesGroup.Children.Add(new TextBlock { Text = "0 = unlimited", FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] });
+        form.Children.Add(profilesGroup);
 
         // Max Playback Quality — full width
         var qualityGroup = new StackPanel { Spacing = 4 };

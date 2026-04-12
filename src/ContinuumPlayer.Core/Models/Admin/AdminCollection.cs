@@ -23,6 +23,8 @@ public class LibraryCollection
     public string LastSyncStatus { get; set; } = "idle";
     public string LastSyncMessage { get; set; } = "";
     public string? LastSyncAt { get; set; }
+    public string? SyncSchedule { get; set; }
+    public string? NextSyncAt { get; set; }
     public int ItemCount { get; set; }
     public string CreatedAt { get; set; } = "";
     public string UpdatedAt { get; set; } = "";

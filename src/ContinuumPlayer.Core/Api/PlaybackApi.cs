@@ -55,6 +55,123 @@ public class PlaybackApi(ContinuumApiClient client)
     public Task<SubtitleDownloadResponse> DownloadSubtitleAsync(int mediaFileId, string provider, string subtitleId, string language, string format, CancellationToken ct = default)
         => client.PostAsync<SubtitleDownloadResponse>("/api/v1/subtitles/download",
             new { media_file_id = mediaFileId, provider, subtitle_id = subtitleId, language, format }, ct);
+
+    // ===== Watch Together (Watch Party) =====
+    // Thin wrappers around /api/v1/watch-together/*. Mirrors webui's lib/watchTogether.ts.
+    // The room_token is an opaque JWT returned by create/join; for suggestion endpoints it
+    // travels as a query param (not the session token). Room write endpoints (selection,
+    // policy, close) are profile-scoped and authenticated via the usual Bearer header.
+
+    public Task<WatchTogetherRoomResponse> CreateWatchTogetherRoomAsync(
+        string selectionMode = "host_pick",
+        int? fileId = null,
+        int? libraryId = null,
+        CancellationToken ct = default)
+    {
+        object body = fileId.HasValue && libraryId.HasValue
+            ? new { selection_mode = selectionMode, file_id = fileId.Value, library_id = libraryId.Value }
+            : (object)new { selection_mode = selectionMode };
+        return client.PostAsync<WatchTogetherRoomResponse>("/api/v1/watch-together/rooms", body, ct);
+    }
+
+    public Task<WatchTogetherRoomResponse> JoinWatchTogetherRoomAsync(string? code, string? joinToken, CancellationToken ct = default)
+    {
+        object body = !string.IsNullOrEmpty(joinToken)
+            ? new { join_token = joinToken! }
+            : (object)new { code = code ?? "" };
+        return client.PostAsync<WatchTogetherRoomResponse>("/api/v1/watch-together/join", body, ct);
+    }
+
+    public Task<WatchTogetherRoomResponse> GetWatchTogetherRoomAsync(string roomId, string roomToken, CancellationToken ct = default)
+        => client.GetAsync<WatchTogetherRoomResponse>(
+            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}?room_token={Uri.EscapeDataString(roomToken)}", ct);
+
+    public Task<WatchTogetherRoomResponse> UpdateWatchTogetherRoomPolicyAsync(string roomId, string guestControlPolicy, CancellationToken ct = default)
+        => client.PatchAsync<WatchTogetherRoomResponse>(
+            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/policy",
+            new { guest_control_policy = guestControlPolicy }, ct);
+
+    public Task<WatchTogetherRoomResponse> SelectWatchTogetherRoomItemAsync(
+        string roomId, string contentId, int? fileId = null, int? libraryId = null, CancellationToken ct = default)
+    {
+        object body;
+        if (fileId.HasValue && libraryId.HasValue)
+            body = new { content_id = contentId, file_id = fileId.Value, library_id = libraryId.Value };
+        else if (fileId.HasValue)
+            body = new { content_id = contentId, file_id = fileId.Value };
+        else if (libraryId.HasValue)
+            body = new { content_id = contentId, library_id = libraryId.Value };
+        else
+            body = new { content_id = contentId };
+
+        return client.PutAsync<WatchTogetherRoomResponse>(
+            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/selection", body, ct);
+    }
+
+    public Task CloseWatchTogetherRoomAsync(string roomId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}", ct);
+
+    public Task<WatchTogetherSuggestionsResponse> ListWatchTogetherSuggestionsAsync(string roomId, string roomToken, CancellationToken ct = default)
+        => client.GetAsync<WatchTogetherSuggestionsResponse>(
+            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions?room_token={Uri.EscapeDataString(roomToken)}", ct);
+
+    public Task<WatchTogetherSuggestionsResponse> CreateWatchTogetherSuggestionAsync(
+        string roomId, string roomToken,
+        string contentId, string contentType, string title,
+        string? subtitle = null, string? posterUrl = null, string? note = null,
+        CancellationToken ct = default)
+    {
+        var body = new
+        {
+            content_id = contentId,
+            content_type = contentType,
+            title,
+            subtitle = subtitle ?? "",
+            poster_url = posterUrl ?? "",
+            note = note ?? "",
+        };
+        return client.PostAsync<WatchTogetherSuggestionsResponse>(
+            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions?room_token={Uri.EscapeDataString(roomToken)}",
+            body, ct);
+    }
+
+    public Task<WatchTogetherSuggestionsResponse> DeleteWatchTogetherSuggestionAsync(
+        string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
+    {
+        // server returns the updated suggestions list, so we can't use DeleteAsync (no return).
+        // Use a manual Patch-style call isn't available either — fall back to PutAsync with a
+        // pseudo body? No — the proper approach is to keep a distinct delete-with-response helper.
+        // Simpler: fire the DELETE, then re-fetch the list.
+        return DeleteAndRefetchSuggestionsAsync(roomId, roomToken, suggestionId, ct);
+    }
+
+    private async Task<WatchTogetherSuggestionsResponse> DeleteAndRefetchSuggestionsAsync(
+        string roomId, string roomToken, string suggestionId, CancellationToken ct)
+    {
+        await client.DeleteAsync(
+            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions/{Uri.EscapeDataString(suggestionId)}?room_token={Uri.EscapeDataString(roomToken)}", ct);
+        return await ListWatchTogetherSuggestionsAsync(roomId, roomToken, ct);
+    }
+
+    public Task<WatchTogetherSuggestionsResponse> VoteWatchTogetherSuggestionAsync(
+        string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
+        => client.PostAsync<WatchTogetherSuggestionsResponse>(
+            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions/{Uri.EscapeDataString(suggestionId)}/vote?room_token={Uri.EscapeDataString(roomToken)}",
+            new { }, ct);
+
+    public async Task<WatchTogetherSuggestionsResponse> UnvoteWatchTogetherSuggestionAsync(
+        string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
+    {
+        await client.DeleteAsync(
+            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions/{Uri.EscapeDataString(suggestionId)}/vote?room_token={Uri.EscapeDataString(roomToken)}", ct);
+        return await ListWatchTogetherSuggestionsAsync(roomId, roomToken, ct);
+    }
+
+    public Task<WatchTogetherRoomResponse> PromoteWatchTogetherSuggestionAsync(
+        string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
+        => client.PostAsync<WatchTogetherRoomResponse>(
+            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions/promote?room_token={Uri.EscapeDataString(roomToken)}",
+            new { suggestion_id = suggestionId }, ct);
 }
 
 public class SubtitleListResponse
