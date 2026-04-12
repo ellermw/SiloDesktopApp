@@ -66,9 +66,14 @@ public sealed partial class HomePage : Page
         SectionsPanel.Children.Clear();
         foreach (var section in ViewModel.Sections)
         {
-            if (section.Items.Count == 0) continue;
+            // F12: sections with empty Items are still loading (skeleton shown
+            // by SectionRow). Include them so skeletons render.
             SectionsPanel.Children.Add(new SectionRow { Section = section });
         }
+
+        // Empty state when the server returned zero sections.
+        bool hasSections = ViewModel.FeaturedSections.Count > 0 || ViewModel.Sections.Count > 0;
+        EmptyHomeState.Visibility = hasSections ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void UpdateUndoBanner()

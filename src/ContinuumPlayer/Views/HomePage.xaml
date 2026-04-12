@@ -117,6 +117,35 @@
 
                 <!-- Section rows (each section handles its own spacing and padding) -->
                 <StackPanel x:Name="SectionsPanel" />
+
+                <!-- Empty state when layout returns zero sections -->
+                <StackPanel
+                    x:Name="EmptyHomeState"
+                    VerticalAlignment="Center"
+                    HorizontalAlignment="Center"
+                    Spacing="12"
+                    Padding="40,80"
+                    Visibility="Collapsed">
+                    <FontIcon
+                        Glyph="&#xE80F;"
+                        FontSize="40"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        HorizontalAlignment="Center" />
+                    <TextBlock
+                        Text="No sections configured"
+                        FontSize="18"
+                        FontWeight="SemiBold"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        HorizontalAlignment="Center" />
+                    <TextBlock
+                        Text="Ask your administrator to set up the homepage in Admin → Home Sections."
+                        FontSize="14"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        HorizontalAlignment="Center"
+                        TextAlignment="Center"
+                        TextWrapping="Wrap"
+                        MaxWidth="400" />
+                </StackPanel>
             </StackPanel>
         </ScrollViewer>
     </Grid>

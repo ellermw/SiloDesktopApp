@@ -479,8 +479,8 @@ public sealed partial class ItemDetailPage : Page
         UpdateScoresRow(item);
         UpdateWatchedButton();
         UpdateFavoriteButton();
-        UpdateWatchlistButton();
         UpdateStarRating();
+        BuildMoreFlyout();
 
         // Set initial play button text from catalog item user data (before watch detail loads)
         UpdatePlayButtonFromItemData(item);
@@ -775,10 +775,72 @@ public sealed partial class ItemDetailPage : Page
 
     private void UpdateWatchlistButton()
     {
-        // Segoe Fluent: \uE73E = check (in watchlist), \uE710 = plus (add to watchlist).
-        // Previous \uE8B7 (bookmark) was confusing against the watched state's check.
-        WatchlistIcon.Glyph = ViewModel.InWatchlist ? "\uE73E" : "\uE710";
-        WatchlistText.Text = ViewModel.InWatchlist ? "In Watchlist" : "Watchlist";
+        // Legacy — kept for any remaining references but no longer visible.
+    }
+
+    /// <summary>
+    /// Populate the "More" kebab flyout with secondary actions: Watchlist,
+    /// Mark Watched, admin-only Refresh Metadata. Rebuilds each time the
+    /// item loads so labels/icons reflect current state.
+    /// </summary>
+    private void BuildMoreFlyout()
+    {
+        MoreFlyout.Items.Clear();
+
+        // Watchlist toggle
+        var wlItem = new MenuFlyoutItem
+        {
+            Text = ViewModel.InWatchlist ? "Remove from Watchlist" : "Add to Watchlist",
+            Icon = new FontIcon { Glyph = ViewModel.InWatchlist ? "\uE73E" : "\uE710" },
+        };
+        wlItem.Click += async (_, _) =>
+        {
+            await ViewModel.ToggleWatchlistCommand.ExecuteAsync(null);
+            BuildMoreFlyout();
+        };
+        MoreFlyout.Items.Add(wlItem);
+
+        // Watched toggle
+        var watchItem = new MenuFlyoutItem
+        {
+            Text = ViewModel.IsWatched ? "Mark Unwatched" : "Mark Watched",
+            Icon = new FontIcon { Glyph = "\uE73E" },
+        };
+        watchItem.Click += async (_, _) =>
+        {
+            await ViewModel.ToggleWatchedCommand.ExecuteAsync(null);
+            UpdateWatchedButton();
+            BuildMoreFlyout();
+        };
+        MoreFlyout.Items.Add(watchItem);
+
+        // Admin-only: Refresh Metadata
+        var authService = App.Services.GetRequiredService<Core.Services.AuthService>();
+        if (authService.CurrentUser?.Role == "admin" && ViewModel.Item != null)
+        {
+            MoreFlyout.Items.Add(new MenuFlyoutSeparator());
+            var refreshItem = new MenuFlyoutItem
+            {
+                Text = "Refresh Metadata",
+                Icon = new FontIcon { Glyph = "\uE72C" },
+            };
+            refreshItem.Click += async (_, _) =>
+            {
+                try
+                {
+                    var adminApi = App.Services.GetRequiredService<Core.Api.AdminApi>();
+                    await adminApi.RefreshItemMetadataAsync(ViewModel.Item.ContentId);
+                    var toast = App.Services.GetRequiredService<Services.ToastService>();
+                    toast.Success("Metadata refresh queued");
+                }
+                catch (Exception ex)
+                {
+                    var toast = App.Services.GetRequiredService<Services.ToastService>();
+                    toast.Error(ex.Message);
+                }
+            };
+            MoreFlyout.Items.Add(refreshItem);
+        }
     }
 
     private async void FavoriteButton_Click(object sender, RoutedEventArgs e)

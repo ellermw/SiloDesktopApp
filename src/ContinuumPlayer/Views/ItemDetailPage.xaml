@@ -424,49 +424,28 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- Watchlist button (moved to overflow) -->
+                        <!-- "More" kebab menu — consolidates less-common actions
+                             (Watchlist, Download, admin Match/Refresh) to reduce
+                             action bar clutter. Matches webui 3-dot overflow. -->
                         <Button
-                            x:Name="WatchlistButton"
+                            x:Name="MoreButton"
                             Style="{StaticResource SecondaryButtonStyle}"
-                            Click="WatchlistButton_Click"
-                            Padding="16,10"
-                            CornerRadius="22">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon x:Name="WatchlistIcon" Glyph="&#xE710;" FontSize="16"
-                                          Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock x:Name="WatchlistText" Text="Watchlist" VerticalAlignment="Center" />
-                            </StackPanel>
+                            Padding="12,10"
+                            CornerRadius="22"
+                            ToolTipService.ToolTip="More actions">
+                            <FontIcon Glyph="&#xE712;" FontSize="16"
+                                      Foreground="{StaticResource PrimaryTextBrush}" />
+                            <Button.Flyout>
+                                <MenuFlyout x:Name="MoreFlyout" />
+                            </Button.Flyout>
                         </Button>
 
-                        <!-- Download button -->
-                        <Button
-                            x:Name="DownloadButton"
-                            Style="{StaticResource SecondaryButtonStyle}"
-                            Click="DownloadButton_Click"
-                            Padding="16,10"
-                            CornerRadius="22"
-                            Visibility="Collapsed">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE896;" FontSize="16"
-                                          Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Download" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-
-                        <!-- Match button (admin only) -->
-                        <Button
-                            x:Name="MatchButton"
-                            Style="{StaticResource SecondaryButtonStyle}"
-                            Click="MatchButton_Click"
-                            Padding="16,10"
-                            CornerRadius="22"
-                            Visibility="Collapsed">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE71C;" FontSize="16"
-                                          Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Match" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
+                        <!-- Hidden elements kept for code-behind references but
+                             no longer directly in the action bar layout. Their
+                             state is driven by the More flyout items instead. -->
+                        <Button x:Name="WatchlistButton" Visibility="Collapsed" />
+                        <Button x:Name="DownloadButton" Visibility="Collapsed" />
+                        <Button x:Name="MatchButton" Visibility="Collapsed" />
 
                         <!-- Refresh metadata (admin only) — B12 -->
                         <Button
