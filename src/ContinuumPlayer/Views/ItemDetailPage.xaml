@@ -523,6 +523,10 @@
                             <TextBlock Text="Written by  " FontSize="13" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
                             <StackPanel x:Name="WriterNamesPanel" Orientation="Horizontal" Spacing="0" />
                         </StackPanel>
+                        <StackPanel x:Name="ProducersPanel" Orientation="Horizontal" Spacing="0" Visibility="Collapsed">
+                            <TextBlock Text="Produced by  " FontSize="13" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
+                            <StackPanel x:Name="ProducerNamesPanel" Orientation="Horizontal" Spacing="0" />
+                        </StackPanel>
                     </StackPanel>
 
                     <!-- Studios row -->

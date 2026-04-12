@@ -339,20 +339,33 @@
                 </Grid>
 
                 <StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center">
+                    <!-- Per-button theme resource overrides so WinUI's
+                         PointerOver / Pressed visual states use OUR palette
+                         instead of the system accent. F1 theme gap workaround. -->
                     <Button x:Name="PlayingNextPlayNowButton" Click="PlayingNextPlayNow_Click"
                             Style="{StaticResource AccentButtonStyle}" Padding="24,0"
-                            Height="44" CornerRadius="22">
+                            Height="44" CornerRadius="22"
+                            Foreground="{StaticResource AccentForegroundBrush}">
+                        <Button.Resources>
+                            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{StaticResource AccentHoverColor}" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="{StaticResource AccentPressedColor}" />
+                            <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{StaticResource AccentForegroundColor}" />
+                            <SolidColorBrush x:Key="ButtonForegroundPressed" Color="{StaticResource AccentForegroundColor}" />
+                        </Button.Resources>
                         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <FontIcon Glyph="&#xE768;" FontSize="14"
-                                      Foreground="{StaticResource AccentForegroundBrush}" />
+                            <FontIcon Glyph="&#xE768;" FontSize="14" />
                             <TextBlock x:Name="PlayingNextPlayNowText" Text="Play next in 10"
-                                       FontWeight="SemiBold" FontSize="14"
-                                       Foreground="{StaticResource AccentForegroundBrush}" />
+                                       FontWeight="SemiBold" FontSize="14" />
                         </StackPanel>
                     </Button>
                     <Button x:Name="PlayingNextCancelButton" Click="PlayingNextCancel_Click"
                             Style="{StaticResource SecondaryButtonStyle}" Padding="24,0"
-                            Height="44" CornerRadius="22">
+                            Height="44" CornerRadius="22"
+                            Foreground="{StaticResource PrimaryTextBrush}">
+                        <Button.Resources>
+                            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{StaticResource SurfaceHoverColor}" />
+                            <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{StaticResource PrimaryTextColor}" />
+                        </Button.Resources>
                         <TextBlock Text="Cancel" FontSize="14" VerticalAlignment="Center" />
                     </Button>
                 </StackPanel>

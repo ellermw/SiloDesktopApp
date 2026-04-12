@@ -13,6 +13,13 @@ public sealed partial class LandscapeCard : UserControl
 {
     private CancellationTokenSource? _loadCts;
 
+    /// <summary>
+    /// Fired when the user clicks the X dismiss button on a Continue
+    /// Watching / Next Up card. The consumer (HomePage) handles the
+    /// actual dismissal via HomeViewModel.DismissItemCommand.
+    /// </summary>
+    public event EventHandler<MediaItem>? DismissRequested;
+
     public static readonly DependencyProperty MediaItemProperty =
         DependencyProperty.Register(
             nameof(MediaItem),
@@ -55,6 +62,12 @@ public sealed partial class LandscapeCard : UserControl
             _ => MediaItemMenu.Surface.Default,
         };
         this.ContextFlyout = MediaItemMenu.Build(item, surface);
+
+        // Show dismiss X button for CW/NU cards — enables quick-dismiss
+        // from the home screen without opening a context menu.
+        bool canDismiss = item.ItemSource is "continue_watching" or "next_up";
+        DismissButton.Visibility = canDismiss ? Visibility.Visible : Visibility.Collapsed;
+        DismissButton.Opacity = 0; // starts invisible, fades in on hover
 
         // B31: Match the webui ContinueWatchingCard hierarchy. For episodes,
         // the series title is the primary heading and the episode context
@@ -193,14 +206,19 @@ public sealed partial class LandscapeCard : UserControl
     {
         CardBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["SurfaceHoverBrush"];
-        AnimateHover(scale: 1.04, borderOpacity: 1.0, dimOpacity: 1.0, playOpacity: 1.0, playScale: 1.0);
+        AnimateHover(scale: 1.04, borderOpacity: 1.0, dimOpacity: 1.0, playOpacity: 1.0, playScale: 1.0, dismissOpacity: 1.0);
     }
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
     {
         CardBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["CardBackgroundBrush"];
-        AnimateHover(scale: 1.0, borderOpacity: 0.0, dimOpacity: 0.0, playOpacity: 0.0, playScale: 0.7);
+        AnimateHover(scale: 1.0, borderOpacity: 0.0, dimOpacity: 0.0, playOpacity: 0.0, playScale: 0.7, dismissOpacity: 0.0);
+    }
+
+    private void DismissButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (MediaItem != null) DismissRequested?.Invoke(this, MediaItem);
     }
 
     /// <summary>
@@ -208,7 +226,7 @@ public sealed partial class LandscapeCard : UserControl
     /// border glow, dark tint overlay, and a centered Play circle that fades
     /// and scales in. Short ease-out curve matching the webui transition timing.
     /// </summary>
-    private void AnimateHover(double scale, double borderOpacity, double dimOpacity, double playOpacity, double playScale)
+    private void AnimateHover(double scale, double borderOpacity, double dimOpacity, double playOpacity, double playScale, double dismissOpacity = 0)
     {
         var storyboard = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
         var duration = new Duration(TimeSpan.FromMilliseconds(180));
@@ -229,6 +247,8 @@ public sealed partial class LandscapeCard : UserControl
         Add(HoverPlayButton, "Opacity", playOpacity);
         Add(HoverPlayButtonTransform, "ScaleX", playScale);
         Add(HoverPlayButtonTransform, "ScaleY", playScale);
+        if (DismissButton.Visibility == Visibility.Visible)
+            Add(DismissButton, "Opacity", dismissOpacity);
 
         storyboard.Begin();
     }

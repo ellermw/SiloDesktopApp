@@ -183,9 +183,36 @@ public sealed partial class HeroCarousel : UserControl
 
         HeroTitle.Text = item.Title;
         HeroTitleShadow.Text = item.Title;
-        HeroYear.Text = item.Year > 0 ? item.Year.ToString() : "";
-        HeroGenres.Text = item.Genres.Count > 0 ? string.Join(", ", item.Genres) : "";
         HeroOverview.Text = item.Overview ?? "";
+
+        // Metadata pills row: year · IMDb badge · first 3 genres as dark-glass
+        // pills matching the webui .metadata-badge hero pattern.
+        HeroMetaPillsRow.Children.Clear();
+        if (item.Year > 0)
+            HeroMetaPillsRow.Children.Add(BuildHeroPill(item.Year.ToString()));
+        if (item.RatingImdb.HasValue)
+        {
+            var ratingStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            ratingStack.Children.Add(new FontIcon
+            {
+                Glyph = "\uE735",
+                FontSize = 11,
+                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                    Windows.UI.Color.FromArgb(0xFF, 0xFA, 0xCC, 0x15)),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            ratingStack.Children.Add(new TextBlock
+            {
+                Text = item.RatingImdb.Value.ToString("0.0"),
+                FontSize = 12,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            HeroMetaPillsRow.Children.Add(BuildHeroPill(ratingStack));
+        }
+        foreach (var genre in item.Genres.Take(3))
+            HeroMetaPillsRow.Children.Add(BuildHeroPill(genre));
 
         UpdateDots();
 
@@ -311,6 +338,30 @@ public sealed partial class HeroCarousel : UserControl
         Storyboard.SetTargetProperty(anim, "Opacity");
         return anim;
     }
+
+    // ── Hero metadata pill builder ──────────────────────────────────────
+
+    private static Border BuildHeroPill(string text) => BuildHeroPill(
+        new TextBlock
+        {
+            Text = text,
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+    private static Border BuildHeroPill(FrameworkElement content) => new()
+    {
+        Height = 26,
+        Background = (Brush)Application.Current.Resources["CardOverlayBackgroundBrush"],
+        BorderBrush = (Brush)Application.Current.Resources["CardOverlayBorderBrush"],
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(13),
+        Padding = new Thickness(12, 0, 12, 0),
+        VerticalAlignment = VerticalAlignment.Center,
+        Child = content,
+    };
 
     // ── Keyboard navigation ─────────────────────────────────────────────
 

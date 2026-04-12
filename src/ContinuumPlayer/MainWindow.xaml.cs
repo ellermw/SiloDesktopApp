@@ -195,24 +195,57 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void PlayingNextTimer_Tick(object? sender, object e)
+    private async void PlayingNextTimer_Tick(object? sender, object e)
     {
         _playingNextRemaining--;
         if (_playingNextRemaining <= 0)
         {
             StopPlayingNextCountdown();
             PlayingNextOverlay.Visibility = Visibility.Collapsed;
-            _ = _playerService.ContinuePlayingNextAsync();
+            try
+            {
+                await _playerService.ContinuePlayingNextAsync();
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    var logPath = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "ContinuumPlayer", "state_trace.txt");
+                    System.IO.File.AppendAllText(logPath,
+                        $"[{DateTime.Now:HH:mm:ss.fff}] PlayingNextTimer error: {ex}\n");
+                }
+                catch { }
+                ShowPlaybackError($"Failed to start next episode: {ex.Message}");
+            }
             return;
         }
         PlayingNextPlayNowText.Text = $"Play next in {_playingNextRemaining}";
     }
 
-    private void PlayingNextPlayNow_Click(object sender, RoutedEventArgs e)
+    private async void PlayingNextPlayNow_Click(object sender, RoutedEventArgs e)
     {
         StopPlayingNextCountdown();
         PlayingNextOverlay.Visibility = Visibility.Collapsed;
-        _ = _playerService.ContinuePlayingNextAsync();
+        try
+        {
+            await _playerService.ContinuePlayingNextAsync();
+        }
+        catch (Exception ex)
+        {
+            // Log and surface the error instead of silently crashing.
+            try
+            {
+                var logPath = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "ContinuumPlayer", "state_trace.txt");
+                System.IO.File.AppendAllText(logPath,
+                    $"[{DateTime.Now:HH:mm:ss.fff}] PlayingNextPlayNow error: {ex}\n");
+            }
+            catch { }
+            ShowPlaybackError($"Failed to start next episode: {ex.Message}");
+        }
     }
 
     private void PlayingNextCancel_Click(object sender, RoutedEventArgs e)

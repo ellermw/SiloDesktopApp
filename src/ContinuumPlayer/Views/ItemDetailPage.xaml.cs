@@ -1959,7 +1959,10 @@ public sealed partial class ItemDetailPage : Page
         CastHeader.Visibility = Visibility.Visible;
         CastScrollViewer.Visibility = Visibility.Visible;
 
-        foreach (var member in cast.Take(20))
+        // Sort by the server-provided order field (main cast first) then
+        // take top 20. Previously unsorted with .Take(20) which could miss
+        // prominent actors who appeared later in the list.
+        foreach (var member in cast.OrderBy(c => c.Order).Take(20))
         {
             // B34: Portrait cards 110x165 (aspect 2:3) instead of 64x64 circles —
             // matches WebUI CastCarousel aspect-[2/3] frames.
@@ -1969,7 +1972,8 @@ public sealed partial class ItemDetailPage : Page
                 Spacing = 6
             };
 
-            // Photo placeholder (portrait, rounded corners — not a circle)
+            // Photo placeholder (portrait, rounded corners — not a circle).
+            // Show initials when no photo URL instead of a generic Contact glyph.
             var photoBorder = new Border
             {
                 Width = 110,
@@ -1979,20 +1983,28 @@ public sealed partial class ItemDetailPage : Page
                 HorizontalAlignment = HorizontalAlignment.Center
             };
 
-            var photoIcon = new FontIcon
-            {
-                Glyph = "\uE77B",
-                FontSize = 32,
-                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            photoBorder.Child = photoIcon;
-
-            // Load photo if available
             if (!string.IsNullOrEmpty(member.PhotoUrl))
             {
                 _ = LoadCastPhotoAsync(photoBorder, member);
+            }
+            else
+            {
+                // Initials fallback: first letter(s) of each name part, max 2.
+                string initials = string.Join("", member.Name
+                    .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .Take(2)
+                    .Select(p => char.ToUpperInvariant(p[0])));
+                if (string.IsNullOrEmpty(initials)) initials = "?";
+
+                photoBorder.Child = new TextBlock
+                {
+                    Text = initials,
+                    FontSize = 28,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
             }
 
             card.Children.Add(photoBorder);
@@ -2000,7 +2012,8 @@ public sealed partial class ItemDetailPage : Page
             card.Children.Add(new TextBlock
             {
                 Text = member.Name,
-                Style = (Style)Application.Current.Resources["CaptionTextStyle"],
+                FontSize = 12,
+                FontWeight = Microsoft.UI.Text.FontWeights.Medium,
                 Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
                 TextAlignment = TextAlignment.Center,
                 TextWrapping = TextWrapping.Wrap,
@@ -2010,10 +2023,14 @@ public sealed partial class ItemDetailPage : Page
 
             if (!string.IsNullOrEmpty(member.Character))
             {
+                // Distinct secondary styling for character name (webui uses
+                // separate muted text-xs; previous code reused CaptionTextStyle
+                // for both which made them look identical).
                 card.Children.Add(new TextBlock
                 {
                     Text = member.Character,
-                    Style = (Style)Application.Current.Resources["CaptionTextStyle"],
+                    FontSize = 11,
+                    Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
                     TextAlignment = TextAlignment.Center,
                     TextWrapping = TextWrapping.Wrap,
                     MaxLines = 2,
@@ -2091,6 +2108,7 @@ public sealed partial class ItemDetailPage : Page
     {
         DirectorNamesPanel.Children.Clear();
         WriterNamesPanel.Children.Clear();
+        ProducerNamesPanel.Children.Clear();
 
         if (crew.Count == 0)
         {
@@ -2098,18 +2116,19 @@ public sealed partial class ItemDetailPage : Page
             return;
         }
 
-        // Match WebUI: group by exact job value, not synthesized categories.
-        // Writers and Screenplay and Story are distinct jobs in the web UI; the
-        // desktop was lumping them together under "Written by".
-        var directors = crew.Where(c =>
-            c.Job.Equals("Director", StringComparison.OrdinalIgnoreCase)).ToList();
-        var writers = crew.Where(c =>
-            c.Job.Equals("Writer", StringComparison.OrdinalIgnoreCase)).ToList();
+        // Match WebUI: group by exact job value, deduplicate by name within
+        // each group (the server can return the same person twice if they
+        // have multiple credits). Webui parity: Directors + Writers + Producers.
+        var directors = DeduplicateByName(crew.Where(c =>
+            c.Job.Equals("Director", StringComparison.OrdinalIgnoreCase)));
+        var writers = DeduplicateByName(crew.Where(c =>
+            c.Job.Equals("Writer", StringComparison.OrdinalIgnoreCase)));
+        var producers = DeduplicateByName(crew.Where(c =>
+            c.Job.Equals("Producer", StringComparison.OrdinalIgnoreCase)
+            || c.Job.Equals("Executive Producer", StringComparison.OrdinalIgnoreCase)));
 
-        bool hasDirectors = directors.Count > 0;
-        bool hasWriters = writers.Count > 0;
-
-        if (!hasDirectors && !hasWriters)
+        bool hasAny = directors.Count > 0 || writers.Count > 0 || producers.Count > 0;
+        if (!hasAny)
         {
             CrewSection.Visibility = Visibility.Collapsed;
             return;
@@ -2117,24 +2136,26 @@ public sealed partial class ItemDetailPage : Page
 
         CrewSection.Visibility = Visibility.Visible;
 
-        if (hasDirectors)
-        {
-            DirectorsPanel.Visibility = Visibility.Visible;
-            BuildCrewNameLinks(DirectorNamesPanel, directors);
-        }
-        else
-        {
-            DirectorsPanel.Visibility = Visibility.Collapsed;
-        }
+        ToggleCrewGroup(DirectorsPanel, DirectorNamesPanel, directors);
+        ToggleCrewGroup(WritersPanel, WriterNamesPanel, writers);
+        ToggleCrewGroup(ProducersPanel, ProducerNamesPanel, producers);
+    }
 
-        if (hasWriters)
+    private static List<CrewMember> DeduplicateByName(IEnumerable<CrewMember> source) =>
+        source.GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+              .Select(g => g.First())
+              .ToList();
+
+    private void ToggleCrewGroup(StackPanel groupPanel, StackPanel namesPanel, List<CrewMember> members)
+    {
+        if (members.Count > 0)
         {
-            WritersPanel.Visibility = Visibility.Visible;
-            BuildCrewNameLinks(WriterNamesPanel, writers);
+            groupPanel.Visibility = Visibility.Visible;
+            BuildCrewNameLinks(namesPanel, members);
         }
         else
         {
-            WritersPanel.Visibility = Visibility.Collapsed;
+            groupPanel.Visibility = Visibility.Collapsed;
         }
     }
 
@@ -2228,6 +2249,63 @@ public sealed partial class ItemDetailPage : Page
             _ = LoadSeasonPosterAsync(posterBorder, season);
         }
 
+        // Overlay container hosts poster + checkmark badge + progress bar.
+        var posterHost = new Grid { Width = 150, Height = 225 };
+        posterHost.Children.Add(posterBorder);
+
+        // Completed checkmark (top-right green badge) — webui parity: the
+        // circular bg-green-500/90 check overlay on fully-watched seasons.
+        bool isCompleted = season.UserData?.Played == true;
+        if (isCompleted)
+        {
+            posterHost.Children.Add(new Border
+            {
+                Width = 28,
+                Height = 28,
+                CornerRadius = new CornerRadius(14),
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                    Windows.UI.Color.FromArgb(0xE6, 0x22, 0xC5, 0x5E)),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 6, 6, 0),
+                Child = new FontIcon
+                {
+                    Glyph = "\uE73E",
+                    FontSize = 14,
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                },
+            });
+        }
+
+        // Season progress bar (3px at bottom): green when completed, accent
+        // otherwise. Fills proportional to watched/total episodes.
+        if (season.UserData != null && season.EpisodeCount > 0)
+        {
+            int watched = isCompleted ? season.EpisodeCount : (season.UserData.WatchedCount);
+            double pct = Math.Clamp((double)watched / season.EpisodeCount * 100, 0, 100);
+            if (pct > 0)
+            {
+                var barTrack = new Grid
+                {
+                    Height = 3,
+                    VerticalAlignment = VerticalAlignment.Bottom,
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                        Windows.UI.Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF)),
+                };
+                barTrack.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(pct, GridUnitType.Star) });
+                barTrack.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100 - pct, GridUnitType.Star) });
+                var fill = new Microsoft.UI.Xaml.Shapes.Rectangle
+                {
+                    Fill = isCompleted
+                        ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x22, 0xC5, 0x5E))
+                        : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"],
+                };
+                Grid.SetColumn(fill, 0);
+                barTrack.Children.Add(fill);
+                posterHost.Children.Add(barTrack);
+            }
+        }
+
         // Title
         var titleText = new TextBlock
         {
@@ -2245,7 +2323,7 @@ public sealed partial class ItemDetailPage : Page
         var content = new StackPanel
         {
             Width = 150,
-            Children = { posterBorder, titleText, progressText }
+            Children = { posterHost, titleText, progressText }
         };
 
         var cardBorder = new Border
@@ -2461,9 +2539,14 @@ public sealed partial class ItemDetailPage : Page
 
     private Border BuildEpisodeRowContent(FrameworkElement stillElement, Episode episode)
     {
-        // Title line: E1 . "Title" . 42 min
+        bool isInProgress = episode.UserData != null
+            && episode.UserData.PositionSeconds > 0
+            && !episode.UserData.Played;
+        bool isWatched = episode.UserData?.Played == true;
+
+        // Title line: "Title" . 42 min (episode number moved to gutter)
         var runtimeStr = episode.Runtime > 0 ? $"{episode.Runtime} min" : "";
-        var titleLine = $"E{episode.EpisodeNumber} \u00B7 {episode.Title}";
+        var titleLine = episode.Title;
         if (!string.IsNullOrEmpty(runtimeStr))
             titleLine += $" \u00B7 {runtimeStr}";
 
@@ -2519,23 +2602,18 @@ public sealed partial class ItemDetailPage : Page
             badgesPanel.Children.Add(badge);
         }
 
-        // Watched indicator
-        if (episode.UserData?.Played == true)
+        // Watched indicator: green checkmark icon (webui parity — replaces
+        // the old "Watched" text badge which was hard to read).
+        if (isWatched)
         {
-            var watchedBadge = new Border
+            badgesPanel.Children.Add(new FontIcon
             {
-                Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeBackgroundBrush"],
-                CornerRadius = new CornerRadius(4),
-                Padding = new Thickness(6, 2, 6, 2),
-                Child = new TextBlock
-                {
-                    Text = "Watched",
-                    FontSize = 10,
-                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeTextBrush"]
-                }
-            };
-            badgesPanel.Children.Add(watchedBadge);
+                Glyph = "\uE73E",
+                FontSize = 14,
+                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                    Windows.UI.Color.FromArgb(0xFF, 0x22, 0xC5, 0x5E)),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
         }
 
         // Text content stack
@@ -2546,38 +2624,55 @@ public sealed partial class ItemDetailPage : Page
             Children = { titleText, overviewText, badgesPanel }
         };
 
-        // Main row grid: [Still 160px] [Text content fills rest]
-        var rowGrid = new Grid
-        {
-            ColumnSpacing = 16
-        };
+        // Main row grid: [Episode# gutter 28px] [Still 160px] [Text fills rest]
+        var rowGrid = new Grid { ColumnSpacing = 12 };
+        rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
         rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });
         rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        Grid.SetColumn(stillElement, 0);
-        Grid.SetColumn(textContent, 1);
+        var epNumText = new TextBlock
+        {
+            Text = episode.EpisodeNumber.ToString(),
+            FontSize = 15,
+            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(epNumText, 0);
+        Grid.SetColumn(stillElement, 1);
+        Grid.SetColumn(textContent, 2);
 
+        rowGrid.Children.Add(epNumText);
         rowGrid.Children.Add(stillElement);
         rowGrid.Children.Add(textContent);
+
+        // Row background: in-progress episodes get a subtle accent tint,
+        // others get the default card background. Hover overrides both.
+        var defaultBg = isInProgress
+            ? new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                Windows.UI.Color.FromArgb(0x0D, 0x78, 0xAE, 0xFC)) // bg-accent/5
+            : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"];
 
         var rowBorder = new Border
         {
             Style = (Style)Application.Current.Resources["CardStyle"],
             Padding = new Thickness(12),
             Child = rowGrid,
-            Tag = episode.ContentId
+            Tag = episode.ContentId,
+            Background = defaultBg,
         };
 
         rowBorder.PointerEntered += (s, _) =>
         {
             if (s is Border b)
-                b.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceHoverBrush"];
+                b.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                    Windows.UI.Color.FromArgb(0x0F, 0xFF, 0xFF, 0xFF)); // hover:bg-white/6
         };
 
         rowBorder.PointerExited += (s, _) =>
         {
-            if (s is Border b)
-                b.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"];
+            if (s is Border b) b.Background = defaultBg;
         };
 
         rowBorder.Tapped += EpisodeRow_Tapped;

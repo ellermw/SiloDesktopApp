@@ -65,6 +65,19 @@ public sealed partial class PosterCard : UserControl
         // Thumbhash decoding on UI thread for hundreds of cards causes jank.
         ThumbhashImage.Source = null;
 
+        // Fallback title: when no poster URL is available, show the item's
+        // title centered on the card background (webui: line-clamp-3).
+        string? imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
+        if (string.IsNullOrEmpty(imageUrl))
+        {
+            FallbackTitle.Text = item.Title;
+            FallbackTitle.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            FallbackTitle.Visibility = Visibility.Collapsed;
+        }
+
         UpdateBadges(item);
 
         // Delay image load slightly so scrolling isn't blocked by hundreds of simultaneous loads

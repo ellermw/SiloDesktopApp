@@ -52,6 +52,23 @@
                 VerticalAlignment="Center"
                 Opacity="0" />
 
+            <!-- Fallback title (webui: centered text line-clamp-3 when no
+                 poster URL). Hidden when a poster loads successfully. -->
+            <TextBlock
+                x:Name="FallbackTitle"
+                Visibility="Collapsed"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                TextAlignment="Center"
+                TextWrapping="Wrap"
+                MaxLines="3"
+                MaxWidth="140"
+                FontSize="14"
+                FontWeight="SemiBold"
+                Foreground="{StaticResource SecondaryTextBrush}"
+                TextTrimming="CharacterEllipsis"
+                Padding="8" />
+
             <!-- Bottom gradient overlay (from-black/55) -->
             <Border VerticalAlignment="Bottom" Height="96" IsHitTestVisible="False">
                 <Border.Background>

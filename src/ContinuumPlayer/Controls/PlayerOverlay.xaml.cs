@@ -526,21 +526,35 @@ public sealed partial class PlayerOverlay : UserControl
         SubtitleFlyout.Items.Add(offItem);
         SubtitleFlyout.Items.Add(new MenuFlyoutSeparator());
 
-        // Subtitle tracks from the session
+        // Subtitle tracks from the session, sorted by source priority:
+        // external > downloaded > embedded (matches webui).
         var subtitleUrls = _playerService.Manager?.GetSubtitleUrls() ?? [];
-        int mpvTrackIndex = 1; // mpv subtitle tracks are 1-based
-        for (int idx = 0; idx < subtitleUrls.Count; idx++)
-        {
-            var (track, _) = subtitleUrls[idx];
-            var codec = track.Codec?.ToLowerInvariant() ?? "";
-            if (codec is "pgs" or "pgssub" or "dvdsub" or "vobsub")
-                continue; // skip bitmap subs (they were not loaded)
+        var sortedSubs = subtitleUrls
+            .Select((pair, idx) => (pair.Track, pair.FullUrl, OrigIndex: idx))
+            .Where(s =>
+            {
+                var c = s.Track.Codec?.ToLowerInvariant() ?? "";
+                return c is not ("pgs" or "pgssub" or "dvdsub" or "vobsub");
+            })
+            .OrderBy(s => SourceSortKey(s.Track.Source))
+            .ToList();
 
-            // Build a readable label
+        int mpvTrackIndex = 1;
+        // Build a map from original index → mpv track index (accounts for
+        // skipped bitmap subs). We need this because we render sorted but
+        // mpv's sid is the load order.
+        var mpvIndexMap = new Dictionary<int, int>();
+        for (int i = 0; i < subtitleUrls.Count; i++)
+        {
+            var c = subtitleUrls[i].Track.Codec?.ToLowerInvariant() ?? "";
+            if (c is "pgs" or "pgssub" or "dvdsub" or "vobsub") continue;
+            mpvIndexMap[i] = mpvTrackIndex++;
+        }
+
+        foreach (var (track, _, origIdx) in sortedSubs)
+        {
             var langName = PlayerService.LanguageCodeToName(track.Language);
             var trackTitle = track.Label;
-
-            // If the title is just the codec name, ignore it
             if (string.Equals(trackTitle, track.Codec, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(trackTitle, "subrip", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(trackTitle, "ass", StringComparison.OrdinalIgnoreCase)
@@ -549,19 +563,30 @@ public sealed partial class PlayerOverlay : UserControl
 
             var label = langName;
             if (!string.IsNullOrEmpty(trackTitle) && !string.Equals(trackTitle, langName, StringComparison.OrdinalIgnoreCase))
-                label += $" - {trackTitle}";
-            if (string.IsNullOrEmpty(label)) label = $"Track {idx + 1}";
+                label += $" \u2014 {trackTitle}";
+            if (string.IsNullOrEmpty(label)) label = $"Track {origIdx + 1}";
             if (track.Forced) label += " [Forced]";
 
-            var item = new MenuFlyoutItem { Text = label };
-            int capturedIndex = mpvTrackIndex;
-            string? capturedLang = track.Language;
-            item.Click += (_, _) => _ = _playerService.SetSubtitleTrackAndPersistAsync(capturedIndex, capturedLang);
-            SubtitleFlyout.Items.Add(item);
+            // Source badge: EXTERNAL / DOWNLOADED / EMBEDDED uppercase tag
+            var source = track.Source?.ToUpperInvariant();
+            if (!string.IsNullOrEmpty(source) && source != "EMBEDDED")
+                label += $"  [{source}]";
 
-            mpvTrackIndex++;
+            var item = new MenuFlyoutItem { Text = label };
+            int capturedMpvIndex = mpvIndexMap.GetValueOrDefault(origIdx, 1);
+            string? capturedLang = track.Language;
+            item.Click += (_, _) => _ = _playerService.SetSubtitleTrackAndPersistAsync(capturedMpvIndex, capturedLang);
+            SubtitleFlyout.Items.Add(item);
         }
     }
+
+    private static int SourceSortKey(string? source) => (source?.ToLowerInvariant()) switch
+    {
+        "external" => 0,
+        "downloaded" => 1,
+        "embedded" => 2,
+        _ => 3,
+    };
 
     // ── Audio track switching ────────────────────────────────────────────
 
@@ -572,20 +597,68 @@ public sealed partial class PlayerOverlay : UserControl
         var currentSession = _playerService.Manager?.CurrentSession;
         if (currentSession == null) return;
 
-        // Get audio tracks from the version that matches the current session
         var version = _playerService.Versions.FirstOrDefault(v => v.FileId == currentSession.MediaFileId);
-        if (version?.AudioTracks == null) return;
+        if (version?.AudioTracks == null || version.AudioTracks.Count == 0) return;
+
+        // Disable the button when only 1 track — there's nothing to switch.
+        if (version.AudioTracks.Count == 1)
+        {
+            AudioButton.IsEnabled = false;
+            return;
+        }
+        AudioButton.IsEnabled = true;
+
+        // Header row matching webui "AUDIO" section header
+        AudioFlyout.Items.Add(new MenuFlyoutItem
+        {
+            Text = "AUDIO",
+            IsEnabled = false,
+            FontSize = 10,
+        });
+        AudioFlyout.Items.Add(new MenuFlyoutSeparator());
 
         for (int i = 0; i < version.AudioTracks.Count; i++)
         {
             var at = version.AudioTracks[i];
-            var label = at.Language ?? "Unknown";
-            if (!string.IsNullOrEmpty(at.Title)) label += $" - {at.Title}";
-            if (!string.IsNullOrEmpty(at.Codec)) label += $" ({at.Codec.ToUpperInvariant()})";
-            if (at.Channels.HasValue) label += $" {at.Channels}ch";
+
+            // webui label format: "Language · Layout · CODEC"
+            // e.g. "English · 5.1 · TrueHD"
+            var langName = PlayerService.LanguageCodeToName(at.Language);
+            var parts = new List<string> { langName };
+
+            if (at.Channels.HasValue && at.Channels.Value > 0)
+            {
+                string chLabel = at.Channels.Value switch
+                {
+                    1 => "Mono",
+                    2 => "Stereo",
+                    6 => "5.1",
+                    8 => "7.1",
+                    _ => $"{at.Channels}ch",
+                };
+                parts.Add(chLabel);
+            }
+
+            if (!string.IsNullOrEmpty(at.Codec))
+            {
+                // Normalize codec name (reuse the same mapper from the version flyout)
+                var normalized = at.Codec.ToUpperInvariant() switch
+                {
+                    "TRUEHD" => "TrueHD",
+                    "DTSHDMA" or "DTS-HD MA" => "DTS-HD MA",
+                    "EAC3" => "E-AC3",
+                    "AC3" => "AC3",
+                    "AAC" => "AAC",
+                    "FLAC" => "FLAC",
+                    "OPUS" => "Opus",
+                    _ => at.Codec,
+                };
+                parts.Add(normalized);
+            }
+
+            var label = string.Join(" \u00B7 ", parts);
             if (at.Default) label += " \u2605";
 
-            // Bold the currently active audio track
             var item = new MenuFlyoutItem { Text = label };
             if (i == currentSession.AudioTrackIndex)
                 item.FontWeight = Microsoft.UI.Text.FontWeights.Bold;

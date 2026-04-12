@@ -99,15 +99,10 @@
                     MaxLines="2" />
             </Grid>
 
-            <StackPanel Orientation="Horizontal" Spacing="12">
-                <TextBlock x:Name="HeroYear"
-                    Style="{StaticResource SecondaryTextStyle}"
-                    FontSize="{StaticResource FontSizeSubtitle}" />
-                <TextBlock x:Name="HeroGenres"
-                    Style="{StaticResource SecondaryTextStyle}"
-                    FontSize="{StaticResource FontSizeSubtitle}"
-                    TextTrimming="CharacterEllipsis" MaxWidth="400" />
-            </StackPanel>
+            <!-- Metadata pills row: year · IMDb badge · first 3 genres.
+                 Dark-glass pills matching webui .metadata-badge pattern.
+                 Populated in code-behind ShowCurrentItem(). -->
+            <StackPanel x:Name="HeroMetaPillsRow" Orientation="Horizontal" Spacing="8" />
 
             <TextBlock x:Name="HeroOverview"
                 Style="{StaticResource SecondaryTextStyle}"

@@ -324,7 +324,17 @@ public class PlayerService : IDisposable
         var threadId = Environment.CurrentManagedThreadId;
         LogToFile("state_trace.txt", $"SetState: {State} -> {newState} (thread={threadId})");
 
-        if (State == newState) return;
+        // Even if the state hasn't changed, we MUST still ensure the video
+        // popup is visible when entering Expanded — ContinuePlayingNextAsync
+        // hides the popup for the UP NEXT cinematic but the state stays
+        // Expanded throughout. Without this, Expanded → Expanded skips the
+        // Show() call and the popup stays hidden.
+        if (State == newState)
+        {
+            if (newState == PlayerState.Expanded || newState == PlayerState.Fullscreen)
+                _videoWindow?.Show();
+            return;
+        }
         State = newState;
 
         if (newState == PlayerState.Expanded || newState == PlayerState.Fullscreen)
@@ -633,6 +643,12 @@ public class PlayerService : IDisposable
         var nextId = NextEpisodeContentId;
         ClearNextEpisodeHint();
         if (string.IsNullOrEmpty(nextId)) return Task.CompletedTask;
+
+        // PlayAsync handles old-session cleanup internally with
+        // _switchingContent = true set BEFORE _mpv.Stop(), which suppresses
+        // the end-file handler. Calling CloseAsync here would over-kill
+        // the teardown and break transcode sessions (the proxy + manifest
+        // get torn down before the new session can start).
         return PlayAsync(nextId);
     }
 
@@ -987,10 +1003,21 @@ public class PlayerService : IDisposable
 
         _mpvPlaybackEndedHandler = () =>
         {
-            LogToFile("state_trace.txt", $"PlaybackEnded fired: _switchingContent={_switchingContent} _qualitySwitchActive={_qualitySwitchActive} nextEpisode={NextEpisodeContentId ?? "none"} State={State} thread={Environment.CurrentManagedThreadId}");
+            LogToFile("state_trace.txt", $"PlaybackEnded fired: _switchingContent={_switchingContent} _qualitySwitchActive={_qualitySwitchActive} _closing={_closing} nextEpisode={NextEpisodeContentId ?? "none"} State={State} thread={Environment.CurrentManagedThreadId}");
             if (_switchingContent || _qualitySwitchActive)
             {
                 LogToFile("state_trace.txt", "  → Suppressed (switching content)");
+                return;
+            }
+
+            // Guard against end-file events that fire during CloseAsync
+            // (e.g. _mpv.Stop() inside CloseAsync triggers end-file, or
+            // the player is already torn down to Idle). Without this,
+            // each _mpv.Stop() re-queues CloseAsync which races against
+            // ContinuePlayingNextAsync → PlayAsync.
+            if (_closing || State == PlayerState.Idle)
+            {
+                LogToFile("state_trace.txt", "  → Suppressed (closing or idle)");
                 return;
             }
 
@@ -1832,6 +1859,14 @@ public class PlayerService : IDisposable
             catch (Exception ex) { LogToFile("state_trace.txt", $"Volume persist error: {ex.Message}"); }
         }
 
+        // Clear the next-episode hint BEFORE stopping mpv. _mpv.Stop()
+        // fires end-file → _mpvPlaybackEndedHandler which checks
+        // NextEpisodeContentId. If it's still set, the handler shows the
+        // Playing Next cinematic — wrong when the user manually clicked X
+        // to exit. Clearing first ensures the handler takes the natural-end
+        // path (CloseAsync dispatch) instead of the next-episode path.
+        ClearNextEpisodeHint();
+
         _mpv?.Stop();
 
         if (_playbackManager != null)
@@ -1860,10 +1895,8 @@ public class PlayerService : IDisposable
         ErrorMessage = null;
         Versions = [];
 
-        // Clear any queued next-episode hint from the previous session so a
-        // subsequent PlayAsync starts clean. Callers that WANT a pre-seed
-        // can set it after PlayAsync kicks off (auto-detect in FileLoaded
-        // respects an already-set hint).
+        // Already cleared above (before _mpv.Stop()) but belt-and-suspenders
+        // so a subsequent PlayAsync starts from a known-clean state.
         ClearNextEpisodeHint();
 
         App.MainWindowInstance?.HideLoadingOverlay();

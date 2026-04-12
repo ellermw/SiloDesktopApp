@@ -176,6 +176,11 @@ local state = {
     next_ep_overlay   = nil,
     next_ep_rect      = nil,
 
+    -- Pause center indicator — 64x64 translucent circle with a play icon.
+    -- Drawn via ASS overlay, shown on pause, hidden on resume.
+    pause_indicator_overlay = nil,
+    pause_indicator_shown   = false,
+
     -- Content title (from host via osc-set-title)
     content_title   = "",
     content_subtitle = "",
@@ -1394,6 +1399,7 @@ local check_skip_markers
 local render_skip_button
 local check_next_episode_button
 local render_next_episode_button
+local render_pause_indicator
 
 local function tick()
     if state.osc_disabled then return end
@@ -2059,6 +2065,56 @@ render_next_episode_button = function()
     state.next_ep_overlay:update()
 end
 
+-- Pause center indicator: 64×64 circle bg-black/50 with a Play triangle.
+-- Matches the webui player chrome (64x64 circle bg-black/50 + Play icon).
+render_pause_indicator = function()
+    local should_show = state.pause and not state.osc_disabled
+
+    if should_show == state.pause_indicator_shown then return end
+    state.pause_indicator_shown = should_show
+
+    if not should_show then
+        if state.pause_indicator_overlay then
+            state.pause_indicator_overlay.data = ""
+            state.pause_indicator_overlay:update()
+        end
+        return
+    end
+
+    update_osd_dimensions()
+    local ass = assdraw.ass_new()
+    local W = state.osd_width
+    local H = state.osd_height
+
+    local cx = math.floor(W / 2)
+    local cy = math.floor(H / 2)
+    local r = 32
+
+    -- Circle background (black 50% opacity)
+    draw_rounded_rect(ass, cx - r, cy - r, cx + r, cy + r, r, "000000", "80", 1.0)
+
+    -- Play triangle (white, centered with a slight right offset for optical balance)
+    local tri_size = 18
+    local ox = 3  -- slight right offset
+    ass:new_event()
+    ass:pos(0, 0)
+    ass:append(string.format("{\\an7\\bord0\\shad0\\1c&HFFFFFF&\\1a&H00&\\p1}"))
+    ass:draw_start()
+    ass:move_to(cx - tri_size / 2 + ox, cy - tri_size)
+    ass:line_to(cx + tri_size + ox, cy)
+    ass:line_to(cx - tri_size / 2 + ox, cy + tri_size)
+    ass:draw_stop()
+
+    if not state.pause_indicator_overlay then
+        state.pause_indicator_overlay = mp.create_osd_overlay("ass-events")
+    end
+    state.pause_indicator_overlay.data = ass.text
+    state.pause_indicator_overlay.res_x = W
+    state.pause_indicator_overlay.res_y = H
+    state.pause_indicator_overlay.z = 40  -- below the skip/next buttons
+    state.pause_indicator_overlay:update()
+end
+
 -- Toggle stats (defined here so handle_mouse_down can reference it)
 local function toggle_stats()
     state.stats_visible = not state.stats_visible
@@ -2341,6 +2397,7 @@ local function observe_properties()
     mp.observe_property("pause", "bool", function(_, val)
         state.pause = val or false
         show_osc()  -- Show OSC on any pause state change
+        render_pause_indicator()
     end)
 
     mp.observe_property("volume", "number", function(_, val)
