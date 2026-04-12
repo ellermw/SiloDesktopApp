@@ -486,7 +486,7 @@
                         x:Name="CastScrollViewer"
                         HorizontalScrollBarVisibility="Hidden"
                         VerticalScrollBarVisibility="Disabled"
-                        HorizontalScrollMode="Enabled"
+                        HorizontalScrollMode="Disabled"
                         VerticalScrollMode="Disabled"
                         Visibility="Collapsed">
                         <StackPanel x:Name="CastPanel" Orientation="Horizontal" Spacing="16" />
@@ -559,7 +559,7 @@
                         <ScrollViewer
                             HorizontalScrollBarVisibility="Hidden"
                             VerticalScrollBarVisibility="Disabled"
-                            HorizontalScrollMode="Enabled"
+                            HorizontalScrollMode="Disabled"
                             VerticalScrollMode="Disabled">
                             <StackPanel x:Name="SeasonsPanel" Orientation="Horizontal" Spacing="12" />
                         </ScrollViewer>
@@ -584,7 +584,7 @@
                             x:Name="SimilarScrollViewer"
                             HorizontalScrollBarVisibility="Hidden"
                             VerticalScrollBarVisibility="Disabled"
-                            HorizontalScrollMode="Enabled"
+                            HorizontalScrollMode="Disabled"
                             VerticalScrollMode="Disabled">
                             <StackPanel x:Name="SimilarPanel" Orientation="Horizontal" Spacing="12" />
                         </ScrollViewer>
