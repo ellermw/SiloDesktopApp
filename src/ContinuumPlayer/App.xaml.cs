@@ -148,6 +148,10 @@ public partial class App : Application
         // ToastContainer with this service on construction.
         services.AddSingleton<ToastService>();
 
+        // Card overlay prefs (kill switch + admin defaults + user override).
+        // Populated lazily on first PosterCard bind.
+        services.AddSingleton<CardOverlayService>();
+
         // Player service (owns mpv lifecycle, not tied to page navigation)
         services.AddSingleton<PlayerService>();
 

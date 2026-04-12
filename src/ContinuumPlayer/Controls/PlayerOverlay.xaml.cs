@@ -35,7 +35,6 @@ public sealed partial class PlayerOverlay : UserControl
         // Subscribe to content/playback events (video renders via native GPU window)
         _playerService.ContentLoaded += OnContentLoaded;
         _playerService.PlaybackEnded += OnPlaybackEnded;
-        _playerService.ShowPlayingNextRequested += OnShowPlayingNextRequested;
         _playerService.StateChanged += OnPlayerStateChanged;
 
         // Sync the fullscreen icon eagerly so the first paint after re-activation
@@ -104,10 +103,7 @@ public sealed partial class PlayerOverlay : UserControl
         // Unsubscribe from events
         _playerService.ContentLoaded -= OnContentLoaded;
         _playerService.PlaybackEnded -= OnPlaybackEnded;
-        _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
         _playerService.StateChanged -= OnPlayerStateChanged;
-        StopPlayingNextCountdown();
-        PlayingNextOverlay.Visibility = Visibility.Collapsed;
 
         // Stop timers
         _uiTimer?.Stop();
@@ -170,111 +166,9 @@ public sealed partial class PlayerOverlay : UserControl
         });
     }
 
-    // ── Playing Next cinematic overlay (Phase 3b) ───────────────────────
-
-    private DispatcherTimer? _playingNextTimer;
-    private int _playingNextRemaining;
-    private const int PlayingNextCountdownSeconds = 10;
-
-    private void OnShowPlayingNextRequested()
-    {
-        DispatcherQueue?.TryEnqueue(() =>
-        {
-            if (!_isActive) return;
-
-            var title = _playerService.NextEpisodeTitle ?? "Next episode";
-            var series = _playerService.NextEpisodeSeriesTitle;
-            var overview = _playerService.NextEpisodeOverview ?? "";
-
-            PlayingNextTitleText.Text = title;
-            PlayingNextSeriesText.Text = series ?? "";
-            PlayingNextSeriesText.Visibility = string.IsNullOrEmpty(series) ? Visibility.Collapsed : Visibility.Visible;
-            PlayingNextOverviewText.Text = overview;
-            PlayingNextOverviewText.Visibility = string.IsNullOrEmpty(overview) ? Visibility.Collapsed : Visibility.Visible;
-            PlayingNextPoster.Source = null;
-            _ = LoadPlayingNextPosterAsync();
-
-            _playingNextRemaining = PlayingNextCountdownSeconds;
-            PlayingNextPlayNowText.Text = $"Play next in {_playingNextRemaining}";
-            PlayingNextOverlay.Visibility = Visibility.Visible;
-
-            StartPlayingNextCountdown();
-        });
-    }
-
-    private void StartPlayingNextCountdown()
-    {
-        StopPlayingNextCountdown();
-        _playingNextTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _playingNextTimer.Tick += PlayingNextTimer_Tick;
-        _playingNextTimer.Start();
-    }
-
-    private void StopPlayingNextCountdown()
-    {
-        if (_playingNextTimer != null)
-        {
-            _playingNextTimer.Stop();
-            _playingNextTimer.Tick -= PlayingNextTimer_Tick;
-            _playingNextTimer = null;
-        }
-    }
-
-    private void PlayingNextTimer_Tick(object? sender, object e)
-    {
-        _playingNextRemaining--;
-        if (_playingNextRemaining <= 0)
-        {
-            StopPlayingNextCountdown();
-            PlayingNextOverlay.Visibility = Visibility.Collapsed;
-            _ = _playerService.ContinuePlayingNextAsync();
-            return;
-        }
-        PlayingNextPlayNowText.Text = $"Play next in {_playingNextRemaining}";
-    }
-
-    private void PlayingNextPlayNow_Click(object sender, RoutedEventArgs e)
-    {
-        StopPlayingNextCountdown();
-        PlayingNextOverlay.Visibility = Visibility.Collapsed;
-        _ = _playerService.ContinuePlayingNextAsync();
-    }
-
-    private void PlayingNextCancel_Click(object sender, RoutedEventArgs e)
-    {
-        StopPlayingNextCountdown();
-        PlayingNextOverlay.Visibility = Visibility.Collapsed;
-        _playerService.CancelPlayingNext();
-    }
-
-    private async Task LoadPlayingNextPosterAsync()
-    {
-        var url = _playerService.NextEpisodePosterUrl;
-        if (string.IsNullOrEmpty(url)) return;
-        try
-        {
-            var imageService = App.Services.GetRequiredService<Core.Services.ImageService>();
-            var httpClient = App.Services.GetRequiredService<HttpClient>();
-            var bytes = await imageService.GetImageAsync(
-                _playerService.NextEpisodeContentId ?? "next",
-                "backdrop", url, httpClient, CancellationToken.None);
-            if (bytes == null) return;
-
-            var bitmap = new BitmapImage
-            {
-                DecodePixelWidth = 640,
-                DecodePixelType = DecodePixelType.Logical,
-            };
-            using var stream = new MemoryStream(bytes);
-            await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
-
-            DispatcherQueue?.TryEnqueue(() =>
-            {
-                PlayingNextPoster.Source = bitmap;
-            });
-        }
-        catch { /* Poster is cosmetic */ }
-    }
+    // Playing Next cinematic overlay (Phase 3b) was moved to MainWindow.xaml
+    // + MainWindow.xaml.cs — this UserControl is never activated so the
+    // handlers here would never run. See MainWindow.OnShowPlayingNextRequested.
 
     // B53: mpv now renders directly into its own GPU popup window; the old
     // SW frame pipeline (OnFrameReady → SoftwareBitmap double buffer →
@@ -419,6 +313,18 @@ public sealed partial class PlayerOverlay : UserControl
                 ToggleStats();
                 e.Handled = true;
                 break;
+
+            // K = toggle play/pause (YouTube-style)
+            case Windows.System.VirtualKey.K:
+                _playerService.Mpv.TogglePause();
+                e.Handled = true;
+                break;
+
+            // C = toggle captions/subtitles visibility
+            case Windows.System.VirtualKey.C:
+                _playerService.ToggleSubtitleVisibility();
+                e.Handled = true;
+                break;
         }
 
         ShowControls();
@@ -448,6 +354,7 @@ public sealed partial class PlayerOverlay : UserControl
         _isMuted = !(_playerService.Mpv.GetMute());
         _playerService.Mpv.SetMute(_isMuted);
         _playerService.IsMuted = _isMuted;
+        _playerService.SaveVolumeState();
         UpdateVolumeIcon();
     }
 
@@ -490,6 +397,7 @@ public sealed partial class PlayerOverlay : UserControl
             _playerService.Mpv.SetMute(false);
             _playerService.IsMuted = false;
         }
+        _playerService.SaveVolumeState();
         UpdateVolumeIcon();
     }
 
@@ -608,11 +516,12 @@ public sealed partial class PlayerOverlay : UserControl
     {
         SubtitleFlyout.Items.Clear();
 
-        // "Off" option to disable subtitles
+        // "Off" option to disable subtitles. Persists the choice under the
+        // series (or content) ID so the next play defaults to off too.
         var offItem = new MenuFlyoutItem { Text = "Off" };
         offItem.Click += (_, _) =>
         {
-            _playerService.Mpv?.SetSubtitleTrack(0); // 0 disables subtitles in mpv
+            _ = _playerService.SetSubtitleTrackAndPersistAsync(0, null);
         };
         SubtitleFlyout.Items.Add(offItem);
         SubtitleFlyout.Items.Add(new MenuFlyoutSeparator());
@@ -646,7 +555,8 @@ public sealed partial class PlayerOverlay : UserControl
 
             var item = new MenuFlyoutItem { Text = label };
             int capturedIndex = mpvTrackIndex;
-            item.Click += (_, _) => _playerService.Mpv?.SetSubtitleTrack(capturedIndex);
+            string? capturedLang = track.Language;
+            item.Click += (_, _) => _ = _playerService.SetSubtitleTrackAndPersistAsync(capturedIndex, capturedLang);
             SubtitleFlyout.Items.Add(item);
 
             mpvTrackIndex++;

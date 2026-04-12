@@ -92,6 +92,11 @@
     <SolidColorBrush x:Key="BadgeTextBrush" Color="{StaticResource BadgeTextColor}" />
     <SolidColorBrush x:Key="BadgeResolutionBrush" Color="{StaticResource BadgeResolutionColor}" />
     <SolidColorBrush x:Key="BadgeHdrBrush" Color="{StaticResource BadgeHdrColor}" />
+    <!-- Card overlay badges (resolution/HDR/audio/etc. on poster cards).
+         Web parity: rgba(0,0,0,0.6) with a thin white/15 border. Must be
+         opaque enough to stay legible over bright backdrops. -->
+    <SolidColorBrush x:Key="CardOverlayBackgroundBrush" Color="#99000000" />
+    <SolidColorBrush x:Key="CardOverlayBorderBrush" Color="#26FFFFFF" />
     <SolidColorBrush x:Key="ErrorBrush" Color="{StaticResource ErrorColor}" />
     <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}" />
 

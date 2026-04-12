@@ -345,6 +345,67 @@ public sealed partial class ItemDetailPage : Page
         BreadcrumbPanel.Children.Clear();
         BreadcrumbPanel.Visibility = Visibility.Collapsed;
 
+        // Star rating widget is hidden on season pages (webui parity — the
+        // test suite explicitly asserts this; users rate individual movies
+        // and series, not seasons).
+        StarRatingContainer.Visibility = item.Type == "season"
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+
+        // ─── Hero poster / logo / kicker (webui DetailHero parity) ───
+
+        // Portrait poster column. Only show for non-episode items — episodes
+        // inherit the series backdrop and don't have a dedicated portrait.
+        if (item.Type != "episode" && !string.IsNullOrEmpty(item.PosterUrl))
+        {
+            _ = LoadHeroPosterAsync(item.PosterUrl);
+            HeroPosterContainer.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            HeroPosterContainer.Visibility = Visibility.Collapsed;
+            HeroPosterImage.Source = null;
+        }
+
+        // Logo image — when present, replaces the plain title with the
+        // stylized logo. Title still holds the text for accessibility.
+        if (!string.IsNullOrEmpty(item.LogoUrl))
+        {
+            try
+            {
+                HeroLogoImage.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(item.LogoUrl));
+                HeroLogoImage.Visibility = Visibility.Visible;
+                TitleText.Visibility = Visibility.Collapsed;
+            }
+            catch
+            {
+                HeroLogoImage.Visibility = Visibility.Collapsed;
+                TitleText.Visibility = Visibility.Visible;
+            }
+        }
+        else
+        {
+            HeroLogoImage.Visibility = Visibility.Collapsed;
+            TitleText.Visibility = Visibility.Visible;
+        }
+
+        // Studio/network kicker — uppercase line above the title. Networks
+        // win for series, studios for movies. First one only.
+        string? kicker = null;
+        if (item.Networks != null && item.Networks.Count > 0)
+            kicker = item.Networks[0];
+        else if (item.Studios != null && item.Studios.Count > 0)
+            kicker = item.Studios[0];
+        if (!string.IsNullOrEmpty(kicker))
+        {
+            StudioKickerText.Text = kicker;
+            StudioKickerText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            StudioKickerText.Visibility = Visibility.Collapsed;
+        }
+
         // Episode context: show series title and S##E## above/below episode title
         if (item.Type == "episode")
         {
@@ -628,28 +689,71 @@ public sealed partial class ItemDetailPage : Page
 
     // ===== Star Rating =====
 
+    /// <summary>
+    /// The currently hovered star index (1-5), or null when the pointer
+    /// isn't over the rating widget. Drives the hover-preview fill so users
+    /// see what their click will commit to. Mirrors the webui <c>hoverValue</c>
+    /// state in <c>StarRating.tsx</c>.
+    /// </summary>
+    private int? _starHoverValue;
+
     private void UpdateStarRating()
     {
-        var rating = ViewModel.UserRating;
+        // Use the hover value when active; otherwise the committed rating.
+        int? effective = _starHoverValue ?? ViewModel.UserRating;
         FontIcon[] stars = [Star1Icon, Star2Icon, Star3Icon, Star4Icon, Star5Icon];
+
+        // Dim-highlight when showing hover preview so users can tell it's
+        // not yet committed.
+        var highlightBrush = _starHoverValue.HasValue
+            ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentHoverBrush"]
+            : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
 
         for (int i = 0; i < 5; i++)
         {
-            bool filled = rating != null && (i + 1) <= rating;
-            stars[i].Glyph = filled ? "\uE735" : "\uE734"; // FavoriteStar vs FavoriteStarFill -- actually E735=filled, E734=outline
+            bool filled = effective != null && (i + 1) <= effective;
+            stars[i].Glyph = filled ? "\uE735" : "\uE734"; // E735=filled, E734=outline
             stars[i].Foreground = filled
-                ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"]
+                ? highlightBrush
                 : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"];
         }
     }
 
     private async void Star_Click(object sender, RoutedEventArgs e)
     {
+        if (sender is not Button btn || btn.Tag is not string tagStr || !int.TryParse(tagStr, out int rating))
+            return;
+
+        // Toggle-off: clicking the currently-selected star clears the rating
+        // (matches webui behavior + passes the "clicking active star clears"
+        // test case). The ViewModel's SetRatingAsync already detects this by
+        // comparing current vs new — calling it with the same value clears.
+        await ViewModel.SetRatingCommand.ExecuteAsync(rating);
+        _starHoverValue = null;
+        UpdateStarRating();
+    }
+
+    /// <summary>
+    /// Hover enter on a star → set preview index and repaint. Fires on each
+    /// star's PointerEntered so moving across the row updates smoothly.
+    /// </summary>
+    private void Star_PointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
         if (sender is Button btn && btn.Tag is string tagStr && int.TryParse(tagStr, out int rating))
         {
-            await ViewModel.SetRatingCommand.ExecuteAsync(rating);
+            _starHoverValue = rating;
             UpdateStarRating();
         }
+    }
+
+    /// <summary>
+    /// Pointer exited the whole container (not just a single star) — clear
+    /// hover state and snap back to the committed rating.
+    /// </summary>
+    private void StarPanel_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        _starHoverValue = null;
+        UpdateStarRating();
     }
 
     // ===== Favorite & Watchlist =====
@@ -1551,18 +1655,36 @@ public sealed partial class ItemDetailPage : Page
             }
         }
 
-        // Version options (only show if multiple)
+        // Version options (only show if multiple). Sort by resolution
+        // descending (4K → 1080p → 720p → SD), matching webui
+        // sortByResolution. Ties keep server order.
         if (versions.Count > 1)
         {
-            foreach (var version in versions)
+            var sorted = versions
+                .OrderByDescending(v => ResolutionRank(v.Resolution))
+                .ThenByDescending(v => v.Bitrate)
+                .ToList();
+
+            foreach (var version in sorted)
             {
-                var label = version.Resolution;
-                if (!string.IsNullOrEmpty(version.CodecVideo))
-                    label += $" {version.CodecVideo.ToUpperInvariant()}";
-                if (version.Hdr)
-                    label += " HDR";
-                if (version.Bitrate > 0)
-                    label += $" ({version.Bitrate / 1000}Mbps)";
+                // Webui buildQualitySummary: "2160p · HEVC · HDR · TrueHD"
+                // — resolution, video codec, HDR tag (if any), normalized
+                // audio codec label. Joined with middle dots.
+                var quality = BuildQualitySummary(version);
+
+                // Webui subtitle line: "45.0 GB · Remux" — file size in
+                // human-friendly units plus an extracted release hint
+                // (Remux / WEB-DL / BluRay / etc.) derived from the filename.
+                var subtitleParts = new List<string>();
+                if (version.FileSize > 0)
+                    subtitleParts.Add(FormatFileSize(version.FileSize));
+                var hint = ExtractReleaseHint(version.FileName);
+                if (!string.IsNullOrEmpty(hint))
+                    subtitleParts.Add(hint!);
+
+                string label = quality;
+                if (subtitleParts.Count > 0)
+                    label += "  \u2014  " + string.Join(" \u00B7 ", subtitleParts);
 
                 var item = new MenuFlyoutItem { Text = label };
                 var fileVersion = version;
@@ -1595,6 +1717,120 @@ public sealed partial class ItemDetailPage : Page
                 VersionFlyout.Items.Add(item);
             }
         }
+    }
+
+    // ─── Version formatting helpers (webui lib/quality.ts parity) ──────
+
+    /// <summary>
+    /// Build the main quality summary line for a file version. Matches the
+    /// webui <c>buildQualitySummary</c> output format
+    /// <c>"2160p · HEVC · HDR · TrueHD"</c>. Empty fields are skipped.
+    /// </summary>
+    private static string BuildQualitySummary(FileVersion version)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(version.Resolution))
+            parts.Add(version.Resolution);
+        if (!string.IsNullOrEmpty(version.CodecVideo))
+            parts.Add(version.CodecVideo.ToUpperInvariant());
+        if (version.Hdr)
+            parts.Add("HDR");
+        var audio = NormalizeAudioCodec(version.CodecAudio, version.AudioChannels);
+        if (!string.IsNullOrEmpty(audio))
+            parts.Add(audio!);
+        return string.Join(" \u00B7 ", parts);
+    }
+
+    /// <summary>
+    /// Normalizes raw audio codec strings to human-friendly labels. Matches
+    /// webui <c>mapAudioLabel</c>: TRUEHD → TrueHD, DTSHDMA → DTS-HD MA,
+    /// etc. Appends channel count when available ("5.1", "7.1").
+    /// </summary>
+    private static string? NormalizeAudioCodec(string? codec, int? channels)
+    {
+        if (string.IsNullOrWhiteSpace(codec)) return null;
+        string upper = codec.ToUpperInvariant();
+        string label = upper switch
+        {
+            "TRUEHD" => "TrueHD",
+            "DTSHDMA" or "DTS-HD MA" or "DTSHD" => "DTS-HD MA",
+            "DTSHDHRA" => "DTS-HD HRA",
+            "DTSX" or "DTS:X" => "DTS:X",
+            "EAC3" => "E-AC3",
+            "AC3" => "AC3",
+            "AAC" => "AAC",
+            "FLAC" => "FLAC",
+            "OPUS" => "Opus",
+            "MP3" => "MP3",
+            "VORBIS" => "Vorbis",
+            _ => codec,
+        };
+        if (channels.HasValue && channels.Value > 0)
+        {
+            string chLabel = channels.Value switch
+            {
+                1 => "Mono",
+                2 => "Stereo",
+                6 => "5.1",
+                8 => "7.1",
+                _ => $"{channels.Value}ch",
+            };
+            label += $" {chLabel}";
+        }
+        return label;
+    }
+
+    /// <summary>
+    /// Format a file size in bytes to a human-friendly string like
+    /// "45.0 GB" or "720 MB". Uses decimal (1000) not binary (1024) to
+    /// match webui <c>formatFileSize</c>.
+    /// </summary>
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes <= 0) return "";
+        double gb = bytes / 1_000_000_000.0;
+        if (gb >= 1) return $"{gb:F1} GB";
+        double mb = bytes / 1_000_000.0;
+        return $"{mb:F0} MB";
+    }
+
+    /// <summary>
+    /// Extract a release-type hint from a filename — Remux / WEB-DL /
+    /// WEBRip / BluRay / BDRip / HDTV / DVDRip. Case-insensitive match.
+    /// Mirrors webui <c>extractSourceHint</c>.
+    /// </summary>
+    private static string? ExtractReleaseHint(string? fileName)
+    {
+        if (string.IsNullOrEmpty(fileName)) return null;
+        var upper = fileName.ToUpperInvariant();
+        if (upper.Contains("REMUX")) return "Remux";
+        if (upper.Contains("WEB-DL") || upper.Contains("WEBDL")) return "WEB-DL";
+        if (upper.Contains("WEBRIP")) return "WEBRip";
+        if (upper.Contains("BLURAY") || upper.Contains("BLU-RAY") || upper.Contains("BDMUX")) return "BluRay";
+        if (upper.Contains("BDRIP")) return "BDRip";
+        if (upper.Contains("HDTV")) return "HDTV";
+        if (upper.Contains("DVDRIP")) return "DVDRip";
+        return null;
+    }
+
+    /// <summary>
+    /// Rank for resolution-descending sort. Larger numbers sort first.
+    /// Unknown values land at 0 (bottom of the list).
+    /// </summary>
+    private static int ResolutionRank(string resolution)
+    {
+        if (string.IsNullOrEmpty(resolution)) return 0;
+        var r = resolution.ToLowerInvariant();
+        return r switch
+        {
+            "2160p" or "4k" => 2160,
+            "1440p" => 1440,
+            "1080p" => 1080,
+            "720p" => 720,
+            "480p" => 480,
+            "sd" => 300,
+            _ => 0,
+        };
     }
 
     // ===== Similar Items ("More Like This") =====
@@ -1675,6 +1911,36 @@ public sealed partial class ItemDetailPage : Page
         }
         catch (OperationCanceledException) { }
         catch { }
+    }
+
+    /// <summary>
+    /// Load the 170×255 hero portrait poster via ImageService so it hits the
+    /// disk cache (same cache poster cards use). Fires fire-and-forget from
+    /// UpdateUI. Failures are silent — poster just stays blank.
+    /// </summary>
+    private async Task LoadHeroPosterAsync(string posterUrl)
+    {
+        try
+        {
+            var imageService = App.Services.GetRequiredService<ImageService>();
+            var httpClient = App.Services.GetRequiredService<HttpClient>();
+            var item = ViewModel.Item;
+            if (item == null) return;
+
+            var bytes = await imageService.GetImageAsync(
+                item.ContentId, "poster", posterUrl, httpClient, CancellationToken.None);
+            if (bytes == null) return;
+
+            var bitmap = new BitmapImage
+            {
+                DecodePixelWidth = 340, // 2x for crisp on HiDPI
+                DecodePixelType = DecodePixelType.Logical,
+            };
+            using var stream = new MemoryStream(bytes);
+            await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+            HeroPosterImage.Source = bitmap;
+        }
+        catch { /* best-effort */ }
     }
 
     // ===== Cast Section =====

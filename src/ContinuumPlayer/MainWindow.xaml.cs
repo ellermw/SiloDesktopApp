@@ -75,20 +75,31 @@ public sealed partial class MainWindow : Window
         MainServerActivityButton.HideWhenEmpty = false;
         MainServerActivityButton.OnViewStreams = () =>
         {
+            // Hide the main sidebar BEFORE navigating — same as Admin_Click —
+            // otherwise the user sees two navigation panes side-by-side
+            // (main nav + AdminShellPage's own admin nav).
+            NavView.IsPaneVisible = false;
             _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminActivityPage));
         };
         MainServerActivityButton.OnViewTasks = () =>
         {
+            NavView.IsPaneVisible = false;
             _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminTasksPage));
         };
         MainServerActivityButton.OnViewScans = () =>
         {
+            NavView.IsPaneVisible = false;
             _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminLibrariesPage));
         };
 
         // Listen for player state changes
         _playerService = App.Services.GetRequiredService<PlayerService>();
         _playerService.StateChanged += OnPlayerStateChanged;
+
+        // Playing Next cinematic overlay — fires when an episode ends with
+        // another episode queued. PlayerOverlay used to own this but its
+        // Activate() is never called, so the subscription lives here now.
+        _playerService.ShowPlayingNextRequested += OnShowPlayingNextRequested;
 
         // Keep native video window matched to main window size
         this.SizeChanged += OnWindowSizeChanged;
@@ -123,9 +134,108 @@ public sealed partial class MainWindow : Window
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
         _playerService.StateChanged -= OnPlayerStateChanged;
+        _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
         this.SizeChanged -= OnWindowSizeChanged;
         if (AppWindow != null) AppWindow.Changed -= OnAppWindowChanged;
         _navigationService.Navigated -= OnNavigated_UpdateWindowTitle;
+        StopPlayingNextCountdown();
+    }
+
+    // ─── Playing Next cinematic overlay ─────────────────────────────────
+
+    private DispatcherTimer? _playingNextTimer;
+    private int _playingNextRemaining;
+    private const int PlayingNextCountdownSeconds = 10;
+
+    private void OnShowPlayingNextRequested()
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var title = _playerService.NextEpisodeTitle ?? "Next episode";
+            var series = _playerService.NextEpisodeSeriesTitle;
+            var overview = _playerService.NextEpisodeOverview ?? "";
+
+            PlayingNextTitleText.Text = title;
+            PlayingNextSeriesText.Text = series ?? "";
+            PlayingNextSeriesText.Visibility = string.IsNullOrEmpty(series) ? Visibility.Collapsed : Visibility.Visible;
+            PlayingNextOverviewText.Text = overview;
+            PlayingNextOverviewText.Visibility = string.IsNullOrEmpty(overview) ? Visibility.Collapsed : Visibility.Visible;
+            PlayingNextPoster.Source = null;
+            _ = LoadPlayingNextPosterAsync();
+
+            _playingNextRemaining = PlayingNextCountdownSeconds;
+            PlayingNextPlayNowText.Text = $"Play next in {_playingNextRemaining}";
+            PlayingNextOverlay.Visibility = Visibility.Visible;
+
+            // Hide the mpv popup so this WinUI overlay becomes visible.
+            // The popup stays hidden until either Play Now (which runs
+            // PlayAsync → EnsureMpvInitialized → Show via state transition)
+            // or Cancel (CloseAsync leaves the popup hidden).
+            _playerService.HideVideoPopup();
+
+            StartPlayingNextCountdown();
+        });
+    }
+
+    private void StartPlayingNextCountdown()
+    {
+        StopPlayingNextCountdown();
+        _playingNextTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _playingNextTimer.Tick += PlayingNextTimer_Tick;
+        _playingNextTimer.Start();
+    }
+
+    private void StopPlayingNextCountdown()
+    {
+        if (_playingNextTimer != null)
+        {
+            _playingNextTimer.Stop();
+            _playingNextTimer.Tick -= PlayingNextTimer_Tick;
+            _playingNextTimer = null;
+        }
+    }
+
+    private void PlayingNextTimer_Tick(object? sender, object e)
+    {
+        _playingNextRemaining--;
+        if (_playingNextRemaining <= 0)
+        {
+            StopPlayingNextCountdown();
+            PlayingNextOverlay.Visibility = Visibility.Collapsed;
+            _ = _playerService.ContinuePlayingNextAsync();
+            return;
+        }
+        PlayingNextPlayNowText.Text = $"Play next in {_playingNextRemaining}";
+    }
+
+    private void PlayingNextPlayNow_Click(object sender, RoutedEventArgs e)
+    {
+        StopPlayingNextCountdown();
+        PlayingNextOverlay.Visibility = Visibility.Collapsed;
+        _ = _playerService.ContinuePlayingNextAsync();
+    }
+
+    private void PlayingNextCancel_Click(object sender, RoutedEventArgs e)
+    {
+        StopPlayingNextCountdown();
+        PlayingNextOverlay.Visibility = Visibility.Collapsed;
+        _playerService.CancelPlayingNext();
+    }
+
+    private async Task LoadPlayingNextPosterAsync()
+    {
+        var url = _playerService.NextEpisodePosterUrl;
+        if (string.IsNullOrEmpty(url)) return;
+        try
+        {
+            var httpClient = App.Services.GetRequiredService<HttpClient>();
+            var bytes = await httpClient.GetByteArrayAsync(url);
+            var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
+            using var stream = new MemoryStream(bytes);
+            await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+            PlayingNextPoster.Source = bitmap;
+        }
+        catch { /* Poster is cosmetic */ }
     }
 
     /// <summary>F7: update AppWindow.Title on every page navigation.</summary>

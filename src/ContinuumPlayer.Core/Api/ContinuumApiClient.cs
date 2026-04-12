@@ -135,22 +135,45 @@ public class ContinuumApiClient
     /// </summary>
     private static StringContent CreateJsonContent(object body)
     {
-        // Build a dictionary from the object's public properties,
-        // applying snake_case naming manually. This bypasses System.Text.Json's
-        // broken reflection path in .NET 8 self-contained publish builds.
-        var props = body.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-        var dict = new Dictionary<string, object?>();
-        foreach (var prop in props)
+        // Callers can pass an IDictionary<string, object?> directly when they
+        // want to bypass the reflection path entirely. This is REQUIRED for
+        // mutation bodies containing fields whose names must be preserved
+        // exactly (e.g. admin section updates, settings PUTs), because
+        // .NET 8 Release publish + trimming strips anonymous type property
+        // names and silently serializes them as {}. When a dictionary is
+        // passed, we forward its entries verbatim — no snake_case rewrite,
+        // no reflection.
+        Dictionary<string, object?> dict;
+        if (body is IDictionary<string, object?> nullableDict)
         {
-            if (!prop.CanRead) continue;
-            try
+            dict = new Dictionary<string, object?>(nullableDict);
+        }
+        else if (body is IDictionary<string, object> nonNullableDict)
+        {
+            dict = new Dictionary<string, object?>(nonNullableDict.Count);
+            foreach (var kvp in nonNullableDict)
+                dict[kvp.Key] = kvp.Value;
+        }
+        else
+        {
+            // Fallback: reflect on the body's public properties and apply
+            // snake_case naming manually. Works when trimming is off OR when
+            // the type is trim-rooted; unreliable for anonymous types under
+            // publish trimming (hence the dictionary path above).
+            dict = new Dictionary<string, object?>();
+            var props = body.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            foreach (var prop in props)
             {
-                var value = prop.GetValue(body);
-                if (value == null) continue;
-                var name = ToSnakeCase(prop.Name);
-                dict[name] = value;
+                if (!prop.CanRead) continue;
+                try
+                {
+                    var value = prop.GetValue(body);
+                    if (value == null) continue;
+                    var name = ToSnakeCase(prop.Name);
+                    dict[name] = value;
+                }
+                catch { /* skip properties whose getter was trimmed */ }
             }
-            catch { /* skip properties whose getter was trimmed */ }
         }
 
         var json = JsonSerializer.Serialize(dict, JsonOptions);

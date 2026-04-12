@@ -36,6 +36,15 @@ public class MediaItem
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
     public double? RatingImdb { get; set; }
+    /// <summary>TMDB rating on a 0-10 scale. Used by the card overlay system.</summary>
+    public double? RatingTmdb { get; set; }
+    /// <summary>Rotten Tomatoes critic score on a 0-100 scale.</summary>
+    public int? RatingRtCritic { get; set; }
+    /// <summary>Rotten Tomatoes audience score on a 0-100 scale.</summary>
+    public int? RatingRtAudience { get; set; }
+    /// <summary>ISO 639-1 original language code (e.g. "en", "fr"). Rendered
+    /// uppercase as a card overlay badge when enabled in user prefs.</summary>
+    public string? OriginalLanguage { get; set; }
     public double? PositionSeconds { get; set; }
     public double? DurationSeconds { get; set; }
     public string? ProgressUpdatedAt { get; set; }
@@ -47,6 +56,8 @@ public class MediaItem
 public class OverlaySummary
 {
     public string Resolution { get; set; } = "";
+    /// <summary>HDR / Dolby Vision format string (e.g. "HDR10", "DV HDR10").</summary>
+    public string Hdr { get; set; } = "";
     public string Audio { get; set; } = "";
     public string ReleaseType { get; set; } = "";
 }

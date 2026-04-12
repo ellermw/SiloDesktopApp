@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
 using ContinuumPlayer.Core.Models.Home;
@@ -15,6 +17,12 @@ public sealed partial class HeroCarousel : UserControl
     private int _currentIndex;
     private DispatcherTimer? _autoAdvanceTimer;
     private CancellationTokenSource? _imageCts;
+
+    // F-series hero polish:
+    // - Crossfade between BackdropImageA / BackdropImageB. `_activeIsA`
+    //   tracks which one is currently fully visible.
+    // - Hover-reveal nav arrows (fade 0 → 1 on PointerEntered).
+    private bool _activeIsA = true;
 
     public static readonly DependencyProperty ItemsSourceProperty =
         DependencyProperty.Register(
@@ -174,13 +182,14 @@ public sealed partial class HeroCarousel : UserControl
         var item = _items[_currentIndex];
 
         HeroTitle.Text = item.Title;
+        HeroTitleShadow.Text = item.Title;
         HeroYear.Text = item.Year > 0 ? item.Year.ToString() : "";
         HeroGenres.Text = item.Genres.Count > 0 ? string.Join(", ", item.Genres) : "";
         HeroOverview.Text = item.Overview ?? "";
 
         UpdateDots();
 
-        // Load backdrop image
+        // Load backdrop image into the INACTIVE layer, then crossfade.
         _imageCts?.Cancel();
         _imageCts = new CancellationTokenSource();
         _ = LoadBackdropAsync(item, _imageCts.Token);
@@ -198,7 +207,12 @@ public sealed partial class HeroCarousel : UserControl
 
     private async Task LoadBackdropAsync(MediaItem item, CancellationToken ct)
     {
-        // Show thumbhash placeholder first
+        // Load into the INACTIVE layer so when we crossfade the user never
+        // sees a blank frame between slides.
+        var incoming = _activeIsA ? BackdropImageB : BackdropImageA;
+
+        // Show thumbhash placeholder first so there's SOMETHING to fade to
+        // while the real backdrop fetches.
         if (!string.IsNullOrEmpty(item.BackdropThumbhash))
         {
             try
@@ -217,20 +231,24 @@ public sealed partial class HeroCarousel : UserControl
 
                 System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.CopyTo(bgra, bitmap.PixelBuffer);
                 bitmap.Invalidate();
-                BackdropImage.Source = bitmap;
+                incoming.Source = bitmap;
             }
             catch
             {
-                BackdropImage.Source = null;
+                incoming.Source = null;
             }
         }
         else
         {
-            BackdropImage.Source = null;
+            incoming.Source = null;
         }
 
         // Load the actual backdrop
-        if (string.IsNullOrEmpty(item.BackdropUrl)) return;
+        if (string.IsNullOrEmpty(item.BackdropUrl))
+        {
+            Crossfade();
+            return;
+        }
 
         try
         {
@@ -248,7 +266,8 @@ public sealed partial class HeroCarousel : UserControl
 
             if (ct.IsCancellationRequested) return;
 
-            BackdropImage.Source = bitmapImage;
+            incoming.Source = bitmapImage;
+            Crossfade();
         }
         catch (OperationCanceledException)
         {
@@ -256,7 +275,79 @@ public sealed partial class HeroCarousel : UserControl
         }
         catch
         {
-            // Backdrop load failed, placeholder remains
+            // Backdrop load failed, placeholder remains — still crossfade so
+            // at least the gradient moves.
+            Crossfade();
         }
+    }
+
+    /// <summary>
+    /// Animate opacity between the two backdrop layers: the new one fades
+    /// from 0 → 1 and the previous from 1 → 0 over 800 ms. Mirrors the
+    /// webui <c>transition-opacity duration-1000</c> hero crossfade.
+    /// </summary>
+    private void Crossfade()
+    {
+        var incoming = _activeIsA ? BackdropImageB : BackdropImageA;
+        var outgoing = _activeIsA ? BackdropImageA : BackdropImageB;
+
+        var sb = new Storyboard();
+        sb.Children.Add(BuildOpacity(incoming, 1, 800));
+        sb.Children.Add(BuildOpacity(outgoing, 0, 800));
+        sb.Begin();
+
+        _activeIsA = !_activeIsA;
+    }
+
+    private static DoubleAnimation BuildOpacity(DependencyObject target, double to, int durationMs)
+    {
+        var anim = new DoubleAnimation
+        {
+            To = to,
+            Duration = new Duration(TimeSpan.FromMilliseconds(durationMs)),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut },
+        };
+        Storyboard.SetTarget(anim, target);
+        Storyboard.SetTargetProperty(anim, "Opacity");
+        return anim;
+    }
+
+    // ── Keyboard navigation ─────────────────────────────────────────────
+
+    private void OnKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (_items == null || _items.Count == 0) return;
+        if (e.Key == Windows.System.VirtualKey.Left)
+        {
+            NavigatePrev();
+            ResetAutoAdvance();
+            e.Handled = true;
+        }
+        else if (e.Key == Windows.System.VirtualKey.Right)
+        {
+            NavigateNext();
+            ResetAutoAdvance();
+            e.Handled = true;
+        }
+    }
+
+    // ── Hover-reveal arrows ─────────────────────────────────────────────
+
+    private void RootGrid_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        AnimateArrows(1.0);
+    }
+
+    private void RootGrid_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        AnimateArrows(0.0);
+    }
+
+    private void AnimateArrows(double to)
+    {
+        var sb = new Storyboard();
+        sb.Children.Add(BuildOpacity(PrevButton, to, 180));
+        sb.Children.Add(BuildOpacity(NextButton, to, 180));
+        sb.Begin();
     }
 }

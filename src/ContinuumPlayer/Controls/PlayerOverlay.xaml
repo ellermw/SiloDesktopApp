@@ -45,70 +45,10 @@
             HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,24,100"
             Padding="20,10" Style="{StaticResource AccentButtonStyle}" Click="SkipCredits_Click" />
 
-        <!-- ================================================================= -->
-        <!-- Playing Next cinematic overlay (Phase 3b) — fades in at end of   -->
-        <!-- episode when the next episode is available. 10s countdown, then  -->
-        <!-- autoplay unless the user cancels.                                -->
-        <!-- ================================================================= -->
-        <Grid x:Name="PlayingNextOverlay" Visibility="Collapsed" Background="#E8000000">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-
-            <StackPanel Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center"
-                        MaxWidth="760" Spacing="18">
-                <TextBlock Text="UP NEXT" FontSize="12" FontWeight="SemiBold"
-                           CharacterSpacing="200" Foreground="#78AEFC"
-                           HorizontalAlignment="Center" />
-
-                <Grid ColumnSpacing="24" HorizontalAlignment="Center">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-
-                    <!-- Poster / still -->
-                    <Border Grid.Column="0" Width="320" Height="180" CornerRadius="12"
-                            Background="#202733" VerticalAlignment="Center">
-                        <Image x:Name="PlayingNextPoster" Stretch="UniformToFill" />
-                    </Border>
-
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="10" MaxWidth="400">
-                        <TextBlock x:Name="PlayingNextSeriesText" Text="" FontSize="13"
-                                   Foreground="#9CA3AF" />
-                        <TextBlock x:Name="PlayingNextTitleText" Text="" FontSize="24"
-                                   FontWeight="SemiBold" Foreground="White"
-                                   TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" />
-                        <TextBlock x:Name="PlayingNextOverviewText" Text="" FontSize="13"
-                                   Foreground="#D1D5DB" TextWrapping="Wrap" MaxLines="4"
-                                   TextTrimming="CharacterEllipsis" LineHeight="20" />
-                    </StackPanel>
-                </Grid>
-
-                <!-- Countdown + buttons — explicit Height + numeric CornerRadius so the
-                     pill fill renders cleanly (extreme CornerRadius values warp in WinUI 3). -->
-                <StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center">
-                    <Button x:Name="PlayingNextPlayNowButton" Click="PlayingNextPlayNow_Click"
-                            Style="{StaticResource AccentButtonStyle}" Padding="24,0"
-                            Height="44" CornerRadius="22">
-                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <FontIcon Glyph="&#xE768;" FontSize="14"
-                                      Foreground="{StaticResource AccentForegroundBrush}" />
-                            <TextBlock x:Name="PlayingNextPlayNowText" Text="Play next in 10"
-                                       FontWeight="SemiBold" FontSize="14"
-                                       Foreground="{StaticResource AccentForegroundBrush}" />
-                        </StackPanel>
-                    </Button>
-                    <Button x:Name="PlayingNextCancelButton" Click="PlayingNextCancel_Click"
-                            Style="{StaticResource SecondaryButtonStyle}" Padding="24,0"
-                            Height="44" CornerRadius="22">
-                        <TextBlock Text="Cancel" FontSize="14" VerticalAlignment="Center" />
-                    </Button>
-                </StackPanel>
-            </StackPanel>
-        </Grid>
+        <!-- Playing Next cinematic overlay moved to MainWindow.xaml — this
+             UserControl is never Activate()d so its events don't fire and
+             its Grid stays hidden behind the mpv popup in Expanded state.
+             See MainWindow.OnShowPlayingNextRequested. -->
 
         <!-- Stats overlay (top left) -->
         <Border x:Name="StatsOverlay" Visibility="Collapsed" Background="#CC000000"

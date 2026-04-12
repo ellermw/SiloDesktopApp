@@ -17,13 +17,33 @@
     </Page.Resources>
 
     <Grid>
-        <!-- Loading -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+        <!-- F6: Skeleton placeholder — shown while ViewModel.IsLoading is
+             true. Approximates the hero backdrop + title + metadata row
+             layout so the user sees page structure immediately instead of
+             a blank spinner. Real content fades in when loading finishes. -->
+        <StackPanel
+            x:Name="DetailSkeleton"
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
+            Spacing="20"
+            Padding="40,40,40,0">
+            <!-- Backdrop skeleton -->
+            <controls:SkeletonBackdrop Height="360" HorizontalAlignment="Stretch" />
+            <!-- Title line -->
+            <controls:SkeletonText Width="420" Height="36" />
+            <!-- Metadata row -->
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <controls:SkeletonText Width="60" Height="16" />
+                <controls:SkeletonText Width="50" Height="16" />
+                <controls:SkeletonText Width="80" Height="16" />
+                <controls:SkeletonText Width="70" Height="16" />
+            </StackPanel>
+            <!-- Overview lines -->
+            <StackPanel Spacing="8">
+                <controls:SkeletonText Width="700" Height="14" />
+                <controls:SkeletonText Width="680" Height="14" />
+                <controls:SkeletonText Width="540" Height="14" />
+            </StackPanel>
+        </StackPanel>
 
         <!-- Error -->
         <TextBlock
@@ -100,35 +120,86 @@
                         </StackPanel>
                     </Button>
 
-                    <!-- Title overlay at bottom-left -->
-                    <StackPanel
+                    <!-- Hero content row: 170×255 poster column on the left,
+                         title/metadata column on the right. Mirrors the
+                         webui DetailHero layout (lib/detailHero.tsx). -->
+                    <Grid
                         VerticalAlignment="Bottom"
                         HorizontalAlignment="Left"
-                        Margin="48,0,0,24"
-                        MaxWidth="600"
-                        Spacing="6">
-                        <!-- Parent navigation breadcrumbs (episodes: Series › Season › Episode).
-                             Populated in code-behind when the item is an episode. -->
+                        Margin="48,0,48,24"
+                        ColumnSpacing="24">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Portrait poster column -->
+                        <Border
+                            x:Name="HeroPosterContainer"
+                            Grid.Column="0"
+                            Width="170"
+                            Height="255"
+                            CornerRadius="12"
+                            Background="{StaticResource SurfaceRaisedBrush}"
+                            VerticalAlignment="Bottom"
+                            Visibility="Collapsed">
+                            <Image
+                                x:Name="HeroPosterImage"
+                                Stretch="UniformToFill" />
+                        </Border>
+
+                        <!-- Title / metadata column -->
                         <StackPanel
-                            x:Name="BreadcrumbPanel"
-                            Orientation="Horizontal"
-                            Spacing="0"
-                            Visibility="Collapsed" />
+                            Grid.Column="1"
+                            VerticalAlignment="Bottom"
+                            MaxWidth="720"
+                            Spacing="6">
 
-                        <TextBlock
-                            x:Name="TitleText"
-                            Style="{StaticResource DisplayTextStyle}"
-                            FontSize="36"
-                            TextWrapping="Wrap"
-                            MaxLines="2" />
+                            <!-- Parent navigation breadcrumbs (episodes: Series › Season › Episode).
+                                 Populated in code-behind when the item is an episode. -->
+                            <StackPanel
+                                x:Name="BreadcrumbPanel"
+                                Orientation="Horizontal"
+                                Spacing="0"
+                                Visibility="Collapsed" />
 
-                        <TextBlock
-                            x:Name="TaglineText"
-                            Style="{StaticResource SecondaryTextStyle}"
-                            FontStyle="Italic"
-                            TextWrapping="Wrap"
-                            MaxLines="2" />
-                    </StackPanel>
+                            <!-- Studio/network kicker (web: mb-2 text-xs font-semibold
+                                 uppercase tracking-[0.16em]). Shown above the title when
+                                 the item has a studio or network. -->
+                            <TextBlock
+                                x:Name="StudioKickerText"
+                                FontSize="11"
+                                FontWeight="SemiBold"
+                                CharacterSpacing="160"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                Visibility="Collapsed" />
+
+                            <!-- Logo image — when LogoUrl is present, replaces the
+                                 plain title with the item's stylized logo (web parity).
+                                 Falls back to TitleText when no logo is available. -->
+                            <Image
+                                x:Name="HeroLogoImage"
+                                Stretch="Uniform"
+                                HorizontalAlignment="Left"
+                                MaxWidth="420"
+                                MaxHeight="120"
+                                Visibility="Collapsed" />
+
+                            <TextBlock
+                                x:Name="TitleText"
+                                Style="{StaticResource DisplayTextStyle}"
+                                FontSize="36"
+                                TextWrapping="Wrap"
+                                MaxLines="2" />
+
+                            <TextBlock
+                                x:Name="TaglineText"
+                                Style="{StaticResource SecondaryTextStyle}"
+                                FontStyle="Italic"
+                                TextWrapping="Wrap"
+                                MaxLines="2" />
+                        </StackPanel>
+                    </Grid>
                 </Grid>
 
                 <!-- Detail content below backdrop -->
@@ -322,24 +393,36 @@
                                       Foreground="{StaticResource PrimaryTextBrush}" />
                         </Button>
 
-                        <!-- Star rating: 5 stars -->
-                        <StackPanel x:Name="StarRatingPanel" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
-                            <Button x:Name="Star1" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" Tag="1">
-                                <FontIcon x:Name="Star1Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
-                            </Button>
-                            <Button x:Name="Star2" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" Tag="2">
-                                <FontIcon x:Name="Star2Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
-                            </Button>
-                            <Button x:Name="Star3" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" Tag="3">
-                                <FontIcon x:Name="Star3Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
-                            </Button>
-                            <Button x:Name="Star4" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" Tag="4">
-                                <FontIcon x:Name="Star4Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
-                            </Button>
-                            <Button x:Name="Star5" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" Tag="5">
-                                <FontIcon x:Name="Star5Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
-                            </Button>
-                        </StackPanel>
+                        <!-- Star rating: 5 stars wrapped in a glass-subtle
+                             rounded capsule (web parity). PointerEntered /
+                             Exited on each star drive the hover preview. -->
+                        <Border
+                            x:Name="StarRatingContainer"
+                            Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="22"
+                            Padding="6,2"
+                            PointerExited="StarPanel_PointerExited"
+                            VerticalAlignment="Center">
+                            <StackPanel x:Name="StarRatingPanel" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
+                                <Button x:Name="Star1" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" Tag="1">
+                                    <FontIcon x:Name="Star1Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                                </Button>
+                                <Button x:Name="Star2" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" Tag="2">
+                                    <FontIcon x:Name="Star2Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                                </Button>
+                                <Button x:Name="Star3" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" Tag="3">
+                                    <FontIcon x:Name="Star3Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                                </Button>
+                                <Button x:Name="Star4" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" Tag="4">
+                                    <FontIcon x:Name="Star4Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                                </Button>
+                                <Button x:Name="Star5" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" Tag="5">
+                                    <FontIcon x:Name="Star5Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                                </Button>
+                            </StackPanel>
+                        </Border>
 
                         <!-- Watchlist button (moved to overflow) -->
                         <Button

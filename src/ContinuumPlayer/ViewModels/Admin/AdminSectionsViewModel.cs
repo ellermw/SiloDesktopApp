@@ -136,13 +136,18 @@ public partial class AdminSectionsViewModel : ObservableObject
         try
         {
             bool newEnabled = !section.Enabled;
-            var body = new
+            // NOTE: Dictionary<string, object> instead of anonymous type —
+            // .NET 8 Release publish enables trimming, which strips anonymous
+            // type property names and silently serializes them as {}. See
+            // feedback_build_release memory. Anonymous types here produced
+            // empty PUT bodies, which is why "featured toggle doesn't save".
+            var body = new Dictionary<string, object>
             {
-                title = section.Title,
-                section_type = section.SectionType,
-                item_limit = section.ItemLimit,
-                featured = section.Featured,
-                enabled = newEnabled
+                ["title"] = section.Title,
+                ["section_type"] = section.SectionType,
+                ["item_limit"] = section.ItemLimit,
+                ["featured"] = section.Featured,
+                ["enabled"] = newEnabled,
             };
             await _adminApi.UpdateSectionAsync(section.Id, body);
             section.Enabled = newEnabled;
@@ -153,15 +158,18 @@ public partial class AdminSectionsViewModel : ObservableObject
 
     public object BuildCreateBody(string title, string sectionType, int itemLimit, bool featured, bool enabled)
     {
-        return new
+        // Same trimming concern — use a dictionary so the JSON body survives
+        // .NET 8 Release publish with trimming enabled.
+        var body = new Dictionary<string, object?>
         {
-            title,
-            section_type = sectionType,
-            item_limit = itemLimit,
-            featured,
-            enabled,
-            scope = Scope,
-            library_id = Scope == "library" ? SelectedLibraryId : null
+            ["title"] = title,
+            ["section_type"] = sectionType,
+            ["item_limit"] = itemLimit,
+            ["featured"] = featured,
+            ["enabled"] = enabled,
+            ["scope"] = Scope,
+            ["library_id"] = Scope == "library" ? SelectedLibraryId : null,
         };
+        return body;
     }
 }

@@ -167,6 +167,15 @@ local state = {
     skip_overlay    = nil,
     skip_rect       = nil,
 
+    -- Next Episode button — shown when the host has a queued next episode
+    -- AND we're either in the credits range or the final 5% of duration.
+    -- Clicking it sends "continuum-next-episode" to the host, which jumps
+    -- straight to the next episode without waiting for end-of-file.
+    next_ep_available = false,      -- set by osc-set-next-episode
+    next_ep_visible   = false,
+    next_ep_overlay   = nil,
+    next_ep_rect      = nil,
+
     -- Content title (from host via osc-set-title)
     content_title   = "",
     content_subtitle = "",
@@ -1383,6 +1392,8 @@ end
 -- Forward declarations for functions defined after tick()
 local check_skip_markers
 local render_skip_button
+local check_next_episode_button
+local render_next_episode_button
 
 local function tick()
     if state.osc_disabled then return end
@@ -1416,6 +1427,9 @@ local function tick()
 
     -- Check skip markers (intro/credits)
     check_skip_markers()
+
+    -- Check whether to show the Next Episode button (last 5% or credits range)
+    check_next_episode_button()
 
     -- Cursor visibility
     if state.current_alpha > 0.1 then
@@ -1953,6 +1967,98 @@ check_skip_markers = function()
     end
 end
 
+-- Decide whether the Next Episode button should be visible right now.
+-- Called every tick. Rules:
+--   1. Host has flagged next_ep_available (AutoDetectNextEpisode ran)
+--   2. Current position is either inside the credits marker range OR
+--      in the final 5% of total duration (fallback for shows with no
+--      credits marker). Using max of the two so credits at 88% still
+--      shows the button early instead of waiting until 95%.
+check_next_episode_button = function()
+    local was_visible = state.next_ep_visible
+    state.next_ep_visible = false
+
+    if not state.next_ep_available then
+        if state.next_ep_visible ~= was_visible then render_next_episode_button() end
+        return
+    end
+
+    local pos = state.time_pos
+    local dur = state.duration
+    if pos <= 0 or dur <= 0 then
+        if state.next_ep_visible ~= was_visible then render_next_episode_button() end
+        return
+    end
+
+    local in_credits = state.credits_start > 0
+                   and state.credits_end > state.credits_start
+                   and pos >= state.credits_start
+                   and pos < state.credits_end
+    local near_end = pos >= dur * 0.95
+
+    if in_credits or near_end then
+        state.next_ep_visible = true
+    end
+
+    if state.next_ep_visible ~= was_visible then
+        render_next_episode_button()
+    end
+end
+
+-- Draw a pill "Next Episode ▶" button in the bottom-right corner above
+-- the progress bar, offset left of the Skip button if both are visible.
+render_next_episode_button = function()
+    if not state.next_ep_visible then
+        if state.next_ep_overlay then
+            state.next_ep_overlay.data = ""
+            state.next_ep_overlay:update()
+        end
+        state.next_ep_rect = nil
+        return
+    end
+
+    update_osd_dimensions()
+    local ass = assdraw.ass_new()
+    local W = state.osd_width
+    local H = state.osd_height
+
+    local sc = ui_scale()
+    local fs = math.floor((config.stats_font_size + 2) * sc)
+    local btn_w = math.floor(180 * sc)
+    local btn_h = math.floor(44 * sc)
+
+    -- Position: bottom-right, above the progress bar. If the Skip button
+    -- is also visible, stack this one 56px higher so they don't overlap.
+    local btn_x = W - btn_w - 40
+    local btn_y = H - config.bar_height - btn_h - 20
+    if state.skip_visible then
+        btn_y = btn_y - (btn_h + 12)
+    end
+
+    -- Background (accent-tinted so it's distinct from the Skip button)
+    draw_rounded_rect(ass, btn_x, btn_y, btn_x + btn_w, btn_y + btn_h,
+        8, "FFFFFF", "30", 1.0)
+
+    -- Top border highlight
+    draw_rounded_rect(ass, btn_x, btn_y, btn_x + btn_w, btn_y + 1,
+        0, "FFFFFF", "60", 1.0)
+
+    -- Label: "Next Episode ▶"
+    draw_text(ass, btn_x + btn_w / 2, btn_y + btn_h / 2, "Next Episode \xe2\x96\xb6",
+        fs, config.text_color, "00", 1.0, 5, nil, true)
+
+    state.next_ep_rect = { x = btn_x, y = btn_y, w = btn_w, h = btn_h }
+
+    if not state.next_ep_overlay then
+        state.next_ep_overlay = mp.create_osd_overlay("ass-events")
+    end
+    state.next_ep_overlay.data = ass.text
+    state.next_ep_overlay.res_x = W
+    state.next_ep_overlay.res_y = H
+    state.next_ep_overlay.z = 56  -- one above the skip button
+    state.next_ep_overlay:update()
+end
+
 -- Toggle stats (defined here so handle_mouse_down can reference it)
 local function toggle_stats()
     state.stats_visible = not state.stats_visible
@@ -1971,6 +2077,20 @@ local function handle_mouse_down()
             mp.commandv("seek", tostring(state.skip_target), "absolute")
             state.skip_visible = false
             render_skip_button()
+            return
+        end
+    end
+
+    -- Next Episode button — tell the host to advance immediately. The
+    -- host owns ContinuePlayingNextAsync which tears down the current
+    -- session and starts the next episode.
+    if state.next_ep_visible and state.next_ep_rect then
+        local r = state.next_ep_rect
+        if mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h then
+            state.next_ep_visible = false
+            state.next_ep_available = false
+            render_next_episode_button()
+            mp.commandv("script-message", "continuum-next-episode")
             return
         end
     end
@@ -2273,6 +2393,17 @@ local function observe_properties()
             state.intro_end = tonumber(data.intro_end) or 0
             state.credits_start = tonumber(data.credits_start) or 0
             state.credits_end = tonumber(data.credits_end) or 0
+        end
+    end)
+
+    -- Host tells us whether a next episode is queued. When "true", the
+    -- Next Episode button becomes eligible to show in the last 5% of the
+    -- current episode OR inside the credits marker range.
+    mp.register_script_message("osc-set-next-episode", function(available)
+        state.next_ep_available = (available == "true" or available == "1")
+        if not state.next_ep_available and state.next_ep_visible then
+            state.next_ep_visible = false
+            render_next_episode_button()
         end
     end)
 

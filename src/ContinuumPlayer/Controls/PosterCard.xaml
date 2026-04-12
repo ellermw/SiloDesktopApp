@@ -62,42 +62,38 @@
                 </Border.Background>
             </Border>
 
-            <!-- Badges overlay at bottom -->
+            <!-- Card overlay badges in 4 corners. Each corner is a
+                 vertical StackPanel so multiple enabled overlays at the
+                 same position stack nicely. Populated by
+                 PosterCard.UpdateBadges() using CardOverlayService prefs. -->
             <StackPanel
-                x:Name="BadgesPanel"
-                Orientation="Horizontal"
+                x:Name="OverlayTopLeft"
+                Orientation="Vertical"
+                Spacing="4"
+                VerticalAlignment="Top"
+                HorizontalAlignment="Left"
+                Margin="6" />
+            <StackPanel
+                x:Name="OverlayTopRight"
+                Orientation="Vertical"
+                Spacing="4"
+                VerticalAlignment="Top"
+                HorizontalAlignment="Right"
+                Margin="6" />
+            <StackPanel
+                x:Name="OverlayBottomLeft"
+                Orientation="Vertical"
                 Spacing="4"
                 VerticalAlignment="Bottom"
                 HorizontalAlignment="Left"
-                Margin="6,0,6,6"
-                Visibility="Collapsed">
-
-                <Border
-                    x:Name="ResolutionBadge"
-                    Background="{StaticResource BadgeResolutionBrush}"
-                    CornerRadius="{StaticResource BadgeCornerRadius}"
-                    Padding="6,2"
-                    Visibility="Collapsed">
-                    <TextBlock
-                        x:Name="ResolutionText"
-                        FontSize="10"
-                        FontWeight="SemiBold"
-                        Foreground="White" />
-                </Border>
-
-                <Border
-                    x:Name="AudioBadge"
-                    Background="{StaticResource BadgeBackgroundBrush}"
-                    CornerRadius="{StaticResource BadgeCornerRadius}"
-                    Padding="6,2"
-                    Visibility="Collapsed">
-                    <TextBlock
-                        x:Name="AudioText"
-                        FontSize="10"
-                        FontWeight="SemiBold"
-                        Foreground="{StaticResource BadgeTextBrush}" />
-                </Border>
-            </StackPanel>
+                Margin="6" />
+            <StackPanel
+                x:Name="OverlayBottomRight"
+                Orientation="Vertical"
+                Spacing="4"
+                VerticalAlignment="Bottom"
+                HorizontalAlignment="Right"
+                Margin="6" />
 
             <!-- Hover overlays — MUST be last so they paint on top of image/gradient/badges.
                  Z-order goes: background → image → gradient → badges → dim → play → border. -->

@@ -50,9 +50,40 @@ public sealed partial class SectionRow : UserControl
         CardsRepeater.ItemTemplate = (DataTemplate)this.Resources[templateKey];
         CardsRepeater.ItemsSource = section.Items;
 
+        // F6: show a skeleton row while items are still loading (empty list
+        // during F12 per-section fetch). Replaced by the real cards as soon
+        // as Items gets populated and UpdateSection is called again.
+        bool hasItems = section.Items != null && section.Items.Count > 0;
+        if (hasItems)
+        {
+            SkeletonPanel.Visibility = Visibility.Collapsed;
+            SkeletonPanel.Children.Clear();
+            CardsScrollViewer.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            BuildSkeletonRow();
+            SkeletonPanel.Visibility = Visibility.Visible;
+            CardsScrollViewer.Visibility = Visibility.Collapsed;
+        }
+
         // Reset scroll position on re-bind so the first item is always visible.
         CardsScrollViewer.ChangeView(0, null, null, disableAnimation: true);
         UpdateScrollBounds();
+    }
+
+    /// <summary>
+    /// Populate the skeleton row with 7 placeholder cards (matching the
+    /// webui <c>SectionLoadingRow</c>). Cards are lightweight
+    /// <see cref="SkeletonPoster"/> instances pulsing opacity.
+    /// </summary>
+    private void BuildSkeletonRow()
+    {
+        if (SkeletonPanel.Children.Count > 0) return;
+        for (int i = 0; i < 7; i++)
+        {
+            SkeletonPanel.Children.Add(new SkeletonPoster());
+        }
     }
 
     // ─── Scroll bounds tracking ─────────────────────────────────────────

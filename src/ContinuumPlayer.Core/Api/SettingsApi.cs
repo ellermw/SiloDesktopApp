@@ -16,13 +16,34 @@ public class SettingEntry
     public string Value { get; set; } = "";
 }
 
+public class OverlayConfigResponse
+{
+    /// <summary>Server-wide kill switch. When false, no overlays render for any user.</summary>
+    public bool Enabled { get; set; } = true;
+    /// <summary>
+    /// Admin default prefs as a JSON string (shape matches
+    /// <c>Dictionary&lt;OverlayId, {enabled, position}&gt;</c>). Falls through
+    /// to the built-in defaults if the admin hasn't customized.
+    /// </summary>
+    public string? Defaults { get; set; }
+}
+
 public class SettingsApi(ContinuumApiClient client)
 {
     public Task<SettingEntry> GetSettingAsync(string key, CancellationToken ct = default)
         => client.GetAsync<SettingEntry>($"/api/v1/settings/{Uri.EscapeDataString(key)}", ct);
 
     public Task PutSettingAsync(string key, string value, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/settings/{Uri.EscapeDataString(key)}", new { value }, ct);
+        => client.PutNoContentAsync($"/api/v1/settings/{Uri.EscapeDataString(key)}",
+            // Use dictionary body to survive .NET 8 Release trimming (feedback_build_release).
+            new Dictionary<string, object?> { ["value"] = value }, ct);
+
+    /// <summary>
+    /// Fetches the admin's overlay config (kill switch + default prefs).
+    /// Server: <c>GET /api/v1/settings/overlay-config</c>.
+    /// </summary>
+    public Task<OverlayConfigResponse> GetOverlayConfigAsync(CancellationToken ct = default)
+        => client.GetAsync<OverlayConfigResponse>("/api/v1/settings/overlay-config", ct);
 
     public Task<Profile> UpdateProfileAsync(string profileId, object updates, CancellationToken ct = default)
         => client.PutAsync<Profile>($"/api/v1/profiles/{profileId}", updates, ct);

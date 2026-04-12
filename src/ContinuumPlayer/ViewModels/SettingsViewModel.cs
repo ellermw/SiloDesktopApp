@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.DependencyInjection;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Auth;
 using ContinuumPlayer.Core.Models.Catalog;
@@ -610,6 +611,27 @@ public partial class SettingsViewModel : ObservableObject
                 ["position"] = SubPosition,
             };
             await _settingsApi.PutSettingAsync("subtitle_appearance", System.Text.Json.JsonSerializer.Serialize(settings));
+
+            // B55 follow-up: push the saved values to mpv so they apply to
+            // the currently playing session AND the next one (PlayerService
+            // caches and replays on init).
+            try
+            {
+                var player = App.Services.GetRequiredService<PlayerService>();
+                player.ApplySubtitleAppearance(new Core.Models.Settings.SubtitleAppearance
+                {
+                    FontFamily = SubFontFamily,
+                    FontSize = SubFontSize,
+                    FontColor = SubFontColor,
+                    TextOutline = SubOutlineEnabled,
+                    BackgroundStyle = SubBackgroundStyle,
+                    BackgroundOpacity = SubBackgroundOpacity,
+                    BackgroundColor = SubBackgroundColor,
+                    Position = SubPosition,
+                });
+            }
+            catch { /* mpv not initialized yet — will be applied on first play */ }
+
             ShowStatus("Subtitle appearance saved");
         }
         catch (Exception ex) { ErrorMessage = $"Failed to save subtitle appearance: {ex.Message}"; }

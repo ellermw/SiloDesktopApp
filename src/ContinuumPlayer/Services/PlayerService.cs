@@ -18,6 +18,7 @@ public class PlayerService : IDisposable
     private readonly CatalogApi _catalogApi;
     private readonly AuthService _authService;
     private readonly ContinuumApiClient _apiClient;
+    private readonly SettingsService _settingsService;
 
     private MpvPlayer? _mpv;
     private MpvVideoWindow? _videoWindow;
@@ -43,12 +44,229 @@ public class PlayerService : IDisposable
     private Action<string>? _mpvPlaybackErrorHandler;
     private Action<string>? _mpvErrorHandler;
 
-    public PlayerService(PlaybackApi playbackApi, CatalogApi catalogApi, AuthService authService, ContinuumApiClient apiClient)
+    public PlayerService(
+        PlaybackApi playbackApi,
+        CatalogApi catalogApi,
+        AuthService authService,
+        ContinuumApiClient apiClient,
+        SettingsService settingsService)
     {
         _playbackApi = playbackApi;
         _catalogApi = catalogApi;
         _authService = authService;
         _apiClient = apiClient;
+        _settingsService = settingsService;
+
+        // Restore persisted volume + mute so the player starts where the user
+        // left it instead of at 100%. These are applied to mpv on
+        // EnsureMpvInitialized (see MpvPlayer.SetVolume/SetMute call sites).
+        try
+        {
+            var settings = _settingsService.Load();
+            Volume = Math.Clamp(settings.PlayerVolume, 0, 100);
+            IsMuted = settings.PlayerMuted;
+        }
+        catch { /* settings file missing / corrupt — use defaults */ }
+    }
+
+    /// <summary>
+    /// Persist the current <see cref="Volume"/> + <see cref="IsMuted"/> to
+    /// AppSettings. Called from the overlay / mini-bar on every change so
+    /// the next launch restores the same level.
+    /// </summary>
+    public void SaveVolumeState()
+    {
+        try
+        {
+            var settings = _settingsService.Load();
+            settings.PlayerVolume = Volume;
+            settings.PlayerMuted = IsMuted;
+            _settingsService.Save(settings);
+        }
+        catch { /* non-fatal — volume persistence is best-effort */ }
+    }
+
+    /// <summary>
+    /// True when subtitles are hidden via the C keyboard shortcut. mpv
+    /// internally tracks <c>sub-visibility</c>, but we mirror it here so
+    /// the overlay can swap the Captions glyph.
+    /// </summary>
+    public bool SubtitlesHidden { get; private set; }
+
+    /// <summary>
+    /// C-key shortcut: flip <c>sub-visibility</c> on mpv. If subtitles
+    /// are off entirely (sid=no), this is a no-op.
+    /// </summary>
+    public void ToggleSubtitleVisibility()
+    {
+        if (_mpv == null) return;
+        SubtitlesHidden = !SubtitlesHidden;
+        _mpv.SetProperty("sub-visibility", SubtitlesHidden ? "no" : "yes");
+    }
+
+    // ── Subtitle appearance bridge (B55 follow-up) ──────────────────────
+
+    /// <summary>
+    /// Cached subtitle appearance settings. Applied to mpv on every fresh
+    /// initialize (so the next file starts with the right styling) and
+    /// pushed live by <see cref="ApplySubtitleAppearance"/> whenever the
+    /// user saves on the SettingsPage.
+    /// </summary>
+    private Core.Models.Settings.SubtitleAppearance? _subtitleAppearance;
+
+    /// <summary>
+    /// Push the given subtitle appearance to mpv's sub-* properties. Safe
+    /// to call at any time; if mpv isn't initialized yet the settings are
+    /// cached and applied on the next initialization.
+    /// </summary>
+    public void ApplySubtitleAppearance(Core.Models.Settings.SubtitleAppearance appearance)
+    {
+        _subtitleAppearance = appearance;
+        if (_mpv == null) return;
+        PushSubtitleAppearanceToMpv(appearance);
+    }
+
+    private void PushSubtitleAppearanceToMpv(Core.Models.Settings.SubtitleAppearance a)
+    {
+        if (_mpv == null) return;
+        try
+        {
+            // Font size — map the webui step names to mpv pixel sizes.
+            // mpv's sub-font-size is a point value (~48 is typical default).
+            int fontSize = a.FontSize switch
+            {
+                "small" => 36,
+                "large" => 64,
+                "xlarge" => 80,
+                _ => 48, // medium / unknown
+            };
+            _mpv.SetProperty("sub-font-size", fontSize.ToString());
+
+            // Font family — map to mpv's font family names.
+            string fontName = a.FontFamily switch
+            {
+                "serif" => "Serif",
+                "monospace" => "Monospace",
+                _ => "Sans",
+            };
+            _mpv.SetProperty("sub-font", fontName);
+
+            // Font color — mpv accepts "#RRGGBB" (alpha defaults to FF).
+            _mpv.SetProperty("sub-color", NormalizeHex(a.FontColor));
+
+            // Background color + opacity. mpv uses "#AARRGGBB" where AA is
+            // hex alpha (0x00 = transparent, 0xFF = opaque).
+            if (a.BackgroundStyle == "box")
+            {
+                int alpha = Math.Clamp((int)Math.Round(a.BackgroundOpacity * 2.55), 0, 255);
+                string bgHex = NormalizeHex(a.BackgroundColor);
+                // Strip leading "#" and prepend alpha.
+                string argb = $"#{alpha:X2}{bgHex.TrimStart('#')}";
+                _mpv.SetProperty("sub-back-color", argb);
+                _mpv.SetProperty("sub-border-size", "0");
+                _mpv.SetProperty("sub-shadow-offset", "0");
+            }
+            else if (a.BackgroundStyle == "outline")
+            {
+                // Fully transparent background, heavy border.
+                _mpv.SetProperty("sub-back-color", "#00000000");
+                _mpv.SetProperty("sub-border-size", "3");
+                _mpv.SetProperty("sub-border-color", "#FF000000");
+                _mpv.SetProperty("sub-shadow-offset", "0");
+            }
+            else if (a.BackgroundStyle == "shadow")
+            {
+                _mpv.SetProperty("sub-back-color", "#00000000");
+                _mpv.SetProperty("sub-border-size", "0");
+                _mpv.SetProperty("sub-shadow-offset", "2");
+                _mpv.SetProperty("sub-shadow-color", "#80000000");
+            }
+            else // "none"
+            {
+                _mpv.SetProperty("sub-back-color", "#00000000");
+                _mpv.SetProperty("sub-border-size", "0");
+                _mpv.SetProperty("sub-shadow-offset", "0");
+            }
+
+            // Independent text outline that stacks with the background style.
+            if (a.TextOutline)
+            {
+                _mpv.SetProperty("sub-border-size", "2");
+                _mpv.SetProperty("sub-border-color", "#FF000000");
+            }
+
+            // Position (bottom / lower-third / top).
+            _mpv.SetProperty("sub-align-y", a.Position == "top" ? "top" : "bottom");
+            if (a.Position == "lower-third")
+                _mpv.SetProperty("sub-margin-y", "160");
+            else
+                _mpv.SetProperty("sub-margin-y", "22");
+        }
+        catch (Exception ex) { LogToFile("state_trace.txt", $"ApplySubtitleAppearance error: {ex.Message}"); }
+    }
+
+    private static string NormalizeHex(string hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex)) return "#FFFFFF";
+        if (!hex.StartsWith("#")) hex = "#" + hex;
+        return hex.ToUpperInvariant();
+    }
+
+    // ── Per-series subtitle / audio preference persistence ─────────────
+
+    /// <summary>
+    /// For series episodes the prefs key is the series_id; for movies it's
+    /// the content_id. Matches the webui convention and what the server
+    /// looks up on the next play.
+    /// </summary>
+    private string? GetPrefsKey()
+    {
+        var wd = _playbackManager?.WatchDetail;
+        if (wd == null) return ContentId;
+        if (!string.IsNullOrEmpty(wd.SeriesId)) return wd.SeriesId;
+        return ContentId;
+    }
+
+    /// <summary>
+    /// Change the active subtitle track AND persist the user's choice so
+    /// subsequent episodes / resumes default to the same language + mode.
+    /// Pass <c>mpvTrackIndex=0</c> to disable subtitles entirely (mode=off).
+    /// </summary>
+    public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language)
+    {
+        _mpv?.SetSubtitleTrack(mpvTrackIndex);
+
+        var key = GetPrefsKey();
+        if (string.IsNullOrEmpty(key)) return;
+
+        try
+        {
+            string mode = mpvTrackIndex <= 0 ? "off" : "manual";
+            await _playbackApi.SaveSubtitlePrefsAsync(key, language ?? "", mode);
+        }
+        catch (Exception ex) { LogToFile("state_trace.txt", $"SaveSubtitlePrefs error: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Change the active audio track AND persist the choice. The index is
+    /// 1-based to match mpv's <c>aid</c> property.
+    /// </summary>
+    public async Task SetAudioTrackAndPersistAsync(int mpvTrackIndex, string? language)
+    {
+        _mpv?.SetAudioTrack(mpvTrackIndex);
+
+        var key = GetPrefsKey();
+        if (string.IsNullOrEmpty(key)) return;
+
+        try
+        {
+            await _catalogApi.SetAudioPrefsAsync(key, new Core.Models.Catalog.AudioPreference
+            {
+                AudioTrackIndex = mpvTrackIndex,
+                AudioLanguage = language,
+            });
+        }
+        catch (Exception ex) { LogToFile("state_trace.txt", $"SetAudioPrefs error: {ex.Message}"); }
     }
 
     // ── State ────────────────────────────────────────────────────────────
@@ -283,6 +501,13 @@ public class PlayerService : IDisposable
         _pendingSubtitleSelection = subtitleSelection;
         LogToFile("state_trace.txt", $"PlayAsync called: contentId={contentId} fromStart={fromStart} audioTrackIndex={audioTrackIndex?.ToString() ?? "auto"} subtitleSelection={FormatSubtitleSelection(subtitleSelection)} State={State} IsLoading={IsLoading}");
 
+        // CRITICAL: set the "switching content" flag BEFORE stopping the
+        // previous mpv session. Without it, _mpv?.Stop() fires end-file →
+        // _mpvPlaybackEndedHandler runs the natural-end cleanup path
+        // (CloseAsync), which races against the new-session setup below
+        // and crashes the player. The flag causes the handler to short-circuit.
+        _switchingContent = true;
+
         // Stop any existing session first (prevents HTTP 400 from server)
         if (_playbackManager != null)
         {
@@ -304,7 +529,6 @@ public class PlayerService : IDisposable
         _playbackCts?.Cancel();
         _playbackCts?.Dispose();
         _playbackCts = new CancellationTokenSource();
-        _switchingContent = true;
 
         App.MainWindowInstance?.ShowLoadingOverlay();
 
@@ -414,13 +638,36 @@ public class PlayerService : IDisposable
 
     /// <summary>
     /// Phase 3b — user dismissed the Playing Next prompt. Clears the next
-    /// episode state and invokes the normal PlaybackEnded close flow.
+    /// episode state and fully tears down the player (same cleanup as a
+    /// natural end-of-file without a queued next episode).
     /// </summary>
     public void CancelPlayingNext()
     {
         ClearNextEpisodeHint();
-        _videoWindow?.Hide();
         PlaybackEnded?.Invoke();
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+        if (dispatcher != null)
+            dispatcher.TryEnqueue(() => _ = CloseAsync());
+        else
+            _ = CloseAsync();
+    }
+
+    /// <summary>
+    /// Hide the mpv popup window without changing player state. Used by
+    /// MainWindow when the Playing Next cinematic fires — the main window
+    /// needs to be visible so the overlay Grid shows, but we don't want
+    /// to fully tear down the player (state stays Expanded) in case the
+    /// user hits "Play Now" and we resume straight into the next episode.
+    /// </summary>
+    public void HideVideoPopup()
+    {
+        _videoWindow?.Hide();
+    }
+
+    /// <summary>Re-show the mpv popup window (complement to <see cref="HideVideoPopup"/>).</summary>
+    public void ShowVideoPopup()
+    {
+        _videoWindow?.Show();
     }
 
     /// <summary>Reset all next-episode fields to their default null state.</summary>
@@ -431,6 +678,60 @@ public class PlayerService : IDisposable
         NextEpisodeSeriesTitle = null;
         NextEpisodePosterUrl = null;
         NextEpisodeOverview = null;
+        // Also tell the OSC to drop its "Next Episode" button.
+        _mpv?.SendScriptMessage("osc-set-next-episode", "false");
+    }
+
+    /// <summary>
+    /// Auto-compute the next-episode hint for a series episode that's just
+    /// started playing. Runs in the background so it doesn't block
+    /// FileLoaded. If the current item is an episode with a known series +
+    /// season + episode number, fetch the season's episode list and pick
+    /// the next one by number. Set on <see cref="NextEpisodeContentId"/>
+    /// so the end-of-file handler can fire the Playing Next cinematic.
+    ///
+    /// Called from the FileLoaded handler when no caller pre-set a hint.
+    /// This makes the Playing Next flow work for playback launched from
+    /// anywhere — home sections, cards, swipe decks, ItemDetailPage —
+    /// without each launch site having to compute next manually.
+    /// </summary>
+    private async Task AutoDetectNextEpisodeAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(100, ct); // Let WatchDetail settle
+            var wd = _playbackManager?.WatchDetail;
+            if (wd == null) return;
+            if (string.IsNullOrEmpty(wd.SeriesId)) return;
+            if (!wd.SeasonNumber.HasValue || !wd.EpisodeNumber.HasValue) return;
+
+            var episodes = await _catalogApi.GetEpisodesAsync(wd.SeriesId, wd.SeasonNumber.Value, ct);
+            if (ct.IsCancellationRequested) return;
+            if (episodes.Episodes == null || episodes.Episodes.Count == 0) return;
+
+            int currentNumber = wd.EpisodeNumber.Value;
+            var next = episodes.Episodes.FirstOrDefault(ep => ep.EpisodeNumber == currentNumber + 1);
+            if (next == null)
+            {
+                LogToFile("state_trace.txt", $"AutoDetectNextEpisode: no next episode after S{wd.SeasonNumber} E{currentNumber}");
+                return;
+            }
+
+            NextEpisodeContentId = next.ContentId;
+            var label = $"S{next.SeasonNumber} E{next.EpisodeNumber}";
+            NextEpisodeTitle = string.IsNullOrEmpty(next.Title) ? label : $"{label} \u00B7 {next.Title}";
+            NextEpisodeSeriesTitle = wd.SeriesTitle;
+            NextEpisodePosterUrl = next.StillUrl;
+            NextEpisodeOverview = next.Overview;
+            LogToFile("state_trace.txt", $"AutoDetectNextEpisode: next={next.ContentId} ({NextEpisodeTitle})");
+
+            // Tell the Lua OSC that a next episode is queued so it can
+            // show the in-player "Next Episode" button during credits /
+            // the final 5%.
+            _mpv?.SendScriptMessage("osc-set-next-episode", "true");
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { LogToFile("state_trace.txt", $"AutoDetectNextEpisode error: {ex.Message}"); }
     }
 
     /// <summary>
@@ -577,6 +878,22 @@ public class PlayerService : IDisposable
         _mpv.InitializeWithWindow(_videoWindow.Hwnd);
         _videoWindow.SetMpv(_mpv);
         WireMpvEvents();
+
+        // Restore the persisted volume + mute on this fresh mpv instance so
+        // the first track obeys the saved level instead of mpv's default.
+        try
+        {
+            _mpv.SetVolume(Volume);
+            if (IsMuted) _mpv.SetMute(true);
+        }
+        catch { /* non-fatal */ }
+
+        // Apply cached subtitle appearance settings (B55 follow-up) so the
+        // first track starts with the user's saved sub styling instead of
+        // mpv's defaults. If nothing has been cached yet, mpv uses defaults
+        // and gets updated on the next SettingsPage save.
+        if (_subtitleAppearance != null)
+            PushSubtitleAppearanceToMpv(_subtitleAppearance);
     }
 
     private void UnwireMpvEvents()
@@ -655,6 +972,13 @@ public class PlayerService : IDisposable
                 LoadSubtitles();
             }, ct);
 
+            // Auto-compute next-episode hint if no caller already set one.
+            // This fires for every playback session — including ones launched
+            // directly from a card (LandscapeCard, PosterCard) that bypass
+            // ItemDetailPage.SetNextEpisodeHintIfApplicable.
+            if (string.IsNullOrEmpty(NextEpisodeContentId))
+                _ = AutoDetectNextEpisodeAsync(ct);
+
             // Connect WebSocket for real-time admin control
             try { ConnectWebSocket(); }
             catch (Exception ex) { LogToFile("state_trace.txt", $"WebSocket connect failed: {ex.Message}"); }
@@ -664,25 +988,36 @@ public class PlayerService : IDisposable
         _mpvPlaybackEndedHandler = () =>
         {
             LogToFile("state_trace.txt", $"PlaybackEnded fired: _switchingContent={_switchingContent} _qualitySwitchActive={_qualitySwitchActive} nextEpisode={NextEpisodeContentId ?? "none"} State={State} thread={Environment.CurrentManagedThreadId}");
-            if (!_switchingContent && !_qualitySwitchActive)
-            {
-                // Phase 3b: if the caller set a next-episode hint before playback,
-                // show the Playing Next overlay instead of closing the player.
-                // The overlay will call ContinuePlayingNextAsync or CancelPlayingNext.
-                if (!string.IsNullOrEmpty(NextEpisodeContentId))
-                {
-                    LogToFile("state_trace.txt", "  → Next-episode prompt requested");
-                    ShowPlayingNextRequested?.Invoke();
-                    return;
-                }
-                LogToFile("state_trace.txt", "  → Hiding window and invoking PlaybackEnded");
-                _videoWindow?.Hide();
-                PlaybackEnded?.Invoke();
-            }
-            else
+            if (_switchingContent || _qualitySwitchActive)
             {
                 LogToFile("state_trace.txt", "  → Suppressed (switching content)");
+                return;
             }
+
+            // Phase 3b: if the caller set a next-episode hint before playback,
+            // show the Playing Next overlay instead of closing the player.
+            // The overlay will call ContinuePlayingNextAsync or CancelPlayingNext.
+            if (!string.IsNullOrEmpty(NextEpisodeContentId))
+            {
+                LogToFile("state_trace.txt", "  → Next-episode prompt requested");
+                ShowPlayingNextRequested?.Invoke();
+                return;
+            }
+
+            // CRITICAL: end-of-file means the session is DONE. We MUST tear
+            // down the mpv/playback-manager state or the next PlayAsync call
+            // will race against stale state and crash. Previously this code
+            // just hid the window and invoked PlaybackEnded — but the only
+            // listener (PlayerOverlay.OnPlaybackEnded) was gated behind an
+            // _isActive flag that was never set, so nothing actually
+            // cleaned up. Call CloseAsync ourselves, on the UI thread.
+            LogToFile("state_trace.txt", "  → Natural end — dispatching CloseAsync to UI thread");
+            PlaybackEnded?.Invoke();
+            var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+            if (dispatcher != null)
+                dispatcher.TryEnqueue(() => _ = CloseAsync());
+            else
+                _ = CloseAsync();
         };
         _mpv.PlaybackEnded += _mpvPlaybackEndedHandler;
 
@@ -822,6 +1157,28 @@ public class PlayerService : IDisposable
             _mpv.LoadFile(url, authHeader);
             _mpv.Play();
             _switchingContent = false;
+
+            // Persist the audio-track choice under the series (or content)
+            // ID so the next episode / resume defaults to the same track.
+            var key = GetPrefsKey();
+            if (!string.IsNullOrEmpty(key))
+            {
+                try
+                {
+                    // Look up the language from the current version's audio tracks.
+                    string? language = null;
+                    var version = Versions.FirstOrDefault(v => v.FileId == _playbackManager.CurrentSession?.MediaFileId);
+                    if (version?.AudioTracks != null && trackIndex >= 0 && trackIndex < version.AudioTracks.Count)
+                        language = version.AudioTracks[trackIndex].Language;
+
+                    await _catalogApi.SetAudioPrefsAsync(key, new Core.Models.Catalog.AudioPreference
+                    {
+                        AudioTrackIndex = trackIndex,
+                        AudioLanguage = language,
+                    });
+                }
+                catch (Exception ex) { LogToFile("state_trace.txt", $"SetAudioPrefs error: {ex.Message}"); }
+            }
         }
         catch (Exception ex)
         {
@@ -1175,6 +1532,13 @@ public class PlayerService : IDisposable
                     dispatch.TryEnqueue(() => _ = SwitchQualityTierAsync(args[1]));
                 }
                 break;
+            case "continuum-next-episode":
+                // User clicked the in-player Next Episode button. Jump
+                // straight to the next episode — ContinuePlayingNextAsync
+                // tears down the current session and starts the next one.
+                LogToFile("state_trace.txt", "Next Episode button clicked");
+                dispatch.TryEnqueue(() => _ = ContinuePlayingNextAsync());
+                break;
         }
     }
 
@@ -1446,6 +1810,28 @@ public class PlayerService : IDisposable
             catch (Exception ex) { LogToFile("state_trace.txt", $"Publish progress event error: {ex.Message}"); }
         }
 
+        // Volume persistence: the XAML overlay's VolumeSlider is never the
+        // live source of truth during fullscreen playback — mpv's own Lua OSC
+        // handles the user's volume drag directly on the popup window and
+        // nothing propagates that back to PlayerService.Volume. So before we
+        // stop mpv, pull the CURRENT volume/mute from mpv and persist them.
+        if (_mpv != null)
+        {
+            try
+            {
+                double liveVolume = _mpv.GetPropertyDouble("volume");
+                bool liveMute = _mpv.GetMute();
+                if (liveVolume > 0 || liveMute)
+                {
+                    Volume = Math.Clamp(liveVolume, 0, 100);
+                    IsMuted = liveMute;
+                    SaveVolumeState();
+                    LogToFile("state_trace.txt", $"Persisted volume={Volume:F0} muted={IsMuted} on close");
+                }
+            }
+            catch (Exception ex) { LogToFile("state_trace.txt", $"Volume persist error: {ex.Message}"); }
+        }
+
         _mpv?.Stop();
 
         if (_playbackManager != null)
@@ -1474,6 +1860,12 @@ public class PlayerService : IDisposable
         ErrorMessage = null;
         Versions = [];
 
+        // Clear any queued next-episode hint from the previous session so a
+        // subsequent PlayAsync starts clean. Callers that WANT a pre-seed
+        // can set it after PlayAsync kicks off (auto-detect in FileLoaded
+        // respects an already-set hint).
+        ClearNextEpisodeHint();
+
         App.MainWindowInstance?.HideLoadingOverlay();
         _videoWindow?.Hide();
         SetState(PlayerState.Idle);
@@ -1487,6 +1879,24 @@ public class PlayerService : IDisposable
         // ExitAnyFullscreen can still see which path is active.
         if (State == PlayerState.Fullscreen)
             ExitAnyFullscreen();
+
+        // Persist live mpv volume on app shutdown — the user may have
+        // changed it via the Lua OSC and never gone through CloseAsync.
+        if (_mpv != null)
+        {
+            try
+            {
+                double liveVolume = _mpv.GetPropertyDouble("volume");
+                bool liveMute = _mpv.GetMute();
+                if (liveVolume > 0 || liveMute)
+                {
+                    Volume = Math.Clamp(liveVolume, 0, 100);
+                    IsMuted = liveMute;
+                    SaveVolumeState();
+                }
+            }
+            catch { /* best-effort */ }
+        }
 
         _videoWindow?.Dispose();
         _videoWindow = null;

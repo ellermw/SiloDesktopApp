@@ -13,4 +13,13 @@ public class AppSettings
     public List<int> HiddenLibraryIds { get; set; } = [];
     public string? LastUserRole { get; set; }
     public string? LastUsername { get; set; }
+
+    /// <summary>
+    /// Player volume on a 0-100 scale. Persisted so the player doesn't
+    /// reset to full loudness on every launch.
+    /// </summary>
+    public double PlayerVolume { get; set; } = 100;
+
+    /// <summary>Whether the player was last in a muted state.</summary>
+    public bool PlayerMuted { get; set; } = false;
 }

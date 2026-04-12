@@ -86,5 +86,16 @@
                 </ItemsRepeater.Layout>
             </ItemsRepeater>
         </ScrollViewer>
+
+        <!-- F6: skeleton row shown when Items is empty during the F12
+             per-section fetch. Replaced with the real ItemsRepeater content
+             as soon as items arrive. -->
+        <StackPanel
+            x:Name="SkeletonPanel"
+            Grid.Row="1"
+            Orientation="Horizontal"
+            Spacing="16"
+            Margin="48,0,48,0"
+            Visibility="Collapsed" />
     </Grid>
 </UserControl>

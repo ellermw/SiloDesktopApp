@@ -65,42 +65,88 @@ public sealed partial class PosterCard : UserControl
         // Thumbhash decoding on UI thread for hundreds of cards causes jank.
         ThumbhashImage.Source = null;
 
-        UpdateBadges(item.OverlaySummary);
+        UpdateBadges(item);
 
         // Delay image load slightly so scrolling isn't blocked by hundreds of simultaneous loads
         _ = LoadPosterAsync(item, ct);
     }
 
-    private void UpdateBadges(OverlaySummary? overlay)
+    /// <summary>
+    /// Rebuilds the 4 corner overlay panels for the given item, using prefs
+    /// from <see cref="Services.CardOverlayService"/>. All 9 overlay types
+    /// from the webui are supported; each one is shown only if:
+    ///   1. Admin kill switch (<c>overlays.enabled</c>) is on
+    ///   2. That overlay id is enabled in the resolved prefs
+    ///   3. The value extractor returns a non-null, non-empty string
+    /// Also kicks off a one-shot prefs fetch on the first card bind.
+    /// </summary>
+    private void UpdateBadges(MediaItem item)
     {
-        if (overlay == null ||
-            (string.IsNullOrEmpty(overlay.Resolution) && string.IsNullOrEmpty(overlay.Audio)))
-        {
-            BadgesPanel.Visibility = Visibility.Collapsed;
-            return;
-        }
+        OverlayTopLeft.Children.Clear();
+        OverlayTopRight.Children.Clear();
+        OverlayBottomLeft.Children.Clear();
+        OverlayBottomRight.Children.Clear();
 
-        BadgesPanel.Visibility = Visibility.Visible;
+        var service = App.Services.GetRequiredService<Services.CardOverlayService>();
+        // Lazy one-shot load. Subsequent cards hit the cached result.
+        _ = service.EnsureLoadedAsync();
 
-        if (!string.IsNullOrEmpty(overlay.Resolution))
-        {
-            ResolutionBadge.Visibility = Visibility.Visible;
-            ResolutionText.Text = overlay.Resolution;
-        }
-        else
-        {
-            ResolutionBadge.Visibility = Visibility.Collapsed;
-        }
+        var prefs = service.GetPrefs();
+        if (prefs == null) return; // Admin kill switch engaged → no badges.
 
-        if (!string.IsNullOrEmpty(overlay.Audio))
+        var data = Services.OverlayData.FromMediaItem(item);
+        foreach (var def in Services.OverlayRegistry.All)
         {
-            AudioBadge.Visibility = Visibility.Visible;
-            AudioText.Text = overlay.Audio;
+            if (!prefs.TryGetValue(def.Id, out var config) || !config.Enabled) continue;
+            var value = def.GetValue(data);
+            if (string.IsNullOrEmpty(value)) continue;
+
+            var badge = BuildBadge(value, def.Id);
+            var host = config.Position switch
+            {
+                Services.OverlayPosition.TopLeft => OverlayTopLeft,
+                Services.OverlayPosition.TopRight => OverlayTopRight,
+                Services.OverlayPosition.BottomLeft => OverlayBottomLeft,
+                Services.OverlayPosition.BottomRight => OverlayBottomRight,
+                _ => OverlayTopLeft,
+            };
+            host.Children.Add(badge);
         }
-        else
+    }
+
+    /// <summary>
+    /// One pill-shaped overlay badge. All overlays share the same dark glass
+    /// style (rgba(0,0,0,0.6) + white/15 border + uppercase white text) —
+    /// matches webui BADGE_CLASS + BADGE_STYLE from lib/cardOverlays.ts.
+    /// Uniform styling is critical for legibility over bright posters;
+    /// earlier resolution-only accent style meant HDR/Audio/Release/etc.
+    /// were invisible on light backdrops.
+    /// </summary>
+    private static Border BuildBadge(string text, string overlayId)
+    {
+        // Fixed height + CornerRadius=height/2 for a clean pill. WinUI's
+        // CornerRadius doesn't behave like CSS rounded-full — a huge radius
+        // value produces a warped oval, so we use the explicit-height
+        // pattern instead (see feedback_no_appearance_changes / memory).
+        return new Border
         {
-            AudioBadge.Visibility = Visibility.Collapsed;
-        }
+            Height = 18,
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardOverlayBackgroundBrush"],
+            BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardOverlayBorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(9),
+            Padding = new Thickness(8, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = text.ToUpperInvariant(),
+                FontSize = 10,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                CharacterSpacing = 60,
+                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
     }
 
     // Limit concurrent image decodes on the UI thread to prevent bursts of

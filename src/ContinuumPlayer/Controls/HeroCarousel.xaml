@@ -7,15 +7,27 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:controls="using:ContinuumPlayer.Controls"
     mc:Ignorable="d"
+    IsTabStop="True"
+    KeyDown="OnKeyDown"
     Loaded="OnLoaded"
     Unloaded="OnUnloaded">
 
     <!-- Height set in code-behind to 72% of window (matching web UI min-h-[72dvh]) -->
-    <Grid x:Name="RootGrid">
-        <!-- Backdrop image with object-position: center 20% -->
+    <Grid
+        x:Name="RootGrid"
+        PointerEntered="RootGrid_PointerEntered"
+        PointerExited="RootGrid_PointerExited">
+        <!-- Two stacked backdrop layers for the crossfade transition. The
+             "active" one is the one currently fully visible; when a new
+             item is shown we load into the inactive layer then animate the
+             opacities in opposite directions. -->
         <controls:BackdropImage
-            x:Name="BackdropImage"
+            x:Name="BackdropImageA"
             AnchorY="0.2" />
+        <controls:BackdropImage
+            x:Name="BackdropImageB"
+            AnchorY="0.2"
+            Opacity="0" />
 
         <!-- Brightness overlay: web uses brightness(0.78), so ~22% darkening -->
         <Border Background="#101722" Opacity="0.22" />
@@ -64,12 +76,28 @@
             MaxWidth="600"
             Spacing="8">
 
-            <TextBlock
-                x:Name="HeroTitle"
-                Style="{StaticResource DisplayTextStyle}"
-                FontSize="36"
-                TextWrapping="Wrap"
-                MaxLines="2" />
+            <!-- Stacked title: a dark "shadow" copy behind the white text
+                 to approximate a CSS text-shadow (WinUI TextBlock has no
+                 built-in shadow). Offset 1px down/right, pure black, 60%
+                 opacity — enough to keep the title readable over bright
+                 backdrops without looking like a drop shadow. -->
+            <Grid>
+                <TextBlock
+                    x:Name="HeroTitleShadow"
+                    Style="{StaticResource DisplayTextStyle}"
+                    FontSize="36"
+                    TextWrapping="Wrap"
+                    MaxLines="2"
+                    Foreground="#99000000"
+                    Margin="1,1,0,0"
+                    IsHitTestVisible="False" />
+                <TextBlock
+                    x:Name="HeroTitle"
+                    Style="{StaticResource DisplayTextStyle}"
+                    FontSize="36"
+                    TextWrapping="Wrap"
+                    MaxLines="2" />
+            </Grid>
 
             <StackPanel Orientation="Horizontal" Spacing="12">
                 <TextBlock x:Name="HeroYear"
@@ -98,17 +126,18 @@
             </StackPanel>
         </StackPanel>
 
-        <!-- Nav arrows -->
+        <!-- Nav arrows — hover-reveal (web: lg:opacity-0 lg:group-hover:opacity-100).
+             Start invisible; PointerEntered on RootGrid animates to full. -->
         <Button x:Name="PrevButton" Style="{StaticResource GhostButtonStyle}"
             VerticalAlignment="Center" HorizontalAlignment="Left"
             Margin="8,0,0,0" Width="40" Height="40"
-            Click="PrevButton_Click" Opacity="0.7">
+            Click="PrevButton_Click" Opacity="0">
             <FontIcon Glyph="&#xE76B;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
         </Button>
         <Button x:Name="NextButton" Style="{StaticResource GhostButtonStyle}"
             VerticalAlignment="Center" HorizontalAlignment="Right"
             Margin="0,0,8,0" Width="40" Height="40"
-            Click="NextButton_Click" Opacity="0.7">
+            Click="NextButton_Click" Opacity="0">
             <FontIcon Glyph="&#xE76C;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
         </Button>
 

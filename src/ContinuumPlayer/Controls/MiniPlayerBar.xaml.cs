@@ -120,6 +120,7 @@ public sealed partial class MiniPlayerBar : UserControl
         _isMuted = !_playerService.Mpv.GetMute();
         _playerService.Mpv.SetMute(_isMuted);
         _playerService.IsMuted = _isMuted;
+        _playerService.SaveVolumeState();
         UpdateVolumeIcon();
     }
 
@@ -134,6 +135,7 @@ public sealed partial class MiniPlayerBar : UserControl
             _playerService.Mpv.SetMute(false);
             _playerService.IsMuted = false;
         }
+        _playerService.SaveVolumeState();
         UpdateVolumeIcon();
     }
 
