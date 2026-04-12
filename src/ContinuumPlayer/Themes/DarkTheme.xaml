@@ -187,7 +187,10 @@
     <!-- Web UI: w-[140px] sm:w-[160px] lg:w-[185px]; aspect-[2/3] -->
     <x:Double x:Key="PosterCardWidth">178</x:Double>
     <x:Double x:Key="PosterCardHeight">267</x:Double>
-    <x:Double x:Key="PosterCardTotalHeight">310</x:Double>
+    <!-- Total card height = poster (267) + title margin (12) + title line (~20)
+         + subtitle margin (4) + subtitle line (~16) + breathing room. Was 310,
+         which clipped the year/subtitle on search results. -->
+    <x:Double x:Key="PosterCardTotalHeight">330</x:Double>
 
     <!-- ===== Text Styles ===== -->
     <Style x:Key="DisplayTextStyle" TargetType="TextBlock">
@@ -235,6 +238,117 @@
         <Setter Property="FontSize" Value="{StaticResource FontSizeCaption}" />
         <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
     </Style>
+
+    <!-- ================================================================ -->
+    <!-- F1 THEME OVERRIDES — WinUI implicit control brush table.        -->
+    <!-- Without these, every Button/ComboBox/TextBox/ToggleSwitch/      -->
+    <!-- Slider/ContentDialog/MenuFlyout falls back to WinUI Fluent      -->
+    <!-- system colors (Windows accent blue on hover, light backgrounds  -->
+    <!-- on focus, stock scrollbars). These keys are read by the default  -->
+    <!-- ControlTemplate VisualStates so we can restyle hover/press/     -->
+    <!-- focus without authoring full ControlTemplates.                   -->
+    <!-- ================================================================ -->
+
+    <!-- ── Button ── -->
+    <SolidColorBrush x:Key="ButtonBackground" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{StaticResource SurfaceHoverColor}" />
+    <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="{StaticResource SurfaceRaisedColor}" />
+    <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="ButtonForeground" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="ButtonForegroundPressed" Color="{StaticResource SecondaryTextColor}" />
+    <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="{StaticResource DisabledTextColor}" />
+    <SolidColorBrush x:Key="ButtonBorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="{StaticResource BorderColor}" />
+
+    <!-- ── TextBox / PasswordBox / NumberBox ── -->
+    <SolidColorBrush x:Key="TextControlBackground" Color="{StaticResource InputColor}" />
+    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{StaticResource SurfaceHoverColor}" />
+    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{StaticResource InputColor}" />
+    <SolidColorBrush x:Key="TextControlForeground" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="TextControlForegroundFocused" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="TextControlBorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{StaticResource TertiaryTextColor}" />
+    <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{StaticResource TertiaryTextColor}" />
+    <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="{StaticResource TertiaryTextColor}" />
+
+    <!-- ── ComboBox ── -->
+    <SolidColorBrush x:Key="ComboBoxBackground" Color="{StaticResource InputColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="{StaticResource SurfaceHoverColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="{StaticResource SurfaceRaisedColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="{StaticResource InputColor}" />
+    <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="ComboBoxForeground" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{StaticResource PopoverColor}" />
+    <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemForeground" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemForegroundSelected" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="{StaticResource AccentBackgroundColor}" />
+
+    <!-- ── ToggleSwitch ── -->
+    <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{StaticResource AccentHoverColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="{StaticResource AccentPressedColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchFillOffPointerOver" Color="{StaticResource SurfaceHoverColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="{StaticResource AccentHoverColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchStrokeOffPointerOver" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOn" Color="{StaticResource AccentForegroundColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOff" Color="{StaticResource SecondaryTextColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOffPointerOver" Color="{StaticResource PrimaryTextColor}" />
+
+    <!-- ── Slider ── -->
+    <SolidColorBrush x:Key="SliderTrackFill" Color="{StaticResource SurfaceRaisedColor}" />
+    <SolidColorBrush x:Key="SliderTrackValueFill" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="SliderTrackValueFillPointerOver" Color="{StaticResource AccentHoverColor}" />
+    <SolidColorBrush x:Key="SliderTrackValueFillPressed" Color="{StaticResource AccentPressedColor}" />
+    <SolidColorBrush x:Key="SliderThumbBackground" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="SliderThumbBackgroundPointerOver" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="SliderThumbBackgroundPressed" Color="{StaticResource AccentColor}" />
+
+    <!-- ── ContentDialog ── -->
+    <SolidColorBrush x:Key="ContentDialogBackground" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="ContentDialogBorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ContentDialogTopOverlay" Color="Transparent" />
+    <SolidColorBrush x:Key="ContentDialogSmokeFill" Color="#80000000" />
+
+    <!-- ── MenuFlyout ── -->
+    <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="{StaticResource PopoverColor}" />
+    <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="MenuFlyoutItemBackground" Color="Transparent" />
+    <SolidColorBrush x:Key="MenuFlyoutItemBackgroundPointerOver" Color="{StaticResource SurfaceHoverColor}" />
+    <SolidColorBrush x:Key="MenuFlyoutItemBackgroundPressed" Color="{StaticResource SurfaceRaisedColor}" />
+    <SolidColorBrush x:Key="MenuFlyoutItemForeground" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="MenuFlyoutItemForegroundPointerOver" Color="{StaticResource PrimaryTextColor}" />
+
+    <!-- ── Focus visuals ── -->
+    <SolidColorBrush x:Key="FocusVisualPrimaryBrush" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="FocusVisualSecondaryBrush" Color="Transparent" />
+
+    <!-- ── System accent override (affects all controls' highlight) ── -->
+    <SolidColorBrush x:Key="SystemControlHighlightAccentBrush" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="SystemControlHighlightListAccentLowBrush" Color="{StaticResource AccentBackgroundColor}" />
+    <SolidColorBrush x:Key="SystemControlHighlightListAccentMediumBrush" Color="{StaticResource AccentBackgroundColor}" />
+
+    <!-- ── NavigationView ── -->
+    <SolidColorBrush x:Key="NavigationViewItemForeground" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="{StaticResource PrimaryTextColor}" />
+    <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="{StaticResource SurfaceHoverColor}" />
+    <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="{StaticResource AccentBackgroundColor}" />
+    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="{StaticResource AppBackgroundColor}" />
+
+    <!-- ── HyperlinkButton ── -->
+    <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="{StaticResource AccentHoverColor}" />
+    <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="{StaticResource AccentPressedColor}" />
 
     <!-- ===== Button Styles ===== -->
     <Style x:Key="AccentButtonStyle" TargetType="Button">

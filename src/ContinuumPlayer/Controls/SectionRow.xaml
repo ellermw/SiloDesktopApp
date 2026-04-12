@@ -70,12 +70,17 @@
 
         <!-- B44: Single ScrollViewer + ItemsRepeater hosts both poster and
              landscape layouts. The ItemTemplate swaps based on section type. -->
+        <!-- HorizontalScrollMode=Disabled prevents the mouse wheel from
+             being captured by this horizontal ScrollViewer when the user is
+             scrolling the page vertically. Horizontal movement is handled
+             exclusively by the arrow buttons (hover-reveal). ChangeView
+             still works programmatically with scroll mode disabled. -->
         <ScrollViewer
             x:Name="CardsScrollViewer"
             Grid.Row="1"
             HorizontalScrollBarVisibility="Hidden"
             VerticalScrollBarVisibility="Disabled"
-            HorizontalScrollMode="Enabled"
+            HorizontalScrollMode="Disabled"
             VerticalScrollMode="Disabled"
             ViewChanged="CardsScrollViewer_ViewChanged"
             SizeChanged="CardsScrollViewer_SizeChanged">
