@@ -1021,6 +1021,31 @@ public class PlayerService : IDisposable
                 return;
             }
 
+            // Premature EOF detection: if mpv says "end of file" but we're
+            // nowhere near the actual end (>5% remaining), the HTTP connection
+            // was dropped by the CDN/server. Instead of closing, re-seek to
+            // the current position which forces mpv to re-open the stream.
+            // This handles the "Coneheads 16 minutes left" scenario where a
+            // long-running byte-range connection gets reset by the CDN.
+            var pos = _mpv?.Position ?? 0;
+            var dur = _mpv?.Duration ?? 0;
+            if (dur > 0 && pos > 10 && pos < dur * 0.95)
+            {
+                LogToFile("state_trace.txt", $"  → Premature EOF detected (pos={pos:F1} dur={dur:F1}, {(1 - pos/dur)*100:F0}% remaining). Auto-resuming...");
+                try
+                {
+                    // Re-load the same stream URL at the current position.
+                    // This creates a fresh HTTP connection to the CDN.
+                    _mpv?.Seek(pos);
+                    _mpv?.Play();
+                }
+                catch (Exception ex)
+                {
+                    LogToFile("state_trace.txt", $"  → Auto-resume failed: {ex.Message}");
+                }
+                return;
+            }
+
             // Phase 3b: if the caller set a next-episode hint before playback,
             // show the Playing Next overlay instead of closing the player.
             // The overlay will call ContinuePlayingNextAsync or CancelPlayingNext.
@@ -1033,11 +1058,7 @@ public class PlayerService : IDisposable
 
             // CRITICAL: end-of-file means the session is DONE. We MUST tear
             // down the mpv/playback-manager state or the next PlayAsync call
-            // will race against stale state and crash. Previously this code
-            // just hid the window and invoked PlaybackEnded — but the only
-            // listener (PlayerOverlay.OnPlaybackEnded) was gated behind an
-            // _isActive flag that was never set, so nothing actually
-            // cleaned up. Call CloseAsync ourselves, on the UI thread.
+            // will race against stale state and crash.
             LogToFile("state_trace.txt", "  → Natural end — dispatching CloseAsync to UI thread");
             PlaybackEnded?.Invoke();
             var dispatcher = App.MainWindowInstance?.DispatcherQueue;
