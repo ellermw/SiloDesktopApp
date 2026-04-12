@@ -73,11 +73,27 @@
                         TextChanged="SearchBox_TextChanged"
                         KeyDown="SearchBox_KeyDown"
                         FontSize="15"
-                        Padding="46,14,16,14"
+                        Padding="46,14,40,14"
                         Background="Transparent"
                         BorderThickness="0"
                         CornerRadius="20"
                         Foreground="{StaticResource PrimaryTextBrush}" />
+                    <Button
+                        x:Name="SearchBoxClearButton"
+                        Click="ClearButton_Click"
+                        Visibility="Collapsed"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Padding="8"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        Margin="0,0,8,0"
+                        CornerRadius="12">
+                        <FontIcon
+                            Glyph="&#xE711;"
+                            FontSize="12"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                    </Button>
                 </Grid>
             </Border>
         </StackPanel>
@@ -93,54 +109,23 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- Header with title + count panel (web: page-header in CatalogResults) -->
-            <Grid Grid.Row="0" Margin="40,24,40,20">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
+            <!-- Header with title + inline result count (web: page-header in CatalogResults) -->
+            <StackPanel Grid.Row="0" Margin="40,24,40,20" Spacing="6">
+                <TextBlock
+                    x:Name="ResultsTitle"
+                    FontSize="{StaticResource FontSizeDisplayLarge}"
+                    FontWeight="Bold"
+                    Foreground="{StaticResource PrimaryTextBrush}" />
 
-                <!-- Title + subtitle -->
-                <StackPanel Grid.Column="0" Spacing="6">
+                <!-- Inline result count (web style: "N results" next to header) -->
+                <StackPanel Orientation="Horizontal" Spacing="6">
                     <TextBlock
-                        x:Name="ResultsTitle"
-                        FontSize="{StaticResource FontSizeDisplayLarge}"
-                        FontWeight="Bold"
-                        Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock
-                        Text="Refine the archive by type, era, rating, or genre."
-                        FontSize="14"
+                        x:Name="ResultCountText"
+                        FontSize="{StaticResource FontSizeTitle}"
+                        FontWeight="SemiBold"
                         Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
-
-                <!-- Item count panel (web: surface-panel-subtle rounded-[1.35rem] px-5 py-4) -->
-                <Border
-                    Grid.Column="1"
-                    Background="{StaticResource SurfaceBrush}"
-                    CornerRadius="20"
-                    Padding="20,16"
-                    MinWidth="160"
-                    VerticalAlignment="Center">
-                    <StackPanel HorizontalAlignment="Right">
-                        <TextBlock
-                            Text="AVAILABLE NOW"
-                            FontSize="10"
-                            FontWeight="SemiBold"
-                            CharacterSpacing="160"
-                            Foreground="{StaticResource SecondaryTextBrush}" />
-                        <TextBlock
-                            x:Name="ResultCountText"
-                            FontSize="24"
-                            FontWeight="SemiBold"
-                            Foreground="{StaticResource PrimaryTextBrush}"
-                            Margin="0,4,0,0" />
-                        <TextBlock
-                            x:Name="ResultCountLabel"
-                            FontSize="12"
-                            Foreground="{StaticResource SecondaryTextBrush}" />
-                    </StackPanel>
-                </Border>
-            </Grid>
+            </StackPanel>
 
             <!-- Search bar in results view (web: centered prominent SearchBar) -->
             <Border
@@ -164,11 +149,27 @@
                         TextChanged="SearchBox_TextChanged"
                         KeyDown="SearchBox_KeyDown"
                         FontSize="14"
-                        Padding="40,10,14,10"
+                        Padding="40,10,36,10"
                         Background="Transparent"
                         BorderThickness="0"
                         CornerRadius="20"
                         Foreground="{StaticResource PrimaryTextBrush}" />
+                    <Button
+                        x:Name="ResultsSearchBoxClearButton"
+                        Click="ClearButton_Click"
+                        Visibility="Collapsed"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Padding="8"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        Margin="0,0,6,0"
+                        CornerRadius="12">
+                        <FontIcon
+                            Glyph="&#xE711;"
+                            FontSize="12"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                    </Button>
                 </Grid>
             </Border>
 

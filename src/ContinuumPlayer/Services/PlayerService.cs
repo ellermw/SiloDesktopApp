@@ -1559,6 +1559,17 @@ public class PlayerService : IDisposable
                     dispatch.TryEnqueue(() => _ = SwitchQualityTierAsync(args[1]));
                 }
                 break;
+            case "continuum-volume-changed":
+                if (args.Length > 1 && double.TryParse(args[1], System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out var newVol))
+                {
+                    dispatch.TryEnqueue(() =>
+                    {
+                        Volume = Math.Clamp(newVol, 0, 100);
+                        SaveVolumeState();
+                    });
+                }
+                break;
             case "continuum-next-episode":
                 // User clicked the in-player Next Episode button. Jump
                 // straight to the next episode — ContinuePlayingNextAsync

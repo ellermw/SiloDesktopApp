@@ -48,6 +48,28 @@
                 Spacing="4"
                 Opacity="0">
                 <Button
+                    x:Name="ExploreAllBtn"
+                    Background="Transparent"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="16"
+                    Padding="10,4"
+                    VerticalAlignment="Center"
+                    Visibility="Collapsed"
+                    Click="ExploreAll_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock
+                            Text="Explore all"
+                            FontSize="11"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            VerticalAlignment="Center" />
+                        <FontIcon
+                            Glyph="&#xE76C;"
+                            FontSize="10"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                </Button>
+                <Button
                     x:Name="ScrollLeftBtn"
                     Style="{StaticResource GhostButtonStyle}"
                     Width="32" Height="32"

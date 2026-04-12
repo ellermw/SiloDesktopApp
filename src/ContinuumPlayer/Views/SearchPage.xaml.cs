@@ -65,8 +65,7 @@ public sealed partial class SearchPage : Page
             var mediaCount = ViewModel.TotalCount;
             var peopleCount = ViewModel.PeopleResults.Count;
             var totalDisplay = mediaCount + peopleCount;
-            ResultCountText.Text = totalDisplay.ToString("N0");
-            ResultCountLabel.Text = totalDisplay == 1 ? "result" : "results";
+            ResultCountText.Text = $"{totalDisplay:N0} {(totalDisplay == 1 ? "result" : "results")}";
 
             NoResultsText.Visibility = mediaCount == 0 && peopleCount == 0 && !ViewModel.IsLoading
                 ? Visibility.Visible : Visibility.Collapsed;
@@ -96,6 +95,11 @@ public sealed partial class SearchPage : Page
             else if (textBox == ResultsSearchBox && SearchBox.Text != textBox.Text)
                 SearchBox.Text = textBox.Text;
         }
+
+        // Toggle clear button visibility based on whether text is present
+        var hasText = !string.IsNullOrEmpty(ViewModel.Query);
+        SearchBoxClearButton.Visibility = hasText ? Visibility.Visible : Visibility.Collapsed;
+        ResultsSearchBoxClearButton.Visibility = hasText ? Visibility.Visible : Visibility.Collapsed;
 
         if (string.IsNullOrWhiteSpace(ViewModel.Query))
         {
@@ -141,5 +145,21 @@ public sealed partial class SearchPage : Page
             var nav = App.Services.GetRequiredService<NavigationService>();
             nav.Navigate<PersonDetailPage>(personId);
         }
+    }
+
+    private void ClearButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Clear both search boxes and reset to empty state
+        SearchBox.Text = "";
+        ResultsSearchBox.Text = "";
+        ViewModel.Query = "";
+        ViewModel.Results.Clear();
+        ViewModel.PeopleResults.Clear();
+        SearchBoxClearButton.Visibility = Visibility.Collapsed;
+        ResultsSearchBoxClearButton.Visibility = Visibility.Collapsed;
+        EmptyState.Visibility = Visibility.Visible;
+        ResultsState.Visibility = Visibility.Collapsed;
+        _searchDebounce?.Stop();
+        SearchBox.Focus(FocusState.Programmatic);
     }
 }

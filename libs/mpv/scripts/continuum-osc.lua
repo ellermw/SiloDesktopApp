@@ -2358,20 +2358,18 @@ end
 
 -- Scroll wheel for volume
 local function handle_wheel_up()
-    if state.current_alpha > 0.1 and state.mouse_in_bar then
-        mp.commandv("add", "volume", "5")
-    else
-        mp.commandv("add", "volume", "2")
-    end
+    local new_vol = math.min((state.volume or 100) + 5, 100)
+    mp.commandv("set", "volume", tostring(new_vol))
+    mp.osd_message(string.format("Volume: %d%%", new_vol), 1)
+    mp.commandv("script-message", "continuum-volume-changed", tostring(new_vol))
     show_osc()
 end
 
 local function handle_wheel_down()
-    if state.current_alpha > 0.1 and state.mouse_in_bar then
-        mp.commandv("add", "volume", "-5")
-    else
-        mp.commandv("add", "volume", "-2")
-    end
+    local new_vol = math.max((state.volume or 100) - 5, 0)
+    mp.commandv("set", "volume", tostring(new_vol))
+    mp.osd_message(string.format("Volume: %d%%", new_vol), 1)
+    mp.commandv("script-message", "continuum-volume-changed", tostring(new_vol))
     show_osc()
 end
 

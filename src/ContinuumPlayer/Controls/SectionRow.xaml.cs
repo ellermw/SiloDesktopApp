@@ -26,6 +26,12 @@ public sealed partial class SectionRow : UserControl
     private bool _canScrollPrev;
     private bool _canScrollNext;
 
+    /// <summary>
+    /// Optional callback invoked when the "Explore all" button is clicked.
+    /// When set, the button becomes visible in the title row.
+    /// </summary>
+    public Action? OnViewAll { get; set; }
+
     public SectionRow()
     {
         this.InitializeComponent();
@@ -42,6 +48,9 @@ public sealed partial class SectionRow : UserControl
     private void UpdateSection(HomeSectionWithItems section)
     {
         SectionTitle.Text = section.Title;
+
+        // Show the "Explore all" button only when a navigation callback is set.
+        ExploreAllBtn.Visibility = OnViewAll != null ? Visibility.Visible : Visibility.Collapsed;
 
         // B44: swap the ItemsRepeater template by section type. Landscape for
         // continue_watching / next_up; poster for everything else.
@@ -128,9 +137,10 @@ public sealed partial class SectionRow : UserControl
 
     private void UpdateArrowsOpacity()
     {
-        // Arrows are visible only when hovered AND there's something to scroll
-        // in at least one direction. Otherwise they fade out entirely.
-        bool show = _isHovered && (_canScrollPrev || _canScrollNext);
+        // Panel is visible when hovered AND either there's something to scroll
+        // or the "Explore all" button is available.
+        bool hasExploreAll = OnViewAll != null;
+        bool show = _isHovered && (_canScrollPrev || _canScrollNext || hasExploreAll);
         double target = show ? 1.0 : 0.0;
         if (Math.Abs(ArrowsPanel.Opacity - target) < 0.01) return;
 
@@ -145,6 +155,13 @@ public sealed partial class SectionRow : UserControl
         var sb = new Storyboard();
         sb.Children.Add(anim);
         sb.Begin();
+    }
+
+    // ─── Explore all ────────────────────────────────────────────────────
+
+    private void ExploreAll_Click(object sender, RoutedEventArgs e)
+    {
+        OnViewAll?.Invoke();
     }
 
     // ─── Scroll actions ─────────────────────────────────────────────────

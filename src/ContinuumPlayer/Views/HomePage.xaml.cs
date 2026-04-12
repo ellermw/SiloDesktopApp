@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Navigation;
 using ContinuumPlayer.Controls;
+using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Models.Home;
 using ContinuumPlayer.Helpers;
 using ContinuumPlayer.ViewModels;
@@ -64,11 +65,27 @@ public sealed partial class HomePage : Page
 
         // Non-featured sections as rows
         SectionsPanel.Children.Clear();
+        var mainVm = App.Services.GetRequiredService<MainViewModel>();
         foreach (var section in ViewModel.Sections)
         {
             // F12: sections with empty Items are still loading (skeleton shown
             // by SectionRow). Include them so skeletons render.
-            SectionsPanel.Children.Add(new SectionRow { Section = section });
+            var row = new SectionRow { Section = section };
+
+            // Wire "Explore all" for library-backed section types.
+            var library = TryResolveLibrary(section, mainVm);
+            if (library != null)
+            {
+                var lib = library; // capture for closure
+                row.OnViewAll = () =>
+                {
+                    var nav = App.Services.GetRequiredService<NavigationService>();
+                    nav.Navigate<LibraryPage>(lib);
+                };
+                row.Section = section; // re-set so UpdateSection picks up OnViewAll visibility
+            }
+
+            SectionsPanel.Children.Add(row);
         }
 
         // Empty state when the server returned zero sections.
@@ -120,6 +137,51 @@ public sealed partial class HomePage : Page
         {
             DispatcherQueue.TryEnqueue(UpdateUndoBanner);
         }
+    }
+
+    // Section types that represent browseable library content. These are the
+    // server-generated home sections that are scoped to a specific library and
+    // make sense to "Explore all" by navigating to the full library page.
+    private static readonly HashSet<string> BrowseableSectionTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "recently_added",
+        "popular",
+        "genre",
+        "collection",
+    };
+
+    /// <summary>
+    /// Attempt to resolve the <see cref="Library"/> that a home section belongs
+    /// to. The server section ID typically follows the format
+    /// <c>{section_type}_{library_id}</c> (e.g. "recently_added_1"). Returns
+    /// null when the section type is not library-browseable or no matching
+    /// library is found.
+    /// </summary>
+    private static Library? TryResolveLibrary(HomeSectionWithItems section, MainViewModel mainVm)
+    {
+        if (!BrowseableSectionTypes.Contains(section.SectionType))
+            return null;
+
+        // Try to extract a trailing numeric library ID from the section ID.
+        // Expected format: "{type}_{library_id}" or "{type}:{library_id}".
+        var id = section.Id;
+        if (string.IsNullOrEmpty(id))
+            return null;
+
+        int lastSep = id.LastIndexOfAny(['_', ':']);
+        if (lastSep < 0 || lastSep >= id.Length - 1)
+            return null;
+
+        if (!int.TryParse(id.AsSpan(lastSep + 1), out int libraryId))
+            return null;
+
+        foreach (var lib in mainVm.Libraries)
+        {
+            if (lib.Id == libraryId)
+                return lib;
+        }
+
+        return null;
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
