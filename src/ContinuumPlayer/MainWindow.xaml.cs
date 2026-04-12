@@ -281,7 +281,24 @@ public sealed partial class MainWindow : Window
             AppWindow.Title = DocumentTitle.AppName;
             return;
         }
+
+        // For pages that display a specific item, use a dynamic title
+        // instead of the generic page-type label. The actual name gets
+        // set later (after the async load) via SetDynamicTitle from the
+        // page's code-behind. Start with the generic label as a placeholder
+        // so there's never a blank title bar.
         AppWindow.Title = DocumentTitle.FromPageType(pageType);
+    }
+
+    /// <summary>
+    /// Called by pages (ItemDetailPage, LibraryPage, PersonDetailPage, etc.)
+    /// after their data loads to replace the generic window title with the
+    /// actual item/library/person name.
+    /// </summary>
+    public void SetDynamicTitle(string label)
+    {
+        if (AppWindow != null)
+            AppWindow.Title = DocumentTitle.FromLabel(label);
     }
 
     private async void NavView_Loaded(object sender, RoutedEventArgs e)

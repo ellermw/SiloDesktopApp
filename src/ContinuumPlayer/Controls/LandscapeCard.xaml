@@ -14,12 +14,7 @@
         x:Name="RootGrid"
         Width="280"
         Background="Transparent"
-        CacheMode="BitmapCache"
-        RenderTransformOrigin="0.5,0.5">
-
-        <Grid.RenderTransform>
-            <CompositeTransform x:Name="HoverTransform" ScaleX="1" ScaleY="1" />
-        </Grid.RenderTransform>
+        CacheMode="BitmapCache">
 
         <Grid.RowDefinitions>
             <RowDefinition Height="158" />
@@ -36,13 +31,19 @@
                 Background="{StaticResource CardBackgroundBrush}"
                 CornerRadius="12" />
 
-            <!-- Actual backdrop image -->
+            <!-- Actual backdrop image — hover zoom on image only (not the
+                 whole card) so the rounded clip frame stays still. -->
             <Image
                 x:Name="BackdropImage"
                 Stretch="UniformToFill"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"
-                Opacity="0" />
+                Opacity="0"
+                RenderTransformOrigin="0.5,0.5">
+                <Image.RenderTransform>
+                    <CompositeTransform x:Name="HoverTransform" ScaleX="1" ScaleY="1" />
+                </Image.RenderTransform>
+            </Image>
 
             <!-- Bottom gradient overlay -->
             <Border VerticalAlignment="Bottom" Height="64" IsHitTestVisible="False">

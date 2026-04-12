@@ -209,7 +209,21 @@ public sealed partial class PosterCard : UserControl
                 if (ct.IsCancellationRequested) return;
 
                 PosterImage.Source = bitmapImage;
-                PosterImage.Opacity = 1;
+                // Smooth fade-in matching webui transition-opacity duration-300
+                var fadeIn = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+                {
+                    To = 1,
+                    Duration = new Duration(TimeSpan.FromMilliseconds(250)),
+                    EasingFunction = new Microsoft.UI.Xaml.Media.Animation.CubicEase
+                    {
+                        EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut
+                    },
+                };
+                Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fadeIn, PosterImage);
+                Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fadeIn, "Opacity");
+                var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+                sb.Children.Add(fadeIn);
+                sb.Begin();
             }
             finally
             {

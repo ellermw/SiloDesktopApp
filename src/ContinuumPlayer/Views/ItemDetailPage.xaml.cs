@@ -441,6 +441,10 @@ public sealed partial class ItemDetailPage : Page
             YearText.Text = item.Year > 0 ? item.Year.ToString() : "";
         }
 
+        // F7: set dynamic window title to the item's name
+        if (App.MainWindowInstance is MainWindow mw)
+            mw.SetDynamicTitle(item.Title);
+
         // Content rating in pill badge
         if (!string.IsNullOrEmpty(item.ContentRating))
         {

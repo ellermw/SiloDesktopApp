@@ -168,7 +168,21 @@ public sealed partial class LandscapeCard : UserControl
             if (ct.IsCancellationRequested) return;
 
             BackdropImage.Source = bitmapImage;
-            BackdropImage.Opacity = 1;
+            // Smooth fade-in matching webui transition-opacity duration-300
+            var fadeIn = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+            {
+                To = 1,
+                Duration = new Duration(TimeSpan.FromMilliseconds(250)),
+                EasingFunction = new Microsoft.UI.Xaml.Media.Animation.CubicEase
+                {
+                    EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut
+                },
+            };
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fadeIn, BackdropImage);
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fadeIn, "Opacity");
+            var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+            sb.Children.Add(fadeIn);
+            sb.Begin();
         }
         catch (OperationCanceledException) { }
         catch { }

@@ -14,19 +14,18 @@
     <Grid
         x:Name="RootGrid"
         Width="{StaticResource PosterCardWidth}"
-        Background="Transparent"
-        RenderTransformOrigin="0.5,0.5">
-
-        <Grid.RenderTransform>
-            <CompositeTransform x:Name="HoverTransform" ScaleX="1" ScaleY="1" />
-        </Grid.RenderTransform>
+        Background="Transparent">
 
         <Grid.RowDefinitions>
             <RowDefinition Height="267" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Poster image area (2:3 aspect, rounded-xl = 12px) -->
+        <!-- Poster image area (2:3 aspect, rounded-xl = 12px).
+             Scale transform lives HERE (not on the whole card) so the
+             hover zoom only affects the poster, not the text below.
+             Scaling the RootGrid caused overflow clipping in the
+             ItemsRepeater's fixed-height cells. -->
         <Grid
             Grid.Row="0"
             CornerRadius="{StaticResource PosterCornerRadius}">
@@ -44,13 +43,21 @@
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center" />
 
-            <!-- Actual poster image -->
+            <!-- Actual poster image — scale transform for hover zoom lives here
+                 (not on the parent Grid) so the image zooms INSIDE the
+                 rounded clip frame, matching webui's overflow:hidden +
+                 group-hover:scale-105 pattern. -->
             <Image
                 x:Name="PosterImage"
                 Stretch="UniformToFill"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"
-                Opacity="0" />
+                Opacity="0"
+                RenderTransformOrigin="0.5,0.5">
+                <Image.RenderTransform>
+                    <CompositeTransform x:Name="HoverTransform" ScaleX="1" ScaleY="1" />
+                </Image.RenderTransform>
+            </Image>
 
             <!-- Fallback title (webui: centered text line-clamp-3 when no
                  poster URL). Hidden when a poster loads successfully. -->

@@ -91,6 +91,10 @@ public sealed partial class LibraryPage : Page
             LibraryTitle.Text = library.Name;
             ViewModel.Library = library;
 
+            // F7: set window title to the library name
+            if (App.MainWindowInstance is MainWindow mw)
+                mw.SetDynamicTitle(library.Name);
+
             // B42: Restore previously-viewed tab + filters for this library if any.
             // Falls back to fresh defaults on first visit.
             _viewStateByLibrary.TryGetValue(library.Id, out var state);

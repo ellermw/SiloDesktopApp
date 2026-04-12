@@ -76,6 +76,7 @@
                         Padding="46,14,16,14"
                         Background="Transparent"
                         BorderThickness="0"
+                        CornerRadius="20"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                 </Grid>
             </Border>
@@ -166,6 +167,7 @@
                         Padding="40,10,14,10"
                         Background="Transparent"
                         BorderThickness="0"
+                        CornerRadius="20"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                 </Grid>
             </Border>

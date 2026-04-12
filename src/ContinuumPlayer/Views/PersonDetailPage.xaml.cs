@@ -51,6 +51,8 @@ public sealed partial class PersonDetailPage : Page
         if (person == null) return;
 
         PersonName.Text = person.Name;
+        if (App.MainWindowInstance is MainWindow mw)
+            mw.SetDynamicTitle(person.Name);
         AgeText.Text = ViewModel.AgeDisplay;
         DatesText.Text = ViewModel.DatesDisplay;
 
