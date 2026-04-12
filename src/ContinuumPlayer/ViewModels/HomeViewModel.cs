@@ -205,22 +205,42 @@ public partial class HomeViewModel : ObservableObject,
                 var resp = await _homeApi.GetSectionItemsAsync(section.Id);
                 if (resp.Section?.Items != null && resp.Section.Items.Count > 0)
                 {
-                    // Replace the empty placeholder items list in place.
-                    // Find the placeholder by reference so we mutate the
-                    // collection already bound to the UI.
                     section.Items = resp.Section.Items;
-                    // Reassign the reference in the ObservableCollection so
-                    // WinUI picks up the new items (HomeSectionWithItems is
-                    // not itself observable — HomePage rebuilds rows when
-                    // the collection changes).
                     ReplaceInBoundCollection(section);
                 }
+                else
+                {
+                    // Section fetched but has no items (e.g. empty Next Up).
+                    // Remove the placeholder so the skeleton row disappears
+                    // instead of flashing indefinitely.
+                    RemoveFromBoundCollection(section.Id);
+                }
             }
-            catch { /* per-section failure is non-fatal; leave empty. */ }
+            catch { /* per-section failure is non-fatal; leave skeleton. */ }
             finally { gate.Release(); }
         }).ToList();
 
         await Task.WhenAll(tasks);
+    }
+
+    private void RemoveFromBoundCollection(string sectionId)
+    {
+        for (int i = FeaturedSections.Count - 1; i >= 0; i--)
+        {
+            if (FeaturedSections[i].Id == sectionId)
+            {
+                FeaturedSections.RemoveAt(i);
+                return;
+            }
+        }
+        for (int i = Sections.Count - 1; i >= 0; i--)
+        {
+            if (Sections[i].Id == sectionId)
+            {
+                Sections.RemoveAt(i);
+                return;
+            }
+        }
     }
 
     private void ReplaceInBoundCollection(HomeSectionWithItems updated)
