@@ -29,8 +29,6 @@ public sealed class MpvVideoWindow : IDisposable
     private const int SW_HIDE = 0;
     private const int SW_SHOWNOACTIVATE = 4;
     private const int GWL_STYLE = -16;
-    private static readonly IntPtr HWND_TOPMOST = new(-1);
-    private static readonly IntPtr HWND_NOTOPMOST = new(-2);
 
     public event Action? EscapeRequested;
     public event Action? MinimizeRequested;
@@ -195,20 +193,25 @@ public sealed class MpvVideoWindow : IDisposable
         GetMonitorInfoW(monitor, ref mi);
         _fullscreenRect = mi.rcMonitor;
         _isFullscreen = true;
-        // Position fullscreen, TOPMOST, activate
-        SetWindowPos(_hwnd, HWND_TOPMOST,
+        // Position fullscreen and bring to top, but NOT topmost — topmost
+        // forces the player above every other window including file
+        // explorer/browsers the user drags over, which is more aggressive
+        // than the webui (a normal browser tab). HWND_TOP moves the window
+        // to the front of non-topmost windows, same Z-order as any focused
+        // window, so clicking away lets other windows cover it naturally.
+        SetWindowPos(_hwnd, HWND_TOP,
             mi.rcMonitor.Left, mi.rcMonitor.Top,
             mi.rcMonitor.Right - mi.rcMonitor.Left,
             mi.rcMonitor.Bottom - mi.rcMonitor.Top,
             SWP_SHOWWINDOW);
         SetForegroundWindow(_hwnd);
-        // Re-assert topmost after 200ms — mpv's internal fullscreen handling
-        // may reposition the window after our call
+        // Re-assert position after 200ms — mpv's internal fullscreen handling
+        // may reposition the window after our call.
         System.Threading.Tasks.Task.Delay(200).ContinueWith(_ =>
         {
             if (_isFullscreen && _hwnd != IntPtr.Zero)
             {
-                SetWindowPos(_hwnd, HWND_TOPMOST,
+                SetWindowPos(_hwnd, HWND_TOP,
                     _fullscreenRect.Left, _fullscreenRect.Top,
                     _fullscreenRect.Right - _fullscreenRect.Left,
                     _fullscreenRect.Bottom - _fullscreenRect.Top,
@@ -226,11 +229,8 @@ public sealed class MpvVideoWindow : IDisposable
     {
         if (_hwnd == IntPtr.Zero) return;
         _isFullscreen = false;
-        // Owned window — just reposition to client area, z-order is automatic
+        // Owned window — just reposition to client area, z-order is automatic.
         MatchParentPosition();
-        // Drop from TOPMOST (fullscreen sets it)
-        SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-            SWP_NOACTIVATE | 0x0001 /*SWP_NOSIZE*/ | 0x0002 /*SWP_NOMOVE*/);
     }
 
     public bool IsFullscreen => _isFullscreen;

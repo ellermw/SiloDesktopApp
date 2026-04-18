@@ -1949,8 +1949,11 @@ check_skip_markers = function()
     local was_visible = state.skip_visible
     state.skip_visible = false
 
-    -- Check intro range
-    if state.intro_start > 0 and state.intro_end > state.intro_start then
+    -- Check intro range. Webui parity (VideoPlayer.tsx): rely on
+    -- end > start to mean "marker present with duration"; earlier code
+    -- also required start > 0, which wrongly hid Skip Intro whenever
+    -- the intro began at position 0 (common on streaming-first shows).
+    if state.intro_end > state.intro_start then
         if pos >= state.intro_start and pos < state.intro_end then
             state.skip_visible = true
             state.skip_label = "Skip Intro"
@@ -1958,8 +1961,8 @@ check_skip_markers = function()
         end
     end
 
-    -- Check credits range (credits takes priority if overlapping)
-    if state.credits_start > 0 and state.credits_end > state.credits_start then
+    -- Check credits range (credits takes priority if overlapping).
+    if state.credits_end > state.credits_start then
         if pos >= state.credits_start and pos < state.credits_end then
             state.skip_visible = true
             state.skip_label = "Skip Credits"
@@ -1996,8 +1999,7 @@ check_next_episode_button = function()
         return
     end
 
-    local in_credits = state.credits_start > 0
-                   and state.credits_end > state.credits_start
+    local in_credits = state.credits_end > state.credits_start
                    and pos >= state.credits_start
                    and pos < state.credits_end
     local near_end = pos >= dur * 0.95

@@ -31,6 +31,7 @@ public class PlayerService : IDisposable
     /// </summary>
     private int? _pendingSubtitleSelection;
     private volatile bool _qualitySwitchActive;
+    private bool _playingNextShown;
     private string _activeQualityTier = "original";
     private HlsProxy? _hlsProxy;
     private PlaybackWebSocket? _webSocket;
@@ -998,6 +999,7 @@ public class PlayerService : IDisposable
             Position = pos;
             _playbackManager?.UpdatePosition(pos, IsPaused);
             PositionChanged?.Invoke(pos);
+            MaybeFirePlayingNextAtCredits(pos);
         };
         _mpv.PositionChanged += _mpvPositionHandler;
 
@@ -1023,6 +1025,7 @@ public class PlayerService : IDisposable
             IsLoading = false;
             _switchingContent = false; // Safe to receive PlaybackEnded now
             _qualitySwitchActive = false;
+            _playingNextShown = false;
             App.MainWindowInstance?.HideLoadingOverlay();
             LogToFile("state_trace.txt", "FileLoaded fired");
 
@@ -1115,9 +1118,17 @@ public class PlayerService : IDisposable
             // Phase 3b: if the caller set a next-episode hint before playback,
             // show the Playing Next overlay instead of closing the player.
             // The overlay will call ContinuePlayingNextAsync or CancelPlayingNext.
+            // Fallback path for episodes without a credits marker — the normal
+            // path fires at credits.Start via MaybeFirePlayingNextAtCredits.
             if (!string.IsNullOrEmpty(NextEpisodeContentId))
             {
-                LogToFile("state_trace.txt", "  → Next-episode prompt requested");
+                if (_playingNextShown)
+                {
+                    LogToFile("state_trace.txt", "  → Next-episode prompt already shown at credits.Start");
+                    return;
+                }
+                LogToFile("state_trace.txt", "  → Next-episode prompt requested (end-of-file fallback)");
+                _playingNextShown = true;
                 ShowPlayingNextRequested?.Invoke();
                 return;
             }
@@ -1593,6 +1604,22 @@ public class PlayerService : IDisposable
         var json = System.Text.Json.JsonSerializer.Serialize(jsonTracks);
         _mpv.SendScriptMessage("osc-set-subtitles", json);
         _mpv.SendScriptMessage("osc-set-active-subtitle", "-1");
+    }
+
+    // Webui parity (useNextEpisode.ts): fire the cinematic Playing Next
+    // overlay as soon as position crosses into the credits marker, instead
+    // of waiting for end-of-file. _playingNextShown guards against refiring
+    // every mpv position tick; it resets on FileLoaded.
+    private void MaybeFirePlayingNextAtCredits(double pos)
+    {
+        if (_playingNextShown) return;
+        if (string.IsNullOrEmpty(NextEpisodeContentId)) return;
+        var credits = _playbackManager?.WatchDetail?.Credits;
+        if (credits == null) return;
+        if (credits.End <= credits.Start) return;
+        if (pos < credits.Start) return;
+        _playingNextShown = true;
+        ShowPlayingNextRequested?.Invoke();
     }
 
     private void SendMarkersToOsc()
