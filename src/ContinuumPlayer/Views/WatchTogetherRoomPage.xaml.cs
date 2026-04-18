@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using ContinuumPlayer.Core.Models.Playback;
+using ContinuumPlayer.Services;
 using ContinuumPlayer.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
 
@@ -50,6 +51,31 @@ public sealed partial class WatchTogetherRoomPage : Page
         UpdateRoomUi();
         UpdateConnectionUi();
         UpdateSuggestionsUi();
+
+        // Register with the playback-sync coordinator so inbound transport
+        // commands reach mpv and local playback sessions get attached.
+        var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
+        coordinator.PlaybackStartRequested -= OnCoordinatorStartRequested;
+        coordinator.PlaybackStartRequested += OnCoordinatorStartRequested;
+        coordinator.SetActiveRoom(ViewModel);
+    }
+
+    /// <summary>
+    /// Raised by the coordinator when the room transitions to phase=playing on
+    /// a new selection_revision. Kicks off local playback so all members share
+    /// the experience without the host having to manually navigate each guest.
+    /// </summary>
+    private void OnCoordinatorStartRequested(string contentId)
+    {
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            try
+            {
+                var player = App.Services.GetRequiredService<ContinuumPlayer.Services.PlayerService>();
+                await player.PlayAsync(contentId);
+            }
+            catch { }
+        });
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -61,6 +87,13 @@ public sealed partial class WatchTogetherRoomPage : Page
             ViewModel.Suggestions.CollectionChanged -= Suggestions_CollectionChanged;
             _subscribed = false;
         }
+        try
+        {
+            var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
+            coordinator.PlaybackStartRequested -= OnCoordinatorStartRequested;
+            coordinator.ClearActiveRoom();
+        }
+        catch { }
         ViewModel.Dispose();
     }
 
@@ -104,6 +137,11 @@ public sealed partial class WatchTogetherRoomPage : Page
         CopyInviteButton.Visibility = hasInvite ? Visibility.Visible : Visibility.Collapsed;
         PolicyButton.Visibility = isHost ? Visibility.Visible : Visibility.Collapsed;
         EndButton.Visibility = isHost ? Visibility.Visible : Visibility.Collapsed;
+
+        // Host content-search section — only for hosts during lobby (not
+        // already playing). Hidden for guests and vote-mode rooms.
+        HostPickSection.Visibility = (isHost && hasRoom && !isPlaying && !isVoteMode)
+            ? Visibility.Visible : Visibility.Collapsed;
 
         if (isHost && room != null)
         {
@@ -150,12 +188,21 @@ public sealed partial class WatchTogetherRoomPage : Page
         SuggestionsPanel.Visibility = hasRoom && isVoteMode ? Visibility.Visible : Visibility.Collapsed;
         UpdateSuggestionsUi();
 
-        // Auto-start stub — see VM comment. In this pass we just acknowledge so the flag
-        // doesn't fire repeatedly; wiring to PlayerService is a follow-up.
+        // Auto-start: when the room has selected content and we haven't started yet,
+        // launch playback via PlayerService.
         if (ViewModel.ShouldAutoStartPlayback)
         {
             ViewModel.AcknowledgePlaybackStart();
-            // TODO: PlayerService.PlayAsync(room.SelectedContentId, room.SelectedFileId, ...) with room sync.
+            var selectedContentId = ViewModel.Room?.SelectedContentId;
+            if (!string.IsNullOrEmpty(selectedContentId))
+            {
+                try
+                {
+                    var player = App.Services.GetRequiredService<Services.PlayerService>();
+                    _ = player.PlayAsync(selectedContentId);
+                }
+                catch { }
+            }
         }
     }
 
@@ -230,5 +277,140 @@ public sealed partial class WatchTogetherRoomPage : Page
 
         if (target.VotedByMe) await ViewModel.UnvoteAsync(id);
         else await ViewModel.VoteAsync(id);
+    }
+
+    // ── Host content search ──────────────────────────────────────────────
+
+    private async void HostSearchBtn_Click(object sender, RoutedEventArgs e) => await RunHostSearchAsync();
+
+    private async void HostSearchBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Enter) await RunHostSearchAsync();
+    }
+
+    private async Task RunHostSearchAsync()
+    {
+        var query = HostSearchBox.Text?.Trim();
+        if (string.IsNullOrEmpty(query))
+        {
+            HostSearchResults.ItemsSource = null;
+            return;
+        }
+        try
+        {
+            var catalogApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.CatalogApi>();
+            var result = await catalogApi.SearchAsync(query, limit: 20);
+            HostSearchResults.ItemsSource = result?.Items;
+        }
+        catch
+        {
+            // Keep the UI usable on transient errors — empty list is fine.
+            HostSearchResults.ItemsSource = null;
+        }
+    }
+
+    private async void HostSearchResult_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not string contentId) return;
+        if (string.IsNullOrEmpty(ViewModel.RoomId)) return;
+
+        try
+        {
+            var playbackApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.PlaybackApi>();
+            var resp = await playbackApi.SelectWatchTogetherRoomItemAsync(
+                ViewModel.RoomId!, contentId);
+            ViewModel.Room = resp.Room;
+            HostSearchResults.ItemsSource = null;
+            HostSearchBox.Text = "";
+        }
+        catch { }
+    }
+
+    // ===== Series Drill-Down =====
+
+    private string? _drillDownSeriesId;
+
+    /// <summary>
+    /// Called when a search result is selected. Movies go directly to candidate spotlight.
+    /// Series drill down into seasons → episodes.
+    /// </summary>
+    public async void OnSearchResultSelected(ContinuumPlayer.Core.Models.Home.MediaItem item)
+    {
+        if (item.Type == "movie")
+        {
+            ShowCandidateSpotlight(item);
+            return;
+        }
+
+        if (item.Type == "series")
+        {
+            _drillDownSeriesId = item.ContentId;
+            await ShowSeasonsAsync(item);
+        }
+    }
+
+    private async Task ShowSeasonsAsync(ContinuumPlayer.Core.Models.Home.MediaItem series)
+    {
+        HostSearchResults.Visibility = Visibility.Collapsed;
+        DrillDownPanel.Visibility = Visibility.Visible;
+        CandidateSpotlight.Visibility = Visibility.Collapsed;
+        DrillDownTitle.Text = $"{series.Title} — Seasons";
+        DrillDownBackText.Text = "Back to results";
+
+        try
+        {
+            var catalogApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.CatalogApi>();
+            var seasonsResp = await catalogApi.GetSeasonsAsync(series.ContentId);
+            var seasonItems = seasonsResp.Seasons.Select(s => new ContinuumPlayer.Core.Models.Home.MediaItem
+            {
+                ContentId = s.ContentId,
+                Title = $"Season {s.SeasonNumber}",
+                Type = "season",
+                PosterUrl = s.PosterUrl,
+            }).ToList();
+            DrillDownItems.ItemsSource = seasonItems;
+        }
+        catch { DrillDownItems.ItemsSource = null; }
+    }
+
+    private void DrillDownBack_Click(object sender, RoutedEventArgs e)
+    {
+        DrillDownPanel.Visibility = Visibility.Collapsed;
+        CandidateSpotlight.Visibility = Visibility.Collapsed;
+        HostSearchResults.Visibility = Visibility.Visible;
+    }
+
+    private void ShowCandidateSpotlight(ContinuumPlayer.Core.Models.Home.MediaItem item)
+    {
+        HostSearchResults.Visibility = Visibility.Collapsed;
+        DrillDownPanel.Visibility = Visibility.Collapsed;
+        CandidateSpotlight.Visibility = Visibility.Visible;
+
+        CandidateTitle.Text = item.Title ?? "";
+        CandidateMeta.Text = $"{item.Year}  ·  {item.Type}";
+        CandidateOverview.Text = item.Overview ?? "";
+        CandidatePlayBtn.Tag = item.ContentId;
+    }
+
+    private async void CandidatePlay_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not string contentId) return;
+        if (string.IsNullOrEmpty(ViewModel.RoomId)) return;
+
+        try
+        {
+            var playbackApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.PlaybackApi>();
+            var resp = await playbackApi.SelectWatchTogetherRoomItemAsync(ViewModel.RoomId!, contentId);
+            ViewModel.Room = resp.Room;
+            CandidateSpotlight.Visibility = Visibility.Collapsed;
+            HostSearchBox.Text = "";
+        }
+        catch { }
+    }
+
+    private void CandidateBack_Click(object sender, RoutedEventArgs e)
+    {
+        CandidateSpotlight.Visibility = Visibility.Collapsed;
+        HostSearchResults.Visibility = Visibility.Visible;
     }
 }

@@ -103,24 +103,63 @@
             </Border>
         </Grid>
 
-        <!-- Loading -->
-        <ProgressRing
-            Grid.Row="1"
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
+        <!-- Skeleton while recommendations load (approximates row layout). -->
+        <ScrollViewer Grid.Row="1"
+                      VerticalScrollBarVisibility="Disabled"
+                      Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+            <StackPanel Padding="40,0,40,24" Spacing="36">
+                <StackPanel Spacing="12">
+                    <controls:SkeletonText Width="180" Height="18" HorizontalAlignment="Left" />
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Spacing="12">
+                    <controls:SkeletonText Width="240" Height="18" HorizontalAlignment="Left" />
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Spacing="12">
+                    <controls:SkeletonText Width="200" Height="18" HorizontalAlignment="Left" />
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                    </StackPanel>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
 
         <!-- Error -->
-        <TextBlock
+        <StackPanel
             Grid.Row="1"
-            Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
-            Foreground="{StaticResource ErrorBrush}"
-            Style="{StaticResource BodyTextStyle}"
             HorizontalAlignment="Center"
-            VerticalAlignment="Center" />
+            VerticalAlignment="Center"
+            Spacing="12"
+            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+            <TextBlock
+                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                Foreground="{StaticResource ErrorBrush}"
+                Style="{StaticResource BodyTextStyle}"
+                HorizontalAlignment="Center" />
+            <Button Content="Retry" Style="{StaticResource OutlineButtonStyle}"
+                    HorizontalAlignment="Center"
+                    Command="{x:Bind ViewModel.LoadCommand}" />
+        </StackPanel>
 
         <!-- All recommendation rows (web: rows.map(row => <MediaCarousel title={row.label}>)) -->
         <ScrollViewer

@@ -10,6 +10,10 @@
     Title="Continuum">
 
     <Grid Background="{StaticResource AppBackgroundBrush}">
+        <Grid.KeyboardAccelerators>
+            <!-- Ctrl+K opens the global search palette (webui parity). -->
+            <KeyboardAccelerator Modifiers="Control" Key="K" Invoked="GlobalSearchAccelerator_Invoked" />
+        </Grid.KeyboardAccelerators>
         <NavigationView
             x:Name="NavView"
             IsBackButtonVisible="Collapsed"
@@ -69,8 +73,28 @@
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
 
-                <!-- LIBRARIES section header -->
-                <NavigationViewItemHeader x:Name="LibrariesHeader" Content="LIBRARIES" />
+                <!-- LIBRARIES section header (collapsible — click toggles library visibility) -->
+                <NavigationViewItem x:Name="LibrariesHeader" SelectsOnInvoked="False"
+                                    Tapped="LibrariesHeader_Tapped">
+                    <NavigationViewItem.Content>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon x:Name="LibrariesChevron" Glyph="&#xE972;" FontSize="10"
+                                      Foreground="{StaticResource TertiaryTextBrush}"
+                                      VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock Grid.Column="1" Text="LIBRARIES" FontSize="10" FontWeight="SemiBold"
+                                       CharacterSpacing="220"
+                                       Foreground="{StaticResource TertiaryTextBrush}"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+                    </NavigationViewItem.Content>
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="" FontSize="0" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
 
                 <!-- Libraries inserted dynamically after this point -->
 
@@ -135,28 +159,6 @@
                         Margin="12,0,12,8"
                         Opacity="0.7" />
 
-                    <!-- Settings nav item -->
-                    <Button
-                        x:Name="SettingsButton"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        HorizontalAlignment="Stretch"
-                        HorizontalContentAlignment="Left"
-                        Padding="16,10"
-                        Margin="4,0"
-                        CornerRadius="12"
-                        Click="Settings_Click">
-                        <StackPanel Orientation="Horizontal" Spacing="10">
-                            <FontIcon Glyph="&#xE713;" FontSize="18" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock
-                                Text="Settings"
-                                Foreground="{StaticResource SecondaryTextBrush}"
-                                VerticalAlignment="Center"
-                                FontSize="13"
-                                FontWeight="Medium" />
-                        </StackPanel>
-                    </Button>
-
                     <!-- Admin nav item (visible only for admin users) -->
                     <Button
                         x:Name="AdminButton"
@@ -180,7 +182,7 @@
                         </StackPanel>
                     </Button>
 
-                    <!-- Profile button -->
+                    <!-- Profile button with dropdown (webui: Settings + Switch Profile + Logout inside avatar dropdown) -->
                     <Button
                         x:Name="ProfileFooterButton"
                         Background="Transparent"
@@ -214,25 +216,81 @@
                                 FontWeight="Medium" />
                         </StackPanel>
                         <Button.Flyout>
-                            <MenuFlyout Placement="Top">
-                                <MenuFlyoutItem
-                                    x:Name="SwitchProfileMenuItem"
-                                    Text="Switch Profile"
-                                    Click="SwitchProfile_Click">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE748;" />
-                                    </MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutSeparator />
-                                <MenuFlyoutItem
-                                    x:Name="LogoutMenuItem"
-                                    Text="Logout"
-                                    Click="Logout_Click">
-                                    <MenuFlyoutItem.Icon>
-                                        <FontIcon Glyph="&#xE711;" />
-                                    </MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                            </MenuFlyout>
+                            <Flyout Placement="Top">
+                                <Flyout.FlyoutPresenterStyle>
+                                    <Style TargetType="FlyoutPresenter">
+                                        <Setter Property="Padding" Value="8" />
+                                        <Setter Property="MinWidth" Value="260" />
+                                        <Setter Property="MaxWidth" Value="300" />
+                                        <Setter Property="CornerRadius" Value="16" />
+                                    </Style>
+                                </Flyout.FlyoutPresenterStyle>
+                                <StackPanel Spacing="4">
+                                    <!-- Avatar + name header -->
+                                    <StackPanel Orientation="Horizontal" Spacing="12" Margin="8,8,8,4">
+                                        <Border Width="36" Height="36" CornerRadius="18"
+                                                Background="{StaticResource AccentBrush}">
+                                            <TextBlock x:Name="ProfileDropdownInitial" Text="?"
+                                                       FontSize="14" FontWeight="Bold"
+                                                       Foreground="{StaticResource AccentForegroundBrush}"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                        <StackPanel VerticalAlignment="Center" Spacing="0">
+                                            <TextBlock x:Name="ProfileDropdownName" Text="Profile"
+                                                       FontSize="14" FontWeight="SemiBold"
+                                                       Foreground="{StaticResource PrimaryTextBrush}" />
+                                            <TextBlock x:Name="ProfileDropdownUsername" Text=""
+                                                       FontSize="11"
+                                                       Foreground="{StaticResource TertiaryTextBrush}" />
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <!-- Theme switcher dots -->
+                                    <StackPanel x:Name="ThemeDotsPanel" Orientation="Horizontal"
+                                                Spacing="8" Margin="8,4,8,4"
+                                                Visibility="Collapsed" />
+
+                                    <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" Margin="0,4" />
+
+                                    <!-- Settings -->
+                                    <Button Background="Transparent" BorderThickness="0"
+                                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                            Padding="12,10" CornerRadius="10"
+                                            Click="Settings_Click">
+                                        <StackPanel Orientation="Horizontal" Spacing="10">
+                                            <FontIcon Glyph="&#xE713;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
+                                            <TextBlock Text="Settings" FontSize="13" FontWeight="Medium"
+                                                       Foreground="{StaticResource PrimaryTextBrush}" />
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" Margin="0,2" />
+
+                                    <!-- Switch Profile -->
+                                    <Button Background="Transparent" BorderThickness="0"
+                                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                            Padding="12,10" CornerRadius="10"
+                                            Click="SwitchProfile_Click">
+                                        <StackPanel Orientation="Horizontal" Spacing="10">
+                                            <FontIcon Glyph="&#xE748;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
+                                            <TextBlock Text="Switch Profile" FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{StaticResource PrimaryTextBrush}" />
+                                        </StackPanel>
+                                    </Button>
+
+                                    <!-- Logout -->
+                                    <Button Background="Transparent" BorderThickness="0"
+                                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                            Padding="12,10" CornerRadius="10"
+                                            Click="Logout_Click">
+                                        <StackPanel Orientation="Horizontal" Spacing="10">
+                                            <FontIcon Glyph="&#xE711;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
+                                            <TextBlock Text="Logout" FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{StaticResource PrimaryTextBrush}" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                            </Flyout>
                         </Button.Flyout>
                     </Button>
                 </StackPanel>
@@ -302,15 +360,21 @@
              visible regardless of the player chrome state. MainWindow
              subscribes to PlayerService.ShowPlayingNextRequested and flips
              this Grid's visibility + kicks off the countdown timer. -->
-        <Grid x:Name="PlayingNextOverlay" Visibility="Collapsed" Background="#E8000000">
+        <!-- Postroll Up Next card — webui parity. Transparent overlay positioned
+             above the mini player bar so the user sees credits/video continue
+             in the mini bar while the Up Next card floats above with countdown. -->
+        <Grid x:Name="PlayingNextOverlay" Visibility="Collapsed" Background="Transparent">
             <Grid.RowDefinitions>
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <StackPanel Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center"
-                        MaxWidth="760" Spacing="18">
+            <Border Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                    Background="#F0141418" BorderBrush="#33FFFFFF" BorderThickness="1"
+                    CornerRadius="14" Padding="28,22,28,22"
+                    MaxWidth="760" Margin="0,0,0,148">
+            <StackPanel Spacing="18">
                 <TextBlock Text="UP NEXT" FontSize="12" FontWeight="SemiBold"
                            CharacterSpacing="200" Foreground="#78AEFC"
                            HorizontalAlignment="Center" />
@@ -370,6 +434,7 @@
                     </Button>
                 </StackPanel>
             </StackPanel>
+            </Border>
         </Grid>
 
         <!-- Layer 5: Toast notifications (F2) — top-right, above everything

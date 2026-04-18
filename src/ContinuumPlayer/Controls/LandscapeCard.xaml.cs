@@ -36,6 +36,13 @@ public sealed partial class LandscapeCard : UserControl
     public LandscapeCard()
     {
         this.InitializeComponent();
+        this.Unloaded += (_, _) =>
+        {
+            try { _loadCts?.Cancel(); } catch { }
+            _loadCts?.Dispose();
+            _loadCts = null;
+            BackdropImage.Source = null;
+        };
     }
 
     private static void OnMediaItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -145,28 +152,25 @@ public sealed partial class LandscapeCard : UserControl
 
         try
         {
-            await Task.Delay(50, ct);
+            await Task.Delay(300, ct);
             if (ct.IsCancellationRequested) return;
 
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
             var imageType = !string.IsNullOrEmpty(item.BackdropUrl) ? "backdrop" : "poster";
-            var bytes = await imageService.GetImageAsync(
+
+            var diskPath = await imageService.GetImageDiskPathAsync(
                 item.ContentId, imageType, imageUrl, httpClient, ct);
 
-            if (ct.IsCancellationRequested || bytes == null) return;
+            if (ct.IsCancellationRequested || string.IsNullOrEmpty(diskPath)) return;
 
             var bitmapImage = new BitmapImage
             {
                 DecodePixelWidth = 280,
-                DecodePixelType = DecodePixelType.Logical
+                DecodePixelType = DecodePixelType.Logical,
+                UriSource = new Uri(diskPath),
             };
-            using var stream = new MemoryStream(bytes);
-            await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
-
-            if (ct.IsCancellationRequested) return;
-
             BackdropImage.Source = bitmapImage;
             // Smooth fade-in matching webui transition-opacity duration-300
             var fadeIn = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation

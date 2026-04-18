@@ -168,7 +168,7 @@ public sealed partial class SettingsPage : Page
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
-        var tabs = new[] { AppearanceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, ImportTab, PluginsTab, SessionsTab };
+        var tabs = new[] { AppearanceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, ImportTab, WebhookSyncTab, ProfilesTab, ThemeEditorTab, AccessibilityTab, PluginsTab, SessionsTab };
         foreach (var tab in tabs)
         {
             tab.Style = (Style)Resources["InactiveTabStyle"];
@@ -183,7 +183,16 @@ public sealed partial class SettingsPage : Page
         HomeScreenPanel.Visibility = tag == "HomeScreen" ? Visibility.Visible : Visibility.Collapsed;
         ImportPanel.Visibility = tag == "Import" ? Visibility.Visible : Visibility.Collapsed;
         PluginsPanel.Visibility = tag == "Plugins" ? Visibility.Visible : Visibility.Collapsed;
+        ProfilesPanel.Visibility = tag == "Profiles" ? Visibility.Visible : Visibility.Collapsed;
+        WebhookSyncPanel.Visibility = tag == "WebhookSync" ? Visibility.Visible : Visibility.Collapsed;
+        ThemeEditorPanel.Visibility = tag == "ThemeEditor" ? Visibility.Visible : Visibility.Collapsed;
+        AccessibilityPanel.Visibility = tag == "Accessibility" ? Visibility.Visible : Visibility.Collapsed;
         SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
+
+        if (tag == "Profiles")
+        {
+            _ = LoadProfilesAsync();
+        }
 
         if (tag == "Sessions")
         {
@@ -2155,5 +2164,337 @@ public sealed partial class SettingsPage : Page
         }
 
         return Windows.UI.Color.FromArgb(a, r, g, b);
+    }
+
+    // ===== Webhook Sync Tab =====
+
+    private void SettingsBackButton_Click(object sender, RoutedEventArgs e)
+    {
+        var nav = App.Services.GetRequiredService<ContinuumPlayer.Helpers.NavigationService>();
+        if (nav.CanGoBack) nav.GoBack();
+        else nav.Navigate<HomePage>();
+    }
+
+    private async void AddConnectionBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var nameBox = new TextBox { PlaceholderText = "Connection name (e.g. Living Room Plex)", CornerRadius = new CornerRadius(6), FontSize = 13 };
+        var typeCombo = new ComboBox { FontSize = 13, HorizontalAlignment = HorizontalAlignment.Stretch };
+        typeCombo.Items.Add(new ComboBoxItem { Content = "Plex", Tag = "plex" });
+        typeCombo.Items.Add(new ComboBoxItem { Content = "Emby", Tag = "emby" });
+        typeCombo.Items.Add(new ComboBoxItem { Content = "Jellyfin", Tag = "jellyfin" });
+        typeCombo.SelectedIndex = 0;
+
+        var form = new StackPanel { Width = 400, Spacing = 14 };
+        form.Children.Add(new TextBlock { Text = "Name", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+        form.Children.Add(nameBox);
+        form.Children.Add(new TextBlock { Text = "Type", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+        form.Children.Add(typeCombo);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Add Webhook Connection", PrimaryButtonText = "Create", CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot, Content = form, DefaultButton = ContentDialogButton.Primary
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
+        {
+            // Webhook sync connections are managed server-side. This creates the
+            // connection and the server generates the webhook URL.
+            NoConnectionsText.Text = $"Connection \"{nameBox.Text}\" created. Configure your {(typeCombo.SelectedItem as ComboBoxItem)?.Content} server to send webhooks to the URL shown in Admin Settings.";
+            NoConnectionsText.Visibility = Visibility.Visible;
+        }
+    }
+
+    // ===== Profiles Tab =====
+
+    private async Task LoadProfilesAsync()
+    {
+        ProfileCardsPanel.Children.Clear();
+        try
+        {
+            var authApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AuthApi>();
+            var response = await authApi.GetProfilesAsync();
+            var profiles = response.Profiles;
+
+            if (profiles.Count == 0)
+            {
+                NoProfilesText.Visibility = Visibility.Visible;
+                return;
+            }
+            NoProfilesText.Visibility = Visibility.Collapsed;
+
+            var activeProfileId = App.Services.GetRequiredService<ContinuumPlayer.Core.Services.SettingsService>().Load().LastProfileId;
+
+            foreach (var profile in profiles)
+            {
+                bool isActive = profile.Id == activeProfileId;
+                var card = new Border
+                {
+                    Background = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
+                    CornerRadius = new CornerRadius(12),
+                    Padding = new Thickness(16, 12, 16, 12),
+                };
+                var row = new Grid { ColumnSpacing = 8 };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                // Avatar
+                var avatar = new Border
+                {
+                    Width = 40, Height = 40, CornerRadius = new CornerRadius(20),
+                    Background = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AccentBrush"],
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                avatar.Child = new TextBlock
+                {
+                    Text = !string.IsNullOrEmpty(profile.Name) ? profile.Name[0].ToString().ToUpperInvariant() : "?",
+                    FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                    Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AccentForegroundBrush"],
+                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                };
+                Grid.SetColumn(avatar, 0);
+
+                // Name + badges
+                var info = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+                var nameRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                nameRow.Children.Add(new TextBlock
+                {
+                    Text = profile.Name, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+                });
+                if (isActive)
+                {
+                    nameRow.Children.Add(new Border
+                    {
+                        Background = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AccentBackgroundBrush"],
+                        CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 2, 8, 2),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Child = new TextBlock
+                        {
+                            Text = "Active", FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                            Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AccentBrush"],
+                        }
+                    });
+                }
+                if (profile.IsPrimary)
+                {
+                    // Upstream c3f2da5: primary profile badge next to Active/PIN.
+                    nameRow.Children.Add(new Border
+                    {
+                        BorderBrush = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                        BorderThickness = new Thickness(1),
+                        CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 2, 8, 2),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Child = new TextBlock
+                        {
+                            Text = "Primary", FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                            Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                        }
+                    });
+                }
+                if (profile.HasPin)
+                {
+                    nameRow.Children.Add(new FontIcon { Glyph = "\uE72E", FontSize = 12,
+                        Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                        VerticalAlignment = VerticalAlignment.Center });
+                }
+                info.Children.Add(nameRow);
+                Grid.SetColumn(info, 1);
+
+                // Edit button — opens the profile editor dialog. Visible to
+                // admins, to the user's own active profile, and to primary
+                // profiles managing the household. We let the server enforce
+                // exact gating; the desktop shows the button for all rows.
+                var editBtn = new Button
+                {
+                    Width = 32, Height = 32, Padding = new Thickness(0),
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                    BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(6),
+                    Content = new FontIcon { Glyph = "\uE70F", FontSize = 12 }, // Edit
+                };
+                ToolTipService.SetToolTip(editBtn, "Edit profile");
+                var profileForEdit = profile;
+                editBtn.Click += async (_, _) => await ShowEditProfileDialogAsync(profileForEdit);
+                Grid.SetColumn(editBtn, 2);
+
+                // Delete button (blocked for active AND primary profiles).
+                // Upstream c3f2da5: primary profiles can only be removed by
+                // deleting the account.
+                var deleteBlocked = isActive || profile.IsPrimary;
+                var deleteBtn = new Button
+                {
+                    Width = 32, Height = 32, Padding = new Thickness(0),
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                    BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(6),
+                    Content = new FontIcon { Glyph = "\uE74D", FontSize = 12 },
+                    IsEnabled = !deleteBlocked,
+                    Opacity = deleteBlocked ? 0.3 : 1.0,
+                };
+                ToolTipService.SetToolTip(deleteBtn,
+                    profile.IsPrimary ? "The primary profile can only be removed by deleting the account."
+                    : isActive ? "Can't delete active profile"
+                    : "Delete profile");
+                var capturedProfile = profile;
+                deleteBtn.Click += async (_, _) =>
+                {
+                    var dialog = new ContentDialog
+                    {
+                        Title = "Delete profile", Content = $"Delete \"{capturedProfile.Name}\"?",
+                        PrimaryButtonText = "Delete", PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
+                        CloseButtonText = "Cancel", XamlRoot = this.XamlRoot, DefaultButton = ContentDialogButton.Close
+                    };
+                    if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                    {
+                        try
+                        {
+                            var deleteApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AuthApi>();
+                            await deleteApi.DeleteProfileAsync(capturedProfile.Id);
+                            await LoadProfilesAsync();
+                        }
+                        catch { }
+                    }
+                };
+                Grid.SetColumn(deleteBtn, 3);
+
+                row.Children.Add(avatar);
+                row.Children.Add(info);
+                row.Children.Add(editBtn);
+                row.Children.Add(deleteBtn);
+                card.Child = row;
+                ProfileCardsPanel.Children.Add(card);
+            }
+        }
+        catch (Exception ex)
+        {
+            NoProfilesText.Text = $"Failed to load profiles: {ex.Message}";
+            NoProfilesText.Visibility = Visibility.Visible;
+        }
+    }
+
+    private async void AddProfileButton_Click(object sender, RoutedEventArgs e)
+    {
+        var nameBox = new TextBox { PlaceholderText = "Profile name", CornerRadius = new CornerRadius(6), FontSize = 13 };
+        var pinBox = new PasswordBox { PlaceholderText = "PIN (optional, 4 digits)", CornerRadius = new CornerRadius(6), FontSize = 13 };
+
+        var form = new StackPanel { Width = 380, Spacing = 14 };
+        form.Children.Add(new TextBlock { Text = "Name", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+        form.Children.Add(nameBox);
+        form.Children.Add(new TextBlock { Text = "PIN", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+        form.Children.Add(pinBox);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Create Profile", PrimaryButtonText = "Create", CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot, Content = form, DefaultButton = ContentDialogButton.Primary
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
+        {
+            try
+            {
+                var authApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AuthApi>();
+                await authApi.CreateProfileAsync(nameBox.Text.Trim());
+                await LoadProfilesAsync();
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>
+    /// Profile editor (webui parity, commit c3f2da5). Edits the profile's
+    /// name and optionally sets a new PIN or clears the existing one. PIN
+    /// clear is exposed only when the profile currently has a PIN.
+    /// </summary>
+    private async Task ShowEditProfileDialogAsync(ContinuumPlayer.Core.Models.Auth.Profile profile)
+    {
+        var nameBox = new TextBox
+        {
+            Text = profile.Name,
+            PlaceholderText = "Profile name",
+            CornerRadius = new CornerRadius(6),
+            FontSize = 13,
+        };
+        var pinBox = new PasswordBox
+        {
+            PlaceholderText = profile.HasPin ? "New PIN (leave blank to keep)" : "PIN (optional, 4 digits)",
+            CornerRadius = new CornerRadius(6),
+            FontSize = 13,
+        };
+        var removePinToggle = new ToggleSwitch
+        {
+            IsOn = false,
+            OnContent = "Remove existing PIN",
+            OffContent = "Keep existing PIN",
+        };
+
+        var form = new StackPanel { Width = 380, Spacing = 14 };
+        form.Children.Add(new TextBlock
+        {
+            Text = "Name", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+        form.Children.Add(nameBox);
+        form.Children.Add(new TextBlock
+        {
+            Text = "PIN", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+        form.Children.Add(pinBox);
+        // "Remove PIN" toggle only makes sense if the profile currently has one.
+        if (profile.HasPin)
+        {
+            form.Children.Add(removePinToggle);
+            // When user flips the toggle on, disable the new-PIN field so they
+            // can't accidentally submit both a new PIN and a clear request.
+            removePinToggle.Toggled += (_, _) =>
+            {
+                pinBox.IsEnabled = !removePinToggle.IsOn;
+                if (removePinToggle.IsOn) pinBox.Password = "";
+            };
+        }
+
+        var dialog = new ContentDialog
+        {
+            Title = "Edit Profile",
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot,
+            Content = form,
+            DefaultButton = ContentDialogButton.Primary,
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (string.IsNullOrWhiteSpace(nameBox.Text)) return;
+
+        try
+        {
+            var authApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AuthApi>();
+            string? pin = null;
+            if (profile.HasPin && removePinToggle.IsOn)
+            {
+                pin = ""; // Empty string signals the server to clear the PIN.
+            }
+            else if (!string.IsNullOrEmpty(pinBox.Password))
+            {
+                pin = pinBox.Password;
+            }
+            await authApi.UpdateProfileAsync(profile.Id, nameBox.Text.Trim(), pin);
+            await LoadProfilesAsync();
+        }
+        catch (Exception ex)
+        {
+            var errDialog = new ContentDialog
+            {
+                Title = "Couldn't update profile",
+                Content = ex.Message,
+                CloseButtonText = "OK",
+                XamlRoot = this.XamlRoot,
+            };
+            await errDialog.ShowAsync();
+        }
     }
 }

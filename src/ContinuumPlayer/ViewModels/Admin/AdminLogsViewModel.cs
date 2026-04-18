@@ -16,7 +16,19 @@ public partial class AdminLogsViewModel : ObservableObject
     public ObservableCollection<AuditLogEntry> AuditLogs { get; } = [];
 
     [ObservableProperty] private bool _isLoading;
+    [ObservableProperty] private bool _isLoadingMore;
     [ObservableProperty] private string? _errorMessage;
+
+    // Cursor-pagination state (webui exposes this via the server response's
+    // NextCursor; null means the end of the feed has been reached).
+    [ObservableProperty] private string? _appLogsNextCursor;
+    [ObservableProperty] private string? _auditLogsNextCursor;
+
+    public bool AppLogsHasMore => !string.IsNullOrEmpty(AppLogsNextCursor);
+    public bool AuditLogsHasMore => !string.IsNullOrEmpty(AuditLogsNextCursor);
+
+    partial void OnAppLogsNextCursorChanged(string? value) => OnPropertyChanged(nameof(AppLogsHasMore));
+    partial void OnAuditLogsNextCursorChanged(string? value) => OnPropertyChanged(nameof(AuditLogsHasMore));
 
     // Connection state display
     [ObservableProperty] private string _connectionState = "Disconnected";
@@ -60,6 +72,7 @@ public partial class AdminLogsViewModel : ObservableObject
                 limit: 200);
             AppLogs.Clear();
             foreach (var entry in response.Entries) AppLogs.Add(entry);
+            AppLogsNextCursor = response.NextCursor;
             ConnectionState = "Live";
             UpdatePlaybackSummary();
         }
@@ -69,6 +82,29 @@ public partial class AdminLogsViewModel : ObservableObject
             ConnectionState = "Disconnected";
         }
         finally { IsLoading = false; }
+    }
+
+    [RelayCommand]
+    private async Task LoadMoreAppLogsAsync()
+    {
+        if (IsLoadingMore || string.IsNullOrEmpty(AppLogsNextCursor)) return;
+        IsLoadingMore = true;
+        try
+        {
+            var response = await _adminApi.GetAppLogsAsync(
+                level: null,
+                component: string.IsNullOrWhiteSpace(AppComponent) ? null : AppComponent.Trim(),
+                requestId: string.IsNullOrWhiteSpace(AppRequestId) ? null : AppRequestId.Trim(),
+                q: string.IsNullOrWhiteSpace(AppMessageQuery) ? null : AppMessageQuery.Trim(),
+                playbackSessionId: string.IsNullOrWhiteSpace(PlaybackSessionId) ? null : PlaybackSessionId.Trim(),
+                cursor: AppLogsNextCursor,
+                limit: 200);
+            foreach (var entry in response.Entries) AppLogs.Add(entry);
+            AppLogsNextCursor = response.NextCursor;
+            UpdatePlaybackSummary();
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
+        finally { IsLoadingMore = false; }
     }
 
     [RelayCommand]
@@ -89,6 +125,7 @@ public partial class AdminLogsViewModel : ObservableObject
                 limit: 200);
             AuditLogs.Clear();
             foreach (var entry in response.Entries) AuditLogs.Add(entry);
+            AuditLogsNextCursor = response.NextCursor;
             ConnectionState = "Live";
             UpdatePlaybackSummary();
         }
@@ -98,6 +135,29 @@ public partial class AdminLogsViewModel : ObservableObject
             ConnectionState = "Disconnected";
         }
         finally { IsLoading = false; }
+    }
+
+    [RelayCommand]
+    private async Task LoadMoreAuditLogsAsync()
+    {
+        if (IsLoadingMore || string.IsNullOrEmpty(AuditLogsNextCursor)) return;
+        IsLoadingMore = true;
+        try
+        {
+            var response = await _adminApi.GetAuditLogsAsync(
+                userId: null,
+                requestId: string.IsNullOrWhiteSpace(AuditRequestId) ? null : AuditRequestId.Trim(),
+                method: string.IsNullOrWhiteSpace(AuditMethod) ? null : AuditMethod.Trim(),
+                clientIp: string.IsNullOrWhiteSpace(AuditClientIp) ? null : AuditClientIp.Trim(),
+                playbackSessionId: string.IsNullOrWhiteSpace(PlaybackSessionId) ? null : PlaybackSessionId.Trim(),
+                cursor: AuditLogsNextCursor,
+                limit: 200);
+            foreach (var entry in response.Entries) AuditLogs.Add(entry);
+            AuditLogsNextCursor = response.NextCursor;
+            UpdatePlaybackSummary();
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
+        finally { IsLoadingMore = false; }
     }
 
     public void UpdatePlaybackSummary()

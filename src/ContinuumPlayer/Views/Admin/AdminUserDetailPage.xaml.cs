@@ -269,7 +269,7 @@ public sealed partial class AdminUserDetailPage : Page
         AddDetailRow(PermissionsRows, "Max Playback Quality", FormatPlaybackQualityPreset(user.MaxPlaybackQuality));
         AddDetailRow(PermissionsRows, "Max Streams",          user.MaxStreams == 0 ? "Unlimited" : user.MaxStreams.ToString());
         AddDetailRow(PermissionsRows, "Max Transcodes",       user.MaxTranscodes == 0 ? "Unlimited" : user.MaxTranscodes.ToString());
-        AddDetailRow(PermissionsRows, "Max Profiles",         user.MaxProfiles == 0 ? "Unlimited" : user.MaxProfiles.ToString());
+        AddDetailRow(PermissionsRows, "Max Profiles",         user.MaxProfiles.ToString());
         AddDetailRow(PermissionsRows, "Downloads",            user.DownloadAllowed ? "Allowed" : "Not allowed");
         AddDetailRow(PermissionsRows, "Download Transcode",   user.DownloadTranscodeAllowed ? "Allowed" : "Not allowed");
     }
@@ -333,7 +333,7 @@ public sealed partial class AdminUserDetailPage : Page
             ProfilesContent.Children.Add(new Border
             {
                 Background    = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
-                CornerRadius  = new CornerRadius(26),
+                CornerRadius  = new CornerRadius(16),
                 BorderThickness = new Thickness(0),
                 Padding       = new Thickness(20, 40, 20, 40),
                 Child = new TextBlock
@@ -393,7 +393,7 @@ public sealed partial class AdminUserDetailPage : Page
         var card = new Border
         {
             Background      = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
-            CornerRadius    = new CornerRadius(22),  // rounded-[1.4rem] = 22.4
+            CornerRadius    = new CornerRadius(16),  // rounded-[1.4rem] = 22.4
             BorderThickness = new Thickness(0),       // border-0
             Padding         = new Thickness(16, 12, 16, 12) // px-4 py-3
         };
@@ -1010,10 +1010,13 @@ public sealed partial class AdminUserDetailPage : Page
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
 
+        // Upstream commit e2428e7: floor raised from 0 (unlimited) to 1. The
+        // server now rejects max_profiles < 1 with a 400 and migration 093
+        // upgrades any legacy 0 rows to 5.
         var maxProfilesBox = new NumberBox
         {
-            Value = user.MaxProfiles,
-            Minimum = 0,
+            Value = user.MaxProfiles <= 0 ? 5 : user.MaxProfiles,
+            Minimum = 1,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
             CornerRadius = new CornerRadius(8),
             FontSize = 13,
@@ -1143,7 +1146,7 @@ public sealed partial class AdminUserDetailPage : Page
                 Enabled                  = enabledSwitch.IsOn,
                 MaxStreams                = double.IsNaN(maxStreamsBox.Value) ? 0 : (int)maxStreamsBox.Value,
                 MaxTranscodes            = double.IsNaN(maxTranscodesBox.Value) ? 0 : (int)maxTranscodesBox.Value,
-                MaxProfiles              = double.IsNaN(maxProfilesBox.Value) ? 0 : (int)maxProfilesBox.Value,
+                MaxProfiles              = double.IsNaN(maxProfilesBox.Value) ? 5 : Math.Max(1, (int)maxProfilesBox.Value),
                 MaxPlaybackQuality       = qualityValue,
                 DownloadAllowed          = downloadSwitch.IsOn,
                 DownloadTranscodeAllowed = downloadTranscodeSwitch.IsOn,

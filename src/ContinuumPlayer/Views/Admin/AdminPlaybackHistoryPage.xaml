@@ -32,40 +32,11 @@
     </Page.Resources>
 
     <Grid>
-        <!-- Loading indicator -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
-
-        <!-- Error state -->
-        <StackPanel
-            VerticalAlignment="Center"
-            HorizontalAlignment="Center"
-            Spacing="12"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-            <TextBlock
-                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource BodyTextStyle}"
-                HorizontalAlignment="Center"
-                TextWrapping="Wrap"
-                MaxWidth="400" />
-            <Button
-                Content="Retry"
-                Style="{StaticResource AccentButtonStyle}"
-                HorizontalAlignment="Center"
-                Command="{x:Bind ViewModel.LoadCommand}" />
-        </StackPanel>
-
         <!-- Main content -->
         <ScrollViewer
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <StackPanel Padding="40,28,40,40" Spacing="24" MaxWidth="1440" HorizontalAlignment="Stretch">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -76,6 +47,7 @@
 
                     <StackPanel Grid.Column="0" Spacing="12" VerticalAlignment="Center">
                         <TextBlock
+                            x:Name="PageTitle"
                             Text="Playback History"
                             FontSize="42"
                             FontWeight="Bold"
@@ -92,7 +64,7 @@
                         <!-- User ComboBox -->
                         <ComboBox
                             x:Name="UserComboBox"
-                            MinWidth="180"
+                            MinWidth="220"
                             PlaceholderText="All users"
                             SelectionChanged="UserComboBox_SelectionChanged">
                             <ComboBoxItem Content="All users" Tag="" />
@@ -101,7 +73,7 @@
                         <!-- Profile ComboBox -->
                         <ComboBox
                             x:Name="ProfileComboBox"
-                            MinWidth="180"
+                            MinWidth="220"
                             PlaceholderText="All profiles"
                             SelectionChanged="ProfileComboBox_SelectionChanged">
                             <ComboBoxItem Content="All profiles" Tag="" />
@@ -110,7 +82,7 @@
                         <!-- Completion status ComboBox -->
                         <ComboBox
                             x:Name="StatusComboBox"
-                            MinWidth="160"
+                            MinWidth="180"
                             SelectedIndex="0"
                             SelectionChanged="StatusComboBox_SelectionChanged">
                             <ComboBoxItem Content="All attempts" Tag="all" />
@@ -123,7 +95,7 @@
                             x:Name="ResetButton"
                             Content="Reset"
                             Style="{StaticResource SecondaryButtonStyle}"
-                            Visibility="Collapsed"
+                            IsEnabled="False"
                             Click="ResetButton_Click" />
                     </StackPanel>
                 </Grid>
@@ -149,6 +121,7 @@
                                 Text="0"
                                 FontSize="24"
                                 FontWeight="ExtraBold"
+                                CharacterSpacing="-25"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
                         </StackPanel>
                     </Border>
@@ -166,6 +139,7 @@
                                 Text="0"
                                 FontSize="24"
                                 FontWeight="ExtraBold"
+                                CharacterSpacing="-25"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
                         </StackPanel>
                     </Border>
@@ -183,7 +157,8 @@
                                 Text="0"
                                 FontSize="24"
                                 FontWeight="ExtraBold"
-                                Foreground="{StaticResource SecondaryTextBrush}" />
+                                CharacterSpacing="-25"
+                                Foreground="{StaticResource PrimaryTextBrush}" />
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -214,8 +189,6 @@
                                 VerticalAlignment="Center" />
                         </Grid>
 
-                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
-
                         <!-- Table header row -->
                         <Grid x:Name="TableHeader" Padding="20,14,20,14" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
@@ -228,36 +201,76 @@
                                 <ColumnDefinition Width="1.4*" />
                                 <ColumnDefinition Width="1.2*" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Media" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="1" Text="User" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="Profile" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="Method" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="4" Text="Watch Time" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="5" Text="Status" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="6" Text="Ended" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="7" Text="Logs" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" HorizontalAlignment="Right" />
+                            <TextBlock Grid.Column="0" Text="Media" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="User" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="2" Text="Profile" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="3" Text="Method" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="4" Text="Watch Time" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="5" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="6" Text="Ended" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="7" Text="Logs" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Right" />
                         </Grid>
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
 
+                        <!-- Inline loading indicator -->
+                        <ProgressRing
+                            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                            HorizontalAlignment="Center"
+                            Margin="0,24"
+                            Width="32" Height="32" />
+
+                        <!-- Inline error state -->
+                        <StackPanel
+                            HorizontalAlignment="Center"
+                            Spacing="8"
+                            Padding="0,16"
+                            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                            <TextBlock
+                                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                                Foreground="{StaticResource ErrorBrush}"
+                                FontSize="13"
+                                HorizontalAlignment="Center"
+                                TextWrapping="Wrap"
+                                MaxWidth="400" />
+                            <Button
+                                Content="Retry"
+                                Style="{StaticResource AccentButtonStyle}"
+                                HorizontalAlignment="Center"
+                                Command="{x:Bind ViewModel.LoadCommand}" />
+                        </StackPanel>
+
                         <!-- Rows populated in code-behind -->
                         <StackPanel x:Name="HistoryRowsPanel" Spacing="0" />
 
-                        <!-- Empty state -->
+                        <!-- Empty state — webui: Filter icon + two-line text -->
                         <Border x:Name="EmptyState" Padding="20,48" Visibility="Collapsed">
-                            <TextBlock
-                                Text="No playback history matches the current filters."
-                                FontSize="13"
-                                Foreground="{StaticResource TertiaryTextBrush}"
-                                HorizontalAlignment="Center"
-                                TextAlignment="Center" />
+                            <StackPanel HorizontalAlignment="Center" Spacing="8">
+                                <FontIcon
+                                    Glyph="&#xE71C;"
+                                    FontSize="32"
+                                    Opacity="0.2"
+                                    HorizontalAlignment="Center" />
+                                <TextBlock
+                                    Text="No playback history found"
+                                    FontSize="14"
+                                    Foreground="{StaticResource SecondaryTextBrush}"
+                                    HorizontalAlignment="Center"
+                                    TextAlignment="Center" />
+                                <TextBlock
+                                    Text="Try adjusting your filters or date range."
+                                    FontSize="13"
+                                    Foreground="{StaticResource TertiaryTextBrush}"
+                                    HorizontalAlignment="Center"
+                                    TextAlignment="Center"
+                                    MaxWidth="400" />
+                            </StackPanel>
                         </Border>
 
                         <!-- Pagination bar -->
                         <Border x:Name="PaginationBar"
-                                BorderBrush="{StaticResource BorderBrush}"
-                                BorderThickness="0,1,0,0"
-                                Padding="20,14,20,14"
+                                Padding="8,16,8,16"
                                 Visibility="Collapsed">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -281,11 +294,13 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                                     <Button x:Name="PrevPageButton"
                                             Content="Previous"
-                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            Style="{StaticResource OutlineButtonStyle}"
+                                            Height="32" FontSize="12" Padding="12,0"
                                             Click="PrevPageButton_Click" />
                                     <Button x:Name="NextPageButton"
                                             Content="Next"
-                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            Style="{StaticResource OutlineButtonStyle}"
+                                            Height="32" FontSize="12" Padding="12,0"
                                             Click="NextPageButton_Click" />
                                 </StackPanel>
                             </Grid>

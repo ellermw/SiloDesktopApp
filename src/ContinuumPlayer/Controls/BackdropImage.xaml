@@ -8,6 +8,10 @@
     mc:Ignorable="d">
 
     <Canvas x:Name="ClipCanvas" SizeChanged="ClipCanvas_SizeChanged">
-        <Image x:Name="InnerImage" Stretch="Fill" />
+        <Image x:Name="InnerImage" Stretch="Fill" RenderTransformOrigin="0.5,0.5">
+            <Image.RenderTransform>
+                <CompositeTransform x:Name="KenBurnsTransform" ScaleX="1" ScaleY="1" />
+            </Image.RenderTransform>
+        </Image>
     </Canvas>
 </UserControl>

@@ -104,6 +104,14 @@ public class ContinuumApiClient
         await SendNoContentAsync(request, ct);
     }
 
+    public async Task DeleteWithBodyAsync(string path, object body, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Delete, BuildUrl(path));
+        AddHeaders(request);
+        request.Content = CreateJsonContent(body);
+        await SendNoContentAsync(request, ct);
+    }
+
     public async Task<T> PatchAsync<T>(string path, object body, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Patch, BuildUrl(path));
@@ -246,15 +254,19 @@ public class ContinuumApiClient
 
     private async Task<T> SendAsync<T>(HttpRequestMessage request, CancellationToken ct)
     {
-        var response = await SendWithRetryAsync(request, ct);
-        if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct);
-        return (await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct))!;
+        // ConfigureAwait(false) on both awaits so the HTTP and JSON work
+        // doesn't capture the calling SynchronizationContext — on WinUI 3
+        // the UI thread was the one doing deserialization, which caused
+        // multi-second freezes on larger catalog/home-section responses.
+        var response = await SendWithRetryAsync(request, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct).ConfigureAwait(false);
+        return (await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct).ConfigureAwait(false))!;
     }
 
     private async Task SendNoContentAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        var response = await SendWithRetryAsync(request, ct);
-        if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct);
+        var response = await SendWithRetryAsync(request, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct).ConfigureAwait(false);
     }
 
     private static async Task ThrowApiException(HttpResponseMessage response, CancellationToken ct)

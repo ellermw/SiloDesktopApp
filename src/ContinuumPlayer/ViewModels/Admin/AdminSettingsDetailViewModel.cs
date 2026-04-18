@@ -11,6 +11,7 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
     private Dictionary<string, string> _settings = new();
     private readonly Dictionary<string, string> _dirtySettings = new();
     private HashSet<string> _sensitiveConfigured = new();
+    private HashSet<string> _managedByEnv = new();
 
     // Rate limit config (loaded separately)
     public RateLimitConfig? RateLimitConfig { get; private set; }
@@ -63,8 +64,13 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
         try
         {
             _settings = await _adminApi.GetAdminSettingsAsync();
-            try { _sensitiveConfigured = await _adminApi.GetSensitiveStatusAsync(); }
-            catch { _sensitiveConfigured = new(); }
+            try
+            {
+                var (configured, managed) = await _adminApi.GetSensitiveStatusAsync();
+                _sensitiveConfigured = configured;
+                _managedByEnv = managed;
+            }
+            catch { _sensitiveConfigured = new(); _managedByEnv = new(); }
             try { RateLimitConfig = await _adminApi.GetRateLimitConfigAsync(); }
             catch
             {
@@ -89,6 +95,7 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
     }
 
     public bool IsSensitiveConfigured(string key) => _sensitiveConfigured.Contains(key);
+    public bool IsManagedByEnv(string key) => _managedByEnv.Contains(key);
 
     /// <summary>
     /// Merged view of persisted settings overlaid with any unsaved edits.

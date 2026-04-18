@@ -69,6 +69,17 @@
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
                 </Button>
+                <!-- Per-section refresh / retry (webui parity: retrySection). Click fires
+                     RefreshRequested and the parent re-fetches this section's items. -->
+                <Button
+                    x:Name="RefreshSectionBtn"
+                    Style="{StaticResource GhostButtonStyle}"
+                    Width="32" Height="32"
+                    Padding="0"
+                    ToolTipService.ToolTip="Refresh this section"
+                    Click="RefreshSection_Click">
+                    <FontIcon Glyph="&#xE72C;" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                </Button>
                 <Button
                     x:Name="ScrollLeftBtn"
                     Style="{StaticResource GhostButtonStyle}"
@@ -97,22 +108,56 @@
              scrolling the page vertically. Horizontal movement is handled
              exclusively by the arrow buttons (hover-reveal). ChangeView
              still works programmatically with scroll mode disabled. -->
-        <ScrollViewer
-            x:Name="CardsScrollViewer"
-            Grid.Row="1"
-            HorizontalScrollBarVisibility="Hidden"
-            VerticalScrollBarVisibility="Disabled"
-            HorizontalScrollMode="Disabled"
-            VerticalScrollMode="Disabled"
-            ViewChanged="CardsScrollViewer_ViewChanged"
-            SizeChanged="CardsScrollViewer_SizeChanged">
+        <Grid Grid.Row="1">
+            <ScrollViewer
+                x:Name="CardsScrollViewer"
+                HorizontalScrollBarVisibility="Hidden"
+                VerticalScrollBarVisibility="Disabled"
+                HorizontalScrollMode="Disabled"
+                VerticalScrollMode="Disabled"
+                ViewChanged="CardsScrollViewer_ViewChanged"
+                SizeChanged="CardsScrollViewer_SizeChanged">
 
-            <ItemsRepeater x:Name="CardsRepeater" Margin="48,0,48,0">
-                <ItemsRepeater.Layout>
-                    <StackLayout Orientation="Horizontal" Spacing="16" />
-                </ItemsRepeater.Layout>
-            </ItemsRepeater>
-        </ScrollViewer>
+                <ItemsRepeater x:Name="CardsRepeater" Margin="48,0,48,0">
+                    <ItemsRepeater.Layout>
+                        <StackLayout Orientation="Horizontal" Spacing="16" />
+                    </ItemsRepeater.Layout>
+                </ItemsRepeater>
+            </ScrollViewer>
+
+            <!-- Edge fade gradients hinting at more content. Alpha-only fade
+                 (same RGB as AppBackgroundColor with alpha=0 on the
+                 transparent end) — avoids the semi-transparent gray midpoint
+                 that WinUI's "Transparent" keyword (#00FFFFFF) would produce
+                 when interpolating against a dark color. Opacity driven from
+                 code-behind in lock-step with ScrollLeftBtn/RightBtn. -->
+            <Border
+                x:Name="LeftFadeGradient"
+                HorizontalAlignment="Left"
+                Width="64"
+                IsHitTestVisible="False"
+                Opacity="0">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                        <GradientStop Color="#FF101722" Offset="0.0" />
+                        <GradientStop Color="#00101722" Offset="1.0" />
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
+            <Border
+                x:Name="RightFadeGradient"
+                HorizontalAlignment="Right"
+                Width="64"
+                IsHitTestVisible="False"
+                Opacity="0">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="1,0.5" EndPoint="0,0.5">
+                        <GradientStop Color="#FF101722" Offset="0.0" />
+                        <GradientStop Color="#00101722" Offset="1.0" />
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
+        </Grid>
 
         <!-- F6: skeleton row shown when Items is empty during the F12
              per-section fetch. Replaced with the real ItemsRepeater content

@@ -40,4 +40,8 @@ public class AdminSession
     public string? SourceAudioLayout { get; set; }
     public string? VideoDecision { get; set; }
     public string? AudioDecision { get; set; }
+    public string? ContentId { get; set; }
+    public int RequestedMediaFileId { get; set; }
+    public string? RequestedVideoCodec { get; set; }
+    public string? RequestedVideoResolution { get; set; }
 }

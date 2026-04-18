@@ -32,9 +32,22 @@ public sealed partial class SectionRow : UserControl
     /// </summary>
     public Action? OnViewAll { get; set; }
 
+    /// <summary>
+    /// Optional callback invoked when the per-section refresh button is
+    /// clicked. When set, the parent should re-fetch this section's items
+    /// from the server and rebind. Webui parity with retrySection().
+    /// </summary>
+    public Action<HomeSectionWithItems>? OnRefresh { get; set; }
+
     public SectionRow()
     {
         this.InitializeComponent();
+    }
+
+    private void RefreshSection_Click(object sender, RoutedEventArgs e)
+    {
+        if (Section == null) return;
+        OnRefresh?.Invoke(Section);
     }
 
     private static void OnSectionChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -119,6 +132,11 @@ public sealed partial class SectionRow : UserControl
         ScrollLeftBtn.IsEnabled = _canScrollPrev;
         ScrollRightBtn.IsEnabled = _canScrollNext;
         UpdateArrowsOpacity();
+
+        // Edge fade gradients match the scroll-button enabled state — fade in
+        // only when there's more content in that direction.
+        LeftFadeGradient.Opacity = _canScrollPrev ? 1.0 : 0.0;
+        RightFadeGradient.Opacity = _canScrollNext ? 1.0 : 0.0;
     }
 
     // ─── Hover-reveal ───────────────────────────────────────────────────

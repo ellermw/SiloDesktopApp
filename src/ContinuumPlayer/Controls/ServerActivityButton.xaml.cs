@@ -1,3 +1,5 @@
+using System.Net.WebSockets;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
@@ -6,6 +8,7 @@ using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Admin;
+using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Helpers;
 
 namespace ContinuumPlayer.Controls;
@@ -24,10 +27,15 @@ public sealed partial class ServerActivityButton : UserControl
 {
     private readonly AdminApi _adminApi;
     private DispatcherTimer? _pollTimer;
+    private readonly EventChannelClient _events;
+    private IDisposable? _subscription;
+    private bool _wsConnected;
+    private DateTime _lastEventPollAt = DateTime.MinValue;
 
     // Cached snapshot for popover rebuilds
     private List<AdminSession> _lastSessions = [];
     private List<TaskInfo> _lastRunningTasks = [];
+    private List<AdminScanRun> _lastActiveScans = [];
 
     /// <summary>
     /// Kept for backwards compatibility with the admin shell XAML attribute
@@ -48,13 +56,12 @@ public sealed partial class ServerActivityButton : UserControl
     public ServerActivityButton()
     {
         _adminApi = App.Services.GetRequiredService<AdminApi>();
+        _events = App.Services.GetRequiredService<EventChannelClient>();
         this.InitializeComponent();
 
         // Visibility is owned by the HOST, not this control. MainWindow flips
         // it in ShowMainNavigation / HideMainNavigation (same gate as the
         // sidebar Admin button), and AdminShellPage sets it once from XAML.
-        // This control only fetches/renders the badge content for sessions
-        // and tasks — never decides for itself whether to be shown.
 
         this.Loaded += OnLoaded;
         this.Unloaded += OnUnloaded;
@@ -66,42 +73,147 @@ public sealed partial class ServerActivityButton : UserControl
         // the host makes us visible. Don't wait for the first timer tick.
         _ = PollAsync();
 
+        // Fallback poll — keeps data fresh if the WebSocket is down or never
+        // connected (non-admin fallback, network glitch). Events drive most
+        // of the freshness once the channel is live.
         if (_pollTimer == null)
         {
-            _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+            _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
             _pollTimer.Tick += async (_, _) => await PollAsync();
         }
         _pollTimer.Start();
+
+        SubscribeToEvents();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         _pollTimer?.Stop();
+        UnsubscribeFromEvents();
     }
+
+    // ─── Event channel ───────────────────────────────────────────────────
+
+    private void SubscribeToEvents()
+    {
+        if (_subscription != null) return;
+        try
+        {
+            _events.SnapshotReceived += OnSnapshot;
+            _events.EventReceived += OnEvent;
+            _events.StateChanged += OnWsStateChanged;
+            _subscription = _events.Subscribe("sessions", "tasks", "scans");
+        }
+        catch
+        {
+            // Non-admin / transport issue — polling still carries the button.
+        }
+    }
+
+    private void UnsubscribeFromEvents()
+    {
+        try
+        {
+            _events.SnapshotReceived -= OnSnapshot;
+            _events.EventReceived -= OnEvent;
+            _events.StateChanged -= OnWsStateChanged;
+            _subscription?.Dispose();
+            _subscription = null;
+        }
+        catch { }
+    }
+
+    private void OnWsStateChanged(WebSocketState state)
+    {
+        _wsConnected = state == WebSocketState.Open;
+        DispatcherQueue.TryEnqueue(UpdateBadgeState);
+    }
+
+    private void OnSnapshot(string channel, System.Text.Json.JsonElement data)
+    {
+        if (channel == "scans" && data.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            var scans = new List<AdminScanRun>();
+            foreach (var el in data.EnumerateArray())
+            {
+                try
+                {
+                    var run = el.Deserialize<AdminScanRun>(JsonOpts);
+                    if (run != null) scans.Add(run);
+                }
+                catch { }
+            }
+            _lastActiveScans = scans.Where(IsActiveScanStatus).ToList();
+            DispatcherQueue.TryEnqueue(UpdateBadgeState);
+            return;
+        }
+        // sessions/tasks snapshots — the REST endpoints give richer data, so we
+        // refresh via PollAsync instead of parsing the snapshot payload.
+        DispatcherQueue.TryEnqueue(() => _ = PollAsync());
+    }
+
+    private void OnEvent(string channel, string eventName, System.Text.Json.JsonElement data)
+    {
+        switch (channel)
+        {
+            case "scans":
+                try
+                {
+                    var run = data.Deserialize<AdminScanRun>(JsonOpts);
+                    if (run != null)
+                    {
+                        _lastActiveScans = _lastActiveScans.Where(s => s.Id != run.Id).ToList();
+                        if (IsActiveScanStatus(run)) _lastActiveScans.Add(run);
+                        DispatcherQueue.TryEnqueue(UpdateBadgeState);
+                    }
+                }
+                catch { }
+                break;
+            case "sessions":
+            case "tasks":
+                // Coalesce rapid event bursts: only trigger a REST refresh once per second.
+                var now = DateTime.UtcNow;
+                if ((now - _lastEventPollAt).TotalMilliseconds < 1000) return;
+                _lastEventPollAt = now;
+                DispatcherQueue.TryEnqueue(() => _ = PollAsync());
+                break;
+        }
+    }
+
+    private static bool IsActiveScanStatus(AdminScanRun run) =>
+        run.Status == "accepted" || run.Status == "running";
+
+    private static readonly System.Text.Json.JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower,
+    };
 
     private async Task PollAsync()
     {
         try
         {
+            // Run both calls in parallel; isolate failures so one doesn't block the other
             var sessionsTask = _adminApi.GetSessionsAsync();
             var tasksTask = _adminApi.GetTasksAsync();
-            await Task.WhenAll(sessionsTask, tasksTask);
 
-            _lastSessions = sessionsTask.Result ?? [];
-            var allTasks = tasksTask.Result ?? [];
-            _lastRunningTasks = allTasks.Where(t => t.State == "running").ToList();
+            try { _lastSessions = await sessionsTask ?? []; } catch { }
+            try
+            {
+                var allTasks = await tasksTask ?? [];
+                _lastRunningTasks = allTasks.Where(t => t.State == "running").ToList();
+            }
+            catch { }
 
             DispatcherQueue.TryEnqueue(UpdateBadgeState);
         }
         catch
         {
-            // Non-admin / offline — zero out counts. The host decides whether
-            // we're visible; if we got a 403 here we're wrongly visible and
-            // the host missed our admin-gate, which is a bug we'd rather not
-            // paper over silently.
-            _lastSessions = [];
-            _lastRunningTasks = [];
-            DispatcherQueue.TryEnqueue(UpdateBadgeState);
+            // Keep stale data on transient errors (matches webui React Query
+            // behavior which shows stale counts while retrying). Only clear
+            // on the very first load when there's nothing to show yet.
+            if (_lastSessions.Count == 0 && _lastRunningTasks.Count == 0)
+                DispatcherQueue.TryEnqueue(UpdateBadgeState);
         }
     }
 
@@ -111,7 +223,7 @@ public sealed partial class ServerActivityButton : UserControl
         // tied to the same admin-gate as the sidebar Admin button. This method
         // only updates the count badge and icon tint — it never touches the
         // outer control's Visibility.
-        var total = _lastSessions.Count + _lastRunningTasks.Count;
+        var total = _lastSessions.Count + _lastRunningTasks.Count + _lastActiveScans.Count;
 
         if (total > 0)
         {
@@ -124,6 +236,12 @@ public sealed partial class ServerActivityButton : UserControl
             CountBadge.Visibility = Visibility.Collapsed;
             ActivityIcon.Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
         }
+
+        // Disconnected indicator — small warning dot when WS is down but we
+        // still have activity to report. Mirrors upstream ServerActivity.tsx:100.
+        if (DisconnectedDot != null)
+            DisconnectedDot.Visibility =
+                (!_wsConnected && total > 0) ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void RootButton_Click(object sender, RoutedEventArgs e)
@@ -184,16 +302,93 @@ public sealed partial class ServerActivityButton : UserControl
             BuildTasksContent()));
         PopoverRoot.Children.Add(Divider());
 
-        PopoverRoot.Children.Add(BuildSection("SCANS", 0,
+        PopoverRoot.Children.Add(BuildSection("SCANS", _lastActiveScans.Count,
             () => { ActivityFlyout.Hide(); OnViewScans?.Invoke(); },
-            new TextBlock
+            BuildScansContent()));
+    }
+
+    private FrameworkElement BuildScansContent()
+    {
+        if (_lastActiveScans.Count == 0)
+            return new TextBlock
             {
-                Text = "Scan updates arrive via the events channel (not yet wired here).",
+                Text = "No active scans",
                 FontSize = 11,
                 Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 2, 0, 2),
-            }));
+            };
+
+        var stack = new StackPanel { Spacing = 6 };
+        foreach (var scan in _lastActiveScans)
+        {
+            var row = new StackPanel { Spacing = 1 };
+            var headerRow = new Grid();
+            headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            headerRow.Children.Add(new TextBlock
+            {
+                Text = $"Library #{scan.LibraryId}",
+                FontSize = 12,
+                FontWeight = FontWeights.Medium,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            });
+            var statusText = new TextBlock
+            {
+                Text = scan.Status == "running" ? "Scanning…" : "Queued",
+                FontSize = 10,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                Margin = new Thickness(8, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(statusText, 1);
+            headerRow.Children.Add(statusText);
+            row.Children.Add(headerRow);
+
+            var modeLabel = scan.Mode switch
+            {
+                "library" => "Full library",
+                "subtree" => "Subtree",
+                "file" => "Single file",
+                _ => scan.Mode,
+            };
+            var subLine = string.IsNullOrEmpty(scan.Path) ? modeLabel : $"{modeLabel} · {scan.Path}";
+            row.Children.Add(new TextBlock
+            {
+                Text = subLine,
+                FontSize = 10,
+                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+
+            var progressLabel = FormatScanProgress(scan);
+            if (!string.IsNullOrEmpty(progressLabel))
+            {
+                row.Children.Add(new TextBlock
+                {
+                    Text = progressLabel,
+                    FontSize = 10,
+                    Opacity = 0.8,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                });
+            }
+
+            stack.Children.Add(row);
+        }
+        return stack;
+    }
+
+    private static string? FormatScanProgress(AdminScanRun scan)
+    {
+        var r = scan.Result;
+        if (r == null) return null;
+        if (r.TotalFiles > 0 && r.FilesProcessed > 0)
+        {
+            var pct = Math.Clamp((int)Math.Round(r.FilesProcessed * 100.0 / r.TotalFiles), 0, 100);
+            var msg = string.IsNullOrEmpty(r.Message) ? "Processing files" : r.Message;
+            return $"{msg} · {r.FilesProcessed:N0} / {r.TotalFiles:N0} ({pct}%)";
+        }
+        return r.Message;
     }
 
     private FrameworkElement BuildSection(string title, int count, Action onViewAll, FrameworkElement body)

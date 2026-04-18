@@ -2735,6 +2735,31 @@ local function setup_script_messages()
         end
         mp.commandv("script-message", "osc-hit-test-result", tostring(hit))
     end)
+
+    -- Host sends this after a clean quick left-click. If the point isn't on
+    -- any OSC chrome (bar, menu overlay, stats panel), we toggle pause so
+    -- clicking the video body works like every other media player.
+    mp.register_script_message("osc-video-click", function(x, y)
+        local mx = tonumber(x) or 0
+        local my = tonumber(y) or 0
+        compute_layout()
+        local L = state.layout
+
+        -- Any menu overlay open? Let that handle its own clicks.
+        if state.subtitle_menu_visible or state.quality_menu_visible then
+            return
+        end
+
+        -- Click inside visible OSC bar? The regular osc-mouse-up flow already
+        -- handled that element — don't toggle pause.
+        if state.current_alpha > 0.1 and L and L.bar_hit
+            and point_in_rect(mx, my, L.bar_hit) then
+            return
+        end
+
+        -- Click on the video body — toggle pause.
+        mp.commandv("cycle", "pause")
+    end)
 end
 
 --------------------------------------------------------------------------------

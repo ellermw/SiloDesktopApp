@@ -30,7 +30,7 @@ public partial class SetupWizardViewModel : ObservableObject
     [ObservableProperty]
     private int _currentStep = 1;
 
-    public int TotalSteps => 5;
+    public int TotalSteps => 8;
 
     /// <summary>True after the user has explicitly skipped the library step. Persisted in-memory only.</summary>
     [ObservableProperty]
@@ -104,6 +104,43 @@ public partial class SetupWizardViewModel : ObservableObject
 
     [ObservableProperty]
     private string _jellyfinName = "";
+
+    // ===== Step 4: Storage (S3) =====
+    // Mirrors upstream web/src/pages/setup-wizard/steps/ServerStorageStep.tsx.
+    // Two independent buckets — public (artwork, chapter thumbnails, subtitle
+    // files served to clients) and private (imports/exports/internal artifacts).
+    // All fields optional; users who skip can configure later via Admin Settings.
+
+    [ObservableProperty] private bool _configureStorage;
+
+    // Public bucket — serves client-facing assets
+    [ObservableProperty] private string _s3PublicEndpoint = "";
+    [ObservableProperty] private string _s3PublicBucket = "";
+    [ObservableProperty] private string _s3PublicKeyPrefix = "";
+    [ObservableProperty] private string _s3PublicAccessKey = "";
+    [ObservableProperty] private string _s3PublicSecretKey = "";
+    [ObservableProperty] private string _s3PublicUrlAuth = "presigned"; // presigned | public | cloudflare_token
+    [ObservableProperty] private string _s3PublicReadEndpoint = "";
+
+    // Private bucket — non-public internal storage
+    [ObservableProperty] private string _s3PrivateEndpoint = "";
+    [ObservableProperty] private string _s3PrivateBucket = "";
+    [ObservableProperty] private string _s3PrivateKeyPrefix = "";
+    [ObservableProperty] private string _s3PrivateAccessKey = "";
+    [ObservableProperty] private string _s3PrivateSecretKey = "";
+
+    /// <summary>Cache artwork in public asset storage instead of proxying external URLs.</summary>
+    [ObservableProperty] private bool _cacheImages;
+
+    /// <summary>True when the URL auth method needs a separate read endpoint
+    /// (everything except presigned). Drives visibility of the Read Endpoint
+    /// input in the S3 Public Storage section.</summary>
+    public bool IsPublicReadEndpointVisible =>
+        !string.IsNullOrEmpty(S3PublicUrlAuth) &&
+        !S3PublicUrlAuth.Equals("presigned", StringComparison.OrdinalIgnoreCase);
+
+    partial void OnS3PublicUrlAuthChanged(string value) =>
+        OnPropertyChanged(nameof(IsPublicReadEndpointVisible));
 
     // ===== Step 5: Metadata =====
 
@@ -416,19 +453,42 @@ public partial class SetupWizardViewModel : ObservableObject
             // Save each non-empty setting
             var settings = new Dictionary<string, string>();
 
+            // Server uses dotted keys (redis.url, playback.ffmpeg_path, …) —
+            // see internal/config/db_loader.go. Flat underscored keys are a
+            // no-op and silently lose the setting.
             if (!string.IsNullOrWhiteSpace(RedisUrl))
-                settings["redis_url"] = RedisUrl.Trim();
+                settings["redis.url"] = RedisUrl.Trim();
             if (!string.IsNullOrWhiteSpace(FfmpegPath))
-                settings["ffmpeg_path"] = FfmpegPath.Trim();
+                settings["playback.ffmpeg_path"] = FfmpegPath.Trim();
             if (!string.IsNullOrWhiteSpace(TranscodeDir))
-                settings["transcode_dir"] = TranscodeDir.Trim();
+                settings["playback.transcode_dir"] = TranscodeDir.Trim();
             if (!string.IsNullOrWhiteSpace(HardwareAccel))
-                settings["hardware_accel"] = HardwareAccel.Trim();
-            settings["transcoding_enabled"] = TranscodingEnabled.ToString().ToLowerInvariant();
+                settings["playback.hw_accel"] = HardwareAccel.Trim();
+            settings["playback.transcode_enabled"] = TranscodingEnabled.ToString().ToLowerInvariant();
             if (!string.IsNullOrWhiteSpace(JellyfinUrl))
-                settings["jellyfin_url"] = JellyfinUrl.Trim();
+                settings["jellyfin_compat.public_url"] = JellyfinUrl.Trim();
             if (!string.IsNullOrWhiteSpace(JellyfinName))
-                settings["jellyfin_name"] = JellyfinName.Trim();
+                settings["jellyfin_compat.server_name"] = JellyfinName.Trim();
+
+            // Storage — only when the user expanded the optional section.
+            if (ConfigureStorage)
+            {
+                if (!string.IsNullOrWhiteSpace(S3PublicEndpoint))   settings["s3.public_endpoint"]    = S3PublicEndpoint.Trim();
+                if (!string.IsNullOrWhiteSpace(S3PublicBucket))     settings["s3.public_bucket"]      = S3PublicBucket.Trim();
+                if (!string.IsNullOrWhiteSpace(S3PublicKeyPrefix))  settings["s3.public_key_prefix"]  = S3PublicKeyPrefix.Trim();
+                if (!string.IsNullOrWhiteSpace(S3PublicAccessKey))  settings["s3.public_access_key"]  = S3PublicAccessKey.Trim();
+                if (!string.IsNullOrWhiteSpace(S3PublicSecretKey))  settings["s3.public_secret_key"]  = S3PublicSecretKey.Trim();
+                if (!string.IsNullOrWhiteSpace(S3PublicUrlAuth))    settings["s3.public_url_auth"]    = S3PublicUrlAuth.Trim();
+                if (!string.IsNullOrWhiteSpace(S3PublicReadEndpoint)) settings["s3.public_read_endpoint"] = S3PublicReadEndpoint.Trim();
+
+                if (!string.IsNullOrWhiteSpace(S3PrivateEndpoint))  settings["s3.private_endpoint"]   = S3PrivateEndpoint.Trim();
+                if (!string.IsNullOrWhiteSpace(S3PrivateBucket))    settings["s3.private_bucket"]     = S3PrivateBucket.Trim();
+                if (!string.IsNullOrWhiteSpace(S3PrivateKeyPrefix)) settings["s3.private_key_prefix"] = S3PrivateKeyPrefix.Trim();
+                if (!string.IsNullOrWhiteSpace(S3PrivateAccessKey)) settings["s3.private_access_key"] = S3PrivateAccessKey.Trim();
+                if (!string.IsNullOrWhiteSpace(S3PrivateSecretKey)) settings["s3.private_secret_key"] = S3PrivateSecretKey.Trim();
+
+                settings["metadata.cache_images"] = CacheImages.ToString().ToLowerInvariant();
+            }
 
             foreach (var (key, value) in settings)
             {

@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ContinuumPlayer.Core.Api;
+using ContinuumPlayer.Core.Models.Admin;
 using ContinuumPlayer.Core.Models.Catalog;
 
 namespace ContinuumPlayer.ViewModels.Admin;
@@ -28,6 +29,26 @@ public partial class AdminLibrariesViewModel : ObservableObject
     public HashSet<int> RefreshingIds { get; } = [];
     public HashSet<int> MountCheckingIds { get; } = [];
 
+    // ===== Active Scans (from event channel) =====
+    public List<AdminScanRun> ActiveScans { get; set; } = [];
+
+    // ===== Active Refresh Jobs (library_refresh type) =====
+    public List<AdminJob> ActiveRefreshJobs { get; set; } = [];
+
+    // ===== Unmatched Items =====
+    public List<UnmatchedLibraryItem> UnmatchedItems { get; set; } = [];
+    public int UnmatchedTotal { get; set; }
+    [ObservableProperty] private int _unmatchedPage;
+
+    // ===== Stale Media IDs =====
+    public List<StaleMediaId> StaleIds { get; set; } = [];
+
+    // ===== Ambiguous Roots =====
+    public List<LibraryRoot> AmbiguousRoots { get; set; } = [];
+
+    // ===== Metadata Providers =====
+    public List<MetadataProvider> MetadataProviders { get; set; } = [];
+
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private bool _isScanningAll;
     [ObservableProperty] private string? _errorMessage;
@@ -50,8 +71,12 @@ public partial class AdminLibrariesViewModel : ObservableObject
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsLoading = false; }
 
-        // Load skipped roots in background (non-blocking)
+        // Load secondary data in background (non-blocking)
         _ = LoadSkippedRootsAsync();
+        _ = LoadUnmatchedItemsAsync();
+        _ = LoadStaleIdsAsync();
+        _ = LoadMetadataProvidersAsync();
+        _ = LoadActiveRefreshJobsAsync();
     }
 
     private async Task LoadSkippedRootsAsync()
@@ -63,6 +88,79 @@ public partial class AdminLibrariesViewModel : ObservableObject
             foreach (var s in skipped) SkippedRoots.Add(s);
         }
         catch { /* Non-critical */ }
+    }
+
+    public async Task LoadUnmatchedItemsAsync()
+    {
+        try
+        {
+            var response = await _adminApi.GetUnmatchedItemsAsync(10, UnmatchedPage * 10);
+            UnmatchedItems = response.Items;
+            UnmatchedTotal = response.Total;
+            OnPropertyChanged(nameof(UnmatchedItems));
+            OnPropertyChanged(nameof(UnmatchedTotal));
+        }
+        catch { /* Non-critical */ }
+    }
+
+    private async Task LoadStaleIdsAsync()
+    {
+        try
+        {
+            StaleIds = await _adminApi.GetStaleIdsAsync();
+            OnPropertyChanged(nameof(StaleIds));
+        }
+        catch { /* Non-critical */ }
+    }
+
+    public async Task LoadAmbiguousRootsAsync(int libraryId)
+    {
+        try
+        {
+            var response = await _adminApi.GetLibraryRootsAsync(libraryId, "ambiguous");
+            AmbiguousRoots = response.Items;
+            OnPropertyChanged(nameof(AmbiguousRoots));
+        }
+        catch { AmbiguousRoots = []; OnPropertyChanged(nameof(AmbiguousRoots)); }
+    }
+
+    private async Task LoadMetadataProvidersAsync()
+    {
+        try
+        {
+            MetadataProviders = await _adminApi.GetProvidersAsync();
+            OnPropertyChanged(nameof(MetadataProviders));
+        }
+        catch { /* Non-critical */ }
+    }
+
+    private async Task LoadActiveRefreshJobsAsync()
+    {
+        try
+        {
+            var jobs = await _adminApi.GetAdminJobsAsync("library_refresh", limit: 50);
+            ActiveRefreshJobs = jobs.Where(j => j.Status is "running" or "queued" or "requested").ToList();
+            OnPropertyChanged(nameof(ActiveRefreshJobs));
+        }
+        catch { ActiveRefreshJobs = []; }
+    }
+
+    // ===== Library Providers =====
+
+    public async Task<LibraryProviderChainResponse?> GetLibraryProvidersAsync(int libraryId)
+    {
+        try { return await _adminApi.GetLibraryProvidersAsync(libraryId); }
+        catch { return null; }
+    }
+
+    public async Task<bool> SetLibraryProvidersAsync(int libraryId, SetLibraryChainRequest request)
+    {
+        try
+        {
+            await _adminApi.UpdateLibraryProvidersAsync(libraryId, request);
+            return true;
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; return false; }
     }
 
     // ===== Scan All =====
@@ -217,5 +315,57 @@ public partial class AdminLibrariesViewModel : ObservableObject
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsLoading = false; }
+    }
+
+    // ===== Reorder Libraries =====
+
+    [RelayCommand]
+    private async Task ReorderLibrariesAsync(object body)
+    {
+        try
+        {
+            await _adminApi.ReorderLibrariesAsync(body);
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
+    }
+
+    // ===== Cancel Library Scans =====
+
+    [RelayCommand]
+    private async Task CancelLibraryScansAsync(int libraryId)
+    {
+        try
+        {
+            await _adminApi.CancelLibraryScansAsync(libraryId);
+            StatusMessage = "Scan cancellation requested.";
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
+    }
+
+    // ===== Root Override =====
+
+    [RelayCommand]
+    private async Task UpsertRootOverrideAsync(UpsertLibraryRootOverrideRequest request)
+    {
+        try
+        {
+            await _adminApi.UpsertLibraryRootOverrideAsync(request);
+            StatusMessage = "Root override saved.";
+            // Reload ambiguous roots for the same library
+            await LoadAmbiguousRootsAsync(request.LibraryId);
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
+    }
+
+    [RelayCommand]
+    private async Task DeleteRootOverrideAsync(DeleteLibraryRootOverrideRequest request)
+    {
+        try
+        {
+            await _adminApi.DeleteLibraryRootOverrideAsync(request);
+            StatusMessage = "Root override removed.";
+            await LoadAmbiguousRootsAsync(request.LibraryId);
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
     }
 }

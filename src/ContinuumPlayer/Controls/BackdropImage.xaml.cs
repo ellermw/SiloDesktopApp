@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 
 namespace ContinuumPlayer.Controls;
@@ -9,6 +10,7 @@ public sealed partial class BackdropImage : UserControl
 {
     private double _imgW;
     private double _imgH;
+    private Storyboard? _kenBurnsStoryboard;
 
     public static readonly DependencyProperty SourceProperty =
         DependencyProperty.Register(
@@ -28,6 +30,18 @@ public sealed partial class BackdropImage : UserControl
             typeof(BackdropImage),
             new PropertyMetadata(0.2, OnAnchorYChanged));
 
+    /// <summary>
+    /// Enable a subtle Ken Burns zoom/pan animation on the backdrop. Runs a
+    /// slow auto-reversing scale (1.0 → 1.06) over 30s so the hero feels
+    /// alive without being distracting. Off by default.
+    /// </summary>
+    public static readonly DependencyProperty EnableKenBurnsProperty =
+        DependencyProperty.Register(
+            nameof(EnableKenBurns),
+            typeof(bool),
+            typeof(BackdropImage),
+            new PropertyMetadata(false, OnKenBurnsChanged));
+
     public ImageSource Source
     {
         get => (ImageSource)GetValue(SourceProperty);
@@ -38,6 +52,12 @@ public sealed partial class BackdropImage : UserControl
     {
         get => (double)GetValue(AnchorYProperty);
         set => SetValue(AnchorYProperty, value);
+    }
+
+    public bool EnableKenBurns
+    {
+        get => (bool)GetValue(EnableKenBurnsProperty);
+        set => SetValue(EnableKenBurnsProperty, value);
     }
 
     public BackdropImage()
@@ -84,6 +104,68 @@ public sealed partial class BackdropImage : UserControl
     {
         if (d is BackdropImage ctrl)
             ctrl.Reposition();
+    }
+
+    private static void OnKenBurnsChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not BackdropImage ctrl) return;
+        if ((bool)e.NewValue) ctrl.StartKenBurns();
+        else ctrl.StopKenBurns();
+    }
+
+    private void StartKenBurns()
+    {
+        StopKenBurns();
+        var sb = new Storyboard { RepeatBehavior = RepeatBehavior.Forever, AutoReverse = true };
+
+        var scaleX = new DoubleAnimation
+        {
+            From = 1.0,
+            To = 1.06,
+            Duration = new Duration(TimeSpan.FromSeconds(30)),
+            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+        };
+        Storyboard.SetTarget(scaleX, KenBurnsTransform);
+        Storyboard.SetTargetProperty(scaleX, "ScaleX");
+
+        var scaleY = new DoubleAnimation
+        {
+            From = 1.0,
+            To = 1.06,
+            Duration = new Duration(TimeSpan.FromSeconds(30)),
+            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+        };
+        Storyboard.SetTarget(scaleY, KenBurnsTransform);
+        Storyboard.SetTargetProperty(scaleY, "ScaleY");
+
+        // Small horizontal drift for the "pan" part of Ken Burns.
+        var translateX = new DoubleAnimation
+        {
+            From = 0,
+            To = 12,
+            Duration = new Duration(TimeSpan.FromSeconds(30)),
+            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+        };
+        Storyboard.SetTarget(translateX, KenBurnsTransform);
+        Storyboard.SetTargetProperty(translateX, "TranslateX");
+
+        sb.Children.Add(scaleX);
+        sb.Children.Add(scaleY);
+        sb.Children.Add(translateX);
+        _kenBurnsStoryboard = sb;
+        sb.Begin();
+    }
+
+    private void StopKenBurns()
+    {
+        if (_kenBurnsStoryboard != null)
+        {
+            _kenBurnsStoryboard.Stop();
+            _kenBurnsStoryboard = null;
+        }
+        KenBurnsTransform.ScaleX = 1;
+        KenBurnsTransform.ScaleY = 1;
+        KenBurnsTransform.TranslateX = 0;
     }
 
     private void ClipCanvas_SizeChanged(object sender, SizeChangedEventArgs e)

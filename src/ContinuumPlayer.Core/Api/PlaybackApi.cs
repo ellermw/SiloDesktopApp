@@ -27,8 +27,41 @@ public class PlaybackApi(ContinuumApiClient client)
     // ===== Subtitle Preferences =====
 
     public Task SaveSubtitlePrefsAsync(string seriesId, string language, string mode, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/subtitle-prefs/{Uri.EscapeDataString(seriesId)}",
-            new { subtitle_language = language, subtitle_mode = mode }, ct);
+        => SaveSubtitlePrefsAsync(seriesId, new SubtitlePreferenceRequest
+        {
+            SubtitleLanguage = language,
+            SubtitleMode = mode,
+            SubtitleTrackIndex = mode == "off" ? -1 : 0,
+        }, ct);
+
+    public Task SaveSubtitlePrefsAsync(string seriesId, SubtitlePreferenceRequest request, CancellationToken ct = default)
+    {
+        // Use Dictionary<string,object?> so the .NET 8 trimmer doesn't strip the
+        // anonymous-type properties (established gotcha in this codebase).
+        var body = new Dictionary<string, object?>
+        {
+            ["subtitle_language"] = request.SubtitleLanguage ?? "",
+            ["subtitle_track_index"] = request.SubtitleTrackIndex,
+            ["subtitle_mode"] = request.SubtitleMode,
+        };
+        if (!string.IsNullOrEmpty(request.ExternalSubtitlePath))
+            body["external_subtitle_path"] = request.ExternalSubtitlePath;
+        if (request.TrackSignature != null)
+        {
+            body["track_signature"] = new Dictionary<string, object?>
+            {
+                ["source"] = request.TrackSignature.Source,
+                ["language"] = request.TrackSignature.Language,
+                ["codec"] = request.TrackSignature.Codec,
+                ["label"] = request.TrackSignature.Label,
+                ["forced"] = request.TrackSignature.Forced,
+                ["hearing_impaired"] = request.TrackSignature.HearingImpaired,
+            };
+        }
+        if (request.ShowForcedSubtitles.HasValue)
+            body["show_forced_subtitles"] = request.ShowForcedSubtitles.Value;
+        return client.PutNoContentAsync($"/api/v1/subtitle-prefs/{Uri.EscapeDataString(seriesId)}", body, ct);
+    }
 
     // ===== Home Dismissals =====
 

@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using Windows.UI;
 using ContinuumPlayer.Core.Models.Admin;
 using ContinuumPlayer.ViewModels.Admin;
@@ -19,9 +20,17 @@ public sealed partial class AdminPlaybackHistoryPage : Page
     private bool _rebuildUsersPending;
     private bool _rebuildProfilesPending;
 
+    // Polling timer for periodic refresh (no dedicated event channel for playback history)
+    private DispatcherTimer? _refreshTimer;
+
     // Pagination state (client-side, mirrors web UI behavior)
     private int _page;
     private int _pageSize = 25;
+
+    // Static filter persistence — restored when navigating back
+    private static int? _persistedUserId;
+    private static string? _persistedProfileId;
+    private static string? _persistedCompletionFilter;
 
     public AdminPlaybackHistoryPage()
     {
@@ -29,8 +38,42 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         this.InitializeComponent();
     }
 
+    protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        // Accept user_id or media_item_id as navigation parameter
+        if (e.Parameter is int userId)
+            ViewModel.SelectedUserId = userId;
+        else if (e.Parameter is string paramStr && int.TryParse(paramStr, out var uid))
+            ViewModel.SelectedUserId = uid;
+        else
+        {
+            // Restore persisted filters when navigating back without explicit params
+            ViewModel.SelectedUserId = _persistedUserId;
+            ViewModel.SelectedProfileId = _persistedProfileId;
+            ViewModel.CompletionFilter = _persistedCompletionFilter;
+        }
+    }
+
+    protected override void OnNavigatingFrom(Microsoft.UI.Xaml.Navigation.NavigatingCancelEventArgs e)
+    {
+        base.OnNavigatingFrom(e);
+        // Persist current filters for when user navigates back
+        _persistedUserId = ViewModel.SelectedUserId;
+        _persistedProfileId = ViewModel.SelectedProfileId;
+        _persistedCompletionFilter = ViewModel.CompletionFilter;
+    }
+
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        // Responsive title sizing: clamp(32, 3vw, 48)
+        this.SizeChanged += (_, args) =>
+        {
+            double w = args.NewSize.Width;
+            double fs = Math.Clamp(w * 0.03, 32, 48);
+            PageTitle.FontSize = fs;
+        };
+
         ViewModel.Items.CollectionChanged += (_, _) => ScheduleRebuildItems();
         ViewModel.Users.CollectionChanged += (_, _) => ScheduleRebuildUsers();
         ViewModel.Profiles.CollectionChanged += (_, _) => ScheduleRebuildProfiles();
@@ -42,6 +85,22 @@ public sealed partial class AdminPlaybackHistoryPage : Page
 
         await ViewModel.LoadCommand.ExecuteAsync(null);
         RebuildAll();
+
+        // Start a 30-second polling timer (no dedicated event channel for playback history)
+        _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _refreshTimer.Tick += async (_, _) =>
+        {
+            try { await ViewModel.LoadCommand.ExecuteAsync(null); }
+            catch { }
+        };
+        _refreshTimer.Start();
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        _refreshTimer?.Stop();
+        _refreshTimer = null;
     }
 
     private void ScheduleRebuildItems()
@@ -145,6 +204,13 @@ public sealed partial class AdminPlaybackHistoryPage : Page
             else
                 ProfileComboBox.PlaceholderText = "All profiles";
 
+            // Self-heal: if selected profile is no longer in the list, clear it
+            if (!string.IsNullOrEmpty(ViewModel.SelectedProfileId)
+                && !ViewModel.Profiles.Any(p => p.Id == ViewModel.SelectedProfileId))
+            {
+                ViewModel.SelectedProfileId = null;
+            }
+
             // Restore selection
             if (!string.IsNullOrEmpty(ViewModel.SelectedProfileId))
             {
@@ -169,7 +235,9 @@ public sealed partial class AdminPlaybackHistoryPage : Page
 
     private void UpdateResetButton()
     {
-        ResetButton.Visibility = ViewModel.HasActiveFilters ? Visibility.Visible : Visibility.Collapsed;
+        // Webui always shows Reset button (disabled when no filters active)
+        ResetButton.Visibility = Visibility.Visible;
+        ResetButton.IsEnabled = ViewModel.HasActiveFilters;
     }
 
     // ===== Filter event handlers =====
@@ -366,7 +434,8 @@ public sealed partial class AdminPlaybackHistoryPage : Page
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis
         });
-        if (!string.IsNullOrEmpty(item.ProfileName) && !string.IsNullOrEmpty(item.ProfileId))
+        // Always show profile_id as subline (webui always renders it)
+        if (!string.IsNullOrEmpty(item.ProfileId))
         {
             profileStack.Children.Add(new TextBlock
             {
@@ -448,6 +517,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         };
         viewLogsBtn.Click += (_, _) => page.NavigateToLogs(capturedSessionId, false);
 
+        var accentColor = ((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color;
         var ffmpegLogsBtn = new Button
         {
             Content = "FFmpeg Logs",
@@ -456,7 +526,8 @@ public sealed partial class AdminPlaybackHistoryPage : Page
             Padding = new Thickness(0),
             FontSize = 13,
             FontWeight = FontWeights.Medium,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+            // Webui: text-primary/80 — accent at 80% opacity
+            Foreground = new SolidColorBrush(Color.FromArgb(0xCC, accentColor.R, accentColor.G, accentColor.B))
         };
         ffmpegLogsBtn.Click += (_, _) => page.NavigateToLogs(capturedSessionId, true);
 
@@ -473,6 +544,8 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         row.Children.Add(endedStack);
         row.Children.Add(logsPanel);
 
+        row.PointerEntered += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF)); };
+        row.PointerExited += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); };
         return row;
     }
 
@@ -485,85 +558,72 @@ public sealed partial class AdminPlaybackHistoryPage : Page
 
     private static Border BuildMethodBadge(string? playMethod)
     {
-        Color bg;
-        Color fg;
-        string label;
-
-        switch (playMethod?.ToLowerInvariant())
+        // Webui uses a single uniform "secondary" variant for all method badges —
+        // no per-method color coding. Surface bg + secondary text.
+        string label = playMethod?.ToLowerInvariant() switch
         {
-            case "direct":
-                bg = Color.FromArgb(40, 63, 185, 80);
-                fg = Color.FromArgb(255, 63, 185, 80);
-                label = "direct";
-                break;
-            case "remux":
-                bg = Color.FromArgb(40, 56, 139, 253);
-                fg = Color.FromArgb(255, 56, 139, 253);
-                label = "remux";
-                break;
-            case "transcode":
-                bg = Color.FromArgb(40, 219, 109, 40);
-                fg = Color.FromArgb(255, 219, 109, 40);
-                label = "transcode";
-                break;
-            default:
-                bg = Color.FromArgb(60, 120, 120, 120);
-                fg = Color.FromArgb(255, 160, 160, 160);
-                label = playMethod ?? "unknown";
-                break;
-        }
+            "direct" => "direct",
+            "remux" => "remux",
+            "transcode" => "transcode",
+            _ => playMethod ?? "unknown",
+        };
 
         var badge = new Border
         {
-            Background = new SolidColorBrush(bg),
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
             CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(8, 3, 8, 3)
+            Padding = new Thickness(10, 2, 10, 2),
         };
         badge.Child = new TextBlock
         {
             Text = label,
             FontSize = 11,
             FontWeight = FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(fg)
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
         };
         return badge;
     }
 
     private static Border BuildStatusBadge(bool completed)
     {
-        Color bg;
-        Color fg;
-        string label;
-
         if (completed)
         {
-            // variant="default" — filled accent
-            bg = Color.FromArgb(40, 63, 185, 80);
-            fg = Color.FromArgb(255, 63, 185, 80);
-            label = "Completed";
+            // Webui variant="default" — filled accent/blue badge
+            var badge = new Border
+            {
+                Background = (SolidColorBrush)Application.Current.Resources["AccentBackgroundBrush"],
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 2, 10, 2),
+            };
+            badge.Child = new TextBlock
+            {
+                Text = "Completed",
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+            };
+            return badge;
         }
         else
         {
-            // variant="outline" — subtle / muted
-            bg = Color.FromArgb(60, 120, 120, 120);
-            fg = Color.FromArgb(255, 160, 160, 160);
-            label = "Partial";
+            // Webui variant="outline" — transparent bg + 1px border
+            var badge = new Border
+            {
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 2, 10, 2),
+            };
+            badge.Child = new TextBlock
+            {
+                Text = "Partial",
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            };
+            return badge;
         }
-
-        var badge = new Border
-        {
-            Background = new SolidColorBrush(bg),
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(8, 3, 8, 3)
-        };
-        badge.Child = new TextBlock
-        {
-            Text = label,
-            FontSize = 11,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(fg)
-        };
-        return badge;
     }
 
     // formatDuration equivalent: Xh Ym | Ym Xs | Xs

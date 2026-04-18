@@ -154,6 +154,17 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     public ObservableCollection<WatchTogetherSuggestion> Suggestions { get; } = [];
 
     /// <summary>
+    /// Fired when a <c>transport_command</c> frame arrives from the server — raised
+    /// on the WebSocket receive thread; subscribers MUST dispatch to the UI thread
+    /// before touching mpv or XAML state. Payload carries action (play/pause/seek),
+    /// target position, and the session it applies to.
+    /// </summary>
+    public event Action<WatchTogetherTransportCommand>? TransportCommandReceived;
+
+    /// <summary>Session ID attached to this room (if any). Set by <see cref="AttachSession"/>.</summary>
+    public string? AttachedSessionId { get; private set; }
+
+    /// <summary>
     /// Goes true when the room transitions to phase=playing on a NEW selection_revision,
     /// signalling the page (and, eventually, PlayerService) that synced playback should
     /// start. Consumers should read and clear via <see cref="AcknowledgePlaybackStart"/>.
@@ -299,6 +310,130 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         foreach (var s in next) Suggestions.Add(s);
     }
 
+    // ===== Playback sync (outbound messages) =====
+
+    /// <summary>
+    /// Announce to the room that this session is attached. Required before the
+    /// server will route inbound <c>transport_command</c> frames. Called once
+    /// when playback starts and the user is inside a room. Safe to call before
+    /// the WS connects — queued message is not retained, but an attach triggered
+    /// by PlayerService happens well after room join, so the WS is normally open.
+    /// </summary>
+    public void AttachSession(string sessionId)
+    {
+        AttachedSessionId = sessionId;
+        _ = SendWsMessageAsync(new Dictionary<string, object?>
+        {
+            ["type"] = "attach_session",
+            ["session_id"] = sessionId,
+        });
+    }
+
+    public void DetachSession()
+    {
+        AttachedSessionId = null;
+        // No explicit detach message — the server reconciles when the session
+        // ends server-side. (Matches upstream useWatchTogetherPlaybackSync.)
+    }
+
+    /// <summary>
+    /// Broadcast a transport request (play/pause/seek) to the room. Server
+    /// adjudicates (host-only policy blocks guests) and echoes back a
+    /// <c>transport_command</c> that all peers will apply via
+    /// <see cref="TransportCommandReceived"/>.
+    /// </summary>
+    public void RequestTransport(string action, double positionSeconds, bool isPaused)
+    {
+        if (string.IsNullOrEmpty(AttachedSessionId)) return;
+        if (ConnectionState != "connected") return;
+        _ = SendWsMessageAsync(new Dictionary<string, object?>
+        {
+            ["type"] = "transport_request",
+            ["action"] = action,
+            ["position_seconds"] = positionSeconds,
+            ["is_paused"] = isPaused,
+        });
+    }
+
+    /// <summary>Periodic state report. Sent 1.5s-ish by the coordinator so the
+    /// server can track each client's playhead for drift detection and lagging-
+    /// guest policy. Matches upstream <c>useWatchTogetherPlaybackSync</c>
+    /// <c>state_report</c>.</summary>
+    public void ReportState(double positionSeconds, bool isPaused)
+    {
+        if (string.IsNullOrEmpty(AttachedSessionId)) return;
+        if (ConnectionState != "connected") return;
+        _ = SendWsMessageAsync(new Dictionary<string, object?>
+        {
+            ["type"] = "state_report",
+            ["session_id"] = AttachedSessionId,
+            ["position_seconds"] = positionSeconds,
+            ["is_paused"] = isPaused,
+        });
+    }
+
+    /// <summary>Signal that the local client has loaded the content and is ready
+    /// to play. Sent once when room phase is "waiting" and playback buffered up.</summary>
+    public void ReportReady(double positionSeconds, bool isPaused)
+    {
+        if (string.IsNullOrEmpty(AttachedSessionId)) return;
+        if (ConnectionState != "connected") return;
+        _ = SendWsMessageAsync(new Dictionary<string, object?>
+        {
+            ["type"] = "ready",
+            ["session_id"] = AttachedSessionId,
+            ["position_seconds"] = Math.Max(0, positionSeconds),
+            ["is_paused"] = isPaused,
+        });
+    }
+
+    /// <summary>Signal that local playback stalled for buffering. Server may
+    /// pause other clients until this one catches up (depends on room policy).</summary>
+    public void ReportBuffering(double positionSeconds, bool isPaused)
+    {
+        if (string.IsNullOrEmpty(AttachedSessionId)) return;
+        if (ConnectionState != "connected") return;
+        _ = SendWsMessageAsync(new Dictionary<string, object?>
+        {
+            ["type"] = "buffering",
+            ["session_id"] = AttachedSessionId,
+            ["position_seconds"] = Math.Max(0, positionSeconds),
+            ["is_paused"] = isPaused,
+        });
+    }
+
+    /// <summary>
+    /// Estimated offset (server_time - client_time in ms) derived from transport
+    /// command timestamps. Used to convert server-side <c>execute_at</c> into a
+    /// local DateTime so clients fire transport actions in sync. Zero until the
+    /// first command arrives.
+    /// </summary>
+    public long ServerTimeOffsetMs { get; private set; }
+
+    private void UpdateServerTimeOffset(string? issuedAtIso)
+    {
+        if (string.IsNullOrEmpty(issuedAtIso)) return;
+        if (!DateTime.TryParse(issuedAtIso, null,
+            System.Globalization.DateTimeStyles.RoundtripKind, out var serverTime)) return;
+        var now = DateTime.UtcNow;
+        // Simple moving estimate — we don't have RTT measurement, so this is
+        // best-effort. Refine if a scheduled execute_at drifts more than ~100ms.
+        ServerTimeOffsetMs = (long)(serverTime.ToUniversalTime() - now).TotalMilliseconds;
+    }
+
+    private async Task SendWsMessageAsync(IDictionary<string, object?> body)
+    {
+        var ws = _ws;
+        if (ws == null || ws.State != WebSocketState.Open) return;
+        try
+        {
+            var json = JsonSerializer.Serialize(body);
+            var bytes = Encoding.UTF8.GetBytes(json);
+            await ws.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
+        }
+        catch { /* best effort — next attempt will retry */ }
+    }
+
     // ===== WebSocket =====
 
     private void StartWebSocket()
@@ -436,8 +571,20 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
                         ? (reasonEl.GetString() ?? "room_closed")
                         : "room_closed";
                     break;
-                // transport_command and pong are received but not consumed in this pass —
-                // synchronized playback is a TODO.
+                case "transport_command":
+                    try
+                    {
+                        var cmd = JsonSerializer.Deserialize<WatchTogetherTransportCommand>(
+                            root.GetRawText(), SnakeJsonOptions);
+                        if (cmd != null && !string.IsNullOrEmpty(cmd.Action))
+                        {
+                            UpdateServerTimeOffset(cmd.IssuedAt);
+                            TransportCommandReceived?.Invoke(cmd);
+                        }
+                    }
+                    catch { /* malformed — ignore */ }
+                    break;
+                // pong is received but not consumed (the client doesn't track RTT yet).
             }
         }
         catch { /* ignore malformed frames */ }

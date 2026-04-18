@@ -51,12 +51,21 @@ public partial class AdminDashboardViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private async Task LoadAsync()
+    private Task LoadAsync() => LoadInternalAsync(silent: false);
+
+    /// <summary>
+    /// Silent refresh used by the realtime event-channel subscription.
+    /// Identical to LoadAsync except it does NOT flip <see cref="IsLoading"/>
+    /// so the ProgressRing never flashes on incremental updates.
+    /// </summary>
+    public Task RefreshSilentAsync() => LoadInternalAsync(silent: true);
+
+    private async Task LoadInternalAsync(bool silent)
     {
         if (IsLoading) return;
 
-        IsLoading = true;
-        ErrorMessage = null;
+        if (!silent) IsLoading = true;
+        if (!silent) ErrorMessage = null;
 
         try
         {
@@ -86,16 +95,16 @@ public partial class AdminDashboardViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load dashboard: {ex.Message}";
+            if (!silent) ErrorMessage = $"Failed to load dashboard: {ex.Message}";
         }
         finally
         {
-            IsLoading = false;
+            if (!silent) IsLoading = false;
         }
     }
 
     [RelayCommand]
-    private Task RefreshAsync() => LoadAsync();
+    private Task RefreshAsync() => LoadInternalAsync(silent: false);
 
     [RelayCommand]
     private async Task ScanAllAsync()

@@ -7,18 +7,26 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
     Width="{StaticResource PosterCardWidth}"
+    Height="{StaticResource PosterCardTotalHeight}"
     PointerEntered="OnPointerEntered"
     PointerExited="OnPointerExited"
     Tapped="OnCardTapped">
 
+    <!-- Explicit Height on both the UserControl and its root Grid means
+         UniformGridLayout never has to MeasureOverride the card's visual
+         tree (which was triggering text-measurement on TitleText and
+         SubtitleText per card per layout pass). A LoadMore adding 100
+         items was forcing measurement of ~20 visible card subtrees in one
+         UI-thread burst; pinning the height makes each card layout O(1). -->
     <Grid
         x:Name="RootGrid"
         Width="{StaticResource PosterCardWidth}"
+        Height="{StaticResource PosterCardTotalHeight}"
         Background="Transparent">
 
         <Grid.RowDefinitions>
             <RowDefinition Height="267" />
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <!-- Poster image area (2:3 aspect, rounded-xl = 12px).

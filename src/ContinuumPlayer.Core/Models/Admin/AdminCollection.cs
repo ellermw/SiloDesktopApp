@@ -49,6 +49,7 @@ public class CreateLibraryCollectionRequest
     public Dictionary<string, object>? QueryDefinition { get; set; }
     public Dictionary<string, object>? SortConfig { get; set; }
     public Dictionary<string, object>? SourceConfig { get; set; }
+    public string? SyncSchedule { get; set; }
 }
 
 public class UpdateLibraryCollectionRequest

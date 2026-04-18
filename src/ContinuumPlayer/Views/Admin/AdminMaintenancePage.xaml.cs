@@ -2,10 +2,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.UI;
 using ContinuumPlayer.Controls;
 using ContinuumPlayer.Core.Models.Admin;
+using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.ViewModels.Admin;
 
 namespace ContinuumPlayer.Views.Admin;
@@ -26,6 +28,11 @@ public sealed partial class AdminMaintenancePage : Page
     private bool _rebuildExportsPending;
     private bool _rebuildAllPending;
 
+    // Event channel subscription for realtime refresh
+    private IDisposable? _eventSubscription;
+    private EventChannelClient? _eventChannel;
+    private DateTime _lastEventRefresh = DateTime.MinValue;
+
     public AdminMaintenancePage()
     {
         ViewModel = App.Services.GetRequiredService<AdminMaintenanceViewModel>();
@@ -39,6 +46,36 @@ public sealed partial class AdminMaintenancePage : Page
         ViewModel.AllJobs.CollectionChanged += (_, _) => ScheduleRebuildAll();
         try { await ViewModel.LoadCommand.ExecuteAsync(null); }
         catch (Exception ex) { ViewModel.ErrorMessage = $"Error: {ex.Message}"; }
+
+        // Subscribe to realtime job events for live refresh
+        try
+        {
+            _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
+            _eventChannel.EventReceived += OnEventReceived;
+            _eventSubscription = _eventChannel.Subscribe("jobs");
+        }
+        catch { }
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        if (_eventChannel != null)
+            _eventChannel.EventReceived -= OnEventReceived;
+        _eventSubscription?.Dispose();
+        _eventSubscription = null;
+    }
+
+    private void OnEventReceived(string channel, string eventName, System.Text.Json.JsonElement data)
+    {
+        if (channel != "jobs") return;
+        if ((DateTime.UtcNow - _lastEventRefresh).TotalMilliseconds < 1000) return;
+        _lastEventRefresh = DateTime.UtcNow;
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            try { await ViewModel.LoadCommand.ExecuteAsync(null); }
+            catch { }
+        });
     }
 
     private void ScheduleRebuildImports()
@@ -261,6 +298,9 @@ public sealed partial class AdminMaintenancePage : Page
         }
         info.Children.Add(metaRow);
 
+        // Progress bar (matching import row pattern)
+        info.Children.Add(BuildProgressBar(AdminMaintenanceViewModel.GetJobProgressPercent(job)));
+
         if (!string.IsNullOrEmpty(job.ErrorMessage))
         {
             info.Children.Add(new TextBlock
@@ -285,7 +325,7 @@ public sealed partial class AdminMaintenancePage : Page
 
         if (!string.IsNullOrEmpty(job.DownloadUrl))
         {
-            var dlBtn = new Button { Padding = new Thickness(10, 6, 10, 6), FontSize = 12 };
+            var dlBtn = new Button { Padding = new Thickness(8, 4, 8, 4), Height = 28, FontSize = 12 };
             var dlContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
             dlContent.Children.Add(new FontIcon { Glyph = "\uE896", FontSize = 12 });
             dlContent.Children.Add(new TextBlock { Text = "Download" });
@@ -296,7 +336,7 @@ public sealed partial class AdminMaintenancePage : Page
 
         if (job.Status == "completed" && string.IsNullOrEmpty(job.PublicUrl))
         {
-            var publishBtn = new Button { Content = "Publish", Padding = new Thickness(10, 6, 10, 6), FontSize = 12 };
+            var publishBtn = new Button { Content = "Publish", Padding = new Thickness(8, 4, 8, 4), Height = 28, FontSize = 12 };
             var capturedId = job.Id;
             publishBtn.Click += async (_, _) => await ViewModel.PublishExportAsync(capturedId);
             actions.Children.Add(publishBtn);
@@ -304,7 +344,7 @@ public sealed partial class AdminMaintenancePage : Page
 
         if (!string.IsNullOrEmpty(job.PublicUrl))
         {
-            var copyBtn = new Button { Content = "Copy URL", Padding = new Thickness(10, 6, 10, 6), FontSize = 12 };
+            var copyBtn = new Button { Content = "Copy URL", Padding = new Thickness(8, 4, 8, 4), Height = 28, FontSize = 12 };
             var capturedUrl = job.PublicUrl!;
             copyBtn.Click += (_, _) => CopyToClipboard(capturedUrl);
             actions.Children.Add(copyBtn);
@@ -332,14 +372,40 @@ public sealed partial class AdminMaintenancePage : Page
         var desc = JobDescription(job);
         if (!string.IsNullOrEmpty(desc))
         {
-            headRow.Children.Add(new TextBlock
+            // Try to make description a clickable link to the library if library_id is present
+            int? jobLibraryId = null;
+            if (job.RequestPayload != null && job.RequestPayload.TryGetValue("library_id", out var libIdObj))
             {
-                Text = desc,
-                FontSize = 12,
-                FontWeight = FontWeights.Medium,
-                Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-                VerticalAlignment = VerticalAlignment.Center,
-            });
+                if (libIdObj is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    jobLibraryId = je.GetInt32();
+                else if (libIdObj is int intId) jobLibraryId = intId;
+            }
+
+            if (jobLibraryId.HasValue)
+            {
+                var capturedLibId = jobLibraryId.Value;
+                var descLink = new HyperlinkButton
+                {
+                    Content = desc,
+                    Padding = new Thickness(0),
+                    FontSize = 12,
+                    FontWeight = FontWeights.Medium,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                descLink.Click += (_, _) => Frame.Navigate(typeof(AdminLibrariesPage));
+                headRow.Children.Add(descLink);
+            }
+            else
+            {
+                headRow.Children.Add(new TextBlock
+                {
+                    Text = desc,
+                    FontSize = 12,
+                    FontWeight = FontWeights.Medium,
+                    Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+            }
         }
         headRow.Children.Add(new TextBlock
         {
@@ -362,6 +428,9 @@ public sealed partial class AdminMaintenancePage : Page
             metaRow.Children.Add(MetaText($"Finished: {FormatLocalTime(job.CompletedAt!)}"));
         if (metaRow.Children.Count > 0)
             container.Children.Add(metaRow);
+
+        // Progress bar (consistent across all job types)
+        container.Children.Add(BuildProgressBar(AdminMaintenanceViewModel.GetJobProgressPercent(job)));
 
         if (!string.IsNullOrEmpty(job.ErrorMessage))
         {
@@ -397,6 +466,26 @@ public sealed partial class AdminMaintenancePage : Page
             "failed"    => (Color.FromArgb(0x33, 0xEF, 0x6B, 0x73), Color.FromArgb(0xFF, 0xEF, 0x6B, 0x73)),
             _           => (Color.FromArgb(0x33, 0x9C, 0xA3, 0xAF), Color.FromArgb(0xFF, 0x9C, 0xA3, 0xAF)),
         };
+        var badgeContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        // Show a small spinner for running status (matches webui Loader2 animation)
+        if (status == "running")
+        {
+            badgeContent.Children.Add(new ProgressRing
+            {
+                IsActive = true,
+                Width = 12,
+                Height = 12,
+                Foreground = new SolidColorBrush(fg),
+            });
+        }
+        badgeContent.Children.Add(new TextBlock
+        {
+            Text = status,
+            FontSize = 10,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(fg),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
         return new Border
         {
             Background = new SolidColorBrush(bg),
@@ -404,14 +493,7 @@ public sealed partial class AdminMaintenancePage : Page
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(9, 0, 9, 0),
             VerticalAlignment = VerticalAlignment.Center,
-            Child = new TextBlock
-            {
-                Text = status,
-                FontSize = 10,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(fg),
-                VerticalAlignment = VerticalAlignment.Center,
-            },
+            Child = badgeContent,
         };
     }
 
@@ -479,7 +561,7 @@ public sealed partial class AdminMaintenancePage : Page
     private static string FormatJobProgress(AdminJob job)
     {
         if (job.ProgressTotal > 0)
-            return $"{job.ProgressCurrent} / {job.ProgressTotal}";
+            return $"{job.ProgressCurrent:N0} / {job.ProgressTotal:N0}";
         return job.Status switch
         {
             "completed" => "Done",

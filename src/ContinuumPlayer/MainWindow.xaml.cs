@@ -167,11 +167,15 @@ public sealed partial class MainWindow : Window
             PlayingNextPlayNowText.Text = $"Play next in {_playingNextRemaining}";
             PlayingNextOverlay.Visibility = Visibility.Visible;
 
-            // Hide the mpv popup so this WinUI overlay becomes visible.
-            // The popup stays hidden until either Play Now (which runs
-            // PlayAsync → EnsureMpvInitialized → Show via state transition)
-            // or Cancel (CloseAsync leaves the popup hidden).
-            _playerService.HideVideoPopup();
+            // Postroll mini-player (webui parity): minimize the player so the
+            // mpv popup repositions to the mini bar and credits keep playing
+            // visibly while the Up Next card floats above. The overlay is now
+            // a bottom-centered card (not full-screen) so both surfaces are
+            // visible simultaneously.
+            if (_playerService.State == PlayerState.Expanded || _playerService.State == PlayerState.Fullscreen)
+            {
+                _playerService.Minimize();
+            }
 
             StartPlayingNextCountdown();
         });
@@ -288,6 +292,42 @@ public sealed partial class MainWindow : Window
         // page's code-behind. Start with the generic label as a placeholder
         // so there's never a blank title bar.
         AppWindow.Title = DocumentTitle.FromPageType(pageType);
+
+        // Auto-collapse the nav pane on detail pages so the content gets
+        // more horizontal canvas (webui parity — detail pages shift the
+        // sidebar from 260px to 64px). Browse-type pages expand back.
+        // Only applies in Idle / Minimized states where the pane is
+        // visible at all.
+        if (NavView.IsPaneVisible)
+        {
+            NavView.IsPaneOpen = !IsDetailPage(pageType);
+        }
+    }
+
+    /// <summary>
+    /// Whether a page type should trigger the nav-pane auto-collapse. These
+    /// are pages that prefer a wider content canvas (item detail hero, person
+    /// filmography grid). Browse/home/settings pages stay expanded.
+    /// </summary>
+    private static bool IsDetailPage(Type pageType)
+    {
+        var name = pageType.Name;
+        return name is "ItemDetailPage" or "PersonDetailPage";
+    }
+
+    /// <summary>Ctrl+K — global search palette (webui parity with GlobalSearch.tsx).</summary>
+    private async void GlobalSearchAccelerator_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        try
+        {
+            var dlg = new Controls.GlobalSearchDialog { XamlRoot = this.Content.XamlRoot };
+            await dlg.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"GlobalSearchDialog failed: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -387,13 +427,19 @@ public sealed partial class MainWindow : Window
         // regardless of login/logout/navigation timing.
         MainServerActivityButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
         _ = UpdateProfileDisplayAsync();
+        BuildThemeDots();
 
         if (!_navInitialized)
         {
             _navInitialized = true;
 
-            // Load libraries on first init
-            _ = _viewModel.LoadLibrariesCommand.ExecuteAsync(null);
+            // Load libraries on first init, then fetch sidebar pins so the
+            // library nav renders pinned collections underneath each library.
+            _ = Task.Run(async () =>
+            {
+                await _viewModel.LoadLibrariesCommand.ExecuteAsync(null);
+                DispatcherQueue.TryEnqueue(async () => await RefreshSidebarPinsAsync());
+            });
 
             // Watch for library changes to update nav (marshal to UI thread)
             _viewModel.Libraries.CollectionChanged += (_, _) =>
@@ -426,7 +472,10 @@ public sealed partial class MainWindow : Window
                     ProfileInitialText.Text = !string.IsNullOrEmpty(profile.Name)
                         ? profile.Name[0].ToString().ToUpperInvariant()
                         : "?";
-                    LogoutMenuItem.Text = $"Logout ({profile.Name})";
+                    // Populate dropdown header
+                    ProfileDropdownInitial.Text = ProfileInitialText.Text;
+                    ProfileDropdownName.Text = profile.Name;
+                    ProfileDropdownUsername.Text = _authService.CurrentUser?.Username ?? "";
                 });
             }
         }
@@ -554,7 +603,7 @@ public sealed partial class MainWindow : Window
         int headerIndex = -1;
         for (int i = 0; i < NavView.MenuItems.Count; i++)
         {
-            if (NavView.MenuItems[i] is NavigationViewItemHeader header && header == LibrariesHeader)
+            if (NavView.MenuItems[i] == LibrariesHeader)
             {
                 headerIndex = i;
                 break;
@@ -563,10 +612,11 @@ public sealed partial class MainWindow : Window
 
         if (headerIndex < 0) return;
 
-        // Remove old library items (between LibrariesHeader and the next header)
+        // Remove old library items (between LibrariesHeader and the next section)
         int removeStart = headerIndex + 1;
         while (removeStart < NavView.MenuItems.Count &&
-               NavView.MenuItems[removeStart] is not NavigationViewItemHeader)
+               NavView.MenuItems[removeStart] is not NavigationViewItemHeader &&
+               NavView.MenuItems[removeStart] != LibrariesHeader)
         {
             NavView.MenuItems.RemoveAt(removeStart);
         }
@@ -594,8 +644,188 @@ public sealed partial class MainWindow : Window
                 Tag = lib,
                 Icon = new FontIcon { Glyph = icon }
             };
+
+            // Nested pinned collections under this library (webui parity,
+            // sidebar_pins user setting).
+            if (_sidebarPins.TryGetValue(lib.Id.ToString(), out var pins))
+            {
+                navItem.IsExpanded = true;
+                foreach (var pin in pins)
+                {
+                    var pinItem = new NavigationViewItem
+                    {
+                        Content = pin.Label,
+                        Tag = new SidebarPinNavTag { LibraryId = lib.Id, PinType = pin.Type, PinId = pin.Id, Label = pin.Label },
+                        Icon = new FontIcon { Glyph = pin.Type == "collection" ? "\uE8F0" : "\uE8A5" }, // Folder / List
+                    };
+                    navItem.MenuItems.Add(pinItem);
+                }
+            }
+
             NavView.MenuItems.Insert(insertIndex++, navItem);
         }
+    }
+
+    // ===== Sidebar pins (webui parity: sidebar_pins user setting) =====
+
+    private sealed class SidebarPinRow
+    {
+        public string Type { get; set; } = "";
+        public string Id { get; set; } = "";
+        public string Label { get; set; } = "";
+    }
+
+    private sealed class SidebarPinNavTag
+    {
+        public int LibraryId { get; set; }
+        public string PinType { get; set; } = "";
+        public string PinId { get; set; } = "";
+        public string Label { get; set; } = "";
+    }
+
+    private Dictionary<string, List<SidebarPinRow>> _sidebarPins = [];
+
+    /// <summary>
+    /// Reloads the cached sidebar pins from the server setting and rebuilds
+    /// the library nav. Call on sign-in and after any CollectionBrowsePage
+    /// pin toggle.
+    /// </summary>
+    public async Task RefreshSidebarPinsAsync()
+    {
+        try
+        {
+            var settingsApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.SettingsApi>();
+            var entry = await settingsApi.GetSettingAsync("sidebar_pins");
+            _sidebarPins = ParseSidebarPins(entry.Value);
+        }
+        catch
+        {
+            _sidebarPins = [];
+        }
+        UpdateLibraryNavItems();
+    }
+
+    private static Dictionary<string, List<SidebarPinRow>> ParseSidebarPins(string? raw)
+    {
+        var map = new Dictionary<string, List<SidebarPinRow>>();
+        if (string.IsNullOrWhiteSpace(raw)) return map;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(raw);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return map;
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (prop.Value.ValueKind != System.Text.Json.JsonValueKind.Array) continue;
+                var entries = new List<SidebarPinRow>();
+                foreach (var el in prop.Value.EnumerateArray())
+                {
+                    if (el.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                    entries.Add(new SidebarPinRow
+                    {
+                        Type = el.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "",
+                        Id = el.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "",
+                        Label = el.TryGetProperty("label", out var lb) ? lb.GetString() ?? "" : "",
+                    });
+                }
+                if (entries.Count > 0) map[prop.Name] = entries;
+            }
+        }
+        catch { }
+        return map;
+    }
+
+    // ===== Collapsible Libraries =====
+
+    private bool _librariesExpanded = true;
+
+    private void LibrariesHeader_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+    {
+        _librariesExpanded = !_librariesExpanded;
+        LibrariesChevron.Glyph = _librariesExpanded ? "\uE972" : "\uE974"; // down : right
+
+        // Toggle visibility of all library items between LibrariesHeader and the next section header
+        int headerIndex = -1;
+        for (int i = 0; i < NavView.MenuItems.Count; i++)
+        {
+            if (NavView.MenuItems[i] == LibrariesHeader) { headerIndex = i; break; }
+        }
+        if (headerIndex < 0) return;
+
+        for (int i = headerIndex + 1; i < NavView.MenuItems.Count; i++)
+        {
+            if (NavView.MenuItems[i] is NavigationViewItemHeader) break;
+            if (NavView.MenuItems[i] is NavigationViewItem navItem)
+            {
+                // Only toggle library items (they have a Library tag)
+                if (navItem.Tag is ContinuumPlayer.Core.Models.Catalog.Library)
+                    navItem.Visibility = _librariesExpanded ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
+
+        e.Handled = true;
+    }
+
+    // ===== Theme Switcher Dots =====
+
+    private static readonly (string Id, string Label, string BgHex, string AccentHex)[] CuratedThemes =
+    [
+        ("midnight-cinema", "Cinema Dark", "#141417", "#e8e8ec"),
+        ("cinema-light", "Cinema Light", "#f4f4f6", "#1a1a1e"),
+        ("cobalt-studio", "Cobalt", "#101722", "#78aefc"),
+        ("oxblood-noir", "Oxblood", "#171113", "#d16a78"),
+        ("evergreen-studio", "Evergreen", "#101715", "#5bc39d"),
+    ];
+
+    private string _activeThemeId = "cobalt-studio";
+
+    private void BuildThemeDots()
+    {
+        ThemeDotsPanel.Children.Clear();
+        ThemeDotsPanel.Visibility = Visibility.Visible;
+
+        foreach (var (id, label, bgHex, accentHex) in CuratedThemes)
+        {
+            bool isActive = id == _activeThemeId;
+            var dot = new Border
+            {
+                Width = 24, Height = 24,
+                CornerRadius = new CornerRadius(12),
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor(bgHex)),
+                BorderBrush = isActive
+                    ? (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AccentBrush"]
+                    : (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(isActive ? 2 : 1),
+            };
+            // Inner accent dot
+            dot.Child = new Border
+            {
+                Width = 8, Height = 8,
+                CornerRadius = new CornerRadius(4),
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor(accentHex)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            ToolTipService.SetToolTip(dot, label);
+
+            var capturedId = id;
+            dot.Tapped += (_, _) =>
+            {
+                _activeThemeId = capturedId;
+                BuildThemeDots(); // Rebuild to update selection ring
+                // TODO: Apply theme colors when multi-theme support is added
+            };
+
+            ThemeDotsPanel.Children.Add(dot);
+        }
+    }
+
+    private static Windows.UI.Color ParseHexColor(string hex)
+    {
+        hex = hex.TrimStart('#');
+        byte r = Convert.ToByte(hex[0..2], 16);
+        byte g = Convert.ToByte(hex[2..4], 16);
+        byte b = Convert.ToByte(hex[4..6], 16);
+        return Windows.UI.Color.FromArgb(255, r, g, b);
     }
 
     private void Settings_Click(object sender, RoutedEventArgs e)
@@ -650,6 +880,17 @@ public sealed partial class MainWindow : Window
         else if (args.InvokedItemContainer is NavigationViewItem libItem && libItem.Tag is Library library)
         {
             _navigationService.Navigate<LibraryPage>(library);
+        }
+        else if (args.InvokedItemContainer is NavigationViewItem pinItem && pinItem.Tag is SidebarPinNavTag pinTag)
+        {
+            // Pinned collection: navigate to the CollectionBrowsePage.
+            _navigationService.Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
+            {
+                CollectionId = pinTag.PinId,
+                Title = pinTag.Label,
+                IsUserCollection = false,
+                LibraryId = pinTag.LibraryId,
+            });
         }
     }
 

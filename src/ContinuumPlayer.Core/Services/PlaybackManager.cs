@@ -35,22 +35,14 @@ public class PlaybackManager : IDisposable
         return WatchDetail;
     }
 
-    public FileVersion? SelectBestVersion(List<FileVersion> versions, string? qualityPreference = null)
+    public FileVersion? SelectBestVersion(
+        List<FileVersion> versions,
+        string? qualityPreference = null,
+        WatchUserData? userData = null)
     {
-        if (versions.Count == 0) return null;
-        var sorted = versions
-            .OrderByDescending(v => ResolutionRank(v.Resolution))
-            .ThenByDescending(v => v.Hdr)
-            .ThenByDescending(v => v.Bitrate)
-            .ToList();
-
-        if (qualityPreference != null && qualityPreference != "auto")
-        {
-            var match = sorted.FirstOrDefault(v =>
-                v.Resolution.Equals(qualityPreference, StringComparison.OrdinalIgnoreCase));
-            if (match != null) return match;
-        }
-        return sorted.First();
+        // Delegate to the shared ranker (see VersionRanking.SelectDefaultVersion).
+        // Respects last-watched file, quality-preference cap, and best-audio-codec.
+        return VersionRanking.SelectDefaultVersion(versions, userData, qualityPreference);
     }
 
     public async Task<PlaybackStartResponse> StartSessionAsync(int fileId, double startPosition = 0, bool forceStartPosition = false, int? audioTrackIndex = null, CancellationToken ct = default)
@@ -191,11 +183,6 @@ public class PlaybackManager : IDisposable
         _progressTimer?.Dispose();
         _progressTimer = null;
     }
-
-    private static int ResolutionRank(string res) => res?.ToLower() switch
-    {
-        "2160p" or "4k" => 4, "1440p" => 3, "1080p" => 2, "720p" => 1, "480p" => 0, _ => -1
-    };
 
     private static void LogToStateTrace(string msg)
     {

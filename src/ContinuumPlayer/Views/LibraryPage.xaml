@@ -92,8 +92,9 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Header: title + subtitle + tab pills (web: px-4 py-4 sm:px-6 lg:px-10 xl:px-12) -->
-        <Grid Grid.Row="0" Margin="40,24,40,20" Canvas.ZIndex="10" Background="{StaticResource AppBackgroundBrush}">
+        <!-- Header: overlays hero in Recommended tab (webui: LibraryHeader with overlay prop) -->
+        <Grid x:Name="HeaderGrid" Grid.Row="0" Margin="40,24,40,20" Canvas.ZIndex="10"
+              Background="{StaticResource AppBackgroundBrush}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -106,8 +107,21 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <!-- Title + subtitle (web: text-[clamp(2rem,5vw,3.4rem)]) -->
+                <!-- Eyebrow breadcrumb (webui: hero-eyebrow "Library / {name}") -->
                 <StackPanel Grid.Column="0" Spacing="6">
+                    <StackPanel x:Name="LibraryEyebrow" Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="LIBRARY" FontSize="11" FontWeight="SemiBold"
+                                   CharacterSpacing="200"
+                                   Foreground="{StaticResource TertiaryTextBrush}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="/" FontSize="11"
+                                   Foreground="{StaticResource TertiaryTextBrush}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock x:Name="LibraryEyebrowName" FontSize="11" FontWeight="Bold"
+                                   CharacterSpacing="200"
+                                   Foreground="{StaticResource SecondaryTextBrush}"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
                     <TextBlock
                         x:Name="LibraryTitle"
                         FontSize="{StaticResource FontSizeDisplayLarge}"
@@ -326,33 +340,46 @@
                 Visibility="Collapsed" />
         </StackPanel>
 
-        <!-- Content area: Grid wraps ScrollViewer + overlaid loading indicators.
-             ItemsRepeater MUST be the direct child of ScrollViewer (no StackPanel)
-             so that UniformGridLayout receives proper viewport info and virtualizes. -->
+        <!-- Content area: GridView uses ItemsWrapGrid virtualization which
+             reliably recycles containers on huge datasets (100k+ items). The
+             previous ItemsRepeater + UniformGridLayout combination did not
+             recycle PosterCards, causing unbounded visual-tree growth and
+             multi-second UI-thread freezes around the 3rd LoadMore. -->
         <Grid x:Name="LibraryContentArea" Grid.Row="3" Visibility="Collapsed">
-            <ScrollViewer
-                x:Name="ContentScrollViewer"
-                ViewChanged="ContentScrollViewer_ViewChanged"
-                IsScrollInertiaEnabled="True"
+            <GridView
+                x:Name="PosterGrid"
+                ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
+                SelectionMode="None"
+                IsItemClickEnabled="False"
+                ScrollViewer.IsScrollInertiaEnabled="True"
+                ScrollViewer.HorizontalScrollMode="Disabled"
+                ScrollViewer.HorizontalScrollBarVisibility="Hidden"
+                ContainerContentChanging="PosterGrid_ContainerContentChanging"
                 Padding="40,0,40,24">
-
-                <ItemsRepeater
-                    x:Name="PosterRepeater">
-                    <ItemsRepeater.Layout>
-                        <UniformGridLayout
-                            MinItemWidth="{StaticResource PosterCardWidth}"
-                            MinItemHeight="{StaticResource PosterCardTotalHeight}"
-                            MinColumnSpacing="12"
-                            MinRowSpacing="16"
-                            ItemsStretch="None" />
-                    </ItemsRepeater.Layout>
-                    <ItemsRepeater.ItemTemplate>
-                        <DataTemplate x:DataType="models:MediaItem">
-                            <controls:PosterCard MediaItem="{x:Bind}" />
-                        </DataTemplate>
-                    </ItemsRepeater.ItemTemplate>
-                </ItemsRepeater>
-            </ScrollViewer>
+                <GridView.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <ItemsWrapGrid Orientation="Horizontal" />
+                    </ItemsPanelTemplate>
+                </GridView.ItemsPanel>
+                <GridView.ItemContainerStyle>
+                    <!-- Strip GridViewItem chrome so PosterCard keeps its web-parity
+                         look (no selection highlight, no built-in padding). -->
+                    <Style TargetType="GridViewItem">
+                        <Setter Property="Margin" Value="0,0,12,16" />
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="Background" Value="Transparent" />
+                        <Setter Property="BorderThickness" Value="0" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                        <Setter Property="UseSystemFocusVisuals" Value="False" />
+                    </Style>
+                </GridView.ItemContainerStyle>
+                <GridView.ItemTemplate>
+                    <DataTemplate x:DataType="models:MediaItem">
+                        <controls:PosterCard MediaItem="{x:Bind}" />
+                    </DataTemplate>
+                </GridView.ItemTemplate>
+            </GridView>
 
             <!-- Loading indicator overlaid at bottom of viewport -->
             <ProgressRing
@@ -363,6 +390,20 @@
                 VerticalAlignment="Bottom"
                 Margin="0,0,0,24"
                 Width="32" Height="32" />
+
+            <!-- Scroll-to-top button (webui: floating bottom-right) -->
+            <Button x:Name="ScrollToTopButton"
+                    HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                    Margin="0,0,24,24"
+                    Width="40" Height="40"
+                    CornerRadius="20"
+                    Background="{StaticResource SurfaceRaisedBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    Visibility="Collapsed"
+                    Click="ScrollToTop_Click">
+                <FontIcon Glyph="&#xE74A;" FontSize="14" />
+            </Button>
 
             <!-- Error message overlaid at bottom of viewport -->
             <TextBlock
@@ -392,12 +433,27 @@
                     HorizontalAlignment="Center"
                     Width="32" Height="32"
                     Margin="0,24,0,0" />
-                <TextBlock
-                    x:Name="RecommendedError"
-                    Foreground="{StaticResource ErrorBrush}"
-                    Style="{StaticResource BodyTextStyle}"
+                <StackPanel
+                    x:Name="RecommendedErrorPanel"
                     HorizontalAlignment="Center"
-                    Visibility="Collapsed" />
+                    Spacing="12"
+                    Margin="0,24,0,0"
+                    Visibility="Collapsed">
+                    <TextBlock
+                        x:Name="RecommendedError"
+                        Foreground="{StaticResource ErrorBrush}"
+                        Style="{StaticResource BodyTextStyle}"
+                        HorizontalAlignment="Center"
+                        TextWrapping="Wrap"
+                        TextAlignment="Center"
+                        MaxWidth="480" />
+                    <Button
+                        x:Name="RecommendedRetryButton"
+                        Content="Retry"
+                        Style="{StaticResource OutlineButtonStyle}"
+                        HorizontalAlignment="Center"
+                        Click="RecommendedRetry_Click" />
+                </StackPanel>
             </StackPanel>
         </ScrollViewer>
 

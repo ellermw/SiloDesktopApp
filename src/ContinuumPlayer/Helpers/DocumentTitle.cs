@@ -59,8 +59,6 @@ public static class DocumentTitle
         [typeof(AdminLogsPage)] = "Admin · Logs",
         [typeof(AdminNodesPage)] = "Admin · Nodes",
         [typeof(AdminPluginsPage)] = "Admin · Plugins",
-        [typeof(AdminProvidersPage)] = "Admin · Providers",
-        [typeof(AdminSubtitleProvidersPage)] = "Admin · Subtitle Providers",
         [typeof(AdminRecommendationsPage)] = "Admin · Recommendations",
         [typeof(AdminSectionsPage)] = "Admin · Home Sections",
         [typeof(AdminLibrariesPage)] = "Admin · Libraries",

@@ -17,24 +17,7 @@
     </Page.Resources>
 
     <Grid>
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center" VerticalAlignment="Center"
-            Width="48" Height="48" />
-
-        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-            <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource BodyTextStyle}"
-                HorizontalAlignment="Center" TextWrapping="Wrap" MaxWidth="400" />
-            <Button Content="Retry" Style="{StaticResource AccentButtonStyle}"
-                HorizontalAlignment="Center" Command="{x:Bind ViewModel.LoadCommand}" />
-        </StackPanel>
-
         <ScrollViewer
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
             <StackPanel Padding="48,28,48,48" Spacing="24" MaxWidth="1200" HorizontalAlignment="Stretch">
@@ -68,6 +51,34 @@
                         Foreground="White" />
                 </Border>
 
+                <!-- Inline loading indicator -->
+                <ProgressRing
+                    IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                    HorizontalAlignment="Center"
+                    Margin="0,24"
+                    Width="32" Height="32" />
+
+                <!-- Inline error state -->
+                <StackPanel
+                    HorizontalAlignment="Center"
+                    Spacing="8"
+                    Padding="0,16"
+                    Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                    <TextBlock
+                        Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                        Foreground="{StaticResource ErrorBrush}"
+                        FontSize="13"
+                        HorizontalAlignment="Center"
+                        TextWrapping="Wrap"
+                        MaxWidth="400" />
+                    <Button
+                        Content="Retry"
+                        Style="{StaticResource AccentButtonStyle}"
+                        HorizontalAlignment="Center"
+                        Command="{x:Bind ViewModel.LoadCommand}" />
+                </StackPanel>
+
                 <!-- ===== Catalog Import & Export — actions bar ===== -->
                 <Border
                     Background="{StaticResource CardBackgroundBrush}"
@@ -97,6 +108,8 @@
                                     VerticalAlignment="Center">
                             <Button
                                 x:Name="StartExportButton"
+                                Style="{StaticResource AccentButtonStyle}"
+                                Padding="12,6"
                                 Click="StartExport_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon Glyph="&#xE896;" FontSize="13" />
@@ -105,6 +118,8 @@
                             </Button>
                             <Button
                                 x:Name="ImportCatalogButton"
+                                Style="{StaticResource OutlineButtonStyle}"
+                                Padding="12,6"
                                 Click="ImportCatalog_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon Glyph="&#xE898;" FontSize="13" />
@@ -144,7 +159,7 @@
                                           Foreground="{StaticResource SecondaryTextBrush}" />
                             </Button>
                         </Grid>
-                        <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.6" />
+                        <Border Height="1" Background="{StaticResource BorderBrush}" />
                         <StackPanel x:Name="ImportJobsPanel" />
                     </StackPanel>
                 </Border>
@@ -178,7 +193,7 @@
                                           Foreground="{StaticResource SecondaryTextBrush}" />
                             </Button>
                         </Grid>
-                        <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.6" />
+                        <Border Height="1" Background="{StaticResource BorderBrush}" />
                         <StackPanel x:Name="ExportJobsPanel" />
                     </StackPanel>
                 </Border>
@@ -212,7 +227,7 @@
                                           Foreground="{StaticResource SecondaryTextBrush}" />
                             </Button>
                         </Grid>
-                        <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.6" />
+                        <Border Height="1" Background="{StaticResource BorderBrush}" />
                         <StackPanel x:Name="AllJobsPanel" />
                     </StackPanel>
                 </Border>

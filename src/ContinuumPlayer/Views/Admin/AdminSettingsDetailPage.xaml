@@ -17,37 +17,8 @@
     </Page.Resources>
 
     <Grid>
-        <!-- Loading indicator -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
-
-        <!-- Error message (show only when loading failed and no content visible) -->
-        <StackPanel
-            VerticalAlignment="Center"
-            HorizontalAlignment="Center"
-            Spacing="12"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-            <TextBlock
-                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource BodyTextStyle}"
-                HorizontalAlignment="Center"
-                TextWrapping="Wrap"
-                MaxWidth="400" />
-            <Button
-                Content="Retry"
-                Style="{StaticResource AccentButtonStyle}"
-                HorizontalAlignment="Center"
-                Command="{x:Bind ViewModel.LoadCommand}" />
-        </StackPanel>
-
         <!-- Main content -->
-        <Grid
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
+        <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
@@ -107,9 +78,39 @@
                                 Grid.Column="1"
                                 VerticalScrollBarVisibility="Auto"
                                 Padding="28,24,28,28">
-                                <StackPanel
-                                    x:Name="ContentPanel"
-                                    Spacing="20" />
+                                <StackPanel Spacing="20">
+                                    <!-- Inline loading indicator -->
+                                    <ProgressRing
+                                        IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                                        Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                                        HorizontalAlignment="Center"
+                                        Margin="0,24"
+                                        Width="32" Height="32" />
+
+                                    <!-- Inline error state -->
+                                    <StackPanel
+                                        HorizontalAlignment="Center"
+                                        Spacing="8"
+                                        Padding="0,16"
+                                        Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                                        <TextBlock
+                                            Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                                            Foreground="{StaticResource ErrorBrush}"
+                                            FontSize="13"
+                                            HorizontalAlignment="Center"
+                                            TextWrapping="Wrap"
+                                            MaxWidth="400" />
+                                        <Button
+                                            Content="Retry"
+                                            Style="{StaticResource AccentButtonStyle}"
+                                            HorizontalAlignment="Center"
+                                            Command="{x:Bind ViewModel.LoadCommand}" />
+                                    </StackPanel>
+
+                                    <StackPanel
+                                        x:Name="ContentPanel"
+                                        Spacing="20" />
+                                </StackPanel>
                             </ScrollViewer>
                         </Grid>
                     </Border>
@@ -117,7 +118,7 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- Save bar (bottom, visible when dirty) -->
+            <!-- Save bar (replaced by inline per-tab save, kept hidden for code-behind references) -->
             <Border
                 x:Name="SaveBar"
                 Grid.Row="1"
@@ -125,11 +126,12 @@
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="0,1,0,0"
                 Padding="24,14"
-                Visibility="{x:Bind ViewModel.HasDirtyChanges, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                Visibility="Collapsed">
 
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
@@ -141,14 +143,30 @@
                             FontSize="13"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                         <TextBlock
+                            x:Name="RestartHintText"
                             Text="Server restart may be required for changes to take effect."
                             FontSize="11"
-                            Foreground="{StaticResource TertiaryTextBrush}" />
+                            Foreground="{StaticResource TertiaryTextBrush}"
+                            Visibility="Collapsed" />
                     </StackPanel>
+
+                    <!-- Restart Server button (shown after saving keys that require restart) -->
+                    <Button
+                        Grid.Column="1"
+                        x:Name="RestartServerButton"
+                        Style="{StaticResource OutlineButtonStyle}"
+                        Margin="0,0,8,0"
+                        Visibility="Collapsed"
+                        Click="RestartServer_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE72C;" FontSize="12" />
+                            <TextBlock Text="Restart Server" FontSize="13" />
+                        </StackPanel>
+                    </Button>
 
                     <!-- Discard button -->
                     <Button
-                        Grid.Column="1"
+                        Grid.Column="2"
                         Content="Discard"
                         Style="{StaticResource OutlineButtonStyle}"
                         Margin="0,0,8,0"
@@ -157,7 +175,7 @@
 
                     <!-- Save button -->
                     <Button
-                        Grid.Column="2"
+                        Grid.Column="3"
                         x:Name="SaveButton"
                         Content="Save Changes"
                         Style="{StaticResource AccentButtonStyle}"

@@ -64,7 +64,8 @@
                 <Grid x:Name="BackdropContainer" MinHeight="300">
                     <controls:BackdropImage
                         x:Name="BackdropImage"
-                        AnchorY="0.2" />
+                        AnchorY="0.2"
+                        EnableKenBurns="True" />
 
                     <!-- Brightness overlay: web uses brightness(0.4), so ~60% darkening -->
                     <Border Background="#101722" Opacity="0.6" />
@@ -102,6 +103,17 @@
                                 <GradientStop Color="#33101722" Offset="0.3" />
                                 <GradientStop Color="Transparent" Offset="0.6" />
                             </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <!-- Ambient glow: radial gradient from bottom tinted by dominant backdrop color.
+                         Color is extracted in code-behind after backdrop loads. -->
+                    <Border x:Name="AmbientGlowBorder" Opacity="0.08" IsHitTestVisible="False">
+                        <Border.Background>
+                            <RadialGradientBrush Center="0.5,1.0" RadiusX="0.8" RadiusY="0.6">
+                                <GradientStop x:Name="AmbientGlowColor" Color="#78AEFC" Offset="0.0" />
+                                <GradientStop Color="Transparent" Offset="1.0" />
+                            </RadialGradientBrush>
                         </Border.Background>
                     </Border>
 
@@ -257,15 +269,20 @@
                                     VerticalAlignment="Center" Margin="4,0,0,0" Visibility="Collapsed" />
                     </StackPanel>
 
-                    <!-- Genres line: "Crime · Drama · History" (above overview) -->
-                    <TextBlock
-                        x:Name="GenresText"
-                        FontSize="13"
-                        Foreground="{StaticResource TertiaryTextBrush}"
-                        TextWrapping="Wrap"
-                        MaxWidth="800"
-                        HorizontalAlignment="Left"
+                    <!-- Crew line in hero: "Directed by X · Written by Y" (webui: HeroCrewLine) -->
+                    <TextBlock x:Name="HeroCrewLine" FontSize="13"
+                               Foreground="{StaticResource SecondaryTextBrush}"
+                               TextWrapping="Wrap" MaxWidth="600"
+                               Visibility="Collapsed" />
+
+                    <!-- Genres: styled badge pills (webui: flex-wrap gap-1.5) -->
+                    <StackPanel
+                        x:Name="GenresBadgesPanel"
+                        Orientation="Horizontal"
+                        Spacing="6"
                         Visibility="Collapsed" />
+                    <!-- Hidden TextBlock kept for code-behind compat -->
+                    <TextBlock x:Name="GenresText" Visibility="Collapsed" />
 
                     <!-- Action buttons row -->
                     <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
@@ -461,6 +478,21 @@
                                 <TextBlock Text="Refresh metadata" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
+
+                        <!-- Edit metadata (admin only) — inline dialog with title, year, overview, rating -->
+                        <Button
+                            x:Name="EditMetadataButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Click="EditMetadataButton_Click"
+                            Padding="16,10"
+                            CornerRadius="22"
+                            Visibility="Collapsed">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE70F;" FontSize="16"
+                                          Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Edit metadata" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
 
                     <!-- Overview -->
@@ -566,7 +598,7 @@
                     </StackPanel>
 
                     <!-- Episodes (shown when a season is selected) -->
-                    <StackPanel x:Name="EpisodesSection" Visibility="Collapsed" Spacing="8" Margin="0,16,0,0">
+                    <StackPanel x:Name="EpisodesSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">
                         <TextBlock x:Name="EpisodesHeader" Style="{StaticResource TitleTextStyle}" FontSize="18" />
                         <ProgressRing
                             x:Name="EpisodesLoadingRing"
@@ -574,7 +606,22 @@
                             Visibility="Collapsed"
                             Width="32" Height="32"
                             HorizontalAlignment="Left" />
-                        <StackPanel x:Name="EpisodesPanel" Spacing="8" />
+                        <!-- Grid container populated in code-behind: responsive column count
+                             driven by available width, mirrors upstream's grid-cols-1 →
+                             grid-cols-5 pattern. Cards placed at (row, col) programmatically. -->
+                        <Grid x:Name="EpisodesPanel" SizeChanged="EpisodesPanel_SizeChanged" />
+                    </StackPanel>
+
+                    <!-- Sibling Episodes (shown when viewing an episode — other episodes in same season) -->
+                    <StackPanel x:Name="SiblingEpisodesSection" Visibility="Collapsed" Spacing="12" Margin="0,24,0,0">
+                        <TextBlock x:Name="SiblingEpisodesTitle" Text="More Episodes" Style="{StaticResource TitleTextStyle}" FontSize="18" />
+                        <ScrollViewer
+                            HorizontalScrollBarVisibility="Hidden"
+                            VerticalScrollBarVisibility="Disabled"
+                            HorizontalScrollMode="Disabled"
+                            VerticalScrollMode="Disabled">
+                            <StackPanel x:Name="SiblingEpisodesPanel" Orientation="Horizontal" Spacing="12" />
+                        </ScrollViewer>
                     </StackPanel>
 
                     <!-- More Like This section -->
@@ -588,6 +635,14 @@
                             VerticalScrollMode="Disabled">
                             <StackPanel x:Name="SimilarPanel" Orientation="Horizontal" Spacing="12" />
                         </ScrollViewer>
+                    </StackPanel>
+
+                    <!-- Media locations (admin-only) — webui parity component.
+                         Shows folder/filename for each version with a copy-path
+                         action. Rendered below cast + more-like-this. -->
+                    <StackPanel x:Name="MediaLocationsSection" Visibility="Collapsed" Spacing="10" Margin="0,24,0,0">
+                        <TextBlock Text="Media locations" Style="{StaticResource TitleTextStyle}" FontSize="18" />
+                        <StackPanel x:Name="MediaLocationsPanel" Spacing="8" />
                     </StackPanel>
                 </StackPanel>
             </StackPanel>

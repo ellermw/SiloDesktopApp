@@ -41,7 +41,7 @@ public partial class AdminRecommendationsViewModel : ObservableObject
 
             Status = statusTask.Result;
             _serverSettings = settingsTask.Result;
-            _sensitiveConfigured = sensitiveTask.Result;
+            _sensitiveConfigured = sensitiveTask.Result.Configured;
         }
         catch (Exception ex)
         {

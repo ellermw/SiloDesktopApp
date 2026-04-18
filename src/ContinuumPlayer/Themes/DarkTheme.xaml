@@ -99,6 +99,9 @@
     <SolidColorBrush x:Key="CardOverlayBorderBrush" Color="#26FFFFFF" />
     <SolidColorBrush x:Key="ErrorBrush" Color="{StaticResource ErrorColor}" />
     <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}" />
+    <!-- Semantic: success (green-500), info (blue-400), warning already above -->
+    <SolidColorBrush x:Key="SuccessBrush" Color="#22C55E" />
+    <SolidColorBrush x:Key="InfoBrush" Color="#60A5FA" />
 
     <!-- ===== Brushes: New Semantic Tokens ===== -->
     <SolidColorBrush x:Key="PopoverBrush" Color="{StaticResource PopoverColor}" />
@@ -167,6 +170,7 @@
     <CornerRadius x:Key="RadiusMD">6</CornerRadius>
     <CornerRadius x:Key="RadiusLG">8</CornerRadius>
     <CornerRadius x:Key="RadiusXL">12</CornerRadius>
+    <CornerRadius x:Key="Radius2XL">16</CornerRadius>
     <CornerRadius x:Key="RadiusFull">9999</CornerRadius>
 
     <!-- Existing aliases re-pointed at the corrected values. -->
@@ -446,6 +450,18 @@
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="Width" Value="148" />
+    </Style>
+
+    <!-- ===== Destructive Button Style (delete/revoke confirmations) ===== -->
+    <Style x:Key="DestructiveButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="#33DC5A5A" />
+        <Setter Property="Foreground" Value="#FFDC5A5A" />
+        <Setter Property="CornerRadius" Value="{StaticResource MediumCornerRadius}" />
+        <Setter Property="Padding" Value="16,8" />
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
+        <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+        <Setter Property="FontWeight" Value="Medium" />
+        <Setter Property="BorderThickness" Value="0" />
     </Style>
 
     <!-- ===== Outline Button Style (sign out) ===== -->

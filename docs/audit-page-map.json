@@ -1,0 +1,231 @@
+{
+  "_comment": "Maps every webui page file to its desktop counterpart(s), audit report, and last-verified server commit SHA. Used by audit-delta.ps1 to determine which pages need re-auditing after a server update.",
+  "_server_head_at_last_full_audit": "3760d00",
+
+  "admin": {
+    "web/src/pages/AdminActivity.tsx": {
+      "desktop_files": ["Views/Admin/AdminActivityPage.xaml", "Views/Admin/AdminActivityPage.xaml.cs", "ViewModels/Admin/AdminActivityViewModel.cs"],
+      "audit_file": "docs/audit-gaps/FULL-AUDIT-admin-activity.md",
+      "last_verified_sha": "3760d00"
+    },
+    "web/src/pages/AdminApiKeys.tsx": {
+      "desktop_files": ["Views/Admin/AdminApiKeysPage.xaml", "Views/Admin/AdminApiKeysPage.xaml.cs"],
+      "audit_file": "docs/audit-gaps/FULL-AUDIT-admin-nodes-apikeys-invites.md",
+      "last_verified_sha": "3760d00"
+    },
+    "web/src/pages/AdminCollections.tsx": {
+      "also_includes": ["web/src/pages/AdminCollectionEditor.tsx", "web/src/pages/adminCollectionsShared.tsx"],
+      "desktop_files": ["Views/Admin/AdminCollectionsPage.xaml", "Views/Admin/AdminCollectionsPage.xaml.cs"],
+      "audit_file": "docs/audit-gaps/FULL-AUDIT-admin-collections.md",
+      "last_verified_sha": "3760d00"
+    },
+    "web/src/pages/AdminDashboard.tsx": {
+      "desktop_files": ["Views/Admin/AdminDashboardPage.xaml", "Views/Admin/AdminDashboardPage.xaml.cs"],
+      "audit_file": "docs/audit-gaps/FULL-AUDIT-admin-dashboard.md",
+      "last_verified_sha": "3760d00"
+    },
+    "web/src/pages/AdminHistoryImport.tsx": {
+      "desktop_files": ["Views/Admin/AdminHistoryImportPage.xaml", "Views/Admin/AdminHistoryImportPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/AdminLibraries.tsx": {
+      "desktop_files": ["Views/Admin/AdminLibrariesPage.xaml", "Views/Admin/AdminLibrariesPage.xaml.cs", "ViewModels/Admin/AdminLibrariesViewModel.cs"],
+      "audit_file": "docs/audit-gaps/FULL-AUDIT-admin-libraries.md",
+      "last_verified_sha": "3760d00"
+    },
+    "web/src/pages/AdminLogs.tsx": {
+      "desktop_files": ["Views/Admin/AdminLogsPage.xaml", "Views/Admin/AdminLogsPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/AdminMaintenance.tsx": {
+      "desktop_files": ["Views/Admin/AdminMaintenancePage.xaml", "Views/Admin/AdminMaintenancePage.xaml.cs"],
+      "audit_file": "docs/audit-gaps/FULL-AUDIT-admin-catalog-maintenance.md",
+      "last_verified_sha": "3760d00"
+    },
+    "web/src/pages/AdminNodes.tsx": {
+      "desktop_files": ["Views/Admin/AdminNodesPage.xaml", "Views/Admin/AdminNodesPage.xaml.cs"],
+      "audit_file": "docs/audit-gaps/FULL-AUDIT-admin-nodes-apikeys-invites.md",
+      "last_verified_sha": "3760d00"
+    },
+    "web/src/pages/AdminPlaybackHistory.tsx": {
+      "desktop_files": ["Views/Admin/AdminPlaybackHistoryPage.xaml", "Views/Admin/AdminPlaybackHistoryPage.xaml.cs", "ViewModels/Admin/AdminPlaybackHistoryViewModel.cs"],
+      "audit_file": "docs/audit-gaps/FULL-AUDIT-admin-playback-history.md",
+      "last_verified_sha": "3760d00"
+    },
+    "web/src/pages/AdminPlugins.tsx": {
+      "desktop_files": ["Views/Admin/AdminPluginsPage.xaml", "Views/Admin/AdminPluginsPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/AdminRecommendations.tsx": {
+      "desktop_files": ["Views/Admin/AdminRecommendationsPage.xaml", "Views/Admin/AdminRecommendationsPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/AdminSections.tsx": {
+      "desktop_files": ["Views/Admin/AdminSectionsPage.xaml", "Views/Admin/AdminSectionsPage.xaml.cs"],
+      "audit_file": "docs/audit-gaps/FULL-AUDIT-admin-sections.md",
+      "last_verified_sha": "3760d00"
+    },
+    "web/src/pages/AdminStats.tsx": {
+      "desktop_files": ["Views/Admin/AdminDashboardPage.xaml", "Views/Admin/AdminDashboardPage.xaml.cs"],
+      "audit_file": "docs/audit-gaps/FULL-AUDIT-admin-dashboard.md",
+      "last_verified_sha": "3760d00",
+      "note": "AdminStats may overlap with AdminDashboard — verify if separate route"
+    },
+    "web/src/pages/AdminTaskDetail.tsx": {
+      "desktop_files": ["Views/Admin/AdminTaskDetailPage.xaml", "Views/Admin/AdminTaskDetailPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/AdminTasks.tsx": {
+      "desktop_files": ["Views/Admin/AdminTasksPage.xaml", "Views/Admin/AdminTasksPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/AdminUserDetail.tsx": {
+      "desktop_files": ["Views/Admin/AdminUserDetailPage.xaml", "Views/Admin/AdminUserDetailPage.xaml.cs"],
+      "audit_file": "docs/audit-gaps/FULL-AUDIT-admin-users.md",
+      "last_verified_sha": "3760d00"
+    },
+    "web/src/pages/AdminUsers.tsx": {
+      "desktop_files": ["Views/Admin/AdminUsersPage.xaml", "Views/Admin/AdminUsersPage.xaml.cs"],
+      "audit_file": "docs/audit-gaps/FULL-AUDIT-admin-users.md",
+      "last_verified_sha": "3760d00"
+    },
+    "web/src/pages/admin-settings/": {
+      "also_includes": ["AdminSettingsLayout.tsx", "DatabaseSettings.tsx", "DownloadSettings.tsx", "GeneralSettings.tsx", "IntegrationsSettings.tsx", "InviteCodesTab.tsx", "JellyfinSettings.tsx", "LogRetentionSettings.tsx", "OverlaySettings.tsx", "PlaybackSettings.tsx", "PluginsSettings.tsx", "RateLimitSettings.tsx", "ScannerSettings.tsx", "StorageSettings.tsx", "ThemeSettings.tsx", "FieldGroup.tsx", "SaveBar.tsx", "SettingField.tsx"],
+      "desktop_files": ["Views/Admin/AdminSettingsDetailPage.xaml", "Views/Admin/AdminSettingsDetailPage.xaml.cs", "Views/Admin/AdminInviteCodesPage.xaml", "Views/Admin/AdminInviteCodesPage.xaml.cs", "Views/Admin/AdminSubtitleProvidersPage.xaml", "Views/Admin/AdminSubtitleProvidersPage.xaml.cs"],
+      "audit_file": "docs/audit-gaps/FULL-AUDIT-admin-settings.md",
+      "last_verified_sha": "3760d00",
+      "note": "Desktop splits into AdminSettingsDetailPage (main) + standalone pages for InviteCodes and SubtitleProviders. Webui keeps everything as tabs within admin-settings/."
+    }
+  },
+
+  "user": {
+    "web/src/pages/Home.tsx": {
+      "desktop_files": ["Views/HomePage.xaml", "Views/HomePage.xaml.cs", "ViewModels/HomeViewModel.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/Catalog.tsx": {
+      "desktop_files": ["Views/LibraryPage.xaml", "Views/LibraryPage.xaml.cs", "ViewModels/LibraryViewModel.cs"],
+      "audit_file": null,
+      "last_verified_sha": null,
+      "note": "Webui Catalog.tsx is the main browse surface; desktop uses LibraryPage"
+    },
+    "web/src/pages/LibraryBrowse.tsx": {
+      "desktop_files": ["Views/LibraryPage.xaml", "Views/LibraryPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/LibraryRecommended.tsx": {
+      "desktop_files": ["Views/RecommendationsPage.xaml", "Views/RecommendationsPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/LibraryPage.tsx": {
+      "desktop_files": ["Views/LibraryPage.xaml", "Views/LibraryPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null,
+      "note": "Webui LibraryPage.tsx is the layout wrapper with tabs; may overlap Catalog.tsx"
+    },
+    "web/src/pages/LibraryCollections.tsx": {
+      "desktop_files": ["Views/CollectionBrowsePage.xaml", "Views/CollectionBrowsePage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/ItemDetail/": {
+      "also_includes": ["index.tsx", "MovieContent.tsx", "SeriesContent.tsx", "SeasonContent.tsx", "EpisodeContent.tsx", "DetailHero.tsx", "SeasonCarousel.tsx", "components/*.tsx"],
+      "desktop_files": ["Views/ItemDetailPage.xaml", "Views/ItemDetailPage.xaml.cs", "ViewModels/ItemDetailViewModel.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/PersonDetail.tsx": {
+      "desktop_files": ["Views/PersonDetailPage.xaml", "Views/PersonDetailPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/SearchPage.tsx": {
+      "desktop_files": ["Views/SearchPage.xaml", "Views/SearchPage.xaml.cs", "ViewModels/SearchViewModel.cs"],
+      "audit_file": null,
+      "last_verified_sha": null,
+      "note": "Webui may use Catalog.tsx with source=search instead of a dedicated page — verify"
+    },
+    "web/src/pages/Recommendations.tsx": {
+      "desktop_files": ["Views/RecommendationsPage.xaml", "Views/RecommendationsPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/Calendar.tsx": {
+      "desktop_files": ["Views/CalendarPage.xaml", "Views/CalendarPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/Collections.tsx": {
+      "also_includes": ["web/src/pages/CollectionEditor.tsx", "web/src/pages/userCollectionsShared.tsx"],
+      "desktop_files": ["Views/CollectionsPage.xaml", "Views/CollectionsPage.xaml.cs", "Views/CollectionEditorPage.xaml", "Views/CollectionEditorPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/WatchRoute.tsx": {
+      "desktop_files": ["Services/PlayerService.cs", "Controls/PlayerOverlay.xaml", "Controls/PlayerOverlay.xaml.cs", "Services/MpvVideoWindow.cs"],
+      "audit_file": null,
+      "last_verified_sha": null,
+      "note": "Desktop uses native mpv, not HTML5 video — structural divergence expected"
+    },
+    "web/src/pages/WatchTogetherJoin.tsx": {
+      "desktop_files": ["Views/WatchTogetherJoinPage.xaml", "Views/WatchTogetherJoinPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/WatchTogetherRoomPage.tsx": {
+      "also_includes": ["web/src/pages/WatchTogetherSuggestionPanel.tsx"],
+      "desktop_files": ["Views/WatchTogetherRoomPage.xaml", "Views/WatchTogetherRoomPage.xaml.cs", "ViewModels/WatchTogetherViewModels.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/SettingsLayout.tsx": {
+      "also_includes_dir": "web/src/pages/settings/",
+      "also_includes": ["AccessibilitySettings.tsx", "AppearanceSettings.tsx", "CardOverlaySettings.tsx", "HistoryImportSettings.tsx", "HomeScreenSettings.tsx", "LibrarySettings.tsx", "PlaybackSettings.tsx", "PluginSettings.tsx", "ProfilesSettings.tsx", "SubtitleAppearanceSettings.tsx", "ThemeEditorSettings.tsx", "WebhookSyncSettings.tsx"],
+      "desktop_files": ["Views/SettingsPage.xaml", "Views/SettingsPage.xaml.cs", "ViewModels/SettingsViewModel.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/SetupWizard.tsx": {
+      "also_includes_dir": "web/src/pages/setup-wizard/",
+      "also_includes": ["WizardContext.tsx", "StepIndicator.tsx", "steps/AccountStep.tsx", "steps/DownloadsStep.tsx", "steps/IntegrationsStep.tsx", "steps/LibraryStep.tsx", "steps/NodesFinishStep.tsx", "steps/ProfileStep.tsx", "steps/RecommendationsStep.tsx", "steps/ServerStorageStep.tsx"],
+      "desktop_files": ["Views/SetupWizardPage.xaml", "Views/SetupWizardPage.xaml.cs", "ViewModels/SetupWizardViewModel.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/FavoritesPage.tsx": {
+      "desktop_files": ["Views/FavoritesPage.xaml", "Views/FavoritesPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null,
+      "note": "Webui may not have a standalone Favorites page — verify; could be inside Catalog with source=favorites"
+    },
+    "web/src/pages/Login.tsx": {
+      "desktop_files": ["Views/LoginPage.xaml", "Views/LoginPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/Signup.tsx": {
+      "desktop_files": ["Views/SignupPage.xaml", "Views/SignupPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/Profiles.tsx": {
+      "desktop_files": ["Views/ProfileSelectPage.xaml", "Views/ProfileSelectPage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    },
+    "web/src/pages/ActivateDevice.tsx": {
+      "desktop_files": ["Views/ActivateDevicePage.xaml", "Views/ActivateDevicePage.xaml.cs"],
+      "audit_file": null,
+      "last_verified_sha": null
+    }
+  }
+}

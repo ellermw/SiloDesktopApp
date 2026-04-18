@@ -18,37 +18,8 @@
 
     <Grid>
 
-        <!-- Loading indicator -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
-
-        <!-- Error state -->
-        <StackPanel
-            VerticalAlignment="Center"
-            HorizontalAlignment="Center"
-            Spacing="12"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-            <TextBlock
-                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource BodyTextStyle}"
-                HorizontalAlignment="Center"
-                TextWrapping="Wrap"
-                MaxWidth="400" />
-            <Button
-                Content="Retry"
-                Style="{StaticResource AccentButtonStyle}"
-                HorizontalAlignment="Center"
-                Command="{x:Bind ViewModel.LoadCommand}" />
-        </StackPanel>
-
         <!-- Main content -->
         <ScrollViewer
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
             <StackPanel Padding="40,28,40,40" Spacing="32">
@@ -60,7 +31,7 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" Spacing="4">
+                    <StackPanel Grid.Column="0" Spacing="12">
                         <TextBlock
                             Text="API keys"
                             FontSize="42"
@@ -78,8 +49,8 @@
                         Style="{StaticResource AccentButtonStyle}"
                         VerticalAlignment="Center"
                         Click="CreateKeyButton_Click">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <FontIcon Glyph="&#xE710;" FontSize="13" />
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <FontIcon Glyph="&#xE710;" FontSize="16" />
                             <TextBlock Text="Create Key" />
                         </StackPanel>
                     </Button>
@@ -102,7 +73,7 @@
                 <!-- surface-panel overflow-x-auto rounded-[1.6rem] border-0 -->
                 <Border
                     Background="{StaticResource CardBackgroundBrush}"
-                    CornerRadius="26"
+                    CornerRadius="16"
                     BorderThickness="0"
                     Padding="0">
                     <StackPanel>
@@ -117,25 +88,62 @@
                                 <ColumnDefinition Width="110" />
                                 <ColumnDefinition Width="90" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="LABEL" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="1" Text="USER" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="KEY" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="TIER" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="4" Text="CREATED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="5" Text="LAST USED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="6" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="0" Text="Label" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="User" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="2" Text="Key" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="3" Text="Tier" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="4" Text="Created" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="5" Text="Last Used" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="6" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                         </Grid>
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
 
+                        <!-- Inline loading indicator -->
+                        <ProgressRing
+                            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                            HorizontalAlignment="Center"
+                            Margin="0,24"
+                            Width="32" Height="32" />
+
+                        <!-- Inline error state -->
+                        <StackPanel
+                            HorizontalAlignment="Center"
+                            Spacing="8"
+                            Padding="0,16"
+                            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                            <TextBlock
+                                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                                Foreground="{StaticResource ErrorBrush}"
+                                FontSize="13"
+                                HorizontalAlignment="Center"
+                                TextWrapping="Wrap"
+                                MaxWidth="400" />
+                            <Button
+                                Content="Retry"
+                                Style="{StaticResource AccentButtonStyle}"
+                                HorizontalAlignment="Center"
+                                Command="{x:Bind ViewModel.LoadCommand}" />
+                        </StackPanel>
+
                         <!-- Rows populated in code-behind -->
                         <StackPanel x:Name="KeysPanel" Spacing="0" />
+
+                        <!-- Pagination bar -->
+                        <StackPanel
+                            x:Name="PaginationBar"
+                            Orientation="Horizontal"
+                            Spacing="12"
+                            Padding="20,10"
+                            HorizontalAlignment="Right"
+                            Visibility="Collapsed" />
 
                         <!-- Empty state — matches web: "No API keys yet. Create one to get started." -->
                         <Border x:Name="EmptyState" Padding="20,40" Visibility="Collapsed">
                             <TextBlock
                                 Text="No API keys yet. Create one to get started."
-                                FontSize="13"
-                                Foreground="{StaticResource TertiaryTextBrush}"
+                                FontSize="14"
+                                Foreground="{StaticResource SecondaryTextBrush}"
                                 HorizontalAlignment="Center"
                                 TextAlignment="Center" />
                         </Border>

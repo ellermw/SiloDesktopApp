@@ -14,6 +14,7 @@ public sealed partial class AdminTasksPage : Page
 
     private DispatcherTimer? _refreshTimer;
     private bool _rebuildPending;
+    private MetadataRefreshMetrics? _refreshMetrics;
 
     public AdminTasksPage()
     {
@@ -28,6 +29,13 @@ public sealed partial class AdminTasksPage : Page
         try
         {
             await ViewModel.LoadCommand.ExecuteAsync(null);
+            // Load refresh_metadata metrics for inline summary
+            try
+            {
+                var adminApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AdminApi>();
+                _refreshMetrics = await adminApi.GetTaskMetricsAsync("refresh_metadata");
+            }
+            catch { _refreshMetrics = null; }
         }
         catch (Exception ex)
         {
@@ -99,7 +107,7 @@ public sealed partial class AdminTasksPage : Page
             var card = new Border
             {
                 Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
-                CornerRadius = new CornerRadius(24),
+                CornerRadius = new CornerRadius(16),
                 BorderThickness = new Thickness(0),
                 Padding = new Thickness(0)
             };
@@ -111,6 +119,10 @@ public sealed partial class AdminTasksPage : Page
             {
                 bool isLast = i == taskList.Count - 1;
                 rowsPanel.Children.Add(BuildTaskRow(taskList[i], isLast));
+
+                // Inline refresh_metadata metrics summary (webui: RefreshMetadataSummary)
+                if (taskList[i].Key == "refresh_metadata" && _refreshMetrics != null)
+                    rowsPanel.Children.Add(BuildRefreshMetricsSummary(_refreshMetrics));
             }
 
             card.Child = rowsPanel;
@@ -392,6 +404,71 @@ public sealed partial class AdminTasksPage : Page
         var parts = new System.Collections.Generic.List<string>();
         foreach (var t in triggers) parts.Add(DescribeTrigger(t));
         return string.Join(", ", parts);
+    }
+
+    private static FrameworkElement BuildRefreshMetricsSummary(MetadataRefreshMetrics metrics)
+    {
+        var panel = new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(12),
+            Margin = new Thickness(16, 0, 16, 12),
+        };
+
+        var content = new StackPanel { Spacing = 8 };
+
+        // 5-column metric grid
+        var grid = new Grid { ColumnSpacing = 12 };
+        for (int i = 0; i < 5; i++)
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        void AddCell(int col, string label, string value)
+        {
+            var cell = new StackPanel { Spacing = 2 };
+            cell.Children.Add(new TextBlock { Text = label, FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] });
+            cell.Children.Add(new TextBlock { Text = value, FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            Grid.SetColumn(cell, col);
+            grid.Children.Add(cell);
+        }
+
+        string FormatDt(string? s) => string.IsNullOrEmpty(s) ? "\u2014" :
+            (DateTime.TryParse(s, out var d) ? d.ToLocalTime().ToString("g") : s);
+
+        AddCell(0, "Queue", metrics.Total.ToString("N0"));
+        AddCell(1, "Due now", metrics.Due.ToString("N0"));
+        AddCell(2, "Leased", metrics.Leased.ToString("N0"));
+        AddCell(3, "Oldest due", FormatDt(metrics.OldestDueAt));
+        AddCell(4, "Oldest lease", FormatDt(metrics.OldestLeaseExpiresAt));
+        content.Children.Add(grid);
+
+        // Reason badges
+        var reasons = metrics.ReasonCounts.Where(r => r.Count > 0).ToList();
+        if (reasons.Count > 0)
+        {
+            var badges = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            foreach (var r in reasons)
+            {
+                string label = r.Reason switch
+                {
+                    "episode_incomplete" => "Episode incomplete",
+                    "stale_provider_id" => "Stale provider ID",
+                    "refresh_failure" => "Refresh failure",
+                    "core_metadata_incomplete" => "Core metadata incomplete",
+                    _ => r.Reason,
+                };
+                badges.Children.Add(new Border
+                {
+                    Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+                    CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 3, 8, 3),
+                    Child = new TextBlock { Text = $"{label}: {r.Count}", FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] }
+                });
+            }
+            content.Children.Add(badges);
+        }
+
+        panel.Child = content;
+        return panel;
     }
 
     private static string DescribeTrigger(TriggerConfig t)

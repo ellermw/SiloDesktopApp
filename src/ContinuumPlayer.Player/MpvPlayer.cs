@@ -56,6 +56,14 @@ public sealed class MpvPlayer : IDisposable
     /// <summary>Whether playback is currently paused.</summary>
     public bool IsPaused { get; private set; } = true;
 
+    /// <summary>True when mpv is paused waiting for the network cache to fill
+    /// (the <c>paused-for-cache</c> property). Indicates rebuffering during
+    /// streaming playback — distinct from user-initiated pause.</summary>
+    public bool IsBufferingForCache { get; private set; }
+
+    /// <summary>Fires when <c>paused-for-cache</c> state changes.</summary>
+    public event Action<bool>? BufferingChanged;
+
     /// <summary>Whether a file is loaded and playing (not paused, not ended).</summary>
     public bool IsPlaying => !IsPaused && Duration > 0;
 
@@ -94,10 +102,11 @@ public sealed class MpvPlayer : IDisposable
 
     // ── Reply userdata IDs for observed properties ───────────────────────
 
-    private const ulong UD_TIME_POS    = 1;
-    private const ulong UD_DURATION    = 2;
-    private const ulong UD_PAUSE       = 3;
-    private const ulong UD_EOF_REACHED = 4;
+    private const ulong UD_TIME_POS         = 1;
+    private const ulong UD_DURATION         = 2;
+    private const ulong UD_PAUSE            = 3;
+    private const ulong UD_EOF_REACHED      = 4;
+    private const ulong UD_PAUSED_FOR_CACHE = 5;
 
     // ── Initialization ───────────────────────────────────────────────────
 
@@ -207,6 +216,7 @@ public sealed class MpvPlayer : IDisposable
         mpv_observe_property(_mpvHandle, UD_DURATION, "duration", MPV_FORMAT_DOUBLE);
         mpv_observe_property(_mpvHandle, UD_PAUSE, "pause", MPV_FORMAT_FLAG);
         mpv_observe_property(_mpvHandle, UD_EOF_REACHED, "eof-reached", MPV_FORMAT_FLAG);
+        mpv_observe_property(_mpvHandle, UD_PAUSED_FOR_CACHE, "paused-for-cache", MPV_FORMAT_FLAG);
 
         // Start background event loop thread
         _eventThread = new Thread(EventLoop)
@@ -349,6 +359,7 @@ public sealed class MpvPlayer : IDisposable
         mpv_observe_property(_mpvHandle, UD_DURATION, "duration", MPV_FORMAT_DOUBLE);
         mpv_observe_property(_mpvHandle, UD_PAUSE, "pause", MPV_FORMAT_FLAG);
         mpv_observe_property(_mpvHandle, UD_EOF_REACHED, "eof-reached", MPV_FORMAT_FLAG);
+        mpv_observe_property(_mpvHandle, UD_PAUSED_FOR_CACHE, "paused-for-cache", MPV_FORMAT_FLAG);
 
         // Start event loop thread
         _eventThread = new Thread(EventLoop)
@@ -670,6 +681,17 @@ public sealed class MpvPlayer : IDisposable
     }
 
     /// <summary>
+    /// Removes a subtitle track by mpv's sid (1-based). Used by the sliding-
+    /// window embedded-subtitle fetch to drop a stale window before loading
+    /// the next one.
+    /// </summary>
+    public void RemoveSubtitle(int sid)
+    {
+        ThrowIfNotInitialized();
+        Command("sub-remove", sid.ToString());
+    }
+
+    /// <summary>
     /// Selects a subtitle track by index (1-based, 0 to disable).
     /// </summary>
     public void SetSubtitleTrack(int index)
@@ -829,6 +851,19 @@ public sealed class MpvPlayer : IDisposable
                     int flag = Marshal.PtrToStructure<int>(prop.Data);
                     if (flag != 0)
                         PlaybackEnded?.Invoke();
+                }
+                break;
+
+            case UD_PAUSED_FOR_CACHE:
+                if (prop.Format == MPV_FORMAT_FLAG && prop.Data != IntPtr.Zero)
+                {
+                    int flag = Marshal.PtrToStructure<int>(prop.Data);
+                    bool buffering = flag != 0;
+                    if (buffering != IsBufferingForCache)
+                    {
+                        IsBufferingForCache = buffering;
+                        BufferingChanged?.Invoke(buffering);
+                    }
                 }
                 break;
 

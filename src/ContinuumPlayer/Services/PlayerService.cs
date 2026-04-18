@@ -1,6 +1,7 @@
 // src/ContinuumPlayer/Services/PlayerService.cs
 using System.Runtime.InteropServices;
 using CommunityToolkit.Mvvm.Messaging;
+using Microsoft.Extensions.DependencyInjection;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Helpers;
 using ContinuumPlayer.Core.Models.Playback;
@@ -39,6 +40,7 @@ public class PlayerService : IDisposable
     private Action<double>? _mpvPositionHandler;
     private Action<double>? _mpvDurationHandler;
     private Action<bool>? _mpvPauseHandler;
+    private Action<bool>? _mpvBufferingHandler;
     private Action? _mpvFileLoadedHandler;
     private Action? _mpvPlaybackEndedHandler;
     private Action<string>? _mpvPlaybackErrorHandler;
@@ -102,6 +104,23 @@ public class PlayerService : IDisposable
         if (_mpv == null) return;
         SubtitlesHidden = !SubtitlesHidden;
         _mpv.SetProperty("sub-visibility", SubtitlesHidden ? "no" : "yes");
+    }
+
+    // ── Transport (used by WatchTogetherCoordinator for synced playback) ──
+
+    /// <summary>Pause / resume the local mpv player.</summary>
+    public void SetPaused(bool paused)
+    {
+        if (_mpv == null) return;
+        if (paused) _mpv.Pause();
+        else _mpv.Play();
+    }
+
+    /// <summary>Seek to an absolute position in media-time seconds.</summary>
+    public void SeekTo(double positionSeconds)
+    {
+        if (_mpv == null) return;
+        _mpv.Seek(positionSeconds);
     }
 
     // ── Subtitle appearance bridge (B55 follow-up) ──────────────────────
@@ -233,6 +252,16 @@ public class PlayerService : IDisposable
     /// Pass <c>mpvTrackIndex=0</c> to disable subtitles entirely (mode=off).
     /// </summary>
     public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language)
+        => await SetSubtitleTrackAndPersistAsync(mpvTrackIndex, language, null);
+
+    /// <summary>
+    /// Variant that carries the full <see cref="SubtitleTrackInfo"/> so the
+    /// server can store a track signature (source/codec/label/forced/HI) —
+    /// matches upstream <c>WatchPage.handleSubtitleChanged</c>. On the next
+    /// play the server will re-resolve to the same subtitle even if indices
+    /// shifted due to a remux/transcode swap.
+    /// </summary>
+    public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)
     {
         _mpv?.SetSubtitleTrack(mpvTrackIndex);
 
@@ -241,8 +270,26 @@ public class PlayerService : IDisposable
 
         try
         {
-            string mode = mpvTrackIndex <= 0 ? "off" : "manual";
-            await _playbackApi.SaveSubtitlePrefsAsync(key, language ?? "", mode);
+            // Mirror derivePersistedSubtitleMode: index null ("Off") → "off";
+            // any explicit track → "always". "auto" is never written here —
+            // it's the default when no pref exists.
+            bool off = mpvTrackIndex <= 0 || track == null;
+            var req = new SubtitlePreferenceRequest
+            {
+                SubtitleLanguage = (off ? "" : track?.Language) ?? "",
+                SubtitleTrackIndex = off ? -1 : (track?.Index ?? (mpvTrackIndex - 1)),
+                SubtitleMode = off ? "off" : "always",
+                TrackSignature = off || track == null ? null : new SubtitleTrackSignature
+                {
+                    Source = track.Source ?? "embedded",
+                    Language = track.Language,
+                    Codec = track.Codec,
+                    Label = track.Label,
+                    Forced = track.Forced,
+                    HearingImpaired = track.HearingImpaired,
+                },
+            };
+            await _playbackApi.SaveSubtitlePrefsAsync(key, req);
         }
         catch (Exception ex) { LogToFile("state_trace.txt", $"SaveSubtitlePrefs error: {ex.Message}"); }
     }
@@ -294,6 +341,20 @@ public class PlayerService : IDisposable
     // ── Events ───────────────────────────────────────────────────────────
 
     public event Action<PlayerState>? StateChanged;
+
+    /// <summary>Fired after a new playback session is created on the server.
+    /// Payload is the session UUID. Consumers like
+    /// <see cref="WatchTogetherCoordinator"/> use this to attach the session
+    /// to any active room so transport commands reach mpv.</summary>
+    public event Action<string>? SessionStarted;
+
+    /// <summary>Relays mpv's <c>paused-for-cache</c> state. Raised on the
+    /// event-pump thread; overlay consumers must dispatch to UI. The overlay
+    /// applies a 500ms debounce before showing any spinner so quick buffer
+    /// recoveries don't flash chrome on screen.</summary>
+    public event Action<bool>? BufferingChanged;
+
+    public bool IsBufferingForCache => _mpv?.IsBufferingForCache ?? false;
     public event Action<double>? PositionChanged;
     public event Action<double>? DurationChanged;
     public event Action<bool>? PauseChanged;
@@ -562,6 +623,7 @@ public class PlayerService : IDisposable
 
             var session = await _playbackManager.StartSessionAsync(bestVersion.FileId, startPosition, forceStartPosition: fromStart, audioTrackIndex: audioTrackIndex);
             PlayMethod = session.PlayMethod;
+            try { SessionStarted?.Invoke(session.SessionId); } catch { }
 
             if (!fromStart && session.Position > 0 && startPosition == 0)
             {
@@ -822,7 +884,7 @@ public class PlayerService : IDisposable
         FileVersion? bestVersion = null;
         if (fileId.HasValue)
             bestVersion = versions.FirstOrDefault(v => v.FileId == fileId.Value);
-        bestVersion ??= _playbackManager!.SelectBestVersion(versions);
+        bestVersion ??= _playbackManager!.SelectBestVersion(versions, userData: watchDetail.UserData);
         return bestVersion;
     }
 
@@ -918,6 +980,7 @@ public class PlayerService : IDisposable
         if (_mpvPositionHandler != null) _mpv.PositionChanged -= _mpvPositionHandler;
         if (_mpvDurationHandler != null) _mpv.DurationChanged -= _mpvDurationHandler;
         if (_mpvPauseHandler != null) _mpv.PauseChanged -= _mpvPauseHandler;
+        if (_mpvBufferingHandler != null) _mpv.BufferingChanged -= _mpvBufferingHandler;
         if (_mpvFileLoadedHandler != null) _mpv.FileLoaded -= _mpvFileLoadedHandler;
         if (_mpvPlaybackEndedHandler != null) _mpv.PlaybackEnded -= _mpvPlaybackEndedHandler;
         if (_mpvPlaybackErrorHandler != null) _mpv.PlaybackError -= _mpvPlaybackErrorHandler;
@@ -951,6 +1014,9 @@ public class PlayerService : IDisposable
             PauseChanged?.Invoke(paused);
         };
         _mpv.PauseChanged += _mpvPauseHandler;
+
+        _mpvBufferingHandler = (buffering) => BufferingChanged?.Invoke(buffering);
+        _mpv.BufferingChanged += _mpvBufferingHandler;
 
         _mpvFileLoadedHandler = () =>
         {
@@ -1115,6 +1181,7 @@ public class PlayerService : IDisposable
             {
                 try { await _playbackManager.StopSessionAsync(); } catch (Exception ex) { LogToFile("state_trace.txt", $"StopSession error: {ex.Message}"); }
                 var session = await _playbackManager.StartSessionAsync(version.FileId, currentPos);
+                try { SessionStarted?.Invoke(session.SessionId); } catch { }
                 var streamUrl = _playbackManager.StreamUrl ?? "";
 
                 if (session.PlayMethod == "transcode")
@@ -1239,11 +1306,36 @@ public class PlayerService : IDisposable
 
     // ── Subtitles ────────────────────────────────────────────────────────
 
+    // ── Sliding-window embedded subtitle fetch (webui parity, commit 75ef59b) ──
+    //
+    // Upstream swapped embedded-subtitle extraction for a streaming fetch
+    // bounded by ?duration= (defaults 600s / max 3600s). mpv downloads the
+    // URL once so we need to slide the window ourselves — track each loaded
+    // window (start + duration + mpv sid + base URL) and sub-remove/sub-add
+    // with a new position before the current window runs out. External and
+    // downloaded subs are server-full so they don't need sliding.
+
+    private sealed class EmbeddedSubWindow
+    {
+        public int Sid { get; set; }
+        public string BaseUrl { get; set; } = "";
+        public string? Label { get; set; }
+        public string? Language { get; set; }
+        public double WindowStart { get; set; }
+        public double WindowDuration { get; set; }
+    }
+
+    private const int SubtitleWindowDurationSeconds = 3600; // Server max.
+    private const int SubtitleSlidePreloadSeconds = 120;    // 2-min lead time.
+    private readonly List<EmbeddedSubWindow> _embeddedSubWindows = [];
+
     private void LoadSubtitles()
     {
         if (_playbackManager?.CurrentSession == null || _mpv == null) return;
 
+        _embeddedSubWindows.Clear();
         var subtitleUrls = _playbackManager.GetSubtitleUrls();
+        int sid = 1;
         foreach (var (track, fullUrl) in subtitleUrls)
         {
             var codec = track.Codec?.ToLowerInvariant() ?? "";
@@ -1251,7 +1343,75 @@ public class PlayerService : IDisposable
                 continue;
 
             var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language ?? "Unknown";
-            _mpv.AddSubtitle(fullUrl, label, track.Language);
+            var isEmbedded = string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase);
+
+            if (isEmbedded)
+            {
+                // Load the initial window at position 0 (playback typically
+                // starts there; TickSubtitleWindows slides forward as needed).
+                var windowed = AppendPositionDuration(fullUrl, 0, SubtitleWindowDurationSeconds);
+                _mpv.AddSubtitle(windowed, label, track.Language);
+                _embeddedSubWindows.Add(new EmbeddedSubWindow
+                {
+                    Sid = sid,
+                    BaseUrl = fullUrl,
+                    Label = label,
+                    Language = track.Language,
+                    WindowStart = 0,
+                    WindowDuration = SubtitleWindowDurationSeconds,
+                });
+            }
+            else
+            {
+                _mpv.AddSubtitle(fullUrl, label, track.Language);
+            }
+            sid++;
+        }
+    }
+
+    private static string AppendPositionDuration(string url, double position, int durationSeconds)
+    {
+        var sep = url.Contains('?') ? '&' : '?';
+        return $"{url}{sep}position={position:0.##}&duration={durationSeconds}";
+    }
+
+    /// <summary>
+    /// Called from the UI tick; if the current playback position is near the
+    /// end of any loaded embedded-subtitle window, slide that window forward
+    /// by sub-remove + sub-add with a new position-centered URL. Also called
+    /// on seek past coverage.
+    /// </summary>
+    public void TickSubtitleWindows(double currentPositionSeconds)
+    {
+        if (_embeddedSubWindows.Count == 0 || _mpv == null) return;
+
+        foreach (var win in _embeddedSubWindows)
+        {
+            var windowEnd = win.WindowStart + win.WindowDuration;
+            // Slide when we're within SlidePreloadSeconds of the tail OR when
+            // we've seeked past the current window entirely.
+            bool approachingTail = currentPositionSeconds >= windowEnd - SubtitleSlidePreloadSeconds;
+            bool pastWindow = currentPositionSeconds >= windowEnd || currentPositionSeconds < win.WindowStart;
+            if (!(approachingTail || pastWindow)) continue;
+
+            // Fetch the next window centered on the current position. Using
+            // currentPos - 30 ensures cues just before the playhead remain
+            // visible (captions often start slightly before dialogue).
+            var newStart = Math.Max(0, currentPositionSeconds - 30);
+            var newUrl = AppendPositionDuration(win.BaseUrl, newStart, SubtitleWindowDurationSeconds);
+
+            try
+            {
+                _mpv.RemoveSubtitle(win.Sid);
+                _mpv.AddSubtitle(newUrl, win.Label, win.Language);
+                win.WindowStart = newStart;
+                win.WindowDuration = SubtitleWindowDurationSeconds;
+            }
+            catch
+            {
+                // If the reload fails the track may disappear; next tick will
+                // retry. Non-fatal — playback continues.
+            }
         }
     }
 
@@ -1634,6 +1794,7 @@ public class PlayerService : IDisposable
                 {
                     await _playbackManager.StopSessionAsync();
                     var session = await _playbackManager.StartSessionAsync(version.FileId, currentPos);
+                    try { SessionStarted?.Invoke(session.SessionId); } catch { }
                     PlayMethod = session.PlayMethod;
 
                     var token = _apiClient.AccessToken;
@@ -1737,16 +1898,54 @@ public class PlayerService : IDisposable
 
         try
         {
-            var results = await _playbackApi.SearchSubtitlesAsync(fileId, ["en"]);
+            // Use the series/profile-effective subtitle language (set by the
+            // server on each watch response) instead of hardcoded English.
+            // Falls back to "en" when no preference is set at any level.
+            var watchDetail = _playbackManager.WatchDetail;
+            var preferred = watchDetail?.EffectiveSubtitleLanguage;
+            if (string.IsNullOrWhiteSpace(preferred))
+            {
+                try
+                {
+                    var settingsVm = App.Services.GetService<ContinuumPlayer.ViewModels.SettingsViewModel>();
+                    preferred = settingsVm?.SubtitleLanguage;
+                }
+                catch { }
+            }
+            var languages = !string.IsNullOrWhiteSpace(preferred)
+                ? new[] { preferred! }
+                : new[] { "en" };
+
+            _mpv?.ShowOsdText($"Searching {languages[0].ToUpperInvariant()} subtitles…", 2000);
+            var results = await _playbackApi.SearchSubtitlesAsync(fileId, languages);
             if (results.Results.Count == 0)
             {
-                _mpv?.ShowOsdText("No subtitles found", 3000);
-                return;
+                // Widen the search to English if the preferred language found nothing.
+                if (languages[0] != "en")
+                {
+                    _mpv?.ShowOsdText($"No {languages[0].ToUpperInvariant()} subs — trying EN…", 2000);
+                    results = await _playbackApi.SearchSubtitlesAsync(fileId, ["en"]);
+                }
+                if (results.Results.Count == 0)
+                {
+                    _mpv?.ShowOsdText("No subtitles found", 3000);
+                    return;
+                }
             }
 
-            var best = results.Results[0];
+            // Pick best by score, then prefer matching language, then prefer
+            // non-hearing-impaired (matches what upstream's auto-pick would do
+            // when no user interaction is possible over the mpv fullscreen).
+            var best = results.Results
+                .OrderByDescending(r => r.Score)
+                .ThenByDescending(r => string.Equals(r.Language, languages[0], StringComparison.OrdinalIgnoreCase))
+                .ThenBy(r => r.HearingImpaired)
+                .First();
             await _playbackApi.DownloadSubtitleAsync(fileId, best.Provider, best.SubtitleId, best.Language, best.Format);
-            _mpv?.ShowOsdText($"Downloaded: {best.Language} subtitle", 3000);
+            var label = string.IsNullOrEmpty(best.ReleaseName)
+                ? $"{best.Language.ToUpperInvariant()} ({best.Provider})"
+                : $"{best.Language.ToUpperInvariant()} · {best.ReleaseName}";
+            _mpv?.ShowOsdText($"Downloaded: {label}", 3000);
 
             // Reload subtitles
             Task.Run(() => LoadSubtitles());

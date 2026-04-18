@@ -45,11 +45,33 @@
             </Button>
 
             <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
-                <TextBlock
-                    x:Name="TitleText"
-                    FontSize="{StaticResource FontSizeDisplayLarge}"
-                    FontWeight="Bold"
-                    Foreground="{StaticResource PrimaryTextBrush}" />
+                <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                    <TextBlock
+                        x:Name="TitleText"
+                        FontSize="{StaticResource FontSizeDisplayLarge}"
+                        FontWeight="Bold"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        VerticalAlignment="Center" />
+
+                    <!-- Pin / Unpin to sidebar (webui parity with sidebar_pins user setting) -->
+                    <Button
+                        x:Name="PinButton"
+                        Style="{StaticResource SecondaryButtonStyle}"
+                        CornerRadius="16"
+                        Padding="12,6"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed"
+                        Click="PinButton_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon x:Name="PinIcon" Glyph="&#xE840;" FontSize="13"
+                                      Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock x:Name="PinLabel" Text="Pin to sidebar"
+                                       FontSize="12"
+                                       Foreground="{StaticResource SecondaryTextBrush}"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
                 <TextBlock
                     x:Name="SubtitleText"
                     FontSize="14"

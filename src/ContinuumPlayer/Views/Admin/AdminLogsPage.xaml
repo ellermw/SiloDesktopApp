@@ -206,7 +206,7 @@
                 <!-- ===== Tab Bar ===== -->
                 <Border
                     Background="{StaticResource SurfaceBrush}"
-                    CornerRadius="24"
+                    CornerRadius="16"
                     Padding="4"
                     HorizontalAlignment="Left">
                     <StackPanel Orientation="Horizontal" Spacing="2">
@@ -251,11 +251,6 @@
                                 Style="{StaticResource FilterBoxStyle}"
                                 Text="{x:Bind ViewModel.AppComponent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 KeyDown="FilterBox_KeyDown" />
-                            <Button
-                                x:Name="BtnSearchApp"
-                                Content="Search"
-                                Style="{StaticResource AccentButtonStyle}"
-                                Click="BtnSearchApp_Click" />
                         </StackPanel>
                     </Border>
 
@@ -266,27 +261,48 @@
                             <Grid
                                 Padding="16,10"
                                 ColumnSpacing="8"
-                                Background="{StaticResource SurfaceBrush}"
-                                CornerRadius="24,24,0,0">
+                                CornerRadius="8,8,0,0">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="140" />
-                                    <ColumnDefinition Width="70" />
-                                    <ColumnDefinition Width="140" />
-                                    <ColumnDefinition Width="70" />
-                                    <ColumnDefinition Width="90" />
-                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="1.4*" />
+                                    <ColumnDefinition Width="0.7*" />
+                                    <ColumnDefinition Width="1.2*" />
+                                    <ColumnDefinition Width="0.6*" />
+                                    <ColumnDefinition Width="0.8*" />
+                                    <ColumnDefinition Width="3*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="Time" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="Level" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="2" Text="Component" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="3" Text="Status" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="4" Text="Duration" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="5" Text="Message" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="0" Text="Time" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="1" Text="Level" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Text="Component" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="4" Text="Duration" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="5" Text="Message" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             </Grid>
 
                             <!-- Rows -->
                             <ScrollViewer MaxHeight="600" VerticalScrollBarVisibility="Auto">
-                                <StackPanel x:Name="AppLogsPanel_Rows" Spacing="0" />
+                                <StackPanel Spacing="0">
+                                    <StackPanel x:Name="AppLogsPanel_Rows" Spacing="0" />
+
+                                    <!-- Cursor-pagination footer: Load more button + status. -->
+                                    <StackPanel
+                                        x:Name="AppLogsLoadMorePanel"
+                                        Orientation="Horizontal"
+                                        HorizontalAlignment="Center"
+                                        Spacing="10"
+                                        Padding="0,16,0,16"
+                                        Visibility="Collapsed">
+                                        <Button
+                                            x:Name="AppLogsLoadMoreButton"
+                                            Content="Load more"
+                                            Style="{StaticResource OutlineButtonStyle}"
+                                            Click="AppLogsLoadMore_Click" />
+                                        <ProgressRing
+                                            x:Name="AppLogsLoadMoreRing"
+                                            IsActive="False"
+                                            Width="18" Height="18"
+                                            Visibility="Collapsed" />
+                                    </StackPanel>
+                                </StackPanel>
                             </ScrollViewer>
 
                             <!-- Empty / loading states -->
@@ -367,11 +383,6 @@
                                 Style="{StaticResource FilterBoxStyle}"
                                 Text="{x:Bind ViewModel.AuditClientIp, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 KeyDown="AuditFilterBox_KeyDown" />
-                            <Button
-                                x:Name="BtnSearchAudit"
-                                Content="Search"
-                                Style="{StaticResource AccentButtonStyle}"
-                                Click="BtnSearchAudit_Click" />
                         </StackPanel>
                     </Border>
 
@@ -382,33 +393,54 @@
                             <Grid
                                 Padding="16,10"
                                 ColumnSpacing="8"
-                                Background="{StaticResource SurfaceBrush}"
-                                CornerRadius="24,24,0,0">
+                                CornerRadius="8,8,0,0">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="130" />
-                                    <ColumnDefinition Width="65" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="55" />
-                                    <ColumnDefinition Width="120" />
-                                    <ColumnDefinition Width="55" />
-                                    <ColumnDefinition Width="90" />
-                                    <ColumnDefinition Width="90" />
-                                    <ColumnDefinition Width="110" />
+                                    <ColumnDefinition Width="1.3*" />
+                                    <ColumnDefinition Width="0.6*" />
+                                    <ColumnDefinition Width="2.5*" />
+                                    <ColumnDefinition Width="0.5*" />
+                                    <ColumnDefinition Width="1.2*" />
+                                    <ColumnDefinition Width="0.5*" />
+                                    <ColumnDefinition Width="0.9*" />
+                                    <ColumnDefinition Width="0.9*" />
+                                    <ColumnDefinition Width="1.1*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="Time" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="Method" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="2" Text="Path" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="3" Text="Status" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="4" Text="Client" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="5" Text="User" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="6" Text="Session" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="7" Text="Playback" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="8" Text="Request" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="0" Text="Time" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="1" Text="Method" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Text="Path" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="4" Text="Client" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="5" Text="User" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="6" Text="Session" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="7" Text="Playback" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="8" Text="Request" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             </Grid>
 
                             <!-- Rows -->
                             <ScrollViewer MaxHeight="600" VerticalScrollBarVisibility="Auto">
-                                <StackPanel x:Name="AuditLogsPanel_Rows" Spacing="0" />
+                                <StackPanel Spacing="0">
+                                    <StackPanel x:Name="AuditLogsPanel_Rows" Spacing="0" />
+
+                                    <!-- Cursor-pagination footer. -->
+                                    <StackPanel
+                                        x:Name="AuditLogsLoadMorePanel"
+                                        Orientation="Horizontal"
+                                        HorizontalAlignment="Center"
+                                        Spacing="10"
+                                        Padding="0,16,0,16"
+                                        Visibility="Collapsed">
+                                        <Button
+                                            x:Name="AuditLogsLoadMoreButton"
+                                            Content="Load more"
+                                            Style="{StaticResource OutlineButtonStyle}"
+                                            Click="AuditLogsLoadMore_Click" />
+                                        <ProgressRing
+                                            x:Name="AuditLogsLoadMoreRing"
+                                            IsActive="False"
+                                            Width="18" Height="18"
+                                            Visibility="Collapsed" />
+                                    </StackPanel>
+                                </StackPanel>
                             </ScrollViewer>
 
                             <!-- Empty / loading states -->

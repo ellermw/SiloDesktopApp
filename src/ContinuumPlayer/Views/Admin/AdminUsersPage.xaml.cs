@@ -100,8 +100,18 @@ public sealed partial class AdminUsersPage : Page
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         _searchQuery = SearchBox.Text ?? "";
+        SearchClearButton.Visibility = string.IsNullOrEmpty(_searchQuery)
+            ? Visibility.Collapsed : Visibility.Visible;
         BuildUserRows();
     }
+
+    private void SearchClearButton_Click(object sender, RoutedEventArgs e)
+    {
+        SearchBox.Text = "";
+    }
+
+    private int _userPageSize = 25;
+    private int _userPage;
 
     private void BuildUserRows()
     {
@@ -121,13 +131,22 @@ public sealed partial class AdminUsersPage : Page
         if (list.Count == 0)
         {
             EmptyState.Visibility = Visibility.Visible;
+            UserPaginationBar.Visibility = Visibility.Collapsed;
             return;
         }
 
         EmptyState.Visibility = Visibility.Collapsed;
 
+        // Paginate
+        int totalPages = Math.Max(1, (int)Math.Ceiling(list.Count / (double)_userPageSize));
+        if (_userPage >= totalPages) _userPage = totalPages - 1;
+        if (_userPage < 0) _userPage = 0;
+        int start = _userPage * _userPageSize;
+        int end = Math.Min(start + _userPageSize, list.Count);
+        var pageUsers = list.Skip(start).Take(_userPageSize).ToList();
+
         bool isFirst = true;
-        foreach (var user in list)
+        foreach (var user in pageUsers)
         {
             if (!isFirst)
             {
@@ -139,6 +158,41 @@ public sealed partial class AdminUsersPage : Page
             }
             isFirst = false;
             UsersPanel.Children.Add(BuildUserRow(user));
+        }
+
+        // Pagination bar
+        UserPaginationBar.Children.Clear();
+        UserPaginationBar.Visibility = list.Count > _userPageSize ? Visibility.Visible : Visibility.Collapsed;
+        if (list.Count > _userPageSize)
+        {
+            UserPaginationBar.Children.Add(new TextBlock
+            {
+                Text = $"Showing {start + 1}-{end} of {list.Count}",
+                FontSize = 13,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+
+            var pageSizeCombo = new ComboBox { Width = 70, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            foreach (var ps in new[] { 25, 50, 100 })
+            {
+                var item = new ComboBoxItem { Content = ps.ToString(), Tag = ps };
+                if (ps == _userPageSize) item.IsSelected = true;
+                pageSizeCombo.Items.Add(item);
+            }
+            pageSizeCombo.SelectionChanged += (_, _) =>
+            {
+                if (pageSizeCombo.SelectedItem is ComboBoxItem sel && sel.Tag is int ps)
+                { _userPageSize = ps; _userPage = 0; BuildUserRows(); }
+            };
+            UserPaginationBar.Children.Add(pageSizeCombo);
+
+            var prevBtn = new Button { Content = new FontIcon { Glyph = "\uE76B", FontSize = 12 }, Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0), Padding = new Thickness(6), IsEnabled = _userPage > 0 };
+            prevBtn.Click += (_, _) => { _userPage--; BuildUserRows(); };
+            var nextBtn = new Button { Content = new FontIcon { Glyph = "\uE76C", FontSize = 12 }, Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0), Padding = new Thickness(6), IsEnabled = _userPage < totalPages - 1 };
+            nextBtn.Click += (_, _) => { _userPage++; BuildUserRows(); };
+            UserPaginationBar.Children.Add(prevBtn);
+            UserPaginationBar.Children.Add(nextBtn);
         }
     }
 
@@ -164,7 +218,7 @@ public sealed partial class AdminUsersPage : Page
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
             FontSize = 13,
-            FontWeight = FontWeights.SemiBold
+            FontWeight = FontWeights.Medium
         };
         userNameLink.Click += (_, _) => Frame.Navigate(typeof(AdminUserDetailPage), capturedUser.Id);
 
@@ -408,6 +462,7 @@ public sealed partial class AdminUsersPage : Page
             Title = "Delete user",
             Content = $"Delete user \"{user.Username}\"? This action cannot be undone.",
             PrimaryButtonText = "Delete",
+                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
             DefaultButton = ContentDialogButton.Close
@@ -645,10 +700,11 @@ public sealed partial class AdminUsersPage : Page
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
 
+        // Upstream commit e2428e7: floor raised to 1, default 5.
         var maxProfilesBox = new NumberBox
         {
-            Value = editingUser?.MaxProfiles ?? 0,
-            Minimum = 0,
+            Value = (editingUser?.MaxProfiles ?? 0) <= 0 ? 5 : editingUser!.MaxProfiles,
+            Minimum = 1,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
             CornerRadius = new CornerRadius(8),
             FontSize = 13,
@@ -763,7 +819,7 @@ public sealed partial class AdminUsersPage : Page
             string role = roleCombo.SelectedItem as string ?? "user";
             int maxStreams = double.IsNaN(maxStreamsBox.Value) ? 0 : (int)maxStreamsBox.Value;
             int maxTranscodes = double.IsNaN(maxTranscodesBox.Value) ? 0 : (int)maxTranscodesBox.Value;
-            int maxProfiles = double.IsNaN(maxProfilesBox.Value) ? 0 : (int)maxProfilesBox.Value;
+            int maxProfiles = double.IsNaN(maxProfilesBox.Value) ? 5 : Math.Max(1, (int)maxProfilesBox.Value);
             bool downloadAllowed = downloadSwitch.IsOn;
             bool downloadTranscodeAllowed = downloadTranscodeSwitch.IsOn;
 
@@ -1184,6 +1240,7 @@ public sealed partial class AdminUsersPage : Page
                 Title = "Delete Invite Code",
                 Content = $"Delete invite code \"{capturedCode.Code}\"?",
                 PrimaryButtonText = "Delete",
+                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
                 CloseButtonText = "Cancel",
                 XamlRoot = this.XamlRoot,
                 DefaultButton = ContentDialogButton.Close
@@ -1225,7 +1282,7 @@ public sealed partial class AdminUsersPage : Page
             FontSize = 13
         };
 
-        var form = new StackPanel { Width = 380, Spacing = 16 };
+        var form = new StackPanel { Width = 512, Spacing = 16 };
         AddInviteCodeFormField(form, "Code (optional)", codeBox);
         AddInviteCodeFormField(form, "Label", labelBox);
         AddInviteCodeFormField(form, "Max Uses (0 = unlimited)", maxUsesBox);

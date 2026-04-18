@@ -299,6 +299,8 @@ public sealed partial class AdminCollectionsPage : Page
         row.Children.Add(updatedBlock);
         row.Children.Add(actionsPanel);
 
+        row.PointerEntered += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF)); };
+        row.PointerExited += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); };
         return row;
     }
 
@@ -313,7 +315,7 @@ public sealed partial class AdminCollectionsPage : Page
 
     private async Task OpenCreateDialogAsync()
     {
-        var (formContent, getBody) = BuildCollectionForm(null);
+        var (formContent, getBody, getPosterFile, getBackdropFile) = BuildCollectionForm(null);
 
         var dialog = new ContentDialog
         {
@@ -333,6 +335,12 @@ public sealed partial class AdminCollectionsPage : Page
 
             try
             {
+                var adminApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AdminApi>();
+                var created = await adminApi.CreateCollectionAsync(body);
+
+                // Upload poster/backdrop files if selected
+                await UploadCollectionImagesAsync(adminApi, created.Id, getPosterFile(), getBackdropFile());
+
                 await ViewModel.LoadCommand.ExecuteAsync(null);
             }
             catch { }
@@ -343,7 +351,7 @@ public sealed partial class AdminCollectionsPage : Page
 
     private async Task OpenEditDialogAsync(LibraryCollection col)
     {
-        var (formContent, getBody) = BuildCollectionForm(col);
+        var (formContent, getBody, getPosterFile, getBackdropFile) = BuildCollectionForm(col);
 
         var dialog = new ContentDialog
         {
@@ -363,6 +371,12 @@ public sealed partial class AdminCollectionsPage : Page
 
             try
             {
+                var adminApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AdminApi>();
+                await adminApi.UpdateCollectionAsync(col.Id, body);
+
+                // Upload poster/backdrop files if selected
+                await UploadCollectionImagesAsync(adminApi, col.Id, getPosterFile(), getBackdropFile());
+
                 await ViewModel.LoadCommand.ExecuteAsync(null);
             }
             catch { }
@@ -378,6 +392,7 @@ public sealed partial class AdminCollectionsPage : Page
             Title = "Delete Collection",
             Content = $"Delete collection \"{col.Title}\"? This action cannot be undone.",
             PrimaryButtonText = "Delete",
+                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
             DefaultButton = ContentDialogButton.Close
@@ -396,13 +411,15 @@ public sealed partial class AdminCollectionsPage : Page
 
     // ===== Form Builder =====
 
-    private (FrameworkElement Content, Func<ContinuumPlayer.Core.Models.Admin.CreateLibraryCollectionRequest?> GetBody) BuildCollectionForm(LibraryCollection? existing)
+    private (FrameworkElement Content, Func<ContinuumPlayer.Core.Models.Admin.CreateLibraryCollectionRequest?> GetBody,
+        Func<(byte[]? Bytes, string? Name, string? ContentType)> GetPosterFile,
+        Func<(byte[]? Bytes, string? Name, string? ContentType)> GetBackdropFile) BuildCollectionForm(LibraryCollection? existing)
     {
         var titleBox = new TextBox
         {
             PlaceholderText = "Collection title",
             Text = existing?.Title ?? "",
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(6),
             FontSize = 13
         };
 
@@ -411,7 +428,7 @@ public sealed partial class AdminCollectionsPage : Page
             PlaceholderText = "Description (optional)",
             Text = existing?.Description ?? "",
             AcceptsReturn = false,
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(6),
             FontSize = 13
         };
 
@@ -419,13 +436,13 @@ public sealed partial class AdminCollectionsPage : Page
         {
             PlaceholderText = "Source URL (MDBList / TMDB, optional)",
             Text = existing?.SourceUrl ?? "",
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(6),
             FontSize = 13
         };
 
         var typeCombo = new ComboBox
         {
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(6),
             FontSize = 13,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
@@ -442,7 +459,7 @@ public sealed partial class AdminCollectionsPage : Page
 
         var visibilityCombo = new ComboBox
         {
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(6),
             FontSize = 13,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
@@ -462,33 +479,7 @@ public sealed partial class AdminCollectionsPage : Page
             OffContent = "Not featured"
         };
 
-        // Library selector from loaded libraries
-        var libCombo = new ComboBox
-        {
-            CornerRadius = new CornerRadius(8),
-            FontSize = 13,
-            HorizontalAlignment = HorizontalAlignment.Stretch
-        };
-        libCombo.Items.Add(new ComboBoxItem { Content = "— None —", Tag = (int?)null });
-        foreach (var lib in ViewModel.Libraries)
-            libCombo.Items.Add(new ComboBoxItem { Content = lib.Name, Tag = (int?)lib.Id });
-
-        // Pre-select the collection's library or the currently filtered library
-        int? preSelectLibId = existing?.LibraryId ?? ViewModel.SelectedLibraryId;
-        if (preSelectLibId.HasValue)
-        {
-            foreach (ComboBoxItem item in libCombo.Items)
-            {
-                if (item.Tag is int id && id == preSelectLibId.Value)
-                {
-                    libCombo.SelectedItem = item;
-                    break;
-                }
-            }
-        }
-        if (libCombo.SelectedItem == null) libCombo.SelectedIndex = 0;
-
-        var form = new StackPanel { Width = 380, Spacing = 14 };
+        var form = new StackPanel { Width = 420, Spacing = 14 };
 
         void AddField(string label, FrameworkElement control)
         {
@@ -496,9 +487,9 @@ public sealed partial class AdminCollectionsPage : Page
             group.Children.Add(new TextBlock
             {
                 Text = label,
-                FontSize = 12,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+                FontSize = 14,
+                FontWeight = FontWeights.Medium,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
             });
             group.Children.Add(control);
             form.Children.Add(group);
@@ -506,21 +497,305 @@ public sealed partial class AdminCollectionsPage : Page
 
         AddField("Title", titleBox);
         AddField("Description", descBox);
-        AddField("Library", libCombo);
+        // Library multi-select (webui supports library_ids[] array)
+        var libCheckPanel = new StackPanel { Spacing = 4 };
+        var libCheckboxes = new List<(int LibId, CheckBox Check)>();
+        var existingLibIds = existing?.LibraryIds ?? (existing?.LibraryId > 0 ? [existing.LibraryId] : []);
+        foreach (var lib in ViewModel.Libraries)
+        {
+            var cb = new CheckBox
+            {
+                Content = lib.Name, FontSize = 12,
+                IsChecked = existingLibIds.Contains(lib.Id),
+            };
+            libCheckPanel.Children.Add(cb);
+            libCheckboxes.Add((lib.Id, cb));
+        }
+        // If no libraries checked and we have a pre-selected lib, check it
+        if (libCheckboxes.All(x => x.Check.IsChecked != true) && ViewModel.SelectedLibraryId.HasValue)
+        {
+            var match = libCheckboxes.FirstOrDefault(x => x.LibId == ViewModel.SelectedLibraryId.Value);
+            if (match.Check != null) match.Check.IsChecked = true;
+        }
+        AddField("Libraries", libCheckPanel);
         AddField("Type", typeCombo);
         AddField("Visibility", visibilityCombo);
         AddField("Source URL", sourceUrlBox);
+
+        // Sync Schedule (webui: SyncScheduleField — dropdown with common intervals)
+        var syncCombo = new ComboBox
+        {
+            CornerRadius = new CornerRadius(6), FontSize = 13,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        syncCombo.Items.Add(new ComboBoxItem { Content = "None (manual only)", Tag = "" });
+        syncCombo.Items.Add(new ComboBoxItem { Content = "Every hour", Tag = "0 * * * *" });
+        syncCombo.Items.Add(new ComboBoxItem { Content = "Every 6 hours", Tag = "0 */6 * * *" });
+        syncCombo.Items.Add(new ComboBoxItem { Content = "Every 12 hours", Tag = "0 */12 * * *" });
+        syncCombo.Items.Add(new ComboBoxItem { Content = "Daily", Tag = "0 0 * * *" });
+        syncCombo.Items.Add(new ComboBoxItem { Content = "Weekly", Tag = "0 0 * * 0" });
+        syncCombo.SelectedIndex = 0;
+        if (existing?.SyncSchedule != null)
+        {
+            bool found = false;
+            for (int i = 0; i < syncCombo.Items.Count; i++)
+            {
+                if (syncCombo.Items[i] is ComboBoxItem ci && (string)ci.Tag == existing.SyncSchedule)
+                { syncCombo.SelectedIndex = i; found = true; break; }
+            }
+            if (!found && !string.IsNullOrEmpty(existing.SyncSchedule))
+            {
+                // Custom cron — add as-is
+                syncCombo.Items.Add(new ComboBoxItem { Content = $"Custom: {existing.SyncSchedule}", Tag = existing.SyncSchedule });
+                syncCombo.SelectedIndex = syncCombo.Items.Count - 1;
+            }
+        }
+        AddField("Sync Schedule", syncCombo);
+
+        // === Source Config: conditional fields for MDBList/TMDB types ===
+
+        // MDBList config: limit
+        var mdbLimitBox = new NumberBox
+        {
+            Value = 100, Minimum = 1, Maximum = 10000,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+        };
+        var mdbConfigPanel = new StackPanel { Spacing = 6, Visibility = Visibility.Collapsed };
+        mdbConfigPanel.Children.Add(new TextBlock { Text = "Item Limit", FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] });
+        mdbConfigPanel.Children.Add(mdbLimitBox);
+        form.Children.Add(mdbConfigPanel);
+
+        // TMDB config: preset + media type
+        var tmdbPresetCombo = new ComboBox { CornerRadius = new CornerRadius(6), FontSize = 13, HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (var (val, label) in new[] {
+            ("trending", "Trending"), ("popular", "Popular"), ("top_rated", "Top Rated"),
+            ("now_playing", "Now Playing"), ("upcoming", "Upcoming"), ("airing_today", "Airing Today"),
+            ("on_the_air", "On The Air") })
+            tmdbPresetCombo.Items.Add(new ComboBoxItem { Content = label, Tag = val });
+        tmdbPresetCombo.SelectedIndex = 0;
+
+        var tmdbMediaCombo = new ComboBox { CornerRadius = new CornerRadius(6), FontSize = 13, HorizontalAlignment = HorizontalAlignment.Stretch };
+        tmdbMediaCombo.Items.Add(new ComboBoxItem { Content = "Movies", Tag = "movie" });
+        tmdbMediaCombo.Items.Add(new ComboBoxItem { Content = "TV Shows", Tag = "tv" });
+        tmdbMediaCombo.SelectedIndex = 0;
+
+        var tmdbConfigPanel = new StackPanel { Spacing = 6, Visibility = Visibility.Collapsed };
+        var tmdbPresetField = new StackPanel { Spacing = 4 };
+        tmdbPresetField.Children.Add(new TextBlock { Text = "Preset", FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] });
+        tmdbPresetField.Children.Add(tmdbPresetCombo);
+        tmdbConfigPanel.Children.Add(tmdbPresetField);
+        var tmdbMediaField = new StackPanel { Spacing = 4 };
+        tmdbMediaField.Children.Add(new TextBlock { Text = "Media Type", FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] });
+        tmdbMediaField.Children.Add(tmdbMediaCombo);
+        tmdbConfigPanel.Children.Add(tmdbMediaField);
+        form.Children.Add(tmdbConfigPanel);
+
+        // Pre-populate from existing source config
+        if (existing?.SourceConfig != null)
+        {
+            string GetConfigStr(string key)
+            {
+                if (existing.SourceConfig.TryGetValue(key, out var v))
+                {
+                    if (v is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.String) return je.GetString() ?? "";
+                    return v?.ToString() ?? "";
+                }
+                return "";
+            }
+            int GetConfigInt(string key, int def)
+            {
+                if (existing.SourceConfig.TryGetValue(key, out var v))
+                {
+                    if (v is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Number) return je.GetInt32();
+                    if (v is int i) return i;
+                }
+                return def;
+            }
+
+            if (existing.CollectionType == "mdblist")
+                mdbLimitBox.Value = GetConfigInt("limit", 100);
+
+            if (existing.CollectionType == "tmdb")
+            {
+                var preset = GetConfigStr("preset");
+                for (int i = 0; i < tmdbPresetCombo.Items.Count; i++)
+                    if (tmdbPresetCombo.Items[i] is ComboBoxItem ci && (string)ci.Tag == preset) { tmdbPresetCombo.SelectedIndex = i; break; }
+                var media = GetConfigStr("media_type");
+                for (int i = 0; i < tmdbMediaCombo.Items.Count; i++)
+                    if (tmdbMediaCombo.Items[i] is ComboBoxItem ci && (string)ci.Tag == media) { tmdbMediaCombo.SelectedIndex = i; break; }
+            }
+        }
+
+        // Toggle visibility based on type selection
+        void UpdateSourceConfigVisibility()
+        {
+            var selType = (typeCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
+            mdbConfigPanel.Visibility = selType == "mdblist" ? Visibility.Visible : Visibility.Collapsed;
+            tmdbConfigPanel.Visibility = selType == "tmdb" ? Visibility.Visible : Visibility.Collapsed;
+        }
+        typeCombo.SelectionChanged += (_, _) => UpdateSourceConfigVisibility();
+        UpdateSourceConfigVisibility();
 
         var featuredGroup = new StackPanel { Spacing = 6 };
         featuredGroup.Children.Add(new TextBlock
         {
             Text = "Featured",
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+            FontSize = 14,
+            FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
         featuredGroup.Children.Add(featuredSwitch);
         form.Children.Add(featuredGroup);
+
+        // === Image fields (poster + backdrop source URLs) ===
+        // Webui: ImageUploadField — source URL input + preview. The server
+        // fetches and stores the image when a source URL is provided on create/update.
+
+        var posterSourceUrlBox = new TextBox
+        {
+            PlaceholderText = "https://image.tmdb.org/t/p/w500/...",
+            Text = existing?.PosterUrl ?? "",
+            CornerRadius = new CornerRadius(6),
+            FontSize = 13
+        };
+        // Show current poster preview when editing
+        var posterPreview = new StackPanel { Spacing = 4 };
+        if (existing != null && !string.IsNullOrEmpty(existing.PosterUrl))
+        {
+            try
+            {
+                var previewImg = new Microsoft.UI.Xaml.Controls.Image
+                {
+                    Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(existing.PosterUrl)),
+                    MaxHeight = 80,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+                };
+                var previewBorder = new Border
+                {
+                    CornerRadius = new CornerRadius(6),
+                    Child = previewImg,
+                    Margin = new Thickness(0, 0, 0, 4),
+                };
+                posterPreview.Children.Add(previewBorder);
+            }
+            catch { }
+        }
+        posterPreview.Children.Add(posterSourceUrlBox);
+        // File picker button for local upload (after save)
+        byte[]? posterFileBytes = null;
+        string? posterFileName = null;
+        string? posterContentType = null;
+        var posterPickBtn = new Button
+        {
+            Content = "Browse...",
+            FontSize = 12,
+            Padding = new Thickness(8, 4, 8, 4),
+            Margin = new Thickness(0, 2, 0, 0),
+        };
+        var posterPickStatus = new TextBlock
+        {
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        posterPickBtn.Click += async (_, _) =>
+        {
+            var picker = new Windows.Storage.Pickers.FileOpenPicker();
+            picker.FileTypeFilter.Add(".jpg");
+            picker.FileTypeFilter.Add(".jpeg");
+            picker.FileTypeFilter.Add(".png");
+            picker.FileTypeFilter.Add(".webp");
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance!);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+            var file = await picker.PickSingleFileAsync();
+            if (file != null)
+            {
+                var buf = await Windows.Storage.FileIO.ReadBufferAsync(file);
+                posterFileBytes = System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(buf);
+                posterFileName = file.Name;
+                posterContentType = file.ContentType;
+                posterPickStatus.Text = file.Name;
+                posterSourceUrlBox.Text = ""; // Clear URL when file selected
+            }
+        };
+        var posterPickRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        posterPickRow.Children.Add(posterPickBtn);
+        posterPickRow.Children.Add(posterPickStatus);
+        posterPreview.Children.Add(posterPickRow);
+        AddField("Poster Image", posterPreview);
+
+        var backdropSourceUrlBox = new TextBox
+        {
+            PlaceholderText = "https://image.tmdb.org/t/p/original/...",
+            Text = existing?.BackdropUrl ?? "",
+            CornerRadius = new CornerRadius(6),
+            FontSize = 13
+        };
+        var backdropPreview = new StackPanel { Spacing = 4 };
+        if (existing != null && !string.IsNullOrEmpty(existing.BackdropUrl))
+        {
+            try
+            {
+                var previewImg = new Microsoft.UI.Xaml.Controls.Image
+                {
+                    Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(existing.BackdropUrl)),
+                    MaxHeight = 60,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+                };
+                var previewBorder = new Border
+                {
+                    CornerRadius = new CornerRadius(6),
+                    Child = previewImg,
+                    Margin = new Thickness(0, 0, 0, 4),
+                };
+                backdropPreview.Children.Add(previewBorder);
+            }
+            catch { }
+        }
+        backdropPreview.Children.Add(backdropSourceUrlBox);
+        byte[]? backdropFileBytes = null;
+        string? backdropFileName = null;
+        string? backdropContentType = null;
+        var backdropPickBtn = new Button
+        {
+            Content = "Browse...",
+            FontSize = 12,
+            Padding = new Thickness(8, 4, 8, 4),
+            Margin = new Thickness(0, 2, 0, 0),
+        };
+        var backdropPickStatus = new TextBlock
+        {
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        backdropPickBtn.Click += async (_, _) =>
+        {
+            var picker = new Windows.Storage.Pickers.FileOpenPicker();
+            picker.FileTypeFilter.Add(".jpg");
+            picker.FileTypeFilter.Add(".jpeg");
+            picker.FileTypeFilter.Add(".png");
+            picker.FileTypeFilter.Add(".webp");
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance!);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+            var file = await picker.PickSingleFileAsync();
+            if (file != null)
+            {
+                var buf = await Windows.Storage.FileIO.ReadBufferAsync(file);
+                backdropFileBytes = System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(buf);
+                backdropFileName = file.Name;
+                backdropContentType = file.ContentType;
+                backdropPickStatus.Text = file.Name;
+                backdropSourceUrlBox.Text = "";
+            }
+        };
+        var backdropPickRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        backdropPickRow.Children.Add(backdropPickBtn);
+        backdropPickRow.Children.Add(backdropPickStatus);
+        backdropPreview.Children.Add(backdropPickRow);
+        AddField("Backdrop Image", backdropPreview);
 
         ContinuumPlayer.Core.Models.Admin.CreateLibraryCollectionRequest? GetBody()
         {
@@ -535,23 +810,67 @@ public sealed partial class AdminCollectionsPage : Page
             if (visibilityCombo.SelectedItem is ComboBoxItem visItem && visItem.Tag is string v)
                 visibility = v;
 
-            int? libraryId = null;
-            if (libCombo.SelectedItem is ComboBoxItem libItem && libItem.Tag is int lid)
-                libraryId = lid;
+            // Library IDs from multi-select checkboxes
+            var selectedLibIds = libCheckboxes
+                .Where(x => x.Check.IsChecked == true)
+                .Select(x => x.LibId)
+                .ToList();
+            int? libraryId = selectedLibIds.Count > 0 ? selectedLibIds[0] : null;
+
+            string? syncSchedule = null;
+            if (syncCombo.SelectedItem is ComboBoxItem syncItem && syncItem.Tag is string sched && !string.IsNullOrEmpty(sched))
+                syncSchedule = sched;
+
+            // Build source config based on type
+            Dictionary<string, object>? sourceConfig = null;
+            if (type == "mdblist" && !double.IsNaN(mdbLimitBox.Value))
+                sourceConfig = new() { ["limit"] = (int)mdbLimitBox.Value };
+            else if (type == "tmdb")
+            {
+                var preset = (tmdbPresetCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "trending";
+                var mediaType = (tmdbMediaCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "movie";
+                sourceConfig = new() { ["preset"] = preset, ["media_type"] = mediaType };
+            }
+
+            // Image source URLs (server will fetch these)
+            string? posterSrcUrl = string.IsNullOrWhiteSpace(posterSourceUrlBox.Text) ? null : posterSourceUrlBox.Text.Trim();
+            string? backdropSrcUrl = string.IsNullOrWhiteSpace(backdropSourceUrlBox.Text) ? null : backdropSourceUrlBox.Text.Trim();
 
             return new ContinuumPlayer.Core.Models.Admin.CreateLibraryCollectionRequest
             {
                 Title = title,
                 Description = string.IsNullOrEmpty(descBox.Text) ? null : descBox.Text.Trim(),
                 LibraryId = libraryId,
+                LibraryIds = selectedLibIds.Count > 0 ? selectedLibIds : null,
                 CollectionType = type,
                 Visibility = visibility,
                 SourceUrl = string.IsNullOrEmpty(sourceUrlBox.Text) ? null : sourceUrlBox.Text.Trim(),
-                Featured = featuredSwitch.IsOn
+                Featured = featuredSwitch.IsOn,
+                SyncSchedule = syncSchedule,
+                SourceConfig = sourceConfig,
+                PosterSourceUrl = posterSrcUrl,
+                BackdropSourceUrl = backdropSrcUrl,
             };
         }
 
-        return (form, GetBody);
+        // Expose file upload data for post-save upload
+        (byte[]? Bytes, string? Name, string? ContentType) GetPosterFile() => (posterFileBytes, posterFileName, posterContentType);
+        (byte[]? Bytes, string? Name, string? ContentType) GetBackdropFile() => (backdropFileBytes, backdropFileName, backdropContentType);
+
+        return (form, GetBody, GetPosterFile, GetBackdropFile);
+    }
+
+    // ===== Image Upload Helper =====
+
+    private static async Task UploadCollectionImagesAsync(
+        ContinuumPlayer.Core.Api.AdminApi adminApi, string collectionId,
+        (byte[]? Bytes, string? Name, string? ContentType) poster,
+        (byte[]? Bytes, string? Name, string? ContentType) backdrop)
+    {
+        if (poster.Bytes != null && poster.Name != null && poster.ContentType != null)
+            await adminApi.UploadCollectionImageAsync(collectionId, "poster", poster.Bytes, poster.Name, poster.ContentType);
+        if (backdrop.Bytes != null && backdrop.Name != null && backdrop.ContentType != null)
+            await adminApi.UploadCollectionImageAsync(collectionId, "backdrop", backdrop.Bytes, backdrop.Name, backdrop.ContentType);
     }
 
     // ===== Badge Helpers =====

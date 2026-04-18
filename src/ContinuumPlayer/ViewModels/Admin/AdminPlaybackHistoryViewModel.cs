@@ -50,7 +50,8 @@ public partial class AdminPlaybackHistoryViewModel : ObservableObject
                 foreach (var u in users) Users.Add(u);
             }
 
-            // If a user is selected, load their profiles
+            // Profiles are loaded reactively via OnSelectedUserIdChanged;
+            // only back-fill here if we have a user but profiles haven't arrived yet.
             if (SelectedUserId.HasValue && Profiles.Count == 0)
                 await LoadProfilesAsync(SelectedUserId.Value);
 
@@ -126,7 +127,7 @@ public partial class AdminPlaybackHistoryViewModel : ObservableObject
     public static string FormatDateTime(string dateStr)
     {
         if (!DateTime.TryParse(dateStr, out var dt)) return dateStr;
-        return dt.ToLocalTime().ToString("MMM d, yyyy h:mm tt");
+        return dt.ToLocalTime().ToString("MMM d, yyyy h:mm:ss tt");
     }
 
     // B29: Delegated to ContinuumPlayer.Core.Helpers.TimeAgo for consistency

@@ -100,7 +100,9 @@ public sealed partial class AdminTaskDetailPage : Page
         if (task == null) return;
 
         BuildHeader(task);
+        BuildScanNotice(task);
         BuildProgressSection(task);
+        BuildMetricsSection();
         BuildTriggersSection(task);
         BuildHistoryTable();
         StartOrStopRefreshTimer();
@@ -161,6 +163,21 @@ public sealed partial class AdminTaskDetailPage : Page
         RebuildPage();
     }
 
+    // ===== Scan notice =====
+
+    private void BuildScanNotice(TaskInfo task)
+    {
+        if (task.Key == "scan_libraries")
+        {
+            ScanNoticePanel.Visibility = Visibility.Visible;
+            ScanNoticeText.Text = "This task history records how long it took to queue per-library scan runs. Actual scan work continues in the background and is tracked from Admin Libraries and Server Activity.";
+        }
+        else
+        {
+            ScanNoticePanel.Visibility = Visibility.Collapsed;
+        }
+    }
+
     // ===== Progress section =====
 
     private void BuildProgressSection(TaskInfo task)
@@ -183,6 +200,187 @@ public sealed partial class AdminTaskDetailPage : Page
         ProgressMessageText.Text = task.State == "cancelling"
             ? "Cancelling..."
             : (task.ProgressMessage ?? $"{Math.Round(pct)}%");
+    }
+
+    // ===== Metrics section (refresh_metadata only) =====
+
+    private void BuildMetricsSection()
+    {
+        var metrics = ViewModel.Metrics;
+        if (metrics == null)
+        {
+            MetricsSection.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        MetricsSection.Visibility = Visibility.Visible;
+        MetricsCardsPanel.Children.Clear();
+
+        // Top row: 5 metric cards in a grid
+        var topGrid = new Grid { ColumnSpacing = 12 };
+        for (int i = 0; i < 5; i++)
+            topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        topGrid.Children.Add(BuildMetricCard("QUEUE", metrics.Total.ToString("N0"), 0));
+        topGrid.Children.Add(BuildMetricCard("DUE NOW", metrics.Due.ToString("N0"), 1));
+        topGrid.Children.Add(BuildMetricCard("LEASED", metrics.Leased.ToString("N0"), 2));
+        topGrid.Children.Add(BuildMetricCard("OLDEST DUE", FormatOptionalDateTime(metrics.OldestDueAt), 3, small: true));
+        topGrid.Children.Add(BuildMetricCard("OLDEST LEASE", FormatOptionalDateTime(metrics.OldestLeaseExpiresAt), 4, small: true));
+        MetricsCardsPanel.Children.Add(topGrid);
+
+        // Reason breakdown badges
+        var reasonPanel = new StackPanel { Spacing = 8 };
+        reasonPanel.Children.Add(new TextBlock
+        {
+            Text = "Reason breakdown", FontSize = 13, FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
+        });
+        var badgesWrap = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var reasons = metrics.ReasonCounts.Where(r => r.Count > 0).ToList();
+        if (reasons.Count == 0)
+        {
+            badgesWrap.Children.Add(new TextBlock { Text = "No queued debt.", FontSize = 13,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] });
+        }
+        foreach (var reason in reasons)
+        {
+            string label = reason.Reason switch
+            {
+                "episode_incomplete" => "Episode incomplete",
+                "stale_provider_id" => "Stale provider ID",
+                "refresh_failure" => "Refresh failure",
+                "core_metadata_incomplete" => "Core metadata incomplete",
+                _ => reason.Reason,
+            };
+            badgesWrap.Children.Add(new Border
+            {
+                Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 4, 10, 4),
+                Child = new TextBlock { Text = $"{label}: {reason.Count}", FontSize = 12,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] }
+            });
+        }
+        reasonPanel.Children.Add(badgesWrap);
+
+        // Attempt buckets
+        if (metrics.AttemptBuckets.Count > 0)
+        {
+            var bucketsGrid = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 8, 0, 0) };
+            for (int i = 0; i < metrics.AttemptBuckets.Count; i++)
+                bucketsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            for (int i = 0; i < metrics.AttemptBuckets.Count; i++)
+            {
+                var bucket = metrics.AttemptBuckets[i];
+                var card = new Border
+                {
+                    Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
+                    CornerRadius = new CornerRadius(12),
+                    Padding = new Thickness(12),
+                };
+                var inner = new StackPanel { Spacing = 4 };
+                inner.Children.Add(new TextBlock { Text = $"Attempts {bucket.Label}", FontSize = 11,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] });
+                inner.Children.Add(new TextBlock { Text = bucket.Count.ToString(), FontSize = 18, FontWeight = FontWeights.SemiBold,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+                card.Child = inner;
+                Grid.SetColumn(card, i);
+                bucketsGrid.Children.Add(card);
+            }
+            reasonPanel.Children.Add(bucketsGrid);
+        }
+
+        var reasonCard = new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
+            CornerRadius = new CornerRadius(16),
+            Padding = new Thickness(16),
+        };
+        reasonCard.Child = reasonPanel;
+        MetricsCardsPanel.Children.Add(reasonCard);
+
+        // Recent errors
+        if (metrics.RecentErrors.Count > 0)
+        {
+            var errPanel = new StackPanel { Spacing = 8 };
+            errPanel.Children.Add(new TextBlock { Text = "Recent errors", FontSize = 13, FontWeight = FontWeights.Medium,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            foreach (var err in metrics.RecentErrors)
+            {
+                var errCard = new Border
+                {
+                    Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
+                    CornerRadius = new CornerRadius(12),
+                    Padding = new Thickness(12),
+                    Margin = new Thickness(0, 0, 0, 4),
+                };
+                var errInner = new StackPanel { Spacing = 4 };
+                errInner.Children.Add(new TextBlock
+                {
+                    Text = string.IsNullOrEmpty(err.Title) ? err.ContentId : err.Title,
+                    FontSize = 13, FontWeight = FontWeights.Medium,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                });
+                errInner.Children.Add(new TextBlock
+                {
+                    Text = $"{(string.IsNullOrEmpty(err.Type) ? "item" : err.Type)} \u00b7 attempts {err.AttemptCount}",
+                    FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                });
+                if (!string.IsNullOrEmpty(err.LastError))
+                {
+                    errInner.Children.Add(new TextBlock
+                    {
+                        Text = err.LastError, FontSize = 11, MaxLines = 2,
+                        Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                    });
+                }
+                errCard.Child = errInner;
+                errPanel.Children.Add(errCard);
+            }
+            var errOuter = new Border
+            {
+                Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
+                CornerRadius = new CornerRadius(16),
+                Padding = new Thickness(16),
+            };
+            errOuter.Child = errPanel;
+            MetricsCardsPanel.Children.Add(errOuter);
+        }
+    }
+
+    private static FrameworkElement BuildMetricCard(string label, string value, int column, bool small = false)
+    {
+        var card = new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
+            CornerRadius = new CornerRadius(16),
+            Padding = new Thickness(16),
+        };
+        var inner = new StackPanel { Spacing = 8 };
+        inner.Children.Add(new TextBlock
+        {
+            Text = label, FontSize = 11, FontWeight = FontWeights.Medium,
+            CharacterSpacing = 160,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+        });
+        inner.Children.Add(new TextBlock
+        {
+            Text = value, FontSize = small ? 13 : 24, FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+        card.Child = inner;
+        Grid.SetColumn(card, column);
+        return card;
+    }
+
+    private static string FormatOptionalDateTime(string? dateStr)
+    {
+        if (string.IsNullOrEmpty(dateStr)) return "\u2014";
+        if (DateTime.TryParse(dateStr, out var dt))
+            return dt.ToLocalTime().ToString("G");
+        return dateStr;
     }
 
     // ===== Triggers section =====
@@ -298,7 +496,8 @@ public sealed partial class AdminTaskDetailPage : Page
 
     private FrameworkElement BuildHistoryRow(ExecutionResult result)
     {
-        // Web: px-4 py-2 per cell (16px horiz, 8px vert)
+        var container = new StackPanel();
+
         var row = new Grid
         {
             Padding       = new Thickness(16, 8, 16, 8),
@@ -311,54 +510,98 @@ public sealed partial class AdminTaskDetailPage : Page
 
         // Failed rows get bg-destructive/5
         if (result.Status.Equals("failed", StringComparison.OrdinalIgnoreCase))
+            row.Background = new SolidColorBrush(Color.FromArgb(13, 220, 70, 70));
+
+        bool hasResultData = result.ResultData != null && result.ResultData.Count > 0;
+
+        // Started — with chevron if expandable
+        var startedPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        FontIcon? chevronIcon = null;
+        if (hasResultData)
         {
-            row.Background = new SolidColorBrush(Color.FromArgb(13, 220, 70, 70)); // ~5% opacity red
+            chevronIcon = new FontIcon { Glyph = "\uE76C", FontSize = 10, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] };
+            startedPanel.Children.Add(chevronIcon);
         }
-
-        // Started
-        var startedBlock = new TextBlock
+        startedPanel.Children.Add(new TextBlock
         {
-            Text              = FormatDateTime(result.StartedAt),
-            FontSize          = 13,
-            Foreground        = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            Text = FormatDateTime(result.StartedAt), FontSize = 13,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center
-        };
+        });
 
-        // Duration
         var durationBlock = new TextBlock
         {
-            Text              = FormatDuration(result.DurationMs),
-            FontSize          = 13,
-            Foreground        = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            Text = FormatDuration(result.DurationMs), FontSize = 13,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        // Status badge — matches web Badge variants:
-        // failed → destructive, cancelled → outline, else → secondary
         var statusBadge = BuildStatusBadge(result.Status);
 
-        // Error — text-muted-foreground max-w-xs truncate
         var errorBlock = new TextBlock
         {
-            Text              = result.ErrorMessage ?? "\u2014",  // em dash
-            FontSize          = 13,
-            Foreground        = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            Text = result.ErrorMessage ?? "\u2014", FontSize = 13,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming      = TextTrimming.CharacterEllipsis,
-            MaxLines          = 1
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 1
         };
 
-        Grid.SetColumn(startedBlock,  0);
+        Grid.SetColumn(startedPanel, 0);
         Grid.SetColumn(durationBlock, 1);
-        Grid.SetColumn(statusBadge,   2);
-        Grid.SetColumn(errorBlock,    3);
+        Grid.SetColumn(statusBadge, 2);
+        Grid.SetColumn(errorBlock, 3);
 
-        row.Children.Add(startedBlock);
+        row.Children.Add(startedPanel);
         row.Children.Add(durationBlock);
         row.Children.Add(statusBadge);
         row.Children.Add(errorBlock);
 
-        return row;
+        // Hover effect
+        row.PointerEntered += (s, _) => { if (s is Grid g && hasResultData) g.Background = new SolidColorBrush(Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF)); };
+        row.PointerExited += (s, _) =>
+        {
+            if (s is Grid g)
+                g.Background = result.Status.Equals("failed", StringComparison.OrdinalIgnoreCase)
+                    ? new SolidColorBrush(Color.FromArgb(13, 220, 70, 70))
+                    : new SolidColorBrush(Colors.Transparent);
+        };
+
+        container.Children.Add(row);
+
+        // Expandable result_data panel
+        if (hasResultData)
+        {
+            var detailPanel = new Border
+            {
+                Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
+                Padding = new Thickness(16, 12, 16, 12),
+                Visibility = Visibility.Collapsed,
+            };
+            string json;
+            try { json = System.Text.Json.JsonSerializer.Serialize(result.ResultData, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }); }
+            catch { json = result.ResultData?.ToString() ?? ""; }
+            detailPanel.Child = new TextBlock
+            {
+                Text = json, FontSize = 11,
+                FontFamily = new FontFamily("Consolas"),
+                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                TextWrapping = TextWrapping.Wrap,
+                IsTextSelectionEnabled = true,
+            };
+
+            row.Tapped += (_, _) =>
+            {
+                bool isVisible = detailPanel.Visibility == Visibility.Visible;
+                detailPanel.Visibility = isVisible ? Visibility.Collapsed : Visibility.Visible;
+                if (chevronIcon != null)
+                    chevronIcon.Glyph = isVisible ? "\uE76C" : "\uE972"; // right : down
+            };
+
+            container.Children.Add(detailPanel);
+        }
+
+        return container;
     }
 
     // ===== Badge Builders =====

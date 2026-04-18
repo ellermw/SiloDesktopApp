@@ -182,7 +182,7 @@ public sealed partial class AdminPluginsPage : Page
         var card = new Border
         {
             Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
-            CornerRadius = new CornerRadius(20),
+            CornerRadius = new CornerRadius(12),
             Padding = new Thickness(20, 16, 20, 16)
         };
 
@@ -277,7 +277,7 @@ public sealed partial class AdminPluginsPage : Page
         }
 
         // Delete
-        var deleteBtn = MakeIconButton("\uE74D", "Delete plugin", 28, Color.FromArgb(255, 220, 90, 90));
+        var deleteBtn = MakeIconButton("\uE74D", "Delete plugin", 28);
         deleteBtn.Click += async (_, _) =>
         {
             var dialog = new ContentDialog
@@ -285,6 +285,7 @@ public sealed partial class AdminPluginsPage : Page
                 Title = "Delete Plugin",
                 Content = $"Delete plugin \"{capturedPlugin.PluginId}\"? This cannot be undone.",
                 PrimaryButtonText = "Delete",
+                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
                 CloseButtonText = "Cancel",
                 XamlRoot = this.XamlRoot,
                 DefaultButton = ContentDialogButton.Close
@@ -311,7 +312,7 @@ public sealed partial class AdminPluginsPage : Page
         var card = new Border
         {
             Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
-            CornerRadius = new CornerRadius(20),
+            CornerRadius = new CornerRadius(12),
             Padding = new Thickness(20, 16, 20, 16)
         };
 
@@ -409,7 +410,7 @@ public sealed partial class AdminPluginsPage : Page
         row.Children.Add(info);
 
         var capturedRepo = repo;
-        var deleteBtn = MakeIconButton("\uE74D", "Delete repository", 28, Color.FromArgb(255, 220, 90, 90));
+        var deleteBtn = MakeIconButton("\uE74D", "Delete repository", 28);
         deleteBtn.Click += async (_, _) =>
         {
             var dialog = new ContentDialog
@@ -417,6 +418,7 @@ public sealed partial class AdminPluginsPage : Page
                 Title = "Delete Repository",
                 Content = $"Delete repository \"{capturedRepo.DisplayName}\"?",
                 PrimaryButtonText = "Delete",
+                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
                 CloseButtonText = "Cancel",
                 XamlRoot = this.XamlRoot,
                 DefaultButton = ContentDialogButton.Close
@@ -430,6 +432,8 @@ public sealed partial class AdminPluginsPage : Page
         Grid.SetColumn(deleteBtn, 1);
         row.Children.Add(deleteBtn);
 
+        row.PointerEntered += (s, _) => { if (s is Grid g) g.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF)); };
+        row.PointerExited += (s, _) => { if (s is Grid g) g.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent); };
         return row;
     }
 
@@ -437,10 +441,10 @@ public sealed partial class AdminPluginsPage : Page
 
     private async void AddRepoButton_Click(object sender, RoutedEventArgs e)
     {
-        var nameBox = new TextBox { PlaceholderText = "e.g. My Plugins", CornerRadius = new CornerRadius(8), FontSize = 13 };
-        var urlBox = new TextBox { PlaceholderText = "https://example.com/repo", CornerRadius = new CornerRadius(8), FontSize = 13 };
+        var nameBox = new TextBox { PlaceholderText = "e.g. My Plugins", CornerRadius = new CornerRadius(6), FontSize = 13 };
+        var urlBox = new TextBox { PlaceholderText = "https://example.com/repo", CornerRadius = new CornerRadius(6), FontSize = 13 };
 
-        var form = new StackPanel { Width = 380, Spacing = 16 };
+        var form = new StackPanel { Width = 512, Spacing = 16 };
         AddField(form, "Display Name", nameBox);
         AddField(form, "Repository URL", urlBox);
 
@@ -474,9 +478,9 @@ public sealed partial class AdminPluginsPage : Page
         group.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+            FontSize = 14,
+            FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
         group.Children.Add(control);
         form.Children.Add(group);

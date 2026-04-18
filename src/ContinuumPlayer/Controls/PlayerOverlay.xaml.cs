@@ -12,17 +12,25 @@ public sealed partial class PlayerOverlay : UserControl
     private readonly PlayerService _playerService;
 
     private bool _statsVisible;
-    private bool _suppressSeek;
     private bool _isMuted;
     private bool _isActive;
 
     private DispatcherTimer? _uiTimer;
     private DispatcherTimer? _hideTimer;
+    private DispatcherTimer? _bufferingDebounceTimer;
+    private Microsoft.UI.Xaml.Media.Animation.Storyboard? _breatheStoryboard;
+    private Microsoft.UI.Xaml.Media.ScaleTransform? _breatheTransform;
+    private const int BufferingSpinnerDelayMs = 500;
 
     public PlayerOverlay()
     {
         _playerService = App.Services.GetRequiredService<PlayerService>();
         this.InitializeComponent();
+        SeekBar.SeekRequested += (seconds) =>
+        {
+            try { _playerService.Mpv?.Seek(seconds); } catch { }
+            ShowControls();
+        };
     }
 
     // ── Activate / Deactivate (called by MainWindow when visibility toggles) ──
@@ -36,6 +44,7 @@ public sealed partial class PlayerOverlay : UserControl
         _playerService.ContentLoaded += OnContentLoaded;
         _playerService.PlaybackEnded += OnPlaybackEnded;
         _playerService.StateChanged += OnPlayerStateChanged;
+        _playerService.BufferingChanged += OnBufferingChanged;
 
         // Sync the fullscreen icon eagerly so the first paint after re-activation
         // reflects the current state (otherwise it lingers on the "exit fullscreen"
@@ -104,12 +113,58 @@ public sealed partial class PlayerOverlay : UserControl
         _playerService.ContentLoaded -= OnContentLoaded;
         _playerService.PlaybackEnded -= OnPlaybackEnded;
         _playerService.StateChanged -= OnPlayerStateChanged;
+        _playerService.BufferingChanged -= OnBufferingChanged;
 
         // Stop timers
         _uiTimer?.Stop();
         _uiTimer = null;
         _hideTimer?.Stop();
         _hideTimer = null;
+        _bufferingDebounceTimer?.Stop();
+        _bufferingDebounceTimer = null;
+        BufferingSpinner.Visibility = Visibility.Collapsed;
+
+        // Stop the breathing animation cleanly on deactivate so it doesn't
+        // accumulate Storyboards across Activate/Deactivate cycles.
+        SetBreatheActive(false);
+    }
+
+    /// <summary>
+    /// Raised off-UI-thread from mpv's paused-for-cache property observer. We
+    /// debounce by 500ms before actually showing the spinner — quick cache
+    /// recoveries (common on good networks) never flash chrome.
+    /// </summary>
+    private void OnBufferingChanged(bool buffering)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_isActive) return;
+            if (buffering)
+            {
+                // Start / restart the debounce timer.
+                if (_bufferingDebounceTimer == null)
+                {
+                    _bufferingDebounceTimer = new DispatcherTimer
+                    {
+                        Interval = TimeSpan.FromMilliseconds(BufferingSpinnerDelayMs),
+                    };
+                    _bufferingDebounceTimer.Tick += (_, _) =>
+                    {
+                        _bufferingDebounceTimer?.Stop();
+                        // Only show if we're STILL buffering when the delay expires.
+                        if (_isActive && _playerService.IsBufferingForCache)
+                            BufferingSpinner.Visibility = Visibility.Visible;
+                    };
+                }
+                _bufferingDebounceTimer.Stop();
+                _bufferingDebounceTimer.Start();
+            }
+            else
+            {
+                _bufferingDebounceTimer?.Stop();
+                BufferingSpinner.Visibility = Visibility.Collapsed;
+            }
+        });
     }
 
     /// <summary>
@@ -154,6 +209,16 @@ public sealed partial class PlayerOverlay : UserControl
             PopulateSubtitleFlyout();
             PopulateAudioFlyout();
             PopulateChaptersFlyout();
+            UpdateEpisodeNav();
+
+            // Seed the seek bar with markers + chapters for the newly loaded item.
+            var intro = _playerService.WatchDetail?.Intro;
+            SeekBar.IntroMarker = intro != null ? (intro.Start, intro.End) : null;
+            var credits = _playerService.WatchDetail?.Credits;
+            SeekBar.CreditsMarker = credits != null ? (credits.Start, credits.End) : null;
+            var version = _playerService.Versions.FirstOrDefault(v => v.FileId == (_playerService.Manager?.CurrentSession?.MediaFileId ?? 0));
+            SeekBar.Chapters = version?.Chapters;
+            SeekBar.Invalidate();
         });
     }
 
@@ -185,24 +250,39 @@ public sealed partial class PlayerOverlay : UserControl
         var pos = _playerService.Mpv.Position;
         var dur = _playerService.Mpv.Duration;
 
-        // Update seek slider without triggering seek
-        _suppressSeek = true;
-        if (dur > 0) SeekSlider.Maximum = dur;
-        SeekSlider.Value = pos;
-        _suppressSeek = false;
+        // Push current position + duration to the custom seek bar; it
+        // re-lays-out internally. No suppression flags needed — unlike the
+        // Slider it doesn't emit ValueChanged on programmatic updates.
+        SeekBar.Duration = dur;
+        SeekBar.CurrentTime = pos;
+        // Buffered state — mpv exposes demuxer-cache-time as "seconds ahead
+        // of current position that are already downloaded".
+        try
+        {
+            var cacheAhead = _playerService.Mpv.GetPropertyDouble("demuxer-cache-time");
+            SeekBar.BufferedEnd = pos + (cacheAhead > 0 ? cacheAhead : 0);
+        }
+        catch { SeekBar.BufferedEnd = pos; }
 
         // Update time labels
         PositionText.Text = PlayerService.FormatTime(pos);
         DurationText.Text = PlayerService.FormatTime(dur);
 
         // Update play/pause icon based on actual playback state
-        PlayPauseIcon.Glyph = _playerService.Mpv.IsPaused ? "\uE768" : "\uE769";
+        var isPaused = _playerService.Mpv.IsPaused;
+        PlayPauseIcon.Glyph = isPaused ? "\uE768" : "\uE769";
+        // player-breathe: pulse the primary disc when paused (webui parity).
+        SetBreatheActive(isPaused);
 
         // Update fullscreen icon
         FullscreenIcon.Glyph = _playerService.State == PlayerState.Fullscreen ? "\uE73F" : "\uE740";
 
         // Report progress to server
         _playerService.Manager?.UpdatePosition(pos, _playerService.Mpv.IsPaused);
+
+        // Slide embedded subtitle windows forward if we're near the tail
+        // (webui parity — upstream streams embedded subs in 10min–1hr windows).
+        _playerService.TickSubtitleWindows(pos);
 
         // Check skip markers
         UpdateSkipButtons(pos);
@@ -238,12 +318,44 @@ public sealed partial class PlayerOverlay : UserControl
 
     private void ShowControls()
     {
+        // Only play the reveal animation when transitioning from hidden state.
+        bool wasHidden = ControlsOverlay.Opacity < 1;
         ControlsOverlay.Opacity = 1;
         ControlsOverlay.IsHitTestVisible = true;
+
+        if (wasHidden) PlayRiseAnimation();
 
         // Restart the hide timer
         _hideTimer?.Stop();
         _hideTimer?.Start();
+    }
+
+    /// <summary>
+    /// player-rise cinematic reveal (webui parity): a subtle 6px slide-up
+    /// combined with a fade on the bottom HUD when controls appear. Plays
+    /// once per reveal and doesn't loop.
+    /// </summary>
+    private void PlayRiseAnimation()
+    {
+        var xform = new Microsoft.UI.Xaml.Media.TranslateTransform();
+        ControlsOverlay.RenderTransform = xform;
+
+        var slide = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+        {
+            From = 6,
+            To = 0,
+            Duration = new Duration(TimeSpan.FromMilliseconds(220)),
+            EasingFunction = new Microsoft.UI.Xaml.Media.Animation.CubicEase
+            {
+                EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut,
+            },
+        };
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(slide, xform);
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(slide, "Y");
+
+        var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+        sb.Children.Add(slide);
+        sb.Begin();
     }
 
     private void Overlay_PointerMoved(object sender, PointerRoutedEventArgs e)
@@ -325,6 +437,12 @@ public sealed partial class PlayerOverlay : UserControl
                 _playerService.ToggleSubtitleVisibility();
                 e.Handled = true;
                 break;
+
+            // P = Picture in Picture (webui parity)
+            case Windows.System.VirtualKey.P:
+                _playerService.Minimize();
+                e.Handled = true;
+                break;
         }
 
         ShowControls();
@@ -371,6 +489,9 @@ public sealed partial class PlayerOverlay : UserControl
         {
             StatsOverlay.Visibility = Visibility.Collapsed;
         }
+
+        // Sync the Info utility button's amber data-active dot (webui parity).
+        InfoActiveDot.Visibility = _statsVisible ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ── Button click handlers ────────────────────────────────────────────
@@ -431,49 +552,131 @@ public sealed partial class PlayerOverlay : UserControl
         _playerService.Mpv?.Seek(_playerService.WatchDetail?.Credits?.End ?? 0);
     }
 
-    // ── Seek slider interaction (suppressed feedback loop pattern) ────────
-    //
-    // WebUI commits seeks only on mouseup, not during drag — avoids seek storms
-    // on mpv (which can cause buffering thrashing). We replicate that here with
-    // a _isDragging flag: ValueChanged during drag only updates the displayed
-    // position; the actual mpv.Seek() fires on PointerCaptureLost (drag-end).
-    // Plain clicks (tap without drag) seek immediately via PointerPressed.
+    // ── New center-cluster skip buttons (webui parity: back 10s, forward 30s) ──
 
-    private bool _isDragging;
-    private double _pendingSeekValue;
+    private const double SkipBackSeconds = 10;
+    private const double SkipForwardSeconds = 30;
 
-    private void SeekSlider_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    private void SkipBack_Click(object sender, RoutedEventArgs e) => SeekRelative(-SkipBackSeconds);
+    private void SkipForward_Click(object sender, RoutedEventArgs e) => SeekRelative(SkipForwardSeconds);
+
+    // ── Episode navigation stubs ───────────────────────────────────────────
+    // Wire these to PlayerService once prev/next episode context is exposed.
+    // Buttons are Collapsed in XAML today; flip visibility + populate via the
+    // same path that shows/hides the ClusterSlotSpacer pair (webui parity).
+
+    private void PrevEpisode_Click(object sender, RoutedEventArgs e) { /* TODO #166b */ }
+    private async void NextEpisode_Click(object sender, RoutedEventArgs e)
     {
-        _isDragging = true;
-        _pendingSeekValue = SeekSlider.Value;
+        // Fast-path to the next episode without waiting for the credits
+        // countdown — PlayerService reuses the same path used by the
+        // PlayingNext auto-continue flow.
+        try { await _playerService.ContinuePlayingNextAsync(); }
+        catch { /* reported via ErrorMessage elsewhere */ }
     }
 
-    private void SeekSlider_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    /// <summary>
+    /// Show / hide the prev/next episode buttons and their spacers based on
+    /// PlayerService's current episode context. Called from OnContentLoaded
+    /// and after each state transition. Mirrors webui's showEpisodeSlots
+    /// logic — both slots are reserved when ANY episode nav exists so the
+    /// play button stays on the cluster centerline.
+    /// </summary>
+    private void UpdateEpisodeNav()
     {
-        if (!_isDragging || _playerService.Mpv == null) { _isDragging = false; return; }
-        _isDragging = false;
-        // Commit the final seek position
-        _playerService.Mpv.Seek(_pendingSeekValue);
-        ShowControls();
-    }
+        var hasNext = !string.IsNullOrEmpty(_playerService.NextEpisodeContentId);
+        // Desktop doesn't currently track PrevEpisode on the service; only
+        // reserve the slot when next exists (asymmetric but honest).
+        bool hasAnyEpisodeSlot = hasNext;
 
-    private void SeekSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        // If the change came from our programmatic update in the timer, ignore it
-        if (_suppressSeek || _playerService.Mpv == null) return;
-
-        if (_isDragging)
+        if (!hasAnyEpisodeSlot)
         {
-            // Track where the user is scrubbing — don't commit until drag-end
-            _pendingSeekValue = e.NewValue;
-            ShowControls();
+            PrevEpisodeButton.Visibility = Visibility.Collapsed;
+            PrevEpisodeSpacer.Visibility = Visibility.Collapsed;
+            NextEpisodeButton.Visibility = Visibility.Collapsed;
+            NextEpisodeSpacer.Visibility = Visibility.Collapsed;
             return;
         }
 
-        // User clicked without dragging — seek to the new position immediately
-        _playerService.Mpv.Seek(e.NewValue);
-        ShowControls();
+        // Reserve both slots so the cluster stays centered. Only populate
+        // the buttons that actually have destinations.
+        PrevEpisodeButton.Visibility = Visibility.Collapsed;
+        PrevEpisodeSpacer.Visibility = Visibility.Visible;
+        NextEpisodeButton.Visibility = hasNext ? Visibility.Visible : Visibility.Collapsed;
+        NextEpisodeSpacer.Visibility = hasNext ? Visibility.Collapsed : Visibility.Visible;
     }
+
+    // ── Picture-in-Picture (#155) ──────────────────────────────────────────
+    // PiP-lite: collapse the player to the mini bar so video keeps playing
+    // at the bottom of the window while the user navigates the main UI. True
+    // detached top-most window PiP is tracked as a follow-up.
+
+    private void PipButton_Click(object sender, RoutedEventArgs e)
+    {
+        _playerService.Minimize();
+    }
+
+    // ── player-breathe animation (webui parity: paused play button halo) ──
+    //
+    // Gentle pulsing scale on the primary play/pause disc when paused so the
+    // "tap to resume" affordance reads clearly without distracting during
+    // active playback. Scales 1.0 → 1.04 → 1.0 over 2.6s, matching the web's
+    // box-shadow pulse cadence.
+
+    private void SetBreatheActive(bool active)
+    {
+        if (active)
+        {
+            if (_breatheStoryboard != null) return;
+
+            _breatheTransform = new Microsoft.UI.Xaml.Media.ScaleTransform { CenterX = 28, CenterY = 28 };
+            PlayPauseButton.RenderTransform = _breatheTransform;
+
+            var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimationUsingKeyFrames
+            {
+                Duration = new Duration(TimeSpan.FromMilliseconds(2600)),
+                RepeatBehavior = Microsoft.UI.Xaml.Media.Animation.RepeatBehavior.Forever,
+            };
+            anim.KeyFrames.Add(new Microsoft.UI.Xaml.Media.Animation.LinearDoubleKeyFrame
+            { KeyTime = Microsoft.UI.Xaml.Media.Animation.KeyTime.FromTimeSpan(TimeSpan.Zero), Value = 1.0 });
+            anim.KeyFrames.Add(new Microsoft.UI.Xaml.Media.Animation.LinearDoubleKeyFrame
+            { KeyTime = Microsoft.UI.Xaml.Media.Animation.KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(1560)), Value = 1.04 });
+            anim.KeyFrames.Add(new Microsoft.UI.Xaml.Media.Animation.LinearDoubleKeyFrame
+            { KeyTime = Microsoft.UI.Xaml.Media.Animation.KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(2600)), Value = 1.0 });
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(anim, _breatheTransform);
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(anim, "ScaleX");
+
+            var animY = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimationUsingKeyFrames
+            {
+                Duration = new Duration(TimeSpan.FromMilliseconds(2600)),
+                RepeatBehavior = Microsoft.UI.Xaml.Media.Animation.RepeatBehavior.Forever,
+            };
+            animY.KeyFrames.Add(new Microsoft.UI.Xaml.Media.Animation.LinearDoubleKeyFrame
+            { KeyTime = Microsoft.UI.Xaml.Media.Animation.KeyTime.FromTimeSpan(TimeSpan.Zero), Value = 1.0 });
+            animY.KeyFrames.Add(new Microsoft.UI.Xaml.Media.Animation.LinearDoubleKeyFrame
+            { KeyTime = Microsoft.UI.Xaml.Media.Animation.KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(1560)), Value = 1.04 });
+            animY.KeyFrames.Add(new Microsoft.UI.Xaml.Media.Animation.LinearDoubleKeyFrame
+            { KeyTime = Microsoft.UI.Xaml.Media.Animation.KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(2600)), Value = 1.0 });
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(animY, _breatheTransform);
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(animY, "ScaleY");
+
+            _breatheStoryboard = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+            _breatheStoryboard.Children.Add(anim);
+            _breatheStoryboard.Children.Add(animY);
+            _breatheStoryboard.Begin();
+        }
+        else
+        {
+            _breatheStoryboard?.Stop();
+            _breatheStoryboard = null;
+            PlayPauseButton.RenderTransform = null;
+            _breatheTransform = null;
+        }
+    }
+
+    // Seek slider interaction moved into CustomSeekBar — scrub-and-commit
+    // semantics preserved (no seek during drag; commit on pointer up). See
+    // Controls/CustomSeekBar.xaml.cs for the implementation.
 
     // ── Quality / version switching ──────────────────────────────────────
 
@@ -574,10 +777,34 @@ public sealed partial class PlayerOverlay : UserControl
 
             var item = new MenuFlyoutItem { Text = label };
             int capturedMpvIndex = mpvIndexMap.GetValueOrDefault(origIdx, 1);
-            string? capturedLang = track.Language;
-            item.Click += (_, _) => _ = _playerService.SetSubtitleTrackAndPersistAsync(capturedMpvIndex, capturedLang);
+            var capturedTrack = track;
+            item.Click += (_, _) => _ = _playerService.SetSubtitleTrackAndPersistAsync(
+                capturedMpvIndex, capturedTrack.Language, capturedTrack);
             SubtitleFlyout.Items.Add(item);
         }
+
+        // Appearance… — opens the in-player SubtitleAppearanceDialog (webui
+        // parity, commit 1adbcd1). Separator keeps it visually distinct from
+        // the track list above.
+        SubtitleFlyout.Items.Add(new MenuFlyoutSeparator());
+        var appearanceItem = new MenuFlyoutItem
+        {
+            Text = "Appearance…",
+            Icon = new FontIcon { Glyph = "\uE700" }, // GlobalNavButton → sliders approximation
+        };
+        appearanceItem.Click += async (_, _) =>
+        {
+            try
+            {
+                var dlg = new SubtitleAppearanceDialog { XamlRoot = this.XamlRoot };
+                await dlg.ShowAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"SubtitleAppearanceDialog failed: {ex.Message}");
+            }
+        };
+        SubtitleFlyout.Items.Add(appearanceItem);
     }
 
     private static int SourceSortKey(string? source) => (source?.ToLowerInvariant()) switch

@@ -45,33 +45,92 @@ public sealed partial class AdminApiKeysPage : Page
         });
     }
 
+    // ===== Pagination =====
+    private int _pageSize = 25;
+    private int _currentPage;
+
     // ===== Row Builder =====
 
     private void RebuildRows()
     {
         KeysPanel.Children.Clear();
 
-        if (ViewModel.ApiKeys.Count == 0)
+        var allKeys = ViewModel.ApiKeys;
+        if (allKeys.Count == 0)
         {
             EmptyState.Visibility = Visibility.Visible;
+            PaginationBar.Visibility = Visibility.Collapsed;
             return;
         }
         EmptyState.Visibility = Visibility.Collapsed;
 
-        bool isFirst = true;
-        foreach (var key in ViewModel.ApiKeys)
+        // Paginate
+        int totalPages = Math.Max(1, (int)Math.Ceiling(allKeys.Count / (double)_pageSize));
+        if (_currentPage >= totalPages) _currentPage = totalPages - 1;
+        if (_currentPage < 0) _currentPage = 0;
+
+        int start = _currentPage * _pageSize;
+        int end = Math.Min(start + _pageSize, allKeys.Count);
+        var pageKeys = allKeys.Skip(start).Take(_pageSize).ToList();
+
+        foreach (var key in pageKeys)
         {
-            if (!isFirst)
-            {
-                KeysPanel.Children.Add(new Border
-                {
-                    BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
-                    BorderThickness = new Thickness(0, 1, 0, 0)
-                });
-            }
-            isFirst = false;
             KeysPanel.Children.Add(BuildKeyRow(key));
         }
+
+        // Pagination bar
+        PaginationBar.Visibility = allKeys.Count > _pageSize ? Visibility.Visible : Visibility.Collapsed;
+        PaginationBar.Children.Clear();
+
+        var rangeText = new TextBlock
+        {
+            Text = $"Showing {start + 1}-{end} of {allKeys.Count}",
+            FontSize = 13,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        var pageSizeCombo = new ComboBox { Width = 70, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var ps in new[] { 25, 50, 100 })
+        {
+            var item = new ComboBoxItem { Content = ps.ToString(), Tag = ps };
+            if (ps == _pageSize) item.IsSelected = true;
+            pageSizeCombo.Items.Add(item);
+        }
+        pageSizeCombo.SelectionChanged += (_, _) =>
+        {
+            if (pageSizeCombo.SelectedItem is ComboBoxItem sel && sel.Tag is int ps)
+            {
+                _pageSize = ps;
+                _currentPage = 0;
+                RebuildRows();
+            }
+        };
+
+        var prevBtn = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE76B", FontSize = 12 },
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6),
+            IsEnabled = _currentPage > 0,
+        };
+        prevBtn.Click += (_, _) => { _currentPage--; RebuildRows(); };
+
+        var nextBtn = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE76C", FontSize = 12 },
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6),
+            IsEnabled = _currentPage < totalPages - 1,
+        };
+        nextBtn.Click += (_, _) => { _currentPage++; RebuildRows(); };
+
+        PaginationBar.Children.Add(rangeText);
+        PaginationBar.Children.Add(pageSizeCombo);
+        PaginationBar.Children.Add(prevBtn);
+        PaginationBar.Children.Add(nextBtn);
     }
 
     private FrameworkElement BuildKeyRow(AdminAPIKey key)
@@ -144,7 +203,15 @@ public sealed partial class AdminApiKeysPage : Page
         // Copy button: web h-6 w-6 = 24px
         var copyBtn = MakeIconButton("\uE8C8", "Copy key", size: 24);
         var capturedKey = key;
-        copyBtn.Click += (_, _) => CopyToClipboard(capturedKey.Key);
+        copyBtn.Click += async (_, _) =>
+        {
+            CopyToClipboard(capturedKey.Key);
+            // Brief visual feedback: swap to checkmark for 1.5s
+            var origIcon = copyBtn.Content;
+            copyBtn.Content = new FontIcon { Glyph = "\uE73E", FontSize = 12, Foreground = new SolidColorBrush(Color.FromArgb(255, 34, 197, 94)) };
+            await Task.Delay(1500);
+            copyBtn.Content = origIcon;
+        };
         keyPanel.Children.Add(copyBtn);
 
         Grid.SetColumn(keyPanel, 2);
@@ -155,7 +222,7 @@ public sealed partial class AdminApiKeysPage : Page
         {
             Width = 120,
             FontSize = 13,
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(6),
             VerticalAlignment = VerticalAlignment.Center
         };
         tierCombo.Items.Add(new ComboBoxItem { Content = "Standard", Tag = "standard" });
@@ -221,7 +288,7 @@ public sealed partial class AdminApiKeysPage : Page
         };
 
         // Delete button: web h-7 w-7 = 28px
-        var deleteBtn = MakeIconButton("\uE74D", "Delete key", size: 28, fgColor: Color.FromArgb(255, 220, 90, 90));
+        var deleteBtn = MakeIconButton("\uE74D", "Delete key", size: 28);
         deleteBtn.Click += async (_, _) => await OpenDeleteDialogAsync(capturedKey);
 
         actionsPanel.Children.Add(deleteBtn);
@@ -229,6 +296,8 @@ public sealed partial class AdminApiKeysPage : Page
         Grid.SetColumn(actionsPanel, 6);
         row.Children.Add(actionsPanel);
 
+        row.PointerEntered += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF)); };
+        row.PointerExited += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); };
         return row;
     }
 
@@ -247,13 +316,13 @@ public sealed partial class AdminApiKeysPage : Page
         var labelBox = new TextBox
         {
             PlaceholderText = "e.g. CI/CD Pipeline",
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(6),
             FontSize = 13
         };
 
         var userCombo = new ComboBox
         {
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(6),
             FontSize = 13,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
@@ -265,10 +334,21 @@ public sealed partial class AdminApiKeysPage : Page
                 Tag = u.Id
             });
         }
-        if (userCombo.Items.Count > 0)
+        // Default to current logged-in user (matches webui behavior)
+        var currentUserId = App.Services.GetRequiredService<ContinuumPlayer.Core.Services.AuthService>().CurrentUser?.Id;
+        bool preSelected = false;
+        if (currentUserId.HasValue)
+        {
+            for (int i = 0; i < userCombo.Items.Count; i++)
+            {
+                if (userCombo.Items[i] is ComboBoxItem ci && ci.Tag is int id && id == currentUserId.Value)
+                { userCombo.SelectedIndex = i; preSelected = true; break; }
+            }
+        }
+        if (!preSelected && userCombo.Items.Count > 0)
             userCombo.SelectedIndex = 0;
 
-        var form = new StackPanel { Width = 380, Spacing = 16 };
+        var form = new StackPanel { Width = 512, Spacing = 16 };
 
         void AddField(string label, FrameworkElement control)
         {
@@ -276,9 +356,9 @@ public sealed partial class AdminApiKeysPage : Page
             group.Children.Add(new TextBlock
             {
                 Text = label,
-                FontSize = 12,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+                FontSize = 14,
+                FontWeight = FontWeights.Medium,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
             });
             group.Children.Add(control);
             form.Children.Add(group);
@@ -329,7 +409,7 @@ public sealed partial class AdminApiKeysPage : Page
         var warningBlock = new TextBlock
         {
             Text = "Copy your API key now. You won't be able to see the full key again.",
-            FontSize = 13,
+            FontSize = 14,
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap
         };
@@ -399,9 +479,10 @@ public sealed partial class AdminApiKeysPage : Page
     {
         var dialog = new ContentDialog
         {
-            Title = "Revoke API Key",
+            Title = "Revoke API key",
             Content = $"Revoke API key \"{key.Label}\"? This action cannot be undone.",
             PrimaryButtonText = "Revoke",
+                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
             DefaultButton = ContentDialogButton.Close

@@ -38,12 +38,12 @@
                 <!-- ===== Restart-required banner ===== -->
                 <Border
                     x:Name="RestartBanner"
-                    MaxWidth="768"
+                    MaxWidth="1080"
                     HorizontalAlignment="Left"
                     Background="#1AF59E0B"
                     BorderBrush="#4DF59E0B"
                     BorderThickness="1"
-                    CornerRadius="22"
+                    CornerRadius="16"
                     Padding="16,12"
                     Visibility="Collapsed">
                     <StackPanel Orientation="Horizontal" Spacing="12">
@@ -73,7 +73,7 @@
                         FontWeight="Medium"
                         Foreground="{StaticResource PrimaryTextBrush}" />
 
-                    <!-- 4-column job card grid -->
+                    <!-- 4-column job card grid (webui: grid gap-3 lg:grid-cols-4) -->
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -87,7 +87,7 @@
                             x:Name="EmbeddingsCard"
                             Grid.Column="0"
                             Background="{StaticResource CardBackgroundBrush}"
-                            CornerRadius="26"
+                            CornerRadius="16"
                             Padding="16">
                             <StackPanel Spacing="12">
                                 <!-- Title + count -->
@@ -147,7 +147,7 @@
                             x:Name="TasteProfilesCard"
                             Grid.Column="1"
                             Background="{StaticResource CardBackgroundBrush}"
-                            CornerRadius="26"
+                            CornerRadius="16"
                             Padding="16">
                             <StackPanel Spacing="12">
                                 <StackPanel Spacing="4">
@@ -186,7 +186,7 @@
                             x:Name="CowatchCard"
                             Grid.Column="2"
                             Background="{StaticResource CardBackgroundBrush}"
-                            CornerRadius="26"
+                            CornerRadius="16"
                             Padding="16">
                             <StackPanel Spacing="12">
                                 <StackPanel Spacing="4">
@@ -241,7 +241,7 @@
                             x:Name="RecommendationsCard"
                             Grid.Column="3"
                             Background="{StaticResource CardBackgroundBrush}"
-                            CornerRadius="26"
+                            CornerRadius="16"
                             Padding="16">
                             <StackPanel Spacing="12">
                                 <StackPanel Spacing="4">

@@ -82,13 +82,30 @@ public sealed partial class WatchTogetherJoinPage : Page
 
     private void UpdateSelectionButtons()
     {
+        // Style swaps in WinUI 3 are expensive — the framework invalidates
+        // the ControlTemplate and rebuilds the visual tree on every swap,
+        // which freezes the UI thread for 1-3 seconds on complex content.
+        // Flip the individual properties directly instead.
         bool hostPick = ViewModel.SelectionMode == "host_pick";
-        HostPickButton.Style = hostPick
-            ? (Style)Application.Current.Resources["AccentButtonStyle"]
-            : (Style)Application.Current.Resources["OutlineButtonStyle"];
-        VoteButton.Style = !hostPick
-            ? (Style)Application.Current.Resources["AccentButtonStyle"]
-            : (Style)Application.Current.Resources["OutlineButtonStyle"];
+        ApplySelectionLook(HostPickButton, hostPick);
+        ApplySelectionLook(VoteButton, !hostPick);
+    }
+
+    private static void ApplySelectionLook(Button btn, bool active)
+    {
+        if (active)
+        {
+            btn.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
+            btn.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentForegroundBrush"];
+            btn.BorderThickness = new Thickness(0);
+        }
+        else
+        {
+            btn.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            btn.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
+            btn.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BorderBrush"];
+            btn.BorderThickness = new Thickness(1);
+        }
     }
 
     private async void RoomCodeBox_KeyDown(object sender, KeyRoutedEventArgs e)

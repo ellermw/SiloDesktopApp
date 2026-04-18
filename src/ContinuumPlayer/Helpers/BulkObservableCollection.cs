@@ -27,4 +27,26 @@ public class BulkObservableCollection<T> : ObservableCollection<T>
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(
             NotifyCollectionChangedAction.Add, newItems, startIndex));
     }
+
+    /// <summary>
+    /// Removes the first <paramref name="count"/> items with a single ranged
+    /// Remove notification. Used to implement a sliding-window cap on
+    /// ItemsRepeater-backed collections so WinUI never has to manage more
+    /// than a bounded number of realized elements at once.
+    /// </summary>
+    public void RemoveFromFront(int count)
+    {
+        if (count <= 0 || Items.Count == 0) return;
+        count = Math.Min(count, Items.Count);
+
+        var removed = new List<T>(count);
+        for (int i = 0; i < count; i++)
+        {
+            removed.Add(Items[0]);
+            Items.RemoveAt(0);
+        }
+
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(
+            NotifyCollectionChangedAction.Remove, removed, 0));
+    }
 }

@@ -6,7 +6,7 @@ using ContinuumPlayer.Core.Models.HistoryImport;
 namespace ContinuumPlayer.Core.Api;
 
 // Simple list-wrapper response types used by endpoints that return JSON arrays wrapped in an object.
-file class AdminSensitiveStatusResponse { public List<string> Configured { get; set; } = []; }
+file class AdminSensitiveStatusResponse { public List<string> Configured { get; set; } = []; public List<string> ManagedByEnv { get; set; } = []; }
 // AdminSectionsListResponse is in Models/Admin/AdminSection.cs
 
 public class AdminApi(ContinuumApiClient client)
@@ -88,11 +88,29 @@ public class AdminApi(ContinuumApiClient client)
     public Task<List<ExecutionResult>> GetTaskHistoryAsync(string key, int limit = 20, CancellationToken ct = default)
         => client.GetAsync<List<ExecutionResult>>($"/api/v1/admin/tasks/{Uri.EscapeDataString(key)}/history?limit={limit}", ct);
 
+    public Task<MetadataRefreshMetrics> GetTaskMetricsAsync(string key, CancellationToken ct = default)
+        => client.GetAsync<MetadataRefreshMetrics>($"/api/v1/admin/tasks/{Uri.EscapeDataString(key)}/metrics", ct);
+
     public Task RunTaskAsync(string key, CancellationToken ct = default)
         => client.PostNoContentAsync($"/api/v1/admin/tasks/{Uri.EscapeDataString(key)}/run", new { }, ct);
 
     public Task CancelTaskAsync(string key, CancellationToken ct = default)
         => client.PostNoContentAsync($"/api/v1/admin/tasks/{Uri.EscapeDataString(key)}/cancel", new { }, ct);
+
+    // ===== System Info =====
+
+    public Task<Dictionary<string, object>> GetHWAccelInfoAsync(CancellationToken ct = default)
+        => client.GetAsync<Dictionary<string, object>>("/api/v1/admin/system/hw-accel", ct);
+
+    // ===== Admin Jobs (long-running: library_refresh, catalog_import, etc.) =====
+
+    public async Task<List<AdminJob>> GetAdminJobsAsync(string? jobType = null, int limit = 50, CancellationToken ct = default)
+    {
+        var url = $"/api/v1/admin/jobs?limit={limit}";
+        if (!string.IsNullOrEmpty(jobType)) url += $"&job_type={Uri.EscapeDataString(jobType)}";
+        var resp = await client.GetAsync<AdminJobsResponse>(url, ct);
+        return resp?.Jobs ?? [];
+    }
 
     public Task<TaskInfo> UpdateTaskTriggersAsync(string key, List<TriggerConfig> triggers, CancellationToken ct = default)
         => client.PutAsync<TaskInfo>($"/api/v1/admin/tasks/{Uri.EscapeDataString(key)}/triggers", triggers, ct);
@@ -130,10 +148,10 @@ public class AdminApi(ContinuumApiClient client)
     public Task UpdateAdminSettingAsync(string key, string value, CancellationToken ct = default)
         => client.PutNoContentAsync($"/api/v1/admin/settings/{Uri.EscapeDataString(key)}", new { value }, ct);
 
-    public async Task<HashSet<string>> GetSensitiveStatusAsync(CancellationToken ct = default)
+    public async Task<(HashSet<string> Configured, HashSet<string> ManagedByEnv)> GetSensitiveStatusAsync(CancellationToken ct = default)
     {
         var response = await client.GetAsync<AdminSensitiveStatusResponse>("/api/v1/admin/settings/sensitive-status", ct);
-        return new HashSet<string>(response.Configured);
+        return (new HashSet<string>(response.Configured), new HashSet<string>(response.ManagedByEnv));
     }
 
     /// <summary>
@@ -371,6 +389,31 @@ public class AdminApi(ContinuumApiClient client)
     public Task UpdateLibraryProvidersAsync(int libraryId, SetLibraryChainRequest request, CancellationToken ct = default)
         => client.PutNoContentAsync($"/api/v1/libraries/{libraryId}/providers", request, ct);
 
+    // ===== Library Reorder =====
+
+    public Task ReorderLibrariesAsync(object body, CancellationToken ct = default)
+        => client.PutNoContentAsync("/api/v1/libraries/reorder", body, ct);
+
+    // ===== Cancel Scans =====
+
+    public Task CancelLibraryScansAsync(int libraryId, CancellationToken ct = default)
+        => client.PostNoContentAsync("/api/v1/scan/cancel", new Dictionary<string, object> { ["library_id"] = libraryId }, ct);
+
+    // ===== Library Roots (Ambiguous) =====
+
+    public Task<LibraryRootsResponse> GetLibraryRootsAsync(int libraryId, string? state = null, CancellationToken ct = default)
+    {
+        var query = $"/api/v1/libraries/roots?library_id={libraryId}";
+        if (state != null) query += $"&state={Uri.EscapeDataString(state)}";
+        return client.GetAsync<LibraryRootsResponse>(query, ct);
+    }
+
+    public Task UpsertLibraryRootOverrideAsync(UpsertLibraryRootOverrideRequest body, CancellationToken ct = default)
+        => client.PutNoContentAsync("/api/v1/libraries/roots/override", body, ct);
+
+    public Task DeleteLibraryRootOverrideAsync(DeleteLibraryRootOverrideRequest body, CancellationToken ct = default)
+        => client.DeleteWithBodyAsync("/api/v1/libraries/roots/override", body, ct);
+
     // ===== Library Extras =====
 
     public Task SetLibraryPosterAsync(int libraryId, byte[] fileBytes, string fileName, string contentType, CancellationToken ct = default)
@@ -385,8 +428,8 @@ public class AdminApi(ContinuumApiClient client)
     public Task RematchStaleIdAsync(string contentId, CancellationToken ct = default)
         => client.PostNoContentAsync($"/api/v1/admin/libraries/stale-ids/{Uri.EscapeDataString(contentId)}/rematch", new { }, ct);
 
-    public Task<List<UnmatchedLibraryItem>> GetUnmatchedItemsAsync(CancellationToken ct = default)
-        => client.GetAsync<List<UnmatchedLibraryItem>>("/api/v1/admin/libraries/unmatched-items", ct);
+    public Task<UnmatchedLibraryItemsResponse> GetUnmatchedItemsAsync(int limit = 10, int offset = 0, CancellationToken ct = default)
+        => client.GetAsync<UnmatchedLibraryItemsResponse>($"/api/v1/libraries/unmatched-items?limit={limit}&offset={offset}", ct);
 
     // ===== Invite Codes =====
 
@@ -421,6 +464,9 @@ public class AdminApi(ContinuumApiClient client)
     public Task<ImportTMDBCollectionResponse> ImportTMDBCollectionAsync(ImportTMDBCollectionRequest request, CancellationToken ct = default)
         => client.PostAsync<ImportTMDBCollectionResponse>("/api/v1/admin/collections/import/tmdb", request, ct);
 
+    public Task UploadCollectionImageAsync(string id, string type, byte[] fileBytes, string fileName, string contentType, CancellationToken ct = default)
+        => client.PutMultipartNoContentAsync($"/api/v1/admin/collections/{Uri.EscapeDataString(id)}/image?type={Uri.EscapeDataString(type)}", "file", fileName, fileBytes, contentType, ct);
+
     public Task DeleteCollectionImageAsync(string id, string type, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/admin/collections/{Uri.EscapeDataString(id)}/image?type={Uri.EscapeDataString(type)}", ct);
 
@@ -437,6 +483,48 @@ public class AdminApi(ContinuumApiClient client)
 
     public Task DeleteHistoryImportSourceAsync(int id, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/admin/history-import-sources/{id}", ct);
+
+    // Token management
+    public Task SetSourceTokenAsync(int sourceId, string token, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/admin/history-imports/sources/{sourceId}/token",
+            new Dictionary<string, object?> { ["token"] = token }, ct);
+
+    public Task ClearSourceTokenAsync(int sourceId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/history-imports/sources/{sourceId}/token", ct);
+
+    // External user discovery
+    public Task<List<HistoryImportExternalUser>> DiscoverExternalUsersAsync(int sourceId, CancellationToken ct = default)
+        => client.GetAsync<List<HistoryImportExternalUser>>($"/api/v1/admin/history-imports/sources/{sourceId}/users", ct);
+
+    // Mappings CRUD
+    public Task<List<HistoryImportUserMapping>> GetMappingsAsync(int sourceId, CancellationToken ct = default)
+        => client.GetAsync<List<HistoryImportUserMapping>>($"/api/v1/admin/history-imports/mappings?source_id={sourceId}", ct);
+
+    public Task<HistoryImportUserMapping> CreateMappingAsync(CreateHistoryImportMappingRequest request, CancellationToken ct = default)
+        => client.PostAsync<HistoryImportUserMapping>("/api/v1/admin/history-imports/mappings", request, ct);
+
+    public Task DeleteMappingAsync(int id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/history-imports/mappings/{id}", ct);
+
+    // Run per-mapping
+    public Task<HistoryImportRun> RunMappingAsync(int mappingId, CancellationToken ct = default)
+        => client.PostAsync<HistoryImportRun>($"/api/v1/admin/history-imports/mappings/{mappingId}/run", new { }, ct);
+
+    // Bulk run all mappings for a source
+    public Task<AdminHistoryImportBulkRunResult> BulkRunSourceAsync(int sourceId, CancellationToken ct = default)
+        => client.PostAsync<AdminHistoryImportBulkRunResult>($"/api/v1/admin/history-imports/sources/{sourceId}/bulk-run", new { }, ct);
+
+    // Cancel a run
+    public Task CancelRunAsync(string runId, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/admin/history-imports/runs/{Uri.EscapeDataString(runId)}/cancel", new { }, ct);
+
+    // Admin runs (filtered by source)
+    public Task<List<HistoryImportRun>> GetAdminRunsAsync(int? sourceId = null, int limit = 20, CancellationToken ct = default)
+    {
+        var url = "/api/v1/admin/history-imports/runs?limit=" + limit;
+        if (sourceId.HasValue) url += $"&source_id={sourceId.Value}";
+        return client.GetAsync<List<HistoryImportRun>>(url, ct);
+    }
 
     // ===== Node Extras =====
 

@@ -41,15 +41,16 @@ public sealed partial class LibraryPage : Page
     private bool _collectionsLoaded;
     private bool _orderAsc = true;
     private string _currentTab = "Recommended";
+    private bool _overlayMode;
+    private bool _scrollListenerAttached;
     private DispatcherTimer? _yearDebounceTimer;
 
     public LibraryPage()
     {
         ViewModel = App.Services.GetRequiredService<LibraryViewModel>();
         this.InitializeComponent();
-        SmoothScrollHelper.Attach(ContentScrollViewer);
-
-        PosterRepeater.ItemsSource = ViewModel.Items;
+        // GridView has its own internal ScrollViewer. ItemsSource is wired via
+        // x:Bind in the XAML; PosterRepeater no longer exists.
 
         _suppressFilterEvents = true;
         SortComboBox.SelectedIndex = 0;
@@ -89,6 +90,7 @@ public sealed partial class LibraryPage : Page
         if (e.Parameter is Library library)
         {
             LibraryTitle.Text = library.Name;
+            LibraryEyebrowName.Text = library.Name.ToUpperInvariant();
             ViewModel.Library = library;
 
             // F7: set window title to the library name
@@ -114,6 +116,7 @@ public sealed partial class LibraryPage : Page
             _orderAsc = state.Order != "desc";
             UpdateOrderButton();
             ViewModel.SelectedSort = state.Sort;
+            Controls.PosterCard.CurrentSortKey = state.Sort;
             ViewModel.SelectedOrder = state.Order;
             ViewModel.SelectedType = state.MediaType;
             ViewModel.SelectedGenre = state.Genre;
@@ -135,6 +138,11 @@ public sealed partial class LibraryPage : Page
                 await LoadRecommendationsAsync();
 
             await ViewModel.LoadCommand.ExecuteAsync(null);
+            // Initial page size (40) may not be tall enough to fill the
+            // viewport on wide displays, leaving the user with no way to
+            // trigger LoadMore via scrolling. Keep loading pages until the
+            // content exceeds viewport threshold.
+            await FillViewportAsync();
         }
     }
 
@@ -201,17 +209,28 @@ public sealed partial class LibraryPage : Page
         _currentTab = tag;
         // B42: Persist tab selection so a return to this library lands on the same tab.
         SaveViewState(tag);
+
+        // Overlay mode: when Recommended tab is active and hero is showing,
+        // make header transparent to overlay the hero banner.
+        UpdateHeaderOverlayMode(tag == "Recommended" && RecommendedHeroCarousel.Visibility == Visibility.Visible);
     }
 
     /// <summary>
-    /// Keeps loading pages until the content exceeds the viewport height.
+    /// Keeps loading pages until the GridView has enough items to fill the
+    /// viewport. With the GridView migration, per-item height is known but
+    /// we don't have a direct ScrollableHeight — approximate by item count.
     /// </summary>
     private async Task FillViewportAsync()
     {
         await Task.Delay(200);
 
+        // Keep loading until ~3 pages worth of items are present OR there are
+        // no more. GridView's container-based trigger (ContainerContentChanging)
+        // takes over once the user scrolls, so we just need a baseline to
+        // make the grid scrollable.
+        const int MinItemsForViewport = 120;
         while (ViewModel.HasMore && !ViewModel.IsLoading &&
-               ContentScrollViewer.ScrollableHeight < 200 &&
+               ViewModel.Items.Count < MinItemsForViewport &&
                LibraryContentArea.Visibility == Visibility.Visible)
         {
             await ViewModel.LoadMoreCommand.ExecuteAsync(null);
@@ -273,6 +292,10 @@ public sealed partial class LibraryPage : Page
         if (SortComboBox.SelectedItem is ComboBoxItem item && item.Tag is string sort)
         {
             ViewModel.SelectedSort = sort;
+            // Tell PosterCards to render a sort-appropriate meta line (e.g.
+            // IMDb rating when sorting by rating_imdb). Must be set BEFORE
+            // ApplyFilter triggers the reload so new cards pick it up.
+            Controls.PosterCard.CurrentSortKey = sort;
             await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
             await FillViewportAsync();
             SaveViewState(_currentTab); // B42
@@ -350,14 +373,88 @@ public sealed partial class LibraryPage : Page
         _yearDebounceTimer.Start();
     }
 
-    private async void ContentScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    /// <summary>
+    /// GridView's container-prep callback. Fires as containers are realized.
+    /// When the item being prepared is within a window of the end, trigger
+    /// LoadMore. This replaces the old ScrollViewer.ViewChanged trigger and
+    /// is the GridView-idiomatic way to do infinite scroll.
+    /// </summary>
+    private async void PosterGrid_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
-        var offset = ContentScrollViewer.VerticalOffset;
-        var scrollable = ContentScrollViewer.ScrollableHeight;
+        if (!ViewModel.HasMore || ViewModel.IsLoading) return;
 
-        if (scrollable > 0 && offset >= scrollable - 1000 && ViewModel.HasMore && !ViewModel.IsLoading)
+        // Trigger a new page when the GridView is realizing an item near the
+        // tail of the current collection.
+        const int PrefetchDistance = 20;
+        if (args.ItemIndex >= ViewModel.Items.Count - PrefetchDistance)
         {
             await ViewModel.LoadMoreCommand.ExecuteAsync(null);
+        }
+
+        // Scroll-to-top button shows after ~4 rows have been realized past
+        // the start. Cheap proxy for "user has scrolled far enough to need
+        // a quick back-to-top". Real scroll offset would require walking the
+        // GridView's internal ScrollViewer, not worth the complexity.
+        if (args.ItemIndex > 40 && ScrollToTopButton.Visibility != Visibility.Visible)
+        {
+            ScrollToTopButton.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void ScrollToTop_Click(object sender, RoutedEventArgs e)
+    {
+        // GridView has its own internal ScrollViewer. ScrollIntoView(first
+        // item) is the cleanest way to jump to the top without FindDescendant
+        // gymnastics.
+        if (ViewModel.Items.Count > 0)
+        {
+            PosterGrid.ScrollIntoView(ViewModel.Items[0]);
+        }
+        ScrollToTopButton.Visibility = Visibility.Collapsed;
+    }
+
+    // ===== Overlay Header (webui: LibraryHeader with glass-on-scroll) =====
+
+    private void UpdateHeaderOverlayMode(bool overlay)
+    {
+        _overlayMode = overlay;
+
+        if (overlay)
+        {
+            // Transparent background — header floats over hero
+            HeaderGrid.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+
+            // Attach scroll listener for glass transition
+            if (!_scrollListenerAttached)
+            {
+                _scrollListenerAttached = true;
+                RecommendedPanel.ViewChanged += RecommendedPanel_ViewChanged;
+            }
+        }
+        else
+        {
+            // Solid background — normal header
+            HeaderGrid.Background = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AppBackgroundBrush"];
+        }
+    }
+
+    private void RecommendedPanel_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (!_overlayMode) return;
+
+        const double GLASS_THRESHOLD = 160;
+        bool pastThreshold = RecommendedPanel.VerticalOffset > GLASS_THRESHOLD;
+
+        if (pastThreshold)
+        {
+            // Glass mode: semi-transparent background
+            HeaderGrid.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                Windows.UI.Color.FromArgb(0xDD, 0x10, 0x17, 0x22)); // AppBackgroundColor at ~87% opacity
+        }
+        else
+        {
+            // Transparent mode: floating over hero
+            HeaderGrid.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
         }
     }
 
@@ -373,6 +470,13 @@ public sealed partial class LibraryPage : Page
 
         if (tag == "Collections" && !_collectionsLoaded)
             await LoadCollectionsAsync();
+
+        // When the user switches TO the Library tab, top up loads so the
+        // viewport is full. Required because the initial LoadCommand fires
+        // while LibraryContentArea is still collapsed (default tab is
+        // "Recommended"), so FillViewportAsync bails on its visibility check.
+        if (tag == "Library")
+            await FillViewportAsync();
     }
 
     private async Task LoadRecommendationsAsync()
@@ -380,7 +484,7 @@ public sealed partial class LibraryPage : Page
         _recommendedLoaded = true;
         RecommendedLoading.IsActive = true;
         RecommendedLoading.Visibility = Visibility.Visible;
-        RecommendedError.Visibility = Visibility.Collapsed;
+        RecommendedErrorPanel.Visibility = Visibility.Collapsed;
         RecommendedHeroCarousel.Visibility = Visibility.Collapsed;
 
         // Clear any previous section rows (keep loading ring, error text, hero carousel)
@@ -402,7 +506,7 @@ public sealed partial class LibraryPage : Page
             if (response.Sections.Count == 0)
             {
                 RecommendedError.Text = "No recommendations available yet.";
-                RecommendedError.Visibility = Visibility.Visible;
+                RecommendedErrorPanel.Visibility = Visibility.Visible;
                 return;
             }
 
@@ -429,7 +533,10 @@ public sealed partial class LibraryPage : Page
 
             foreach (var section in rowSections)
             {
-                RecommendedSectionsPanel.Children.Add(new SectionRow { Section = section });
+                var row = new SectionRow { Section = section };
+                // Per-section retry — refetches just this section's items.
+                row.OnRefresh = async (sec) => await RefreshSectionAsync(row, sec);
+                RecommendedSectionsPanel.Children.Add(row);
             }
         }
         catch (Exception ex)
@@ -437,7 +544,35 @@ public sealed partial class LibraryPage : Page
             RecommendedLoading.IsActive = false;
             RecommendedLoading.Visibility = Visibility.Collapsed;
             RecommendedError.Text = $"Failed to load recommendations: {ex.Message}";
-            RecommendedError.Visibility = Visibility.Visible;
+            RecommendedErrorPanel.Visibility = Visibility.Visible;
+        }
+    }
+
+    private async void RecommendedRetry_Click(object sender, RoutedEventArgs e)
+    {
+        _recommendedLoaded = false;
+        await LoadRecommendationsAsync();
+    }
+
+    private async Task RefreshSectionAsync(SectionRow row, HomeSectionWithItems section)
+    {
+        try
+        {
+            var catalogApi = App.Services.GetRequiredService<CatalogApi>();
+            var libraryId = ViewModel.Library?.Id ?? 0;
+            var response = await catalogApi.GetLibrarySectionItemsAsync(libraryId, section.Id);
+
+            // Re-bind by rebuilding the section instance (SectionRow is
+            // data-driven via the Section DP).
+            var refreshed = response.Sections?.FirstOrDefault();
+            if (refreshed != null)
+            {
+                row.Section = refreshed;
+            }
+        }
+        catch
+        {
+            // Non-fatal — the row keeps its previous items on failure.
         }
     }
 

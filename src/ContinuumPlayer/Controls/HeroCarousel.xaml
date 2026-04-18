@@ -81,11 +81,20 @@
                  built-in shadow). Offset 1px down/right, pure black, 60%
                  opacity — enough to keep the title readable over bright
                  backdrops without looking like a drop shadow. -->
+            <!-- Eyebrow: "FEATURED — No. 01" -->
+            <TextBlock
+                x:Name="HeroEyebrow"
+                FontSize="11"
+                FontWeight="SemiBold"
+                CharacterSpacing="200"
+                Foreground="{StaticResource TertiaryTextBrush}"
+                Margin="0,0,0,4" />
+
             <Grid>
                 <TextBlock
                     x:Name="HeroTitleShadow"
                     Style="{StaticResource DisplayTextStyle}"
-                    FontSize="36"
+                    FontSize="48"
                     TextWrapping="Wrap"
                     MaxLines="2"
                     Foreground="#99000000"
@@ -94,7 +103,7 @@
                 <TextBlock
                     x:Name="HeroTitle"
                     Style="{StaticResource DisplayTextStyle}"
-                    FontSize="36"
+                    FontSize="48"
                     TextWrapping="Wrap"
                     MaxLines="2" />
             </Grid>
@@ -110,12 +119,24 @@
                 TextTrimming="CharacterEllipsis" />
 
             <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,8,0,0">
-                <!-- Single CTA matching WebUI HeroBanner: "Open details" with play icon -->
+                <!-- Primary CTA: Play (pill-primary) -->
                 <Button x:Name="PlayButton" Style="{StaticResource AccentButtonStyle}" Padding="20,10"
+                        CornerRadius="20"
                         Click="PlayButton_Click">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE768;" FontSize="16" FontFamily="{ThemeResource SymbolThemeFontFamily}" />
-                        <TextBlock Text="Open details" VerticalAlignment="Center" />
+                        <TextBlock Text="Play" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <!-- Secondary CTA: More Info (pill-glass) -->
+                <Button x:Name="MoreInfoButton" Padding="20,10"
+                        CornerRadius="20"
+                        Background="#44FFFFFF" BorderThickness="1"
+                        BorderBrush="#33FFFFFF"
+                        Click="PlayButton_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE946;" FontSize="14" Foreground="White" />
+                        <TextBlock Text="More Info" Foreground="White" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
             </StackPanel>
@@ -136,9 +157,41 @@
             <FontIcon Glyph="&#xE76C;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
         </Button>
 
-        <!-- Dots -->
+        <!-- Slide counter + progress rail (bottom-right, replaces dots) -->
+        <StackPanel
+            x:Name="SlideControlsPanel"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Bottom"
+            Margin="0,0,24,20"
+            Spacing="8">
+            <!-- Slide counter: "01 / 04" monospace -->
+            <TextBlock
+                x:Name="SlideCounterText"
+                FontSize="11"
+                FontWeight="Medium"
+                FontFamily="Consolas"
+                CharacterSpacing="120"
+                Foreground="#AAFFFFFF"
+                HorizontalAlignment="Right" />
+            <!-- Progress rail: animated fill bar (8s duration) -->
+            <Border
+                Width="100"
+                Height="3"
+                CornerRadius="2"
+                Background="#33FFFFFF">
+                <Border
+                    x:Name="ProgressRailFill"
+                    HorizontalAlignment="Left"
+                    Width="0"
+                    Height="3"
+                    CornerRadius="2"
+                    Background="{StaticResource AccentBrush}" />
+            </Border>
+        </StackPanel>
+
+        <!-- Dots (hidden, kept for backward compat) -->
         <StackPanel x:Name="DotsPanel" Orientation="Horizontal"
             HorizontalAlignment="Center" VerticalAlignment="Bottom"
-            Margin="0,0,0,12" Spacing="8" />
+            Margin="0,0,0,12" Spacing="8" Visibility="Collapsed" />
     </Grid>
 </UserControl>

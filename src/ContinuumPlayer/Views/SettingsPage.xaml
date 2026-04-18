@@ -57,20 +57,29 @@
     </Page.Resources>
 
     <ScrollViewer IsScrollInertiaEnabled="True">
-        <StackPanel MaxWidth="768" Margin="48,24,48,48">
+        <StackPanel MaxWidth="1200" Margin="48,24,48,48">
 
-            <!-- ===== Header ===== -->
-            <TextBlock
-                Text="Settings"
-                FontSize="32"
-                FontWeight="SemiBold"
-                Foreground="{StaticResource PrimaryTextBrush}" />
-            <TextBlock
-                Text="Manage your playback preferences, libraries, and display options."
-                FontSize="14"
-                Foreground="{StaticResource SecondaryTextBrush}"
-                Margin="0,12,0,0"
-                TextWrapping="Wrap" />
+            <!-- ===== Header (with back button matching webui SettingsLayout) ===== -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Settings" FontSize="32" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Manage your playback preferences, libraries, and display options."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+                <Button Grid.Column="1" Style="{StaticResource OutlineButtonStyle}"
+                        VerticalAlignment="Top" Padding="12,8" CornerRadius="12"
+                        Click="SettingsBackButton_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE76B;" FontSize="14" />
+                        <TextBlock Text="Back" FontSize="13" />
+                    </StackPanel>
+                </Button>
+            </Grid>
 
             <!-- ===== Status / Error ===== -->
             <StackPanel Margin="0,8,0,0">
@@ -92,81 +101,136 @@
                     FontSize="13" />
             </StackPanel>
 
-            <!-- ===== Tab Bar ===== -->
-            <Border
-                Background="{StaticResource SurfaceBrush}"
-                CornerRadius="22"
-                Padding="4"
-                Margin="0,24,0,0">
-                <ScrollViewer
-                    HorizontalScrollBarVisibility="Auto"
-                    VerticalScrollBarVisibility="Disabled"
-                    HorizontalScrollMode="Enabled">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <Button x:Name="AppearanceTab" Click="Tab_Click" Tag="Appearance"
-                                Style="{StaticResource ActiveTabStyle}">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE790;" FontSize="16" />
-                                <TextBlock Text="Appearance" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="PlaybackTab" Click="Tab_Click" Tag="Playback"
-                                Style="{StaticResource InactiveTabStyle}">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE768;" FontSize="16" />
-                                <TextBlock Text="Playback" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="LibrariesTab" Click="Tab_Click" Tag="Libraries"
-                                Style="{StaticResource InactiveTabStyle}">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE8F1;" FontSize="16" />
-                                <TextBlock Text="Libraries" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="SubtitlesTab" Click="Tab_Click" Tag="Subtitles"
-                                Style="{StaticResource InactiveTabStyle}">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xED1E;" FontSize="16" />
-                                <TextBlock Text="Subtitles" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="HomeScreenTab" Click="Tab_Click" Tag="HomeScreen"
-                                Style="{StaticResource InactiveTabStyle}">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xECA5;" FontSize="16" />
-                                <TextBlock Text="Home Screen" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="ImportTab" Click="Tab_Click" Tag="Import"
-                                Style="{StaticResource InactiveTabStyle}">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE8B5;" FontSize="16" />
-                                <TextBlock Text="Import" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="PluginsTab" Click="Tab_Click" Tag="Plugins"
-                                Style="{StaticResource InactiveTabStyle}">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xEA86;" FontSize="16" />
-                                <TextBlock Text="Plugins" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="SessionsTab" Click="Tab_Click" Tag="Sessions"
-                                Style="{StaticResource InactiveTabStyle}">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE8EA;" FontSize="16" />
-                                <TextBlock Text="Sessions" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
+            <!-- ===== Settings Navigation: Two-column layout (sidebar + content) ===== -->
+            <!-- Webui: SettingsLayout.tsx — grouped sidebar (220px) on desktop -->
+            <Grid Margin="0,24,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="220" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Left sidebar navigation (grouped) -->
+                <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="0,0,12,0">
+                    <StackPanel Spacing="20">
+                        <!-- Playback group -->
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="PLAYBACK" FontSize="10" FontWeight="SemiBold"
+                                       CharacterSpacing="180" Foreground="{StaticResource TertiaryTextBrush}"
+                                       Margin="12,0,0,6" />
+                            <Button x:Name="PlaybackTab" Click="Tab_Click" Tag="Playback"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE768;" FontSize="16" />
+                                    <TextBlock Text="Playback" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="SubtitlesTab" Click="Tab_Click" Tag="Subtitles"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xED1E;" FontSize="16" />
+                                    <TextBlock Text="Subtitles" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                        <!-- Appearance group -->
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="APPEARANCE" FontSize="10" FontWeight="SemiBold"
+                                       CharacterSpacing="180" Foreground="{StaticResource TertiaryTextBrush}"
+                                       Margin="12,0,0,6" />
+                            <Button x:Name="AppearanceTab" Click="Tab_Click" Tag="Appearance"
+                                    Style="{StaticResource ActiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE790;" FontSize="16" />
+                                    <TextBlock Text="Appearance" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="ThemeEditorTab" Click="Tab_Click" Tag="ThemeEditor"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE771;" FontSize="16" />
+                                    <TextBlock Text="Theme Editor" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="AccessibilityTab" Click="Tab_Click" Tag="Accessibility"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE7F3;" FontSize="16" />
+                                    <TextBlock Text="Accessibility" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="HomeScreenTab" Click="Tab_Click" Tag="HomeScreen"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xECA5;" FontSize="16" />
+                                    <TextBlock Text="Home Screen" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                        <!-- Library & Data group -->
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="LIBRARY &amp; DATA" FontSize="10" FontWeight="SemiBold"
+                                       CharacterSpacing="180" Foreground="{StaticResource TertiaryTextBrush}"
+                                       Margin="12,0,0,6" />
+                            <Button x:Name="LibrariesTab" Click="Tab_Click" Tag="Libraries"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE8F1;" FontSize="16" />
+                                    <TextBlock Text="Libraries" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="ImportTab" Click="Tab_Click" Tag="Import"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE8B5;" FontSize="16" />
+                                    <TextBlock Text="Import" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="WebhookSyncTab" Click="Tab_Click" Tag="WebhookSync"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE968;" FontSize="16" />
+                                    <TextBlock Text="Webhook Sync" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                        <!-- Account group -->
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="ACCOUNT" FontSize="10" FontWeight="SemiBold"
+                                       CharacterSpacing="180" Foreground="{StaticResource TertiaryTextBrush}"
+                                       Margin="12,0,0,6" />
+                            <Button x:Name="ProfilesTab" Click="Tab_Click" Tag="Profiles"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE77B;" FontSize="16" />
+                                    <TextBlock Text="Profiles" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="PluginsTab" Click="Tab_Click" Tag="Plugins"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xEA86;" FontSize="16" />
+                                    <TextBlock Text="Plugins" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="SessionsTab" Click="Tab_Click" Tag="Sessions"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE8EA;" FontSize="16" />
+                                    <TextBlock Text="Sessions" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
-            </Border>
+
+                <!-- Right column: all content panels stack here; only the
+                     active one is Visible (Tab_Click toggles visibility). -->
+                <StackPanel Grid.Column="1" Padding="24,0,0,0">
 
             <!-- ===================================================================== -->
             <!-- ===== Appearance Panel ===== -->
             <!-- ===================================================================== -->
-            <StackPanel x:Name="AppearancePanel" Spacing="24" Margin="0,32,0,0">
+            <StackPanel x:Name="AppearancePanel" Spacing="24" Margin="0,0,0,0">
 
                 <TextBlock Text="Appearance" FontSize="24" FontWeight="SemiBold"
                            Foreground="{StaticResource PrimaryTextBrush}" />
@@ -1194,6 +1258,193 @@
             <!-- ===================================================================== -->
             <!-- ===== Sessions Panel ===== -->
             <!-- ===================================================================== -->
+            <!-- ===== Webhook Sync Panel ===== -->
+            <StackPanel x:Name="WebhookSyncPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Webhook Sync" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Connect Plex, Emby, or Jellyfin servers to sync watch state in real-time via webhooks."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+
+                <!-- Connections list -->
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
+                    <StackPanel Spacing="12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Connections" FontSize="16" FontWeight="Medium"
+                                       Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
+                            <Button x:Name="AddConnectionBtn" Grid.Column="1"
+                                    Style="{StaticResource AccentButtonStyle}" FontSize="13"
+                                    Click="AddConnectionBtn_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE710;" FontSize="12" />
+                                    <TextBlock Text="Add Connection" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                        <StackPanel x:Name="WebhookConnectionsPanel" Spacing="8" />
+                        <TextBlock x:Name="NoConnectionsText"
+                                   Text="No webhook connections configured. Add a connection to start syncing watch state."
+                                   FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                                   HorizontalAlignment="Center" Padding="0,16"
+                                   Visibility="Collapsed" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Webhook URL info -->
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="12" Padding="16">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Webhook URL" FontSize="13" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Configure your media server to send webhooks to your Continuum server's webhook endpoint. The URL is available in Admin Settings."
+                                   FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- ===== Theme Editor Panel ===== -->
+            <StackPanel x:Name="ThemeEditorPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Theme Editor" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Customize colors, fonts, and styles. Changes are layered on top of your active theme."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+
+                <!-- Custom CSS -->
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Custom CSS" FontSize="14" FontWeight="Medium"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Add custom CSS that layers on top of your active theme. Use CSS variables to override individual tokens."
+                                   FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
+                        <TextBox x:Name="CustomCssBox"
+                                 PlaceholderText=":root { --primary: #ff6b6b; }"
+                                 AcceptsReturn="True" TextWrapping="Wrap"
+                                 MinHeight="120" MaxHeight="300"
+                                 FontFamily="Consolas" FontSize="12"
+                                 Style="{StaticResource DarkTextBoxStyle}" />
+                        <TextBlock Text="CSS changes require a server-side theme configuration. This editor saves your overrides locally."
+                                   FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Preview -->
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Preview" FontSize="14" FontWeight="Medium"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                CornerRadius="12" Padding="20">
+                            <StackPanel Spacing="12">
+                                <TextBlock Text="Movie Night" FontSize="24" FontWeight="Bold"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="A preview of how text, colors, and surfaces look with your current theme."
+                                           FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="Primary" Style="{StaticResource AccentButtonStyle}" Padding="16,8" CornerRadius="20" />
+                                    <Button Content="Secondary" Style="{StaticResource OutlineButtonStyle}" Padding="16,8" CornerRadius="20" />
+                                </StackPanel>
+                                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="12">
+                                    <TextBlock Text="Surface panel with muted text"
+                                               FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                                </Border>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- ===== Profiles Panel ===== -->
+            <StackPanel x:Name="ProfilesPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Profiles" FontSize="24" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Manage user profiles: names, PINs, and access rules."
+                                   FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                    <Button x:Name="AddProfileButton" Grid.Column="1"
+                            Style="{StaticResource AccentButtonStyle}"
+                            VerticalAlignment="Top"
+                            Click="AddProfileButton_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE710;" FontSize="13" />
+                            <TextBlock Text="Add Profile" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+                <StackPanel x:Name="ProfileCardsPanel" Spacing="8" />
+                <TextBlock x:Name="NoProfilesText" Text="No profiles found."
+                           FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                           HorizontalAlignment="Center" Visibility="Collapsed" />
+            </StackPanel>
+
+            <!-- ===== Accessibility Panel ===== -->
+            <StackPanel x:Name="AccessibilityPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Accessibility" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Increase text size, strengthen type weight, and raise contrast for clearer reading."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+
+                <!-- Text Size -->
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Text Size" FontSize="14" FontWeight="Medium"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <StackPanel x:Name="TextSizeButtons" Orientation="Horizontal" Spacing="8" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Text Weight -->
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Text Weight" FontSize="14" FontWeight="Medium"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <StackPanel x:Name="TextWeightButtons" Orientation="Horizontal" Spacing="8" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Contrast -->
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Contrast" FontSize="14" FontWeight="Medium"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <StackPanel x:Name="ContrastButtons" Orientation="Horizontal" Spacing="8" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Preview -->
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Preview" FontSize="14" FontWeight="Medium"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                CornerRadius="8" Padding="16">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="The quick brown fox jumps over the lazy dog"
+                                           FontSize="18" FontWeight="SemiBold"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="This sample paragraph reflects your current text size, weight, and contrast preferences. Adjustments take effect across the entire interface."
+                                           FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                <TextBlock Text="Secondary text · Metadata · Captions"
+                                           FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
             <StackPanel x:Name="SessionsPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
 
                 <StackPanel Spacing="12">
@@ -1213,6 +1464,11 @@
                 <!-- Session cards container (built in code-behind) -->
                 <StackPanel x:Name="SessionCardsContainer" Spacing="12" />
             </StackPanel>
+
+                </StackPanel>
+                <!-- /Grid.Column="1" content column -->
+            </Grid>
+            <!-- /two-column sidebar + content grid -->
 
         </StackPanel>
     </ScrollViewer>

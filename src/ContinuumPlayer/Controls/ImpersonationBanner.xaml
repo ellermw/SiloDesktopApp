@@ -7,50 +7,130 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <!-- WebUI uses bg-muted/40 neutral tone with foreground/muted-foreground text.
-         Maps to our SurfaceBrush @ ~60% + border, matching a muted informational bar
-         instead of the old alarming gold/yellow warning look. -->
+    <!-- Warm-gold override strip on a glass-dark surface (webui parity, commit
+         73a8fea). An admin-impersonating-user indicator unmistakable without
+         being alarming. Pulsing dot / "VIEWING AS" microlabel / avatar chip /
+         username / "authorized by {admin}" / End session button. -->
     <Border
-        Background="{StaticResource SurfaceBrush}"
-        BorderBrush="{StaticResource BorderBrush}"
+        Padding="20,10"
         BorderThickness="0,0,0,1"
-        Padding="16,10"
         HorizontalAlignment="Stretch">
-        <Grid>
+        <Border.Background>
+            <!-- Glass-dark base with warm-gold left wash. Approximates the web's
+                 `color-mix(background 94%, transparent)` + warm-gold overlay. -->
+            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                <GradientStop Color="#1AE8B86E" Offset="0.0" />
+                <GradientStop Color="#00E8B86E" Offset="0.38" />
+                <GradientStop Color="#00E8B86E" Offset="1.0" />
+            </LinearGradientBrush>
+        </Border.Background>
+        <Border.BorderBrush>
+            <SolidColorBrush Color="#54E8B86E" />
+        </Border.BorderBrush>
+
+        <Grid ColumnSpacing="16">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
+                <!-- dot + label -->
+                <ColumnDefinition Width="Auto" />
+                <!-- chip + username -->
+                <ColumnDefinition Width="*" />
+                <!-- authorized by -->
+                <ColumnDefinition Width="Auto" />
+                <!-- end button -->
             </Grid.ColumnDefinitions>
 
-            <!-- Info icon + text (neutral, not a warning) -->
-            <StackPanel
-                Grid.Column="0"
-                Orientation="Horizontal"
-                Spacing="10"
-                VerticalAlignment="Center">
-                <FontIcon
-                    Glyph="&#xE946;"
-                    FontSize="14"
-                    Foreground="{StaticResource SecondaryTextBrush}" />
+            <!-- Pulsing dot + "VIEWING AS" microlabel -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10"
+                        VerticalAlignment="Center">
+                <Grid Width="10" Height="10" VerticalAlignment="Center">
+                    <!-- Static gold dot. Pulse animation is a polish follow-up. -->
+                    <Ellipse Width="8" Height="8" Fill="#E8B86E"
+                             HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Grid>
                 <TextBlock
-                    x:Name="ImpersonatingText"
-                    Text="Impersonating user"
-                    FontSize="13"
-                    FontWeight="Medium"
-                    Foreground="{StaticResource PrimaryTextBrush}"
+                    Text="VIEWING AS"
+                    FontSize="10"
+                    FontWeight="SemiBold"
+                    CharacterSpacing="220"
+                    Foreground="#E8B86E"
                     VerticalAlignment="Center" />
             </StackPanel>
 
-            <!-- End impersonation button -->
+            <!-- Avatar chip + username -->
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10"
+                        VerticalAlignment="Center">
+                <Border
+                    Width="26" Height="26"
+                    CornerRadius="6"
+                    Background="#1FE8B86E"
+                    BorderBrush="#52E8B86E"
+                    BorderThickness="1">
+                    <TextBlock
+                        x:Name="InitialText"
+                        Text="?"
+                        FontSize="11"
+                        FontWeight="Bold"
+                        Foreground="#E8B86E"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center" />
+                </Border>
+                <TextBlock
+                    x:Name="ImpersonatingText"
+                    Text="User"
+                    FontSize="14"
+                    FontWeight="SemiBold"
+                    Foreground="{StaticResource PrimaryTextBrush}"
+                    VerticalAlignment="Center"
+                    TextTrimming="CharacterEllipsis"
+                    MaxWidth="320" />
+            </StackPanel>
+
+            <!-- "· authorized by {admin}" -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6"
+                        VerticalAlignment="Center" Margin="0,0,0,0">
+                <TextBlock Text="·" FontSize="13"
+                           Foreground="{StaticResource TertiaryTextBrush}"
+                           VerticalAlignment="Center" />
+                <TextBlock
+                    Text="authorized by"
+                    FontSize="12"
+                    Foreground="{StaticResource SecondaryTextBrush}"
+                    VerticalAlignment="Center" />
+                <TextBlock
+                    x:Name="ImpersonatorText"
+                    FontSize="12"
+                    FontWeight="Medium"
+                    Foreground="{StaticResource PrimaryTextBrush}"
+                    VerticalAlignment="Center"
+                    TextTrimming="CharacterEllipsis"
+                    MaxWidth="240" />
+            </StackPanel>
+
+            <!-- End session button with X icon -->
             <Button
-                Grid.Column="1"
+                Grid.Column="3"
                 x:Name="EndImpersonationButton"
-                Content="End Impersonation"
-                Style="{StaticResource GhostButtonStyle}"
-                Padding="12,6"
-                FontSize="12"
-                FontWeight="Medium"
-                Click="EndImpersonation_Click" />
+                Background="#14FFFFFF"
+                BorderBrush="#2EFFFFFF"
+                BorderThickness="1"
+                CornerRadius="6"
+                Padding="10,5"
+                Click="EndImpersonation_Click">
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <FontIcon
+                        Glyph="&#xE711;"
+                        FontSize="11"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        VerticalAlignment="Center" />
+                    <TextBlock
+                        Text="End session"
+                        FontSize="12"
+                        FontWeight="SemiBold"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
         </Grid>
     </Border>
 </UserControl>

@@ -249,13 +249,27 @@
                         </ItemsRepeater.ItemTemplate>
                     </ItemsRepeater>
 
-                    <!-- Loading -->
-                    <ProgressRing
-                        IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-                        Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                        HorizontalAlignment="Center"
-                        Margin="0,24,0,24"
-                        Width="32" Height="32" />
+                    <!-- Skeleton while search results load (inline rows) -->
+                    <StackPanel
+                        Spacing="16"
+                        Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <controls:SkeletonPoster />
+                            <controls:SkeletonPoster />
+                            <controls:SkeletonPoster />
+                            <controls:SkeletonPoster />
+                            <controls:SkeletonPoster />
+                            <controls:SkeletonPoster />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <controls:SkeletonPoster />
+                            <controls:SkeletonPoster />
+                            <controls:SkeletonPoster />
+                            <controls:SkeletonPoster />
+                            <controls:SkeletonPoster />
+                            <controls:SkeletonPoster />
+                        </StackPanel>
+                    </StackPanel>
 
                     <!-- Error -->
                     <TextBlock

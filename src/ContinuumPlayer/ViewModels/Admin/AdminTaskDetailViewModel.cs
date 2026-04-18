@@ -18,6 +18,7 @@ public partial class AdminTaskDetailViewModel : ObservableObject
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private TaskInfo? _taskDetail;
+    [ObservableProperty] private MetadataRefreshMetrics? _metrics;
 
     public ObservableCollection<ExecutionResult> History { get; } = [];
 
@@ -41,6 +42,17 @@ public partial class AdminTaskDetailViewModel : ObservableObject
 
             History.Clear();
             foreach (var h in historyTask.Result) History.Add(h);
+
+            // Load metrics for refresh_metadata task
+            if (taskKey == "refresh_metadata")
+            {
+                try { Metrics = await _adminApi.GetTaskMetricsAsync(taskKey); }
+                catch { Metrics = null; }
+            }
+            else
+            {
+                Metrics = null;
+            }
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsLoading = false; }

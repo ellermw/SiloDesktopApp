@@ -18,12 +18,12 @@
         <Grid>
             <FontIcon
                 x:Name="ActivityIcon"
-                Glyph="&#xE9F5;"
+                Glyph="&#xE95E;"
                 FontSize="18"
                 Foreground="{StaticResource SecondaryTextBrush}" />
             <Border
                 x:Name="CountBadge"
-                Background="#EF4444"
+                Background="{StaticResource AccentBrush}"
                 CornerRadius="9"
                 Height="16"
                 MinWidth="16"
@@ -41,6 +41,17 @@
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center" />
             </Border>
+            <!-- Small amber dot when WS is disconnected but activity is present.
+                 Mirrors upstream ServerActivity.tsx line 100. -->
+            <Ellipse
+                x:Name="DisconnectedDot"
+                Width="8"
+                Height="8"
+                Fill="#F59E0B"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Margin="0,0,-2,-2"
+                Visibility="Collapsed" />
         </Grid>
         <Button.Flyout>
             <Flyout x:Name="ActivityFlyout" Placement="BottomEdgeAlignedRight">

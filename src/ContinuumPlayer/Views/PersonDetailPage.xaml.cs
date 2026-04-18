@@ -24,6 +24,37 @@ public sealed partial class PersonDetailPage : Page
         {
             DispatcherQueue.TryEnqueue(UpdateFilmographyState);
         };
+
+        // Incremental filmography pagination — trigger LoadMore when the user
+        // scrolls within 600px of the bottom. Matches webui IntersectionObserver
+        // pattern, adapted for WinUI's ScrollViewer.
+        ContentScroll.ViewChanged += ContentScroll_ViewChanged;
+
+        // Sync the "Loading more…" indicator to IsLoadingMoreFilmography.
+        ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(PersonDetailViewModel.IsLoadingMoreFilmography))
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    FilmographyLoadingMore.Visibility = ViewModel.IsLoadingMoreFilmography
+                        ? Visibility.Visible : Visibility.Collapsed;
+                });
+            }
+        };
+    }
+
+    private void ContentScroll_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (e.IsIntermediate) return;
+        if (!ViewModel.FilmographyHasMore || ViewModel.IsLoadingMoreFilmography) return;
+
+        var distanceFromBottom =
+            ContentScroll.ExtentHeight - (ContentScroll.VerticalOffset + ContentScroll.ViewportHeight);
+        if (distanceFromBottom < 600)
+        {
+            _ = ViewModel.LoadMoreFilmographyCommand.ExecuteAsync(null);
+        }
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -94,6 +125,9 @@ public sealed partial class PersonDetailPage : Page
         }
         ToolTipService.SetToolTip(RefreshButton, ViewModel.IsAdmin ? "Refresh now" : "Refresh metadata");
 
+        // Edit metadata button (admin only)
+        EditMetadataButton.Visibility = ViewModel.IsAdmin ? Visibility.Visible : Visibility.Collapsed;
+
         // Load photo
         if (!string.IsNullOrEmpty(person.PhotoUrl))
         {
@@ -148,6 +182,65 @@ public sealed partial class PersonDetailPage : Page
         RefreshRing.IsActive = false;
         RefreshRing.Visibility = Visibility.Collapsed;
         RefreshButton.IsEnabled = true;
+    }
+
+    private async void EditMetadataButton_Click(object sender, RoutedEventArgs e)
+    {
+        var person = ViewModel.Person;
+        if (person == null) return;
+
+        var nameBox = new TextBox { Text = person.Name ?? "", PlaceholderText = "Name", CornerRadius = new CornerRadius(6), FontSize = 13 };
+        var bioBox = new TextBox { Text = person.Bio ?? "", PlaceholderText = "Biography", AcceptsReturn = true, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, MinHeight = 100, MaxHeight = 200, CornerRadius = new CornerRadius(6), FontSize = 13 };
+        var birthDateBox = new TextBox { Text = person.BirthDate ?? "", PlaceholderText = "YYYY-MM-DD", CornerRadius = new CornerRadius(6), FontSize = 13 };
+        var deathDateBox = new TextBox { Text = person.DeathDate ?? "", PlaceholderText = "YYYY-MM-DD (leave blank if alive)", CornerRadius = new CornerRadius(6), FontSize = 13 };
+        var birthplaceBox = new TextBox { Text = person.Birthplace ?? "", PlaceholderText = "Birthplace", CornerRadius = new CornerRadius(6), FontSize = 13 };
+
+        var form = new StackPanel { Width = 480, Spacing = 14 };
+        void AddField(string label, FrameworkElement control)
+        {
+            var group = new StackPanel { Spacing = 6 };
+            group.Children.Add(new TextBlock { Text = label, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            group.Children.Add(control);
+            form.Children.Add(group);
+        }
+        AddField("Name", nameBox);
+        AddField("Biography", bioBox);
+        AddField("Birth Date", birthDateBox);
+        AddField("Death Date", deathDateBox);
+        AddField("Birthplace", birthplaceBox);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Edit Person Metadata",
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot,
+            Content = new ScrollViewer { Content = form, MaxHeight = 500 },
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            try
+            {
+                var adminApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AdminApi>();
+                await adminApi.UpdateItemMetadataAsync(person.Id, new Dictionary<string, object?>
+                {
+                    ["name"] = nameBox.Text.Trim(),
+                    ["bio"] = string.IsNullOrWhiteSpace(bioBox.Text) ? null : bioBox.Text.Trim(),
+                    ["birth_date"] = string.IsNullOrWhiteSpace(birthDateBox.Text) ? null : birthDateBox.Text.Trim(),
+                    ["death_date"] = string.IsNullOrWhiteSpace(deathDateBox.Text) ? null : deathDateBox.Text.Trim(),
+                    ["birthplace"] = string.IsNullOrWhiteSpace(birthplaceBox.Text) ? null : birthplaceBox.Text.Trim(),
+                });
+                // Refresh
+                await ViewModel.LoadCommand.ExecuteAsync(person.Id);
+                UpdateUI();
+            }
+            catch (Exception ex)
+            {
+                ViewModel.ErrorMessage = $"Failed to update: {ex.Message}";
+            }
+        }
     }
 
     private void ShowMoreBio_Click(object sender, RoutedEventArgs e)

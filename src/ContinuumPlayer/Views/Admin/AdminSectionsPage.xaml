@@ -27,37 +27,8 @@
     </Page.Resources>
 
     <Grid>
-        <!-- Loading indicator -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
-
-        <!-- Error state -->
-        <StackPanel
-            VerticalAlignment="Center"
-            HorizontalAlignment="Center"
-            Spacing="12"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-            <TextBlock
-                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource BodyTextStyle}"
-                HorizontalAlignment="Center"
-                TextWrapping="Wrap"
-                MaxWidth="400" />
-            <Button
-                Content="Retry"
-                Style="{StaticResource AccentButtonStyle}"
-                HorizontalAlignment="Center"
-                Command="{x:Bind ViewModel.LoadCommand}" />
-        </StackPanel>
-
         <!-- Main content -->
         <ScrollViewer
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
             <StackPanel Padding="40,28,40,40" Spacing="24">
@@ -103,25 +74,14 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- ===== Status Banner ===== -->
-                <Border
-                    x:Name="StatusBanner"
-                    Background="{StaticResource AccentBackgroundBrush}"
-                    CornerRadius="8"
-                    Padding="14,10"
-                    Visibility="Collapsed">
-                    <TextBlock
-                        x:Name="StatusBannerText"
-                        FontSize="13"
-                        Foreground="{StaticResource AccentBrush}" />
-                </Border>
+                <!-- Status banner placeholder (moved to overlay) -->
 
                 <!-- ===== Scope Picker ===== -->
                 <StackPanel Spacing="16">
                     <!-- Scope tab buttons -->
                     <Border
                         Background="{StaticResource SurfaceBrush}"
-                        CornerRadius="20"
+                        CornerRadius="12"
                         Padding="4"
                         HorizontalAlignment="Left">
                         <StackPanel Orientation="Horizontal" Spacing="2">
@@ -176,7 +136,7 @@
                 <!-- ===== Sections Table — surface-panel, no border, CornerRadius=26 ===== -->
                 <Border
                     Background="{StaticResource CardBackgroundBrush}"
-                    CornerRadius="26"
+                    CornerRadius="16"
                     BorderThickness="0"
                     Padding="0">
                     <StackPanel>
@@ -192,15 +152,43 @@
                                 <ColumnDefinition Width="80" />   <!-- Actions -->
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="" />
-                            <TextBlock Grid.Column="1" Text="TITLE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="TYPE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="ITEMS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="4" Text="FEATURED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="5" Text="ENABLED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="6" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="Title" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="2" Text="TYPE" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="3" Text="Items" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="4" Text="FEATURED" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="5" Text="ENABLED" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="6" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                         </Grid>
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
+
+                        <!-- Inline loading indicator -->
+                        <ProgressRing
+                            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                            HorizontalAlignment="Center"
+                            Margin="0,24"
+                            Width="32" Height="32" />
+
+                        <!-- Inline error state -->
+                        <StackPanel
+                            HorizontalAlignment="Center"
+                            Spacing="8"
+                            Padding="0,16"
+                            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                            <TextBlock
+                                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                                Foreground="{StaticResource ErrorBrush}"
+                                FontSize="13"
+                                HorizontalAlignment="Center"
+                                TextWrapping="Wrap"
+                                MaxWidth="400" />
+                            <Button
+                                Content="Retry"
+                                Style="{StaticResource AccentButtonStyle}"
+                                HorizontalAlignment="Center"
+                                Command="{x:Bind ViewModel.LoadCommand}" />
+                        </StackPanel>
 
                         <!-- Section rows — populated in code-behind -->
                         <StackPanel x:Name="SectionsPanel" Spacing="0" />
@@ -218,5 +206,22 @@
 
             </StackPanel>
         </ScrollViewer>
+
+        <!-- Toast overlay (sonner-style, floats above content) -->
+        <Border
+            x:Name="StatusBanner"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Top"
+            Margin="0,16,0,0"
+            Padding="16,10"
+            CornerRadius="12"
+            Background="#22C55E"
+            Visibility="Collapsed">
+            <TextBlock
+                x:Name="StatusBannerText"
+                FontSize="13"
+                FontWeight="SemiBold"
+                Foreground="White" />
+        </Border>
     </Grid>
 </Page>

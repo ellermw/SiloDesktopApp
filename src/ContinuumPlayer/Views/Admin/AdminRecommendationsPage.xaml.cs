@@ -287,9 +287,9 @@ public sealed partial class AdminRecommendationsPage : Page
         var card = new Border
         {
             Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"],
-            CornerRadius = new CornerRadius(27),
+            CornerRadius = new CornerRadius(16),
             Padding = new Thickness(20, 16, 20, 16),
-            MaxWidth = 768,
+            MaxWidth = 1080,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
 
@@ -395,8 +395,8 @@ public sealed partial class AdminRecommendationsPage : Page
         var card = new Border
         {
             Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"],
-            CornerRadius = new CornerRadius(27),
-            MaxWidth = 768,
+            CornerRadius = new CornerRadius(16),
+            MaxWidth = 1080,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
 
@@ -409,7 +409,7 @@ public sealed partial class AdminRecommendationsPage : Page
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Padding = new Thickness(20, 16, 20, 16),
-            CornerRadius = new CornerRadius(27),
+            CornerRadius = new CornerRadius(16),
         };
 
         var headerContent = new Grid();

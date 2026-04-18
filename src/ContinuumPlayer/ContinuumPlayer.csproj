@@ -26,6 +26,11 @@
         <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
+        <!-- Version -->
+        <Version>1.0.131</Version>
+        <FileVersion>1.0.131.0</FileVersion>
+        <AssemblyVersion>1.0.131.0</AssemblyVersion>
+
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>
         <UseRidGraph>true</UseRidGraph>

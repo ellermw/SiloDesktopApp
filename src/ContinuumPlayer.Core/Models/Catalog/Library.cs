@@ -19,6 +19,12 @@ public class Library
     public string? ScanWarningMessage { get; set; }
     [JsonPropertyName("scan_warning_at")]
     public string? ScanWarningAt { get; set; }
+    [JsonPropertyName("metadata_language")]
+    public string? MetadataLanguage { get; set; }
+    [JsonPropertyName("chapter_thumbnails_enabled")]
+    public bool? ChapterThumbnailsEnabled { get; set; }
+    [JsonPropertyName("chapter_thumbnails_supported")]
+    public bool? ChapterThumbnailsSupported { get; set; }
 }
 
 public class LibraryMountCheckRoot

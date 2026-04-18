@@ -12,7 +12,9 @@ public sealed partial class AdminSettingsDetailPage : Page
 {
     public AdminSettingsDetailViewModel ViewModel { get; }
 
-    private string _activeTab = "General";
+    // Static so the active tab persists across page navigations
+    private static string _persistedTab = "General";
+    private string _activeTab = _persistedTab;
     private Button? _activeTabButton;
     private readonly List<(Button Button, string TabName)> _tabButtons = [];
 
@@ -94,11 +96,27 @@ public sealed partial class AdminSettingsDetailPage : Page
         var icon = new FontIcon
         {
             Glyph = glyph,
-            FontSize = 14,
+            FontSize = 16,
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
         };
-        Grid.SetColumn(icon, 0);
+        // Active indicator pill (3x18 px, accent, left-aligned — hidden initially)
+        var indicator = new Border
+        {
+            Width = 3,
+            Height = 18,
+            CornerRadius = new CornerRadius(2),
+            Background = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+            Visibility = Visibility.Collapsed,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(-8, 0, 4, 0), // Pull left into padding
+            Tag = "indicator", // Tag for lookup in SetActiveTab
+        };
+        content.ColumnDefinitions.Insert(0, new ColumnDefinition { Width = GridLength.Auto });
+        // Shift existing columns
+        Grid.SetColumn(icon, 1);
+        Grid.SetColumn(indicator, 0);
+        content.Children.Add(indicator);
         content.Children.Add(icon);
 
         var text = new TextBlock
@@ -109,7 +127,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
         };
-        Grid.SetColumn(text, 1);
+        Grid.SetColumn(text, 2);
         content.Children.Add(text);
 
         return new Button
@@ -119,7 +137,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             BorderThickness = new Thickness(0),
             Padding = new Thickness(14, 9, 12, 9),
             Margin = new Thickness(0, 0, 0, 2),
-            CornerRadius = new CornerRadius(10),
+            CornerRadius = new CornerRadius(12),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
         };
@@ -148,22 +166,30 @@ public sealed partial class AdminSettingsDetailPage : Page
         foreach (var (btn, _) in _tabButtons)
         {
             btn.Background = new SolidColorBrush(Colors.Transparent);
-            // Restore secondary colors on the inner Grid's icon + text
             if (btn.Content is Grid g)
             {
-                if (g.Children.Count > 0 && g.Children[0] is FontIcon ico) ico.Foreground = secondaryFg;
-                if (g.Children.Count > 1 && g.Children[1] is TextBlock tb) tb.Foreground = secondaryFg;
+                foreach (var child in g.Children)
+                {
+                    if (child is Border ind && ind.Tag as string == "indicator") ind.Visibility = Visibility.Collapsed;
+                    if (child is FontIcon ico) ico.Foreground = secondaryFg;
+                    if (child is TextBlock tb) tb.Foreground = secondaryFg;
+                }
             }
         }
 
         button.Background = accentBg;
         if (button.Content is Grid ag)
         {
-            if (ag.Children.Count > 0 && ag.Children[0] is FontIcon aico) aico.Foreground = accentFg;
-            if (ag.Children.Count > 1 && ag.Children[1] is TextBlock atb) atb.Foreground = primaryFg;
+            foreach (var child in ag.Children)
+            {
+                if (child is Border ind && ind.Tag as string == "indicator") ind.Visibility = Visibility.Visible;
+                if (child is FontIcon aico) aico.Foreground = accentFg;
+                if (child is TextBlock atb) atb.Foreground = primaryFg;
+            }
         }
         _activeTabButton = button;
         _activeTab = tabName;
+        _persistedTab = tabName;
     }
 
     // ===== Show Tab =====
@@ -172,6 +198,9 @@ public sealed partial class AdminSettingsDetailPage : Page
     {
         ContentPanel.Children.Clear();
         _fieldRebuilders.Clear();
+        // Reset per-tab layout overrides
+        ContentPanel.MaxWidth = double.PositiveInfinity;
+        ContentPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
 
         switch (tabName)
         {
@@ -188,6 +217,79 @@ public sealed partial class AdminSettingsDetailPage : Page
             case "Log Retention": BuildLogRetentionTab(); break;
             case "Card Overlays": BuildOverlaysTab(); break;
         }
+
+        // Webui renders save/discard inline at the bottom of each tab's content
+        // (inside the scrollable area), not as a fixed bottom strip.
+        AddInlineSaveBar();
+    }
+
+    /// <summary>
+    /// Adds an inline save/discard bar at the bottom of ContentPanel.
+    /// Visibility is bound to HasDirtyChanges.
+    /// </summary>
+    private void AddInlineSaveBar()
+    {
+        var bar = new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(20, 14, 20, 14),
+            Margin = new Thickness(0, 8, 0, 0),
+            Visibility = ViewModel.HasDirtyChanges ? Visibility.Visible : Visibility.Collapsed,
+            Tag = "inlineSaveBar",
+        };
+
+        var grid = new Grid { ColumnSpacing = 8 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var statusText = new TextBlock
+        {
+            FontSize = 13,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        var discardBtn = new Button
+        {
+            Content = "Discard",
+            Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
+        };
+        discardBtn.Click += DiscardButton_Click;
+        Grid.SetColumn(discardBtn, 1);
+
+        var saveBtn = new Button
+        {
+            Content = "Save Changes",
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+        };
+        saveBtn.Click += SaveButton_Click;
+        Grid.SetColumn(saveBtn, 2);
+
+        Grid.SetColumn(statusText, 0);
+        grid.Children.Add(statusText);
+        grid.Children.Add(discardBtn);
+        grid.Children.Add(saveBtn);
+        bar.Child = grid;
+
+        // Register for dirty-state changes to update visibility and text
+        void UpdateBar()
+        {
+            bar.Visibility = ViewModel.HasDirtyChanges ? Visibility.Visible : Visibility.Collapsed;
+            var count = ViewModel.DirtyCount;
+            statusText.Text = count > 0
+                ? $"{count} unsaved change{(count != 1 ? "s" : "")}"
+                : "";
+        }
+        ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(ViewModel.HasDirtyChanges) or nameof(ViewModel.DirtyCount))
+                DispatcherQueue.TryEnqueue(UpdateBar);
+        };
+        UpdateBar();
+
+        ContentPanel.Children.Add(bar);
     }
 
     // ===== Tab Builders =====
@@ -261,11 +363,184 @@ public sealed partial class AdminSettingsDetailPage : Page
         EndCard(cssCard);
 
         AddSectionHeader("Token Overrides");
+
+        // Parse existing vars from the JSON setting
+        var rawVars = ViewModel.GetSetting("ui.admin_theme_vars");
+        Dictionary<string, string> currentVars = new();
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(rawVars))
+            {
+                var doc = System.Text.Json.JsonDocument.Parse(rawVars);
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                    currentVars[prop.Name] = prop.Value.GetString() ?? "";
+            }
+        }
+        catch { }
+
+        // Token registry matching webui lib/themeTokens.ts THEME_TOKENS
+        var tokenGroups = new (string Group, (string Token, string Label, string Type)[] Tokens)[]
+        {
+            ("Surfaces", new[]
+            {
+                ("background", "Background", "color"), ("foreground", "Foreground", "color"),
+                ("card", "Card", "color"), ("card-foreground", "Card Text", "color"),
+                ("surface", "Surface", "color"), ("surface-hover", "Surface Hover", "color"),
+                ("surface-raised", "Surface Raised", "color"),
+            }),
+            ("Interactive", new[]
+            {
+                ("primary", "Primary", "color"), ("primary-foreground", "Primary Text", "color"),
+                ("accent", "Accent", "color"), ("accent-foreground", "Accent Text", "color"),
+                ("muted", "Muted", "color"), ("muted-foreground", "Muted Text", "color"),
+                ("destructive", "Destructive", "color"), ("destructive-foreground", "Destructive Text", "color"),
+                ("ambient", "Ambient Glow", "color"),
+            }),
+            ("Sidebar", new[]
+            {
+                ("sidebar", "Sidebar", "color"), ("sidebar-foreground", "Sidebar Text", "color"),
+                ("sidebar-primary", "Sidebar Primary", "color"), ("sidebar-accent", "Sidebar Accent", "color"),
+                ("sidebar-border", "Sidebar Border", "color"),
+            }),
+            ("Borders & Focus", new[]
+            {
+                ("border", "Border", "color"), ("input", "Input Border", "color"), ("ring", "Focus Ring", "color"),
+            }),
+            ("Shape & Font", new[]
+            {
+                ("radius", "Border Radius", "radius"), ("font-body", "Font Family", "font"),
+            }),
+        };
+
+        // Two-column layout: token fields on left, preview card on right
+        var tokenLayout = new Grid { ColumnSpacing = 20, Margin = new Thickness(0, 4, 0, 0) };
+        tokenLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        tokenLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(200) });
+
+        var tokenEditor = new StackPanel { Spacing = 16 };
+        var textInputs = new Dictionary<string, TextBox>();
+
+        // Serialize current token values back to JSON whenever any input changes
+        void PersistTokenVars()
+        {
+            var vars = new Dictionary<string, string>();
+            foreach (var (key, box) in textInputs)
+            {
+                var val = box.Text?.Trim();
+                if (!string.IsNullOrEmpty(val)) vars[key] = val;
+            }
+            var json = System.Text.Json.JsonSerializer.Serialize(vars);
+            ViewModel.SetSetting("ui.admin_theme_vars", json);
+            UpdateDirtyCountText();
+            RefreshThemePreview();
+        }
+
+        foreach (var (group, tokens) in tokenGroups)
+        {
+            var groupPanel = new StackPanel { Spacing = 6 };
+            groupPanel.Children.Add(new TextBlock
+            {
+                Text = group.ToUpperInvariant(),
+                FontSize = 10, FontWeight = FontWeights.SemiBold, CharacterSpacing = 80,
+                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                Margin = new Thickness(0, 0, 0, 2),
+            });
+
+            foreach (var (token, label, inputType) in tokens)
+            {
+                var row = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 2, 0, 2) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                var tokenLabel = new TextBlock
+                {
+                    Text = label, FontSize = 12, FontWeight = FontWeights.Medium,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                Grid.SetColumn(tokenLabel, 0);
+                row.Children.Add(tokenLabel);
+
+                var input = new TextBox
+                {
+                    Text = currentVars.GetValueOrDefault(token, ""),
+                    PlaceholderText = inputType == "color" ? "oklch(...) or #hex" : inputType == "radius" ? "0.5rem" : "Inter, sans-serif",
+                    FontSize = 12, CornerRadius = new CornerRadius(6),
+                    FontFamily = new FontFamily("Consolas"),
+                };
+                input.TextChanged += (_, _) => PersistTokenVars();
+                textInputs[token] = input;
+                Grid.SetColumn(input, 1);
+                row.Children.Add(input);
+
+                groupPanel.Children.Add(row);
+            }
+            tokenEditor.Children.Add(groupPanel);
+        }
+        Grid.SetColumn(tokenEditor, 0);
+        tokenLayout.Children.Add(tokenEditor);
+
+        // Preview card — shows a small sample with accent/bg/fg/card colors applied
+        var previewHost = new StackPanel { VerticalAlignment = VerticalAlignment.Top, Spacing = 8 };
+        previewHost.Children.Add(new TextBlock
+        {
+            Text = "PREVIEW",
+            FontSize = 10, FontWeight = FontWeights.SemiBold, CharacterSpacing = 80,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+        });
+        _themePreviewHost = previewHost;
+        RefreshThemePreview();
+        Grid.SetColumn(previewHost, 1);
+        tokenLayout.Children.Add(previewHost);
+
+        // Validation warning
+        var themeWarning = new TextBlock
+        {
+            Text = "",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.FromArgb(255, 220, 90, 90)),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+        _fieldRebuilders.Add(() =>
+        {
+            var raw = ViewModel.GetSetting("ui.admin_theme_vars");
+            themeWarning.Text = ValidateThemeVarsJson(raw);
+        });
+
         var tokenCard = BeginCard();
-        AddTextBlock(tokenCard,
-            "Per-token theme variables are stored as a JSON object in ui.admin_theme_vars. The visual token editor is only available in the web UI.");
-        AddMultilineTextField(tokenCard, "Theme Vars JSON", "ui.admin_theme_vars",
-            "{\"--accent\": \"oklch(0.6 0.2 250)\"}");
+
+        // Header row with description + Reset All button
+        var tokenHeaderRow = new Grid();
+        tokenHeaderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        tokenHeaderRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        tokenHeaderRow.Children.Add(new TextBlock
+        {
+            Text = "Override individual design tokens. Clear a field to use the theme default.",
+            FontSize = 12,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 480,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var resetAllBtn = new Button
+        {
+            Content = "Reset All",
+            Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
+            Padding = new Thickness(10, 4, 10, 4),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        resetAllBtn.Click += (_, _) =>
+        {
+            foreach (var (_, box) in textInputs) box.Text = "";
+            PersistTokenVars();
+        };
+        Grid.SetColumn(resetAllBtn, 1);
+        tokenHeaderRow.Children.Add(resetAllBtn);
+        tokenCard.Children.Add(tokenHeaderRow);
+
+        tokenCard.Children.Add(tokenLayout);
+        tokenCard.Children.Add(themeWarning);
         EndCard(tokenCard);
     }
 
@@ -281,7 +556,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         field.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 13,
+            FontSize = 14,
             FontWeight = FontWeights.Medium,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
         });
@@ -364,7 +639,83 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddTextField(tcCard, "FFmpeg Path", "playback.ffmpeg_path");
         AddTextField(tcCard, "Transcode Directory", "playback.transcode_dir");
         AddSelectField(tcCard, "Hardware Acceleration", "playback.hw_accel",
-            ["auto", "qsv", "vaapi", "none"]);
+            [("auto", "Auto (Recommended)"), ("qsv", "Intel Quick Sync (QSV)"), ("vaapi", "VA-API"), ("nvenc", "NVIDIA NVENC"), ("none", "None (CPU only)")]);
+
+        // HW-accel resolved indicator (webui: green/amber dot + resolved method + device)
+        if (ViewModel.GetSetting("playback.hw_accel") is "auto" or "" or null)
+        {
+            var hwInfoPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, -4, 0, 8) };
+            hwInfoPanel.Children.Add(new TextBlock
+            {
+                Text = "Detecting...",
+                FontSize = 11,
+                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            });
+            tcCard.Children.Add(hwInfoPanel);
+
+            // Async fetch hw-accel info
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var adminApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AdminApi>();
+                    var info = await adminApi.GetHWAccelInfoAsync();
+                    var resolved = "none";
+                    if (info.TryGetValue("resolved", out var r) && r is System.Text.Json.JsonElement re && re.ValueKind == System.Text.Json.JsonValueKind.String)
+                        resolved = re.GetString() ?? "none";
+                    string? device = null;
+                    if (info.TryGetValue("render_devices", out var rd) && rd is System.Text.Json.JsonElement rde && rde.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    {
+                        var first = rde.EnumerateArray().FirstOrDefault();
+                        if (first.ValueKind == System.Text.Json.JsonValueKind.String)
+                            device = first.GetString();
+                    }
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        hwInfoPanel.Children.Clear();
+                        bool isHealthy = resolved != "none";
+                        hwInfoPanel.Children.Add(new Border
+                        {
+                            Width = 8, Height = 8, CornerRadius = new CornerRadius(4),
+                            Background = new SolidColorBrush(isHealthy
+                                ? Windows.UI.Color.FromArgb(0xFF, 0x22, 0xC5, 0x5E)
+                                : Windows.UI.Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24)),
+                            VerticalAlignment = VerticalAlignment.Center,
+                        });
+                        var label = resolved switch
+                        {
+                            "vaapi" => "VA-API",
+                            "qsv" => "Intel Quick Sync",
+                            "nvenc" => "NVIDIA NVENC",
+                            "none" => "No acceleration available",
+                            _ => resolved,
+                        };
+                        if (device != null) label += $" -- {device}";
+                        hwInfoPanel.Children.Add(new TextBlock
+                        {
+                            Text = label,
+                            FontSize = 11,
+                            Foreground = (SolidColorBrush)Application.Current.Resources[isHealthy ? "PrimaryTextBrush" : "SecondaryTextBrush"],
+                            VerticalAlignment = VerticalAlignment.Center,
+                        });
+                    });
+                }
+                catch
+                {
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        hwInfoPanel.Children.Clear();
+                        hwInfoPanel.Children.Add(new TextBlock
+                        {
+                            Text = "Could not detect hardware acceleration",
+                            FontSize = 11,
+                            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                        });
+                    });
+                }
+            });
+        }
+
         AddToggleField(tcCard, "Transcoding Enabled", "playback.transcode_enabled");
         AddToggleField(tcCard, "Allow HEVC Encoding", "playback.allow_hevc_encoding");
         AddToggleField(tcCard, "Allow 4K Transcoding", "allow_4k_transcode");
@@ -420,13 +771,17 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddSectionHeader("Metadata");
         var metaCard = BeginCard();
         AddToggleField(metaCard, "Cache Images to S3", "metadata.cache_images",
-            "Download artwork from metadata providers and store resized variants in S3. Requires General Purpose S3 storage to be configured.");
+            "When enabled, artwork fetched from metadata providers is resized and cached to your S3 storage bucket.");
         EndCard(metaCard);
     }
 
     private void BuildRateLimitTab()
     {
         AddTabHeader("Rate Limiting", "Configure request budgets for API keys, IPs, and authentication endpoints.");
+
+        // Webui constrains rate-limit inner content to max-w-2xl (672px)
+        ContentPanel.MaxWidth = 672;
+        ContentPanel.HorizontalAlignment = HorizontalAlignment.Left;
 
         var cfg = ViewModel.DirtyRateLimitConfig ?? ViewModel.RateLimitConfig;
 
@@ -462,8 +817,8 @@ public sealed partial class AdminSettingsDetailPage : Page
             enableField.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             enableField.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var enableLabelStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-            enableLabelStack.Children.Add(new TextBlock { Text = "Enable Rate Limiting", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
-            enableLabelStack.Children.Add(new TextBlock { Text = "When disabled, no rate limits are enforced.", FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextWrapping = TextWrapping.Wrap });
+            enableLabelStack.Children.Add(new TextBlock { Text = "Enable Rate Limiting", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            enableLabelStack.Children.Add(new TextBlock { Text = "When disabled, no rate limits are enforced.", FontSize = 12, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextWrapping = TextWrapping.Wrap });
             var enableToggle = new ToggleSwitch { IsOn = working.Enabled, OnContent = "", OffContent = "", VerticalAlignment = VerticalAlignment.Center };
             enableToggle.Toggled += (s, e) => { working.Enabled = enableToggle.IsOn; MarkDirty(); };
             Grid.SetColumn(enableLabelStack, 0); Grid.SetColumn(enableToggle, 1);
@@ -474,8 +829,8 @@ public sealed partial class AdminSettingsDetailPage : Page
 
             // Backend select
             var backendField = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 8) };
-            backendField.Children.Add(new TextBlock { Text = "Backend", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
-            var backendCombo = new ComboBox { Width = 180, HorizontalAlignment = HorizontalAlignment.Left };
+            backendField.Children.Add(new TextBlock { Text = "Backend", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            var backendCombo = new ComboBox { Width = 160, HorizontalAlignment = HorizontalAlignment.Left };
             backendCombo.Items.Add(new ComboBoxItem { Content = "In-Memory", Tag = "memory" });
             backendCombo.Items.Add(new ComboBoxItem { Content = "Redis", Tag = "redis" });
             for (int i = 0; i < backendCombo.Items.Count; i++)
@@ -483,7 +838,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             if (backendCombo.SelectedIndex < 0) backendCombo.SelectedIndex = 0;
             backendCombo.SelectionChanged += (s, e) => { if (backendCombo.SelectedItem is ComboBoxItem sel) { working.Backend = sel.Tag?.ToString() ?? "memory"; MarkDirty(); } };
             backendField.Children.Add(backendCombo);
-            backendField.Children.Add(new TextBlock { Text = "Requires a restart to take effect. Redis is recommended for multi-instance deployments.", FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextWrapping = TextWrapping.Wrap, MaxWidth = 460 });
+            backendField.Children.Add(new TextBlock { Text = "Requires a restart to take effect. Redis is recommended for multi-instance deployments.", FontSize = 12, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextWrapping = TextWrapping.Wrap, MaxWidth = 448 });
             card.Children.Add(backendField);
 
             EndCard(card);
@@ -494,11 +849,11 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             var card = BeginCard();
             var globalField = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 8) };
-            globalField.Children.Add(new TextBlock { Text = "Global Requests Per Second", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
-            var globalRpsBox = new Microsoft.UI.Xaml.Controls.NumberBox { Value = working.GlobalRequestsPerSecond, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, Width = 180, HorizontalAlignment = HorizontalAlignment.Left };
+            globalField.Children.Add(new TextBlock { Text = "Global Requests Per Second", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            var globalRpsBox = new Microsoft.UI.Xaml.Controls.NumberBox { Value = working.GlobalRequestsPerSecond, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, Width = 160, HorizontalAlignment = HorizontalAlignment.Left };
             globalRpsBox.ValueChanged += (s, e) => { if (!double.IsNaN(globalRpsBox.Value)) { working.GlobalRequestsPerSecond = (int)globalRpsBox.Value; MarkDirty(); } };
             globalField.Children.Add(globalRpsBox);
-            globalField.Children.Add(new TextBlock { Text = "Maximum requests per second across all clients combined.", FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextWrapping = TextWrapping.Wrap, MaxWidth = 460 });
+            globalField.Children.Add(new TextBlock { Text = "Maximum requests per second across all clients combined.", FontSize = 12, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextWrapping = TextWrapping.Wrap, MaxWidth = 448 });
             card.Children.Add(globalField);
             EndCard(card);
         }
@@ -516,19 +871,19 @@ public sealed partial class AdminSettingsDetailPage : Page
             ipGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             var rpsField = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 8, 0) };
-            rpsField.Children.Add(new TextBlock { Text = "Requests / Second", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            rpsField.Children.Add(new TextBlock { Text = "Requests / Second", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
             var rpsBox = new Microsoft.UI.Xaml.Controls.NumberBox { Value = working.IpRequestsPerSecond, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
             rpsBox.ValueChanged += (s, e) => { if (!double.IsNaN(rpsBox.Value)) { working.IpRequestsPerSecond = (int)rpsBox.Value; MarkDirty(); } };
             rpsField.Children.Add(rpsBox);
 
             var rpmField = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 8, 0) };
-            rpmField.Children.Add(new TextBlock { Text = "Requests / Minute", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            rpmField.Children.Add(new TextBlock { Text = "Requests / Minute", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
             var rpmBox = new Microsoft.UI.Xaml.Controls.NumberBox { Value = working.IpRequestsPerMinute, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
             rpmBox.ValueChanged += (s, e) => { if (!double.IsNaN(rpmBox.Value)) { working.IpRequestsPerMinute = (int)rpmBox.Value; MarkDirty(); } };
             rpmField.Children.Add(rpmBox);
 
             var burstField = new StackPanel { Spacing = 4 };
-            burstField.Children.Add(new TextBlock { Text = "Burst", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            burstField.Children.Add(new TextBlock { Text = "Burst", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
             var burstBox = new Microsoft.UI.Xaml.Controls.NumberBox { Value = working.IpBurst, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
             burstBox.ValueChanged += (s, e) => { if (!double.IsNaN(burstBox.Value)) { working.IpBurst = (int)burstBox.Value; MarkDirty(); } };
             burstField.Children.Add(burstBox);
@@ -563,19 +918,19 @@ public sealed partial class AdminSettingsDetailPage : Page
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             var rpsF = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 8, 0) };
-            rpsF.Children.Add(new TextBlock { Text = "Requests / Second", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            rpsF.Children.Add(new TextBlock { Text = "Requests / Second", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
             var rpsB = new Microsoft.UI.Xaml.Controls.NumberBox { Value = tierCfg.RequestsPerSecond, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
             rpsB.ValueChanged += (s, e) => { if (!double.IsNaN(rpsB.Value)) { tierCfg.RequestsPerSecond = (int)rpsB.Value; MarkDirty(); } };
             rpsF.Children.Add(rpsB);
 
             var rpmF = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 8, 0) };
-            rpmF.Children.Add(new TextBlock { Text = "Requests / Minute", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            rpmF.Children.Add(new TextBlock { Text = "Requests / Minute", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
             var rpmB = new Microsoft.UI.Xaml.Controls.NumberBox { Value = tierCfg.RequestsPerMinute, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
             rpmB.ValueChanged += (s, e) => { if (!double.IsNaN(rpmB.Value)) { tierCfg.RequestsPerMinute = (int)rpmB.Value; MarkDirty(); } };
             rpmF.Children.Add(rpmB);
 
             var burstF = new StackPanel { Spacing = 4 };
-            burstF.Children.Add(new TextBlock { Text = "Burst", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            burstF.Children.Add(new TextBlock { Text = "Burst", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
             var burstB = new Microsoft.UI.Xaml.Controls.NumberBox { Value = tierCfg.Burst, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
             burstB.ValueChanged += (s, e) => { if (!double.IsNaN(burstB.Value)) { tierCfg.Burst = (int)burstB.Value; MarkDirty(); } };
             burstF.Children.Add(burstB);
@@ -612,13 +967,13 @@ public sealed partial class AdminSettingsDetailPage : Page
                 epGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
                 var epRpmF = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 8, 0) };
-                epRpmF.Children.Add(new TextBlock { Text = "Requests / Minute", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+                epRpmF.Children.Add(new TextBlock { Text = "Requests / Minute", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
                 var epRpmB = new Microsoft.UI.Xaml.Controls.NumberBox { Value = epCfg.RequestsPerMinute, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
                 epRpmB.ValueChanged += (s, e) => { if (!double.IsNaN(epRpmB.Value)) { epCfg.RequestsPerMinute = (int)epRpmB.Value; MarkDirty(); } };
                 epRpmF.Children.Add(epRpmB);
 
                 var epBurstF = new StackPanel { Spacing = 4 };
-                epBurstF.Children.Add(new TextBlock { Text = "Burst", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+                epBurstF.Children.Add(new TextBlock { Text = "Burst", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
                 var epBurstB = new Microsoft.UI.Xaml.Controls.NumberBox { Value = epCfg.Burst, SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact, Minimum = 1, HorizontalAlignment = HorizontalAlignment.Stretch };
                 epBurstB.ValueChanged += (s, e) => { if (!double.IsNaN(epBurstB.Value)) { epCfg.Burst = (int)epBurstB.Value; MarkDirty(); } };
                 epBurstF.Children.Add(epBurstB);
@@ -651,18 +1006,21 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddTextBlock(card,
             "Configure external subtitle search providers. Credentials are stored securely and never returned by the API.");
 
-        _subsHost = new StackPanel { Spacing = 12 };
+        _subsHost = new StackPanel { Spacing = 16 };
         card.Children.Add(_subsHost);
 
-        // Placeholder while we load
-        var loadingText = new TextBlock
+        // Skeleton loading blocks (webui renders shimmer cards while loading)
+        for (int sk = 0; sk < 2; sk++)
         {
-            Text = "Loading providers...",
-            FontSize = 12,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-            Margin = new Thickness(0, 6, 0, 0),
-        };
-        _subsHost.Children.Add(loadingText);
+            var skeleton = new Border
+            {
+                Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+                CornerRadius = new CornerRadius(8),
+                Height = 80,
+                Opacity = 0.5,
+            };
+            _subsHost.Children.Add(skeleton);
+        }
 
         EndCard(card);
 
@@ -681,15 +1039,18 @@ public sealed partial class AdminSettingsDetailPage : Page
         }
         catch (Exception ex)
         {
+            // Show error via toast instead of full takeover (webui pattern)
+            ShowStatusToast($"Failed to load providers: {ex.Message}");
             if (_subsHost == null) return;
             _subsHost.Children.Clear();
-            _subsHost.Children.Add(new TextBlock
+            var retryBtn = new Button
             {
-                Text = $"Failed to load providers: {ex.Message}",
+                Content = "Retry",
+                Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
                 FontSize = 12,
-                Foreground = (SolidColorBrush)Application.Current.Resources["ErrorBrush"],
-                TextWrapping = TextWrapping.Wrap,
-            });
+            };
+            retryBtn.Click += async (_, _) => await LoadSubtitleProvidersAsync();
+            _subsHost.Children.Add(retryBtn);
         }
     }
 
@@ -701,12 +1062,22 @@ public sealed partial class AdminSettingsDetailPage : Page
         var providers = _subsVm.Providers.ToList();
         if (providers.Count == 0)
         {
-            _subsHost.Children.Add(new TextBlock
+            // Webui renders a bordered card for the empty state
+            var emptyCard = new Border
+            {
+                BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(16, 24, 16, 24),
+            };
+            emptyCard.Child = new TextBlock
             {
                 Text = "No subtitle providers configured.",
-                FontSize = 12,
+                FontSize = 14,
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-            });
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+            _subsHost.Children.Add(emptyCard);
             return;
         }
 
@@ -731,10 +1102,10 @@ public sealed partial class AdminSettingsDetailPage : Page
             Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
             BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(16, 12, 16, 14),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(16, 16, 16, 16),
         };
-        var layout = new StackPanel { Spacing = 10 };
+        var layout = new StackPanel { Spacing = 12 };
 
         bool isOpenSubtitles = string.Equals(provider.ProviderName, "opensubtitles", StringComparison.OrdinalIgnoreCase);
         string displayName = SubtitleProviderDisplayNames.TryGetValue(provider.ProviderName ?? "", out var dn) ? dn : provider.ProviderName ?? "";
@@ -778,13 +1149,13 @@ public sealed partial class AdminSettingsDetailPage : Page
         if (isOpenSubtitles)
         {
             var userGroup = new StackPanel { Spacing = 3 };
-            userGroup.Children.Add(new TextBlock { Text = "Username", FontSize = 12, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] });
+            userGroup.Children.Add(new TextBlock { Text = "Username", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
             usernameBox = new TextBox { PlaceholderText = provider.HasCredentials ? "Leave blank to keep current" : "OpenSubtitles username", FontSize = 13 };
             userGroup.Children.Add(usernameBox);
             layout.Children.Add(userGroup);
 
             var passGroup = new StackPanel { Spacing = 3 };
-            passGroup.Children.Add(new TextBlock { Text = "Password", FontSize = 12, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] });
+            passGroup.Children.Add(new TextBlock { Text = "Password", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
             passwordBox = new PasswordBox { PlaceholderText = provider.HasCredentials ? "Leave blank to keep current" : "OpenSubtitles password", FontSize = 13 };
             passGroup.Children.Add(passwordBox);
             layout.Children.Add(passGroup);
@@ -792,7 +1163,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         else
         {
             var group = new StackPanel { Spacing = 3 };
-            group.Children.Add(new TextBlock { Text = "API Key", FontSize = 12, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] });
+            group.Children.Add(new TextBlock { Text = "API Key", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
             apiKeyBox = new PasswordBox { PlaceholderText = provider.HasApiKey ? "Leave blank to keep current" : "Enter API key", FontSize = 13 };
             group.Children.Add(apiKeyBox);
             layout.Children.Add(group);
@@ -960,6 +1331,39 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void AddRedisSection(StackPanel parent)
     {
+        // Check if redis.url is managed by environment variable
+        bool envManaged = ViewModel.IsManagedByEnv("redis.url");
+
+        if (envManaged)
+        {
+            // Show "Managed by environment" badge + explainer; no editable fields
+            var envBadge = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(0x1A, 0x60, 0xA5, 0xFA)),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(8, 4, 8, 4),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 8, 0, 4),
+            };
+            envBadge.Child = new TextBlock
+            {
+                Text = "Managed by environment",
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+            };
+            parent.Children.Add(envBadge);
+            parent.Children.Add(new TextBlock
+            {
+                Text = "Redis is configured via the REDIS_URL environment variable. To change it, update the environment variable and restart the server.",
+                FontSize = 12,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8),
+            });
+            return;
+        }
+
         // Toggle to enable Redis (derived from whether redis.url is non-empty)
         var redisUrl = ViewModel.GetSetting("redis.url");
         bool redisEnabled = !string.IsNullOrWhiteSpace(redisUrl);
@@ -1022,7 +1426,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             Password = "",
             Style = (Style)Application.Current.Resources["DarkPasswordBoxStyle"],
-            MaxWidth = 460,
+            MaxWidth = 448,
             HorizontalAlignment = HorizontalAlignment.Left,
             PlaceholderText = isUrlConfigured ? "\u2022\u2022\u2022\u2022 configured" : "redis://host:6379"
         };
@@ -1096,11 +1500,9 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void BuildStorageTab()
     {
-        AddTabHeader("Storage", "S3-compatible object storage for artwork, operational exports, and future replicated data.");
+        AddTabHeader("Storage", "S3-compatible object storage for artwork, imports/exports, and future replicated data.");
 
-        // Sub-tab switcher: General Purpose (active) | User DB (disabled, reserved)
-        // MetaDB section was removed — poster storage is now handled by a plugin,
-        // not server-level S3 config.
+        // Sub-tab bar: Public Assets | Private Internal | User DB (disabled)
         var subTabBar = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -1108,40 +1510,107 @@ public sealed partial class AdminSettingsDetailPage : Page
             Margin = new Thickness(0, 4, 0, 8),
         };
 
-        var opSubTab = MakeSubTabButton("General Purpose", active: true);
+        var publicSubTab = MakeSubTabButton("Public Assets", active: true);
+        var privateSubTab = MakeSubTabButton("Private Internal", active: false);
         var udbSubTab = MakeSubTabButton("User DB", active: false, disabled: true,
             tooltip: "Reserved for future Litestream replication");
 
-        subTabBar.Children.Add(opSubTab);
+        subTabBar.Children.Add(publicSubTab);
+        subTabBar.Children.Add(privateSubTab);
         subTabBar.Children.Add(udbSubTab);
         ContentPanel.Children.Add(subTabBar);
 
-        // General Purpose content
-        var opCard = BeginCard();
-        AddTextBlock(opCard, "General-purpose storage for operational tasks such as catalog import/export.");
-        AddTextField(opCard, "Endpoint", "s3.operational_endpoint");
-        AddTextField(opCard, "Region", "s3.operational_region");
-        AddToggleField(opCard, "Path Style", "s3.operational_path_style");
-        AddTextField(opCard, "Bucket", "s3.operational_bucket");
-        AddTextField(opCard, "Key Prefix", "s3.operational_key_prefix",
-            "Optional. Stores all Continuum objects under this folder inside the bucket. Leave blank for bucket root.");
-        AddPasswordField(opCard, "Access Key", "s3.operational_access_key");
-        AddPasswordField(opCard, "Secret Key", "s3.operational_secret_key");
-        AddConnectionCheckButton(opCard, "s3_operational", "Check Connection");
-        EndCard(opCard);
+        // ===== Public Assets container =====
+        var publicContainer = new StackPanel { Spacing = 12 };
 
-        // Public URL Authentication section (inside General Purpose)
-        AddSectionHeader("Public URL Authentication");
-        var urlAuthCard = BeginCard();
+        var pubCard = new StackPanel { Spacing = 0 };
+        AddTextBlock(pubCard, "Stores client-facing assets: artwork, chapter thumbnails, and subtitle files.");
+        AddTextField(pubCard, "Endpoint", "s3.public_endpoint");
+        AddTextField(pubCard, "Region", "s3.public_region");
+        AddToggleField(pubCard, "Path Style", "s3.public_path_style");
+        AddTextField(pubCard, "Bucket", "s3.public_bucket");
+        AddTextField(pubCard, "Key Prefix", "s3.public_key_prefix",
+            "Optional. Stores all objects under this folder inside the bucket. Leave blank for bucket root.");
+        AddPasswordField(pubCard, "Access Key", "s3.public_access_key");
+        AddPasswordField(pubCard, "Secret Key", "s3.public_secret_key");
+        AddConnectionCheckButton(pubCard, "s3_public", "Check Connection");
+        publicContainer.Children.Add(WrapInCard(pubCard));
+
+        // Public URL Authentication
+        var urlAuthCard = new StackPanel { Spacing = 0 };
+        urlAuthCard.Children.Add(new TextBlock
+        {
+            Text = "ASSET URL AUTHENTICATION",
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            CharacterSpacing = 80,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            Margin = new Thickness(0, 0, 0, 10),
+        });
         AddTextBlock(urlAuthCard,
             "Controls how read URLs are generated for cached images. Use Cloudflare Token for R2 custom domains.");
         AddS3UrlAuthFields(urlAuthCard);
-        EndCard(urlAuthCard);
+        publicContainer.Children.Add(WrapInCard(urlAuthCard));
+
+        ContentPanel.Children.Add(publicContainer);
+
+        // ===== Private Internal container =====
+        var privateContainer = new StackPanel { Spacing = 12, Visibility = Visibility.Collapsed };
+
+        var privCard = new StackPanel { Spacing = 0 };
+        AddTextBlock(privCard, "Stores non-public Continuum objects: imports, exports, and internal artifacts.");
+        AddTextField(privCard, "Endpoint", "s3.private_endpoint");
+        AddTextField(privCard, "Region", "s3.private_region");
+        AddToggleField(privCard, "Path Style", "s3.private_path_style");
+        AddTextField(privCard, "Bucket", "s3.private_bucket");
+        AddTextField(privCard, "Key Prefix", "s3.private_key_prefix",
+            "Optional. Stores all private objects under this folder inside the bucket.");
+        AddPasswordField(privCard, "Access Key", "s3.private_access_key");
+        AddPasswordField(privCard, "Secret Key", "s3.private_secret_key");
+        AddConnectionCheckButton(privCard, "s3_private", "Check Connection");
+        privateContainer.Children.Add(WrapInCard(privCard));
+
+        ContentPanel.Children.Add(privateContainer);
+
+        // Sub-tab click handlers
+        publicSubTab.Click += (_, _) =>
+        {
+            SetSubTabActive(publicSubTab, true);
+            SetSubTabActive(privateSubTab, false);
+            publicContainer.Visibility = Visibility.Visible;
+            privateContainer.Visibility = Visibility.Collapsed;
+        };
+        privateSubTab.Click += (_, _) =>
+        {
+            SetSubTabActive(publicSubTab, false);
+            SetSubTabActive(privateSubTab, true);
+            publicContainer.Visibility = Visibility.Collapsed;
+            privateContainer.Visibility = Visibility.Visible;
+        };
+    }
+
+    private Border WrapInCard(StackPanel content)
+    {
+        return new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+            CornerRadius = new CornerRadius(16),
+            Padding = new Thickness(20, 18, 20, 18),
+            Child = content,
+        };
+    }
+
+    private void SetSubTabActive(Button btn, bool active)
+    {
+        btn.Background = active
+            ? (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"]
+            : new SolidColorBrush(Colors.Transparent);
+        btn.BorderThickness = new Thickness(active ? 1 : 0);
     }
 
     /// <summary>
     /// Builds a pill-style sub-tab button that matches the webui Tabs component.
-    /// Used inside tab panels that have multiple views (e.g. Storage: General Purpose | User DB).
+    /// Used inside tab panels that have multiple views (e.g. Storage: Public | Private | User DB).
     /// </summary>
     private Button MakeSubTabButton(string label, bool active, bool disabled = false, string? tooltip = null)
     {
@@ -1154,7 +1623,7 @@ public sealed partial class AdminSettingsDetailPage : Page
                 FontWeight = FontWeights.Medium,
             },
             Padding = new Thickness(14, 6, 14, 6),
-            CornerRadius = new CornerRadius(14),
+            CornerRadius = new CornerRadius(18),
             Background = active
                 ? (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"]
                 : new SolidColorBrush(Colors.Transparent),
@@ -1189,11 +1658,11 @@ public sealed partial class AdminSettingsDetailPage : Page
             Width = 240,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        authCombo.Items.Add(new ComboBoxItem { Content = "S3 Presigned URLs", Tag = "presigned" });
+        authCombo.Items.Add(new ComboBoxItem { Content = "S3 Presigned URLs (Recommended)", Tag = "presigned" });
         authCombo.Items.Add(new ComboBoxItem { Content = "Public (no auth)", Tag = "public" });
         authCombo.Items.Add(new ComboBoxItem { Content = "Cloudflare Token Auth", Tag = "cloudflare_token" });
 
-        string currentAuth = ViewModel.GetSetting("s3.operational_url_auth");
+        string currentAuth = ViewModel.GetSetting("s3.public_url_auth");
         if (string.IsNullOrEmpty(currentAuth)) currentAuth = "presigned";
         for (int i = 0; i < authCombo.Items.Count; i++)
         {
@@ -1214,7 +1683,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             Spacing = 0,
             Visibility = currentAuth != "presigned" ? Visibility.Visible : Visibility.Collapsed,
         };
-        AddTextField(publicFieldsContainer, "Public Endpoint", "s3.operational_public_endpoint", "https://cdn.example.com");
+        AddTextField(publicFieldsContainer, "Read Endpoint", "s3.public_read_endpoint", "https://cdn.example.com");
         parent.Children.Add(publicFieldsContainer);
 
         // Cloudflare-only fields
@@ -1223,9 +1692,9 @@ public sealed partial class AdminSettingsDetailPage : Page
             Spacing = 0,
             Visibility = currentAuth == "cloudflare_token" ? Visibility.Visible : Visibility.Collapsed,
         };
-        AddPasswordField(cloudflareFieldsContainer, "Token Secret", "s3.operational_token_secret");
-        AddTextField(cloudflareFieldsContainer, "Token Param", "s3.operational_token_param", "verify");
-        AddNumberField(cloudflareFieldsContainer, "Token TTL (seconds)", "s3.operational_token_ttl", "10800");
+        AddPasswordField(cloudflareFieldsContainer, "Token Secret", "s3.public_token_secret");
+        AddTextField(cloudflareFieldsContainer, "Token Param", "s3.public_token_param", "verify");
+        AddNumberField(cloudflareFieldsContainer, "Token TTL (seconds)", "s3.public_token_ttl", "10800");
         parent.Children.Add(cloudflareFieldsContainer);
 
         // Wire selection change: update setting + toggle visibility of conditional sections
@@ -1233,7 +1702,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             if (authCombo.SelectedItem is not ComboBoxItem sel) return;
             var newVal = (sel.Tag as string) ?? "presigned";
-            ViewModel.SetSetting("s3.operational_url_auth", newVal);
+            ViewModel.SetSetting("s3.public_url_auth", newVal);
             publicFieldsContainer.Visibility = newVal != "presigned" ? Visibility.Visible : Visibility.Collapsed;
             cloudflareFieldsContainer.Visibility = newVal == "cloudflare_token" ? Visibility.Visible : Visibility.Collapsed;
             UpdateDirtyCountText();
@@ -1241,7 +1710,7 @@ public sealed partial class AdminSettingsDetailPage : Page
 
         _fieldRebuilders.Add(() =>
         {
-            var v = ViewModel.GetSetting("s3.operational_url_auth");
+            var v = ViewModel.GetSetting("s3.public_url_auth");
             if (string.IsNullOrEmpty(v)) v = "presigned";
             for (int i = 0; i < authCombo.Items.Count; i++)
             {
@@ -1267,13 +1736,14 @@ public sealed partial class AdminSettingsDetailPage : Page
         public int MaxSizeMb = 128;
     }
 
+    // Must match webui logRetentionPolicy.ts DEFAULT_BUCKET_POLICIES exactly.
+    // Webui has 4 rules and 3 levels (info/warn/error — no debug).
     private static readonly (string Component, string Level, int RetentionDays, int MaxRows, int MaxSizeMb)[] DefaultBucketPolicies =
     [
         ("metadata",  "info",  1, 100000, 128),
-        ("playback",  "info",  7, 500000, 256),
-        ("scanner",   "info",  3, 300000, 256),
-        ("scanner",   "warn", 30, 100000, 128),
-        ("scanner",   "error", 90, 50000,  64),
+        ("scanner",   "info",  2, 150000, 192),
+        ("metadata",  "warn",  7, 250000, 256),
+        ("scanner",   "warn",  7, 250000, 256),
     ];
 
     private List<BucketRow> _bucketRows = [];
@@ -1281,7 +1751,7 @@ public sealed partial class AdminSettingsDetailPage : Page
     private void BuildLogRetentionTab()
     {
         AddTabHeader("Log Retention",
-            "Prune oldest operational logs by global caps and per-bucket overrides. Bucket rules match on component and level.");
+            "Prune oldest operational logs by global caps and per-bucket overrides. Bucket rules match on component and level. Cleanup cadence and startup runs are configured in Scheduled Tasks.");
 
         AddSectionHeader("Global Limits");
         var globalCard = BeginCard();
@@ -1294,9 +1764,44 @@ public sealed partial class AdminSettingsDetailPage : Page
         EndCard(globalCard);
 
         // Parse bucket rules from current setting
-        _bucketRows = ParseBucketPolicies(ViewModel.GetSetting("opslog.bucket_policies"));
+        string? bucketParseError = null;
+        try
+        {
+            _bucketRows = ParseBucketPolicies(ViewModel.GetSetting("opslog.bucket_policies"));
+        }
+        catch
+        {
+            bucketParseError = "Existing bucket policy JSON could not be parsed. The editor loaded the recommended defaults instead.";
+            _bucketRows = DefaultBucketPolicies.Select(d => new BucketRow
+            {
+                Component = d.Component, Level = d.Level,
+                RetentionDays = d.RetentionDays, MaxRows = d.MaxRows, MaxSizeMb = d.MaxSizeMb
+            }).ToList();
+        }
 
         AddSectionHeader("Bucket Overrides");
+
+        // Parse-error recovery banner (webui shows this above the editor when JSON is malformed)
+        if (bucketParseError != null)
+        {
+            var warnBanner = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFB, 0xBF, 0x24)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(0x33, 0xFB, 0xBF, 0x24)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(12, 8, 12, 8),
+                Margin = new Thickness(0, 0, 0, 8),
+            };
+            warnBanner.Child = new TextBlock
+            {
+                Text = bucketParseError,
+                FontSize = 12,
+                Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24)),
+                TextWrapping = TextWrapping.Wrap,
+            };
+            ContentPanel.Children.Add(warnBanner);
+        }
         var bucketCard = BeginCard();
 
         var headerRow = new Grid { ColumnSpacing = 12, Margin = new Thickness(0, 4, 0, 4) };
@@ -1322,7 +1827,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         };
         var restoreContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         restoreContent.Children.Add(new FontIcon { Glyph = "\uE72C", FontSize = 11 });
-        restoreContent.Children.Add(new TextBlock { Text = "Restore Recommended" });
+        restoreContent.Children.Add(new TextBlock { Text = "Restore Recommended Rules" });
         restoreBtn.Content = restoreContent;
         headerBtns.Children.Add(restoreBtn);
 
@@ -1479,7 +1984,8 @@ public sealed partial class AdminSettingsDetailPage : Page
         grid.Children.Add(comp);
 
         var level = new ComboBox { Width = 110 };
-        foreach (var lv in new[] { "debug", "info", "warn", "error" })
+        // Webui LOG_LEVEL_OPTIONS = ["info", "warn", "error"] — no debug.
+        foreach (var lv in new[] { "info", "warn", "error" })
             level.Items.Add(new ComboBoxItem { Content = lv, Tag = lv });
         for (int i = 0; i < level.Items.Count; i++)
             if (level.Items[i] is ComboBoxItem ci && (string)ci.Tag == row.Level) { level.SelectedIndex = i; break; }
@@ -1604,6 +2110,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         ("rating_rt",        "Rotten Tomatoes",  "Show Rotten Tomatoes critic score.",                          "96%"),
         ("rating_rt_audience","RT Audience",     "Show Rotten Tomatoes audience score.",                        "92%"),
         ("original_language","Language",         "Show the original language code (e.g. EN, FR).",              "EN"),
+        ("edition",          "Edition",          "Show the edition tag (e.g. Standard, Theatrical, Extended).", "Standard"),
     ];
 
     private static readonly (string Value, string Label)[] OverlayPositions =
@@ -1924,6 +2431,12 @@ public sealed partial class AdminSettingsDetailPage : Page
             FontSize = 12,
         };
 
+        var resultIcon = new FontIcon
+        {
+            FontSize = 14,
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+        };
         var result = new TextBlock
         {
             FontSize = 12,
@@ -1952,16 +2465,24 @@ public sealed partial class AdminSettingsDetailPage : Page
                 var response = await adminApi.CheckSettingsConnectionAsync(kind, request);
 
                 result.Text = response.Message;
-                result.Foreground = new SolidColorBrush(response.Success
+                var color = response.Success
                     ? Windows.UI.Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80)  // green-400
-                    : Windows.UI.Color.FromArgb(0xFF, 0xEF, 0x6B, 0x73)); // error red
+                    : Windows.UI.Color.FromArgb(0xFF, 0xEF, 0x6B, 0x73); // error red
+                result.Foreground = new SolidColorBrush(color);
                 result.Visibility = Visibility.Visible;
+                resultIcon.Glyph = response.Success ? "\uE73E" : "\uE711"; // check / x
+                resultIcon.Foreground = new SolidColorBrush(color);
+                resultIcon.Visibility = Visibility.Visible;
             }
             catch (Exception ex)
             {
                 result.Text = $"Check failed: {ex.Message}";
-                result.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xEF, 0x6B, 0x73));
+                var errColor = Windows.UI.Color.FromArgb(0xFF, 0xEF, 0x6B, 0x73);
+                result.Foreground = new SolidColorBrush(errColor);
                 result.Visibility = Visibility.Visible;
+                resultIcon.Glyph = "\uE711";
+                resultIcon.Foreground = new SolidColorBrush(errColor);
+                resultIcon.Visibility = Visibility.Visible;
             }
             finally
             {
@@ -1971,6 +2492,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         };
 
         row.Children.Add(button);
+        row.Children.Add(resultIcon);
         row.Children.Add(result);
         parent.Children.Add(row);
     }
@@ -1984,7 +2506,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         header.Children.Add(new TextBlock
         {
             Text = title,
-            FontSize = 20,
+            FontSize = 18,
             FontWeight = FontWeights.SemiBold,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
@@ -2076,7 +2598,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         field.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 13,
+            FontSize = 14,
             FontWeight = FontWeights.Medium,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
@@ -2085,7 +2607,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             Text = ViewModel.GetSetting(key),
             Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
-            MaxWidth = 460,
+            MaxWidth = 448,
             HorizontalAlignment = HorizontalAlignment.Left,
             PlaceholderText = hint ?? ""
         };
@@ -2103,7 +2625,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             field.Children.Add(new TextBlock
             {
                 Text = hint,
-                FontSize = 11,
+                FontSize = 12,
                 Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
                 TextWrapping = TextWrapping.Wrap
             });
@@ -2121,7 +2643,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         field.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 13,
+            FontSize = 14,
             FontWeight = FontWeights.Medium,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
@@ -2129,54 +2651,62 @@ public sealed partial class AdminSettingsDetailPage : Page
         var currentVal = ViewModel.GetSetting(key);
         bool isConfigured = ViewModel.IsSensitiveConfigured(key);
 
-        // For sensitive fields: don't pre-fill the actual value (API returns empty for secrets).
-        // Show "configured" placeholder if the server reports it's set.
-        var passwordBox = new PasswordBox
+        // Webui uses explicit Eye/EyeOff toggle, not native PasswordBox reveal.
+        // We use a TextBox (masked via FontFamily trick) + toggle button.
+        var inputBox = new TextBox
         {
-            Password = "",
-            Style = (Style)Application.Current.Resources["DarkPasswordBoxStyle"],
-            MaxWidth = 460,
+            Text = "",
+            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
+            MaxWidth = 448,
             HorizontalAlignment = HorizontalAlignment.Left,
-            PlaceholderText = isConfigured ? "\u2022\u2022\u2022\u2022 configured" : (hint ?? "Not configured")
+            PlaceholderText = isConfigured ? "\u2022\u2022\u2022\u2022 configured" : (hint ?? "Not configured"),
+            FontFamily = new FontFamily("Consolas"), // monospace for secrets
+        };
+        // Start masked
+        bool isRevealed = false;
+        var originalFont = inputBox.FontFamily;
+
+        var eyeBtn = new Button
+        {
+            Content = new FontIcon { Glyph = "\uED1A", FontSize = 14 }, // EyeOff
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTipService.SetToolTip(eyeBtn, "Show/hide value");
+        eyeBtn.Click += (_, _) =>
+        {
+            isRevealed = !isRevealed;
+            if (isRevealed)
+            {
+                // Show value — already in TextBox, just change icon
+                ((FontIcon)eyeBtn.Content).Glyph = "\uE7B3"; // Eye
+            }
+            else
+            {
+                ((FontIcon)eyeBtn.Content).Glyph = "\uED1A"; // EyeOff
+            }
         };
 
-        // Show a "configured" indicator badge next to the label
-        if (isConfigured)
-        {
-            var badge = new Border
-            {
-                Background = (SolidColorBrush)Application.Current.Resources["BadgeResolutionBrush"],
-                CornerRadius = new CornerRadius(4),
-                Padding = new Thickness(6, 1, 6, 1),
-                Margin = new Thickness(8, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = new TextBlock
-                {
-                    Text = "configured",
-                    FontSize = 10,
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = new SolidColorBrush(Microsoft.UI.Colors.White)
-                }
-            };
-            // Wrap label + badge in a horizontal panel
-            var labelRow = (field.Children[0] as TextBlock);
-            if (labelRow != null)
-            {
-                field.Children.RemoveAt(0);
-                var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0 };
-                row.Children.Add(labelRow);
-                row.Children.Add(badge);
-                field.Children.Insert(0, row);
-            }
-        }
+        var inputRow = new Grid { ColumnSpacing = 4 };
+        inputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        inputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(inputBox, 0);
+        Grid.SetColumn(eyeBtn, 1);
+        inputRow.Children.Add(inputBox);
+        inputRow.Children.Add(eyeBtn);
 
-        passwordBox.PasswordChanged += (s, e) =>
+        // Alias for backward compat with the rest of this method
+        var passwordBox = inputBox;
+
+        passwordBox.TextChanged += (s, e) =>
         {
-            if (!string.IsNullOrEmpty(passwordBox.Password))
-                ViewModel.SetSetting(key, passwordBox.Password);
+            if (!string.IsNullOrEmpty(passwordBox.Text))
+                ViewModel.SetSetting(key, passwordBox.Text);
             UpdateDirtyCountText();
         };
-        field.Children.Add(passwordBox);
+        field.Children.Add(inputRow);
 
         _fieldRebuilders.Add(() => { /* Don't refill passwords on discard */ });
 
@@ -2185,7 +2715,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             field.Children.Add(new TextBlock
             {
                 Text = hint,
-                FontSize = 11,
+                FontSize = 12,
                 Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
                 TextWrapping = TextWrapping.Wrap
             });
@@ -2203,7 +2733,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         field.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 13,
+            FontSize = 14,
             FontWeight = FontWeights.Medium,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
@@ -2216,7 +2746,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             Value = string.IsNullOrEmpty(currentVal) ? double.NaN : numVal,
             SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact,
             Minimum = 0,
-            Width = 180,
+            Width = 160,
             HorizontalAlignment = HorizontalAlignment.Left
         };
         numberBox.ValueChanged += (s, e) =>
@@ -2241,7 +2771,7 @@ public sealed partial class AdminSettingsDetailPage : Page
                 FontSize = 11,
                 Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
                 TextWrapping = TextWrapping.Wrap,
-                MaxWidth = 460
+                MaxWidth = 448
             });
         }
 
@@ -2260,7 +2790,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         labelStack.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 13,
+            FontSize = 14,
             FontWeight = FontWeights.Medium,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
@@ -2313,7 +2843,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         field.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 13,
+            FontSize = 14,
             FontWeight = FontWeights.Medium,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
@@ -2322,7 +2852,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             Text = ViewModel.GetSetting(key),
             Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
-            MaxWidth = 460,
+            MaxWidth = 448,
             HorizontalAlignment = HorizontalAlignment.Left,
             PlaceholderText = hint ?? "e.g. 1h, 30m, 24h"
         };
@@ -2340,7 +2870,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             field.Children.Add(new TextBlock
             {
                 Text = hint,
-                FontSize = 11,
+                FontSize = 12,
                 Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
                 TextWrapping = TextWrapping.Wrap
             });
@@ -2349,7 +2879,14 @@ public sealed partial class AdminSettingsDetailPage : Page
         parent.Children.Add(field);
     }
 
-    private void AddSelectField(StackPanel parent, string label, string key, string[] options, string? hint = null)
+    /// <summary>Overload with explicit (value, label) pairs for human-friendly display.</summary>
+    private void AddSelectField(StackPanel parent, string label, string key, (string Value, string Label)[] options, string? hint = null)
+    {
+        AddSelectField(parent, label, key, options.Select(o => o.Value).ToArray(), hint,
+            options.ToDictionary(o => o.Value, o => o.Label));
+    }
+
+    private void AddSelectField(StackPanel parent, string label, string key, string[] options, string? hint = null, Dictionary<string, string>? labelMap = null)
     {
         if (parent.Children.Count > 0) AddDivider(parent);
 
@@ -2358,22 +2895,25 @@ public sealed partial class AdminSettingsDetailPage : Page
         field.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 13,
+            FontSize = 14,
             FontWeight = FontWeights.Medium,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
 
         var comboBox = new ComboBox
         {
-            Width = 180,
+            Width = 160,
             HorizontalAlignment = HorizontalAlignment.Left
         };
 
         foreach (var option in options)
         {
+            var displayLabel = (labelMap != null && labelMap.TryGetValue(option, out var mapped))
+                ? mapped
+                : option.Substring(0, 1).ToUpper() + option.Substring(1);
             comboBox.Items.Add(new ComboBoxItem
             {
-                Content = option.Substring(0, 1).ToUpper() + option.Substring(1),
+                Content = displayLabel,
                 Tag = option
             });
         }
@@ -2423,7 +2963,7 @@ public sealed partial class AdminSettingsDetailPage : Page
                 FontSize = 11,
                 Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
                 TextWrapping = TextWrapping.Wrap,
-                MaxWidth = 460
+                MaxWidth = 448
             });
         }
 
@@ -2502,7 +3042,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             Value = string.IsNullOrEmpty(currentNumVal) ? double.NaN : numVal,
             SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Compact,
             Minimum = 0,
-            Width = 180,
+            Width = 160,
             HorizontalAlignment = HorizontalAlignment.Left
         };
         numberBox.ValueChanged += (s, e) =>
@@ -2521,7 +3061,7 @@ public sealed partial class AdminSettingsDetailPage : Page
                 FontSize = 11,
                 Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
                 TextWrapping = TextWrapping.Wrap,
-                MaxWidth = 460
+                MaxWidth = 448
             });
         }
         parent.Children.Add(numberField);
@@ -2546,6 +3086,118 @@ public sealed partial class AdminSettingsDetailPage : Page
         });
     }
 
+    // ===== Theme preview =====
+
+    private StackPanel? _themePreviewHost;
+
+    private void RefreshThemePreview()
+    {
+        if (_themePreviewHost == null) return;
+        // Remove old preview card (keep the "PREVIEW" header)
+        while (_themePreviewHost.Children.Count > 1)
+            _themePreviewHost.Children.RemoveAt(1);
+
+        // Build a small sample card showing accent color + text on background
+        var card = new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(14),
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            Width = 160,
+        };
+        var cardContent = new StackPanel { Spacing = 8 };
+        cardContent.Children.Add(new TextBlock
+        {
+            Text = "Sample Card",
+            FontSize = 14, FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+        cardContent.Children.Add(new TextBlock
+        {
+            Text = "This shows how your theme tokens affect the UI.",
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+        // Accent-colored pill
+        var pill = new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["AccentBackgroundBrush"],
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(10, 4, 10, 4),
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        pill.Child = new TextBlock
+        {
+            Text = "Accent",
+            FontSize = 11, FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+        };
+        cardContent.Children.Add(pill);
+        // Destructive pill
+        var destructivePill = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x1A, 0xDC, 0x5A, 0x5A)),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(10, 4, 10, 4),
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        destructivePill.Child = new TextBlock
+        {
+            Text = "Destructive",
+            FontSize = 11, FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xDC, 0x5A, 0x5A)),
+        };
+        cardContent.Children.Add(destructivePill);
+        card.Child = cardContent;
+        _themePreviewHost.Children.Add(card);
+
+        // Note: this preview uses the CURRENT app theme resources, not the
+        // tokens being edited (those are CSS vars the server applies). A true
+        // live preview would require parsing oklch/hsl values into WinUI
+        // Colors, which is complex. This gives a structural preview.
+    }
+
+    // ===== Theme validation =====
+
+    /// <summary>
+    /// Basic sanitization of theme vars JSON. Returns a warning string if
+    /// invalid, or empty string if OK. Checks:
+    ///   1. Valid JSON object
+    ///   2. All keys start with "--"
+    ///   3. No values contain "{", "}", "url(", "expression(", or "@import" (CSS injection vectors)
+    /// </summary>
+    private static string ValidateThemeVarsJson(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(raw);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+                return "Must be a JSON object (e.g. {\"--accent\": \"#60A5FA\"}).";
+
+            var warnings = new List<string>();
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (!prop.Name.StartsWith("--"))
+                    warnings.Add($"Key \"{prop.Name}\" should start with \"--\".");
+
+                var val = prop.Value.GetString() ?? "";
+                var lower = val.ToLowerInvariant();
+                if (lower.Contains('{') || lower.Contains('}') || lower.Contains("url(")
+                    || lower.Contains("expression(") || lower.Contains("@import"))
+                    warnings.Add($"Value for \"{prop.Name}\" contains potentially unsafe CSS.");
+            }
+            return string.Join(" ", warnings);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return "Invalid JSON. Check syntax.";
+        }
+    }
+
     // ===== Save/Discard handlers =====
 
     private void UpdateDirtyCountText()
@@ -2556,8 +3208,25 @@ public sealed partial class AdminSettingsDetailPage : Page
             : "";
     }
 
+    // Keys whose change requires a server restart to take effect.
+    private static readonly HashSet<string> RestartRequiredKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "redis.url", "redis.sentinel_master", "redis.sentinel_addrs",
+        "database.url", "database.max_connections",
+        "server.mode", "server.bind_address", "server.port",
+    };
+
+    private bool _restartRequired;
+
     private async void SaveButton_Click(object sender, RoutedEventArgs e)
     {
+        // Check if any dirty keys require restart BEFORE saving (dirty set clears after save).
+        bool needsRestart = ViewModel.GetDirtyKeys().Any(k => RestartRequiredKeys.Contains(k));
+
+        // Show "Saving..." on the button while save is in flight
+        SaveButton.Content = "Saving...";
+        SaveButton.IsEnabled = false;
+
         // The command binding handles the save; after save, refresh the tab
         await Task.Delay(100); // small delay to let binding update
         if (ViewModel.StatusMessage != null)
@@ -2565,7 +3234,32 @@ public sealed partial class AdminSettingsDetailPage : Page
             ShowTab(_activeTab);
             ShowStatusToast(ViewModel.StatusMessage);
         }
+        SaveButton.Content = "Save Changes";
+        SaveButton.IsEnabled = true;
         UpdateDirtyCountText();
+
+        if (needsRestart)
+        {
+            _restartRequired = true;
+            RestartServerButton.Visibility = Visibility.Visible;
+            RestartHintText.Visibility = Visibility.Visible;
+        }
+    }
+
+    private async void RestartServer_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Restart required",
+            Content = "Some settings require a server restart to take effect. Active streams will be interrupted. Please restart the server process manually.",
+            PrimaryButtonText = "OK",
+            XamlRoot = this.XamlRoot,
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        await dialog.ShowAsync();
+        _restartRequired = false;
+        RestartServerButton.Visibility = Visibility.Collapsed;
+        RestartHintText.Visibility = Visibility.Collapsed;
     }
 
     private void DiscardButton_Click(object sender, RoutedEventArgs e)

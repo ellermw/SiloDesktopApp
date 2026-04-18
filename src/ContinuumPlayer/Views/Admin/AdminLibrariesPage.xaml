@@ -17,93 +17,100 @@
     </Page.Resources>
 
     <Grid>
-        <!-- Loading indicator -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
-
-        <!-- Error state -->
-        <StackPanel
-            VerticalAlignment="Center"
-            HorizontalAlignment="Center"
-            Spacing="12"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-            <TextBlock
-                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource BodyTextStyle}"
-                HorizontalAlignment="Center"
-                TextWrapping="Wrap"
-                MaxWidth="400" />
-            <Button
-                Content="Retry"
-                Style="{StaticResource AccentButtonStyle}"
-                HorizontalAlignment="Center"
-                Command="{x:Bind ViewModel.LoadCommand}" />
-        </StackPanel>
-
         <!-- Main content -->
         <ScrollViewer
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <StackPanel Padding="48,28,48,40" Spacing="24">
 
-                <!-- ===== Header ===== -->
+                <!-- ===== Page Header (.page-header: flex items-end justify-between) ===== -->
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" Spacing="6" VerticalAlignment="Center">
+                    <!-- Left: title + subtitle. VerticalAlignment=Bottom to match items-end. -->
+                    <StackPanel Grid.Column="0" Spacing="12" VerticalAlignment="Bottom">
+                        <!-- .page-title: clamp(2rem, 4vw, 3.75rem), font-weight:800, line-height:0.95,
+                             letter-spacing:-0.05em. WinUI CharacterSpacing is 1/1000 em, so -50. -->
                         <TextBlock
                             Text="Libraries"
-                            FontSize="42"
-                            FontWeight="Bold"
+                            FontSize="48"
+                            FontWeight="ExtraBold"
+                            LineHeight="46"
+                            CharacterSpacing="-50"
                             Foreground="{StaticResource PrimaryTextBrush}" />
+                        <!-- .page-subtitle: mixed foreground/muted-foreground @ 68%, max-width ~60ch,
+                             line-height 1.7. -->
                         <TextBlock
                             Text="Manage library roots and scans. Catalog import/export now lives under Maintenance."
                             FontSize="14"
+                            LineHeight="24"
+                            MaxWidth="560"
+                            TextWrapping="Wrap"
+                            Opacity="0.85"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
 
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <!-- Right: action buttons. VerticalAlignment=Bottom to align with subtitle baseline. -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Bottom">
+                        <!-- Scan Queue Popover (pulsing badge, only visible when scans active) -->
+                        <Button
+                            x:Name="ScanQueueButton"
+                            Style="{StaticResource OutlineButtonStyle}"
+                            Padding="12,6"
+                            MinHeight="32"
+                            Visibility="Collapsed"
+                            Click="ScanQueueButton_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <Ellipse x:Name="ScanQueueDot" Width="8" Height="8" Fill="{StaticResource AccentBrush}" />
+                                <TextBlock x:Name="ScanQueueLabel" Text="0 scans" FontSize="13" />
+                            </StackPanel>
+                            <Button.Flyout>
+                                <Flyout x:Name="ScanQueueFlyout" Placement="Bottom">
+                                    <StackPanel x:Name="ScanQueueFlyoutContent" Width="380" Spacing="0" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
                         <Button
                             x:Name="ScanAllButton"
-                            Style="{StaticResource SecondaryButtonStyle}"
+                            Style="{StaticResource OutlineButtonStyle}"
+                            Padding="12,6"
+                            MinHeight="32"
                             Click="ScanAllButton_Click">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon x:Name="ScanAllIcon" Glyph="&#xE72C;" FontSize="14" />
-                                <TextBlock Text="Scan All" />
+                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <FontIcon x:Name="ScanAllIcon" Glyph="&#xE72C;" FontSize="13" />
+                                <TextBlock Text="Scan All" FontSize="13" />
                             </StackPanel>
                         </Button>
                         <Button
                             x:Name="CatalogMaintenanceButton"
-                            Style="{StaticResource SecondaryButtonStyle}"
+                            Style="{StaticResource OutlineButtonStyle}"
+                            Padding="12,6"
+                            MinHeight="32"
                             Click="CatalogMaintenanceButton_Click"
                             ToolTipService.ToolTip="Open Catalog Maintenance">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon Glyph="&#xE90F;" FontSize="14" />
-                                <TextBlock Text="Catalog Maintenance" />
+                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xE90F;" FontSize="13" />
+                                <TextBlock Text="Catalog Maintenance" FontSize="13" />
                             </StackPanel>
                         </Button>
                         <Button
                             x:Name="AddLibraryButton"
                             Style="{StaticResource AccentButtonStyle}"
+                            Padding="12,6"
+                            MinHeight="32"
                             Click="AddLibraryButton_Click">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon Glyph="&#xE710;" FontSize="14" />
-                                <TextBlock Text="Add Library" />
+                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xE710;" FontSize="13" />
+                                <TextBlock Text="Add Library" FontSize="13" />
                             </StackPanel>
                         </Button>
                     </StackPanel>
                 </Grid>
 
-                <!-- ===== Status message ===== -->
+                <!-- ===== Status banner ===== -->
                 <Border
                     x:Name="StatusBanner"
                     Background="{StaticResource AccentBackgroundBrush}"
@@ -116,33 +123,66 @@
                         Foreground="{StaticResource AccentBrush}" />
                 </Border>
 
-                <!-- ===== Libraries Table ===== -->
-                <!-- surface-panel rounded-[1.6rem] border-0 -->
+                <!-- ===== Libraries Table =====
+                     .surface-panel: surface @ 90%, 1px subtle border, rounded (radius 2xl + 0.35rem ≈ 22px),
+                     inset white highlight + large soft shadow below. -->
                 <Border
-                    Background="{StaticResource CardBackgroundBrush}"
-                    CornerRadius="26"
-                    BorderThickness="0"
+                    Background="{StaticResource SurfaceBrush}"
+                    CornerRadius="16"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
                     Padding="0">
                     <StackPanel>
-                        <!-- Table header: Name | Paths | Type | Status | Last Scanned | Actions -->
-                        <Grid Padding="20,14,20,14" ColumnSpacing="12">
+                        <!-- Table header (shadcn <TableHeader>/<TableHead>): h-10 px-4, muted foreground,
+                             font-medium, sentence case (NOT uppercase). -->
+                        <Grid Padding="16,0" Height="40" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="40" />
                                 <ColumnDefinition Width="1.5*" />
                                 <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="80" />
-                                <ColumnDefinition Width="130" />
+                                <ColumnDefinition Width="90" />
                                 <ColumnDefinition Width="140" />
-                                <ColumnDefinition Width="180" />
+                                <ColumnDefinition Width="150" />
+                                <ColumnDefinition Width="210" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="NAME" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="1" Text="PATHS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="TYPE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="4" Text="LAST SCANNED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="5" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <!-- Col 0: drag handle slot (w-10) -->
+                            <TextBlock Grid.Column="1" Text="Name"         FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Text="Paths"        FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="3" Text="Type"         FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="4" Text="Status"       FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="5" Text="Last Scanned" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="6" Text="Actions"      FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
                         </Grid>
 
-                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
+                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Opacity="0.7" />
+
+                        <!-- Inline loading indicator -->
+                        <ProgressRing
+                            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                            HorizontalAlignment="Center"
+                            Margin="0,24"
+                            Width="32" Height="32" />
+
+                        <!-- Inline error state -->
+                        <StackPanel
+                            HorizontalAlignment="Center"
+                            Spacing="8"
+                            Padding="0,16"
+                            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                            <TextBlock
+                                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                                Foreground="{StaticResource ErrorBrush}"
+                                FontSize="13"
+                                HorizontalAlignment="Center"
+                                TextWrapping="Wrap"
+                                MaxWidth="400" />
+                            <Button
+                                Content="Retry"
+                                Style="{StaticResource AccentButtonStyle}"
+                                HorizontalAlignment="Center"
+                                Command="{x:Bind ViewModel.LoadCommand}" />
+                        </StackPanel>
 
                         <!-- Library rows populated in code-behind -->
                         <StackPanel x:Name="LibrariesPanel" Spacing="0" />
@@ -171,6 +211,102 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ===== Unmatched Items Section ===== -->
+                <Border
+                    x:Name="UnmatchedItemsSection"
+                    Background="{StaticResource SurfaceBrush}"
+                    CornerRadius="16"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    Padding="0"
+                    Visibility="Collapsed">
+                    <StackPanel>
+                        <!-- Header -->
+                        <Grid Padding="20,20,20,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Width="32" Height="32" CornerRadius="8"
+                                    Background="#19F59E0B" Margin="0,0,12,0"
+                                    VerticalAlignment="Top">
+                                <FontIcon Glyph="&#xE721;" FontSize="14" Foreground="#F59E0B"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock Text="Unmatched Items" FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Items that could not be matched to any metadata provider."
+                                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Border x:Name="UnmatchedCountBadge" Grid.Column="2" VerticalAlignment="Top" />
+                        </Grid>
+                        <!-- Search + table -->
+                        <StackPanel Padding="12,0,12,12" Spacing="8">
+                            <TextBox x:Name="UnmatchedSearchBox" PlaceholderText="Filter this page by title, library, or type..."
+                                     FontSize="12" Height="32" CornerRadius="8"
+                                     TextChanged="UnmatchedSearchBox_TextChanged" />
+                            <StackPanel x:Name="UnmatchedTablePanel" Spacing="0" />
+                            <StackPanel x:Name="UnmatchedPaginationPanel" Orientation="Horizontal" Spacing="4"
+                                        HorizontalAlignment="Right" Visibility="Collapsed" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== Ambiguous Roots Section ===== -->
+                <Border
+                    x:Name="AmbiguousRootsSection"
+                    Background="{StaticResource SurfaceBrush}"
+                    CornerRadius="16"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    Padding="0"
+                    Visibility="Collapsed">
+                    <StackPanel>
+                        <!-- Header -->
+                        <Grid Padding="20,20,20,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Width="32" Height="32" CornerRadius="8"
+                                    Background="#19F59E0B" Margin="0,0,12,0"
+                                    VerticalAlignment="Top">
+                                <FontIcon Glyph="&#xED25;" FontSize="14" Foreground="#F59E0B"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock Text="Ambiguous Roots" FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Scanner roots that stay visible but do not enter unattended metadata matching."
+                                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Border x:Name="AmbiguousCountBadge" Grid.Column="2" VerticalAlignment="Top" />
+                        </Grid>
+                        <!-- Library filter + search + table -->
+                        <StackPanel Padding="12,0,12,12" Spacing="8">
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="220" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <ComboBox x:Name="AmbiguousLibraryCombo" Grid.Column="0" FontSize="12"
+                                          Height="32" HorizontalAlignment="Stretch"
+                                          SelectionChanged="AmbiguousLibraryCombo_SelectionChanged" />
+                                <TextBox x:Name="AmbiguousSearchBox" Grid.Column="1"
+                                         PlaceholderText="Filter by path, title, or sample file..."
+                                         FontSize="12" Height="32" CornerRadius="8"
+                                         TextChanged="AmbiguousSearchBox_TextChanged" />
+                            </Grid>
+                            <StackPanel x:Name="AmbiguousTablePanel" Spacing="0" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
                 <!-- ===== Skipped Roots Section ===== -->
                 <Border
                     x:Name="SkippedRootsSection"
@@ -194,6 +330,16 @@
                                 TextWrapping="Wrap" />
                         </StackPanel>
 
+                        <!-- Skipped roots search filter -->
+                        <TextBox
+                            x:Name="SkippedRootsSearchBox"
+                            PlaceholderText="Filter skipped roots..."
+                            FontSize="13"
+                            CornerRadius="8"
+                            MaxWidth="320"
+                            HorizontalAlignment="Left"
+                            TextChanged="SkippedRootsSearchBox_TextChanged" />
+
                         <!-- Skipped roots table header -->
                         <Grid ColumnSpacing="12" Padding="0,8,0,4">
                             <Grid.ColumnDefinitions>
@@ -204,17 +350,61 @@
                                 <ColumnDefinition Width="120" />
                                 <ColumnDefinition Width="120" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="SKIPPED ROOTS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="1" Text="LIBRARY" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="REASON" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="SAMPLE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="4" Text="FIRST SEEN" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                            <TextBlock Grid.Column="5" Text="LAST SEEN" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                            <TextBlock Grid.Column="0" Text="Skipped Roots" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="Library" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="2" Text="Reason" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="3" Text="Sample" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="4" Text="First Seen" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="5" Text="Last Seen" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                         </Grid>
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
 
                         <StackPanel x:Name="SkippedRootsPanel" Spacing="0" />
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== Stale Media IDs Section ===== -->
+                <Border
+                    x:Name="StaleIdsSection"
+                    Background="{StaticResource SurfaceBrush}"
+                    CornerRadius="16"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    Padding="0"
+                    Visibility="Collapsed">
+                    <StackPanel>
+                        <!-- Header -->
+                        <Grid Padding="20,20,20,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Width="32" Height="32" CornerRadius="8"
+                                    Background="#19EF4444" Margin="0,0,12,0"
+                                    VerticalAlignment="Top">
+                                <FontIcon Glyph="&#xE71B;" FontSize="14" Foreground="#F87171"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock Text="Stale External IDs" FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Provider IDs no longer resolve — metadata refresh will fail until re-matched."
+                                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Border x:Name="StaleCountBadge" Grid.Column="2" VerticalAlignment="Top" />
+                        </Grid>
+                        <!-- Search + table -->
+                        <StackPanel Padding="12,0,12,12" Spacing="8">
+                            <TextBox x:Name="StaleSearchBox" PlaceholderText="Filter by title, provider, or ID..."
+                                     FontSize="12" Height="32" CornerRadius="8"
+                                     TextChanged="StaleSearchBox_TextChanged" />
+                            <StackPanel x:Name="StaleTablePanel" Spacing="0" />
+                            <StackPanel x:Name="StalePaginationPanel" Orientation="Horizontal" Spacing="4"
+                                        HorizontalAlignment="Right" Visibility="Collapsed" />
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 

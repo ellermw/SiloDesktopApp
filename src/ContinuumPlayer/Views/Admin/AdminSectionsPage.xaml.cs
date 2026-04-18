@@ -27,6 +27,7 @@ public sealed partial class AdminSectionsPage : Page
         { "continue_watching", "Continue Watching" },
         { "watchlist",         "Watchlist" },
         { "favorites",         "Favorites" },
+        { "recommended_for_you", "Recommended for You" },
         { "collection",        "Collection" },
     };
 
@@ -265,8 +266,10 @@ public sealed partial class AdminSectionsPage : Page
             string? collectionId = GetConfigString(section, "library_collection_id");
             if (!string.IsNullOrEmpty(collectionId))
             {
-                // Show collection ID shortened or just indicate "Collection" badge
-                typePanel.Children.Add(MakeOutlineBadge("Collection"));
+                // Show actual collection name (from cached labels) instead of generic "Collection".
+                var label = ViewModel.CollectionLabels.TryGetValue(collectionId, out var name)
+                    ? name : "Collection";
+                typePanel.Children.Add(MakeOutlineBadge(label));
             }
         }
 
@@ -339,6 +342,8 @@ public sealed partial class AdminSectionsPage : Page
         row.Children.Add(enabledBadge);
         row.Children.Add(actionsPanel);
 
+        row.PointerEntered += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF)); };
+        row.PointerExited += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); };
         return row;
     }
 
@@ -396,7 +401,7 @@ public sealed partial class AdminSectionsPage : Page
             MinWidth = 0
         };
 
-        var dialogContent = new StackPanel { Width = 380, Spacing = 16 };
+        var dialogContent = new StackPanel { Width = 512, Spacing = 16 };
 
         dialogContent.Children.Add(new TextBlock
         {
@@ -510,6 +515,7 @@ public sealed partial class AdminSectionsPage : Page
             Title = "Delete section",
             Content = $"Delete section \"{section.Title}\"? This action cannot be undone.",
             PrimaryButtonText = "Delete",
+                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
             DefaultButton = ContentDialogButton.Close
@@ -535,13 +541,13 @@ public sealed partial class AdminSectionsPage : Page
         {
             PlaceholderText = "Section title",
             Text = existing?.Title ?? "",
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(6),
             FontSize = 13
         };
 
         var typeCombo = new ComboBox
         {
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(6),
             FontSize = 13,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
@@ -566,7 +572,7 @@ public sealed partial class AdminSectionsPage : Page
             Minimum = 1,
             Maximum = 100,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(6),
             FontSize = 13
         };
 
@@ -584,7 +590,7 @@ public sealed partial class AdminSectionsPage : Page
             OffContent = "Disabled"
         };
 
-        var form = new StackPanel { Width = 380, Spacing = 14 };
+        var form = new StackPanel { Width = 512, Spacing = 14 };
 
         void AddField(string label, FrameworkElement control)
         {
@@ -592,9 +598,9 @@ public sealed partial class AdminSectionsPage : Page
             group.Children.Add(new TextBlock
             {
                 Text = label,
-                FontSize = 12,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+                FontSize = 14,
+                FontWeight = FontWeights.Medium,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
             });
             group.Children.Add(control);
             form.Children.Add(group);
@@ -603,6 +609,146 @@ public sealed partial class AdminSectionsPage : Page
         AddField("Title", titleBox);
         AddField("Section Type", typeCombo);
         AddField("Item Limit", itemLimitBox);
+
+        // === Conditional fields based on section type ===
+        var filterTypes = new HashSet<string> { "genre", "custom_filter" };
+
+        // Collection picker (shown when type = "collection")
+        var collectionPicker = new ComboBox
+        {
+            CornerRadius = new CornerRadius(6), FontSize = 13,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            PlaceholderText = "Choose collection",
+        };
+        foreach (var c in ViewModel.Collections)
+        {
+            var libName = ViewModel.Libraries.FirstOrDefault(l => l.Id == c.LibraryId)?.Name;
+            var label = libName != null ? $"{c.Title} ({libName})" : c.Title;
+            collectionPicker.Items.Add(new ComboBoxItem { Content = label, Tag = c.Id });
+        }
+        var collectionField = new StackPanel { Spacing = 6, Visibility = Visibility.Collapsed };
+        collectionField.Children.Add(new TextBlock
+        {
+            Text = "Collection", FontSize = 12, FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        collectionField.Children.Add(collectionPicker);
+        form.Children.Add(collectionField);
+
+        // Pre-select existing collection
+        if (existing != null)
+        {
+            var existingCollId = AdminSectionsViewModel.GetConfigCollectionId(existing);
+            if (existingCollId != null)
+            {
+                for (int i = 0; i < collectionPicker.Items.Count; i++)
+                    if (collectionPicker.Items[i] is ComboBoxItem ci && (string)ci.Tag == existingCollId)
+                    { collectionPicker.SelectedIndex = i; break; }
+            }
+        }
+
+        // Media scope (shown when type is NOT collection and NOT filter)
+        var mediaScopeCombo = new ComboBox
+        {
+            CornerRadius = new CornerRadius(6), FontSize = 13, Width = 160,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "All Types", Tag = "" });
+        mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "Movies", Tag = "movie" });
+        mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "Series", Tag = "series" });
+        mediaScopeCombo.SelectedIndex = 0;
+        var mediaScopeField = new StackPanel { Spacing = 6, Visibility = Visibility.Collapsed };
+        mediaScopeField.Children.Add(new TextBlock
+        {
+            Text = "Media Type Filter", FontSize = 12, FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        mediaScopeField.Children.Add(mediaScopeCombo);
+        form.Children.Add(mediaScopeField);
+
+        // Pre-select existing media scope
+        if (existing != null)
+        {
+            var existingScope = AdminSectionsViewModel.GetConfigMediaScope(existing) ?? "";
+            for (int i = 0; i < mediaScopeCombo.Items.Count; i++)
+                if (mediaScopeCombo.Items[i] is ComboBoxItem ci && (string)ci.Tag == existingScope)
+                { mediaScopeCombo.SelectedIndex = i; break; }
+        }
+
+        // Library multi-select (checkboxes, shown alongside media scope)
+        var libraryChecks = new StackPanel { Spacing = 4 };
+        var libraryCheckboxes = new List<(int LibId, CheckBox Check)>();
+        var existingLibIds = existing != null ? AdminSectionsViewModel.GetConfigLibraryIds(existing) : [];
+        foreach (var lib in ViewModel.Libraries)
+        {
+            var cb = new CheckBox
+            {
+                Content = lib.Name, FontSize = 12,
+                IsChecked = existingLibIds.Contains(lib.Id),
+            };
+            libraryChecks.Children.Add(cb);
+            libraryCheckboxes.Add((lib.Id, cb));
+        }
+        var libraryField = new StackPanel { Spacing = 6, Visibility = Visibility.Collapsed };
+        libraryField.Children.Add(new TextBlock
+        {
+            Text = "Libraries", FontSize = 12, FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        libraryField.Children.Add(libraryChecks);
+        form.Children.Add(libraryField);
+
+        // Genre input (shown when type = "genre")
+        var genreInput = new TextBox
+        {
+            PlaceholderText = "Genre name (e.g. Action, Comedy)",
+            CornerRadius = new CornerRadius(6), FontSize = 13,
+        };
+        // Pre-fill from existing config
+        if (existing?.Config != null)
+        {
+            try
+            {
+                if (existing.Config.TryGetValue("groups", out var groupsObj) &&
+                    groupsObj is System.Text.Json.JsonElement groupsEl &&
+                    groupsEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    var first = groupsEl.EnumerateArray().FirstOrDefault();
+                    if (first.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                        first.TryGetProperty("rules", out var rulesEl) &&
+                        rulesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    {
+                        var rule = rulesEl.EnumerateArray().FirstOrDefault();
+                        if (rule.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                            rule.TryGetProperty("value", out var valEl))
+                            genreInput.Text = valEl.GetString() ?? "";
+                    }
+                }
+            }
+            catch { }
+        }
+        var genreField = new StackPanel { Spacing = 6, Visibility = Visibility.Collapsed };
+        genreField.Children.Add(new TextBlock
+        {
+            Text = "Genre", FontSize = 12, FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        genreField.Children.Add(genreInput);
+        form.Children.Add(genreField);
+
+        // Visibility toggling based on type selection
+        void UpdateConditionalFields()
+        {
+            var selType = (typeCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
+            collectionField.Visibility = selType == "collection" ? Visibility.Visible : Visibility.Collapsed;
+            bool isFilter = filterTypes.Contains(selType);
+            bool showScopeAndLibrary = selType != "collection" && !isFilter;
+            mediaScopeField.Visibility = showScopeAndLibrary ? Visibility.Visible : Visibility.Collapsed;
+            libraryField.Visibility = showScopeAndLibrary ? Visibility.Visible : Visibility.Collapsed;
+            genreField.Visibility = selType == "genre" ? Visibility.Visible : Visibility.Collapsed;
+        }
+        typeCombo.SelectionChanged += (_, _) => UpdateConditionalFields();
+        UpdateConditionalFields();
 
         // Featured — label + switch in a row matching web UI "flex items-center justify-between"
         var featuredRow = new Grid();
@@ -665,7 +811,59 @@ public sealed partial class AdminSectionsPage : Page
 
             int itemLimit = double.IsNaN(itemLimitBox.Value) ? 20 : (int)itemLimitBox.Value;
 
-            return ViewModel.BuildCreateBody(title, sectionType, itemLimit, featuredSwitchSmall.IsOn, enabledSwitchSmall.IsOn);
+            // Build config based on section type
+            Dictionary<string, object?>? config = null;
+
+            if (sectionType == "collection")
+            {
+                var selectedCollId = (collectionPicker.SelectedItem as ComboBoxItem)?.Tag as string;
+                if (!string.IsNullOrEmpty(selectedCollId))
+                    config = new() { ["library_collection_id"] = selectedCollId };
+            }
+            else if (sectionType == "genre")
+            {
+                var genreVal = genreInput.Text?.Trim();
+                if (!string.IsNullOrEmpty(genreVal))
+                {
+                    config = new()
+                    {
+                        ["match"] = "all",
+                        ["groups"] = new List<object>
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["rules"] = new List<object>
+                                {
+                                    new Dictionary<string, object>
+                                    {
+                                        ["field"] = "genre",
+                                        ["operator"] = "contains",
+                                        ["value"] = genreVal,
+                                    }
+                                }
+                            }
+                        }
+                    };
+                }
+            }
+            else if (!filterTypes.Contains(sectionType))
+            {
+                // Non-collection, non-filter: include media scope + library IDs
+                var scope = (mediaScopeCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
+                var selectedLibIds = libraryCheckboxes
+                    .Where(x => x.Check.IsChecked == true)
+                    .Select(x => (object)x.LibId)
+                    .ToList();
+
+                if (!string.IsNullOrEmpty(scope) || selectedLibIds.Count > 0)
+                {
+                    config = new();
+                    if (!string.IsNullOrEmpty(scope)) config["media_scope"] = scope;
+                    if (selectedLibIds.Count > 0) config["library_ids"] = selectedLibIds;
+                }
+            }
+
+            return ViewModel.BuildCreateBody(title, sectionType, itemLimit, featuredSwitchSmall.IsOn, enabledSwitchSmall.IsOn, config);
         }
 
         return (form, GetBody);

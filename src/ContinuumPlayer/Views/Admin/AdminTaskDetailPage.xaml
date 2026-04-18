@@ -112,6 +112,20 @@
                         VerticalAlignment="Bottom" />
                 </Grid>
 
+                <!-- ===== Scan notice (scan_libraries only) ===== -->
+                <Border
+                    x:Name="ScanNoticePanel"
+                    Background="{StaticResource SurfaceBrush}"
+                    CornerRadius="12"
+                    Padding="16"
+                    Visibility="Collapsed">
+                    <TextBlock
+                        x:Name="ScanNoticeText"
+                        FontSize="13"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        TextWrapping="Wrap" />
+                </Border>
+
                 <!-- ===== Progress section (running only) ===== -->
                 <!-- Matches web: surface-panel-subtle rounded-[1.4rem] p-4 space-y-1 -->
                 <Border
@@ -132,6 +146,16 @@
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
                 </Border>
+
+                <!-- ===== Queue Health metrics (refresh_metadata only) ===== -->
+                <StackPanel x:Name="MetricsSection" Spacing="12" Visibility="Collapsed">
+                    <TextBlock
+                        Text="Queue health"
+                        FontSize="18"
+                        FontWeight="Medium"
+                        Foreground="{StaticResource PrimaryTextBrush}" />
+                    <StackPanel x:Name="MetricsCardsPanel" Spacing="12" />
+                </StackPanel>
 
                 <!-- ===== Schedule section ===== -->
                 <!-- Matches web: space-y-3 with header row (h2 + Edit Schedule btn) + card -->

@@ -19,6 +19,12 @@ public partial class AdminSectionsViewModel : ObservableObject
     public ObservableCollection<AdminSection> Sections { get; } = [];
     public ObservableCollection<Library> Libraries { get; } = [];
 
+    /// <summary>Admin collections loaded once for the collection picker + badge labels.</summary>
+    public List<LibraryCollection> Collections { get; private set; } = [];
+
+    /// <summary>collection_id -> title. Used to display actual collection names in row badges.</summary>
+    public Dictionary<string, string> CollectionLabels { get; private set; } = new();
+
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private string? _statusMessage;
@@ -38,6 +44,18 @@ public partial class AdminSectionsViewModel : ObservableObject
                 var libs = await _adminApi.GetAdminLibrariesAsync();
                 Libraries.Clear();
                 foreach (var l in libs) Libraries.Add(l);
+            }
+
+            // Load collections for the section form collection picker + badge labels
+            if (Collections.Count == 0)
+            {
+                try
+                {
+                    var resp = await _adminApi.GetCollectionsAsync();
+                    Collections = resp?.Collections ?? [];
+                    CollectionLabels = Collections.ToDictionary(c => c.Id.ToString(), c => c.Title);
+                }
+                catch { Collections = []; CollectionLabels = new(); }
             }
 
             // B10: pass scope=library with library_id rather than the bare id as the scope.
@@ -156,7 +174,8 @@ public partial class AdminSectionsViewModel : ObservableObject
         catch (Exception ex) { ErrorMessage = ex.Message; }
     }
 
-    public object BuildCreateBody(string title, string sectionType, int itemLimit, bool featured, bool enabled)
+    public object BuildCreateBody(string title, string sectionType, int itemLimit, bool featured, bool enabled,
+        Dictionary<string, object?>? config = null)
     {
         // Same trimming concern — use a dictionary so the JSON body survives
         // .NET 8 Release publish with trimming enabled.
@@ -170,6 +189,35 @@ public partial class AdminSectionsViewModel : ObservableObject
             ["scope"] = Scope,
             ["library_id"] = Scope == "library" ? SelectedLibraryId : null,
         };
+        if (config != null && config.Count > 0)
+            body["config"] = config;
         return body;
     }
+
+    // ===== Config extraction helpers (for populating edit form from existing section) =====
+
+    public static string? GetConfigString(AdminSection section, string key)
+    {
+        if (section.Config == null || !section.Config.TryGetValue(key, out var val)) return null;
+        if (val is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.String)
+            return je.GetString();
+        return val?.ToString();
+    }
+
+    public static List<int> GetConfigLibraryIds(AdminSection section)
+    {
+        if (section.Config == null || !section.Config.TryGetValue("library_ids", out var val)) return [];
+        if (val is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Array)
+            return je.EnumerateArray()
+                .Where(e => e.ValueKind == System.Text.Json.JsonValueKind.Number)
+                .Select(e => e.GetInt32())
+                .ToList();
+        return [];
+    }
+
+    public static string? GetConfigMediaScope(AdminSection section)
+        => GetConfigString(section, "media_scope");
+
+    public static string? GetConfigCollectionId(AdminSection section)
+        => GetConfigString(section, "library_collection_id");
 }

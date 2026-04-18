@@ -194,17 +194,17 @@ public sealed partial class AdminNodesPage : Page
         string healthText;
         if (!node.Enabled)
         {
-            healthColor = Color.FromArgb(255, 130, 130, 130);
+            healthColor = Color.FromArgb(255, 161, 161, 161); // gray-400
             healthText = "Disabled";
         }
         else if (node.Healthy)
         {
-            healthColor = Color.FromArgb(255, 34, 197, 94);
+            healthColor = Color.FromArgb(255, 34, 197, 94);   // green-500
             healthText = "Healthy";
         }
         else
         {
-            healthColor = Color.FromArgb(255, 220, 70, 70);
+            healthColor = Color.FromArgb(255, 239, 68, 68);   // red-500
             healthText = "Unhealthy";
         }
 
@@ -274,7 +274,7 @@ public sealed partial class AdminNodesPage : Page
         // ---- Last Check ----
         string lastCheckText = "Never";
         if (!string.IsNullOrEmpty(node.LastHealthCheck) && DateTime.TryParse(node.LastHealthCheck, out var checkDt))
-            lastCheckText = checkDt.ToLocalTime().ToString("g");
+            lastCheckText = checkDt.ToLocalTime().ToString("G");
 
         var lastCheckBlock = new TextBlock
         {
@@ -298,17 +298,36 @@ public sealed partial class AdminNodesPage : Page
 
         var checkBtn = MakeIconButton("\uE72C", "Check health");
         var editBtn = MakeIconButton("\uE70F", "Edit node");
-        var deleteBtn = MakeIconButton("\uE74D", "Delete node", Color.FromArgb(255, 220, 90, 90));
+        var deleteBtn = MakeIconButton("\uE74D", "Delete node");
 
         checkBtn.Click += async (_, _) =>
         {
             checkBtn.IsEnabled = false;
+            // Spin the icon while health check is pending
+            var icon = checkBtn.Content as FontIcon;
+            Microsoft.UI.Xaml.Media.Animation.Storyboard? spin = null;
+            if (icon != null)
+            {
+                icon.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
+                icon.RenderTransform = new Microsoft.UI.Xaml.Media.RotateTransform();
+                spin = new Microsoft.UI.Xaml.Media.Animation.Storyboard { RepeatBehavior = Microsoft.UI.Xaml.Media.Animation.RepeatBehavior.Forever };
+                var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation { From = 0, To = 360, Duration = new Duration(TimeSpan.FromSeconds(1)) };
+                Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(anim, icon.RenderTransform);
+                Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(anim, "Angle");
+                spin.Children.Add(anim);
+                spin.Begin();
+            }
             try
             {
                 await ViewModel.CheckHealthCommand.ExecuteAsync(capturedNode.Id);
                 if (ViewModel.StatusMessage != null) ShowStatus(ViewModel.StatusMessage);
             }
-            finally { checkBtn.IsEnabled = true; }
+            finally
+            {
+                spin?.Stop();
+                if (icon != null) icon.RenderTransform = null;
+                checkBtn.IsEnabled = true;
+            }
         };
 
         editBtn.Click += async (_, _) => await OpenEditDialogAsync(capturedNode);
@@ -321,6 +340,8 @@ public sealed partial class AdminNodesPage : Page
         Grid.SetColumn(actionsPanel, col);
         row.Children.Add(actionsPanel);
 
+        row.PointerEntered += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF)); };
+        row.PointerExited += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); };
         return row;
     }
 
@@ -414,6 +435,7 @@ public sealed partial class AdminNodesPage : Page
             Title = "Delete node",
             Content = $"Delete stream node \"{node.Name}\"? This action cannot be undone.",
             PrimaryButtonText = "Delete",
+                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
             DefaultButton = ContentDialogButton.Close
@@ -440,8 +462,8 @@ public sealed partial class AdminNodesPage : Page
         {
             PlaceholderText = nodeType == "proxy" ? "Proxy Node 1" : "Transcode Node 1",
             Text = existingNode?.Name ?? "",
-            CornerRadius = new CornerRadius(8),
-            FontSize = 13
+            CornerRadius = new CornerRadius(6),
+            FontSize = 14
         };
 
         string urlPlaceholder = nodeType == "proxy"
@@ -452,8 +474,8 @@ public sealed partial class AdminNodesPage : Page
         {
             PlaceholderText = urlPlaceholder,
             Text = existingNode?.Url ?? "",
-            CornerRadius = new CornerRadius(8),
-            FontSize = 13
+            CornerRadius = new CornerRadius(6),
+            FontSize = 14
         };
 
         string urlHint = nodeType == "proxy"
@@ -486,7 +508,7 @@ public sealed partial class AdminNodesPage : Page
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
         };
 
-        var form = new StackPanel { Width = 380, Spacing = 16 };
+        var form = new StackPanel { Width = 512, Spacing = 16 };
 
         void AddField(string label, FrameworkElement control, FrameworkElement? hint = null)
         {
@@ -494,9 +516,9 @@ public sealed partial class AdminNodesPage : Page
             group.Children.Add(new TextBlock
             {
                 Text = label,
-                FontSize = 12,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+                FontSize = 14,
+                FontWeight = FontWeights.Medium,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
             });
             group.Children.Add(control);
             if (hint != null) group.Children.Add(hint);
@@ -520,8 +542,8 @@ public sealed partial class AdminNodesPage : Page
 
         var btn = new Button
         {
-            Width = 32,
-            Height = 32,
+            Width = 28,
+            Height = 28,
             Padding = new Thickness(0),
             Background = new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
@@ -529,7 +551,7 @@ public sealed partial class AdminNodesPage : Page
             Content = new FontIcon
             {
                 Glyph = glyph,
-                FontSize = 14,
+                FontSize = 12,
                 Foreground = fg
             }
         };

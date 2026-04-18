@@ -93,7 +93,36 @@ public sealed partial class AdminInviteCodesPage : Page
             FontFamily = new FontFamily("Consolas, Courier New"),
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         };
-        Grid.SetColumn(codeBorder, 0); row.Children.Add(codeBorder);
+        // Code cell: badge + copy button in a horizontal stack
+        var codeCell = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        codeCell.Children.Add(codeBorder);
+        var codeText = code.Code;
+        var copyBtn = new Button
+        {
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(4),
+            CornerRadius = new CornerRadius(4),
+            VerticalAlignment = VerticalAlignment.Center,
+            Content = new FontIcon { Glyph = "\uE8C8", FontSize = 12, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] },
+        };
+        ToolTipService.SetToolTip(copyBtn, "Copy code");
+        copyBtn.Click += async (_, _) =>
+        {
+            try
+            {
+                var dp = new Windows.ApplicationModel.DataTransfer.DataPackage();
+                dp.SetText(codeText);
+                Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(dp);
+                // Brief visual feedback
+                copyBtn.Content = new FontIcon { Glyph = "\uE73E", FontSize = 12, Foreground = new SolidColorBrush(Color.FromArgb(255, 34, 197, 94)) };
+                await Task.Delay(1500);
+                copyBtn.Content = new FontIcon { Glyph = "\uE8C8", FontSize = 12, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] };
+            }
+            catch { }
+        };
+        codeCell.Children.Add(copyBtn);
+        Grid.SetColumn(codeCell, 0); row.Children.Add(codeCell);
 
         var label = new TextBlock
         {
@@ -119,10 +148,21 @@ public sealed partial class AdminInviteCodesPage : Page
         };
         Grid.SetColumn(usage, 2); row.Children.Add(usage);
 
-        var statusBadge = code.Enabled
-            ? MakeBadge("Active", Color.FromArgb(40, 34, 197, 94), Color.FromArgb(255, 34, 197, 94))
-            : MakeBadge("Disabled", Color.FromArgb(40, 120, 120, 120), Color.FromArgb(255, 160, 160, 160));
-        Grid.SetColumn(statusBadge, 3); row.Children.Add(statusBadge);
+        // Webui has an inline Switch + dynamic "Enabled"/"Disabled" label in the status cell.
+        var statusSwitch = new ToggleSwitch
+        {
+            IsOn = code.Enabled,
+            OnContent = "Active",
+            OffContent = "Disabled",
+            MinWidth = 0,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var capturedForToggle = code;
+        statusSwitch.Toggled += async (_, _) =>
+        {
+            await ViewModel.ToggleInviteCodeCommand.ExecuteAsync(capturedForToggle);
+        };
+        Grid.SetColumn(statusSwitch, 3); row.Children.Add(statusSwitch);
 
         string createdText = "\u2014";
         if (!string.IsNullOrEmpty(code.CreatedAt) && DateTime.TryParse(code.CreatedAt, out var dt))
@@ -148,14 +188,15 @@ public sealed partial class AdminInviteCodesPage : Page
         actions.Children.Add(toggleBtn);
 
         // Delete
-        var deleteBtn = MakeIconButton("\uE74D", "Delete", 28, Color.FromArgb(255, 220, 90, 90));
+        var deleteBtn = MakeIconButton("\uE74D", "Delete", 28);
         deleteBtn.Click += async (_, _) =>
         {
             var dialog = new ContentDialog
             {
                 Title = "Delete Invite Code",
-                Content = $"Delete invite code \"{capturedCode.Code}\"?",
+                Content = $"Delete invite code \"{capturedCode.Code}\"? This action cannot be undone.",
                 PrimaryButtonText = "Delete", CloseButtonText = "Cancel",
+                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
                 XamlRoot = this.XamlRoot, DefaultButton = ContentDialogButton.Close
             };
             if (await dialog.ShowAsync() == ContentDialogResult.Primary)
@@ -167,16 +208,19 @@ public sealed partial class AdminInviteCodesPage : Page
         actions.Children.Add(deleteBtn);
         Grid.SetColumn(actions, 5); row.Children.Add(actions);
 
+        row.PointerEntered += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF)); };
+        row.PointerExited += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); };
         return row;
     }
 
     private async void CreateButton_Click(object sender, RoutedEventArgs e)
     {
-        var codeBox = new TextBox { PlaceholderText = "Leave blank to auto-generate", CornerRadius = new CornerRadius(8), FontSize = 13 };
-        var labelBox = new TextBox { PlaceholderText = "e.g. Friends & Family", CornerRadius = new CornerRadius(8), FontSize = 13 };
-        var maxUsesBox = new NumberBox { Value = 1, Minimum = 0, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
+        var codeBox = new TextBox { PlaceholderText = "Leave blank to auto-generate", CornerRadius = new CornerRadius(6), FontSize = 13, CharacterCasing = CharacterCasing.Upper };
+        var labelBox = new TextBox { PlaceholderText = "e.g. Friends & Family", CornerRadius = new CornerRadius(6), FontSize = 13 };
+        // Webui enforces min=1 (no unlimited via max_uses=0). Match that.
+        var maxUsesBox = new NumberBox { Value = 1, Minimum = 1, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
 
-        var form = new StackPanel { Width = 380, Spacing = 16 };
+        var form = new StackPanel { Width = 512, Spacing = 16 };
         AddField(form, "Code (optional)", codeBox);
         AddField(form, "Label", labelBox);
         AddField(form, "Max Uses (0 = unlimited)", maxUsesBox);
@@ -205,8 +249,8 @@ public sealed partial class AdminInviteCodesPage : Page
         var group = new StackPanel { Spacing = 6 };
         group.Children.Add(new TextBlock
         {
-            Text = label, FontSize = 12, FontWeight = FontWeights.SemiBold,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+            Text = label, FontSize = 14, FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
         group.Children.Add(control);
         form.Children.Add(group);

@@ -21,49 +21,90 @@ public class ImageService : IDisposable
         Directory.CreateDirectory(diskCacheDir);
     }
 
-    public async Task<byte[]?> GetImageAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default)
+    public Task<byte[]?> GetImageAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default)
     {
         var cacheKey = $"{contentId}_{imageType}";
 
-        // 1. Memory cache hit
+        // 1. Memory cache hit — synchronous fast path. No I/O, safe to run
+        //    from any thread including the UI thread.
         if (_memoryCache.TryGetValue(cacheKey, out var cached))
-            return cached;
+            return Task.FromResult<byte[]?>(cached);
 
-        // 2. Disk cache hit
-        var diskPath = GetDiskPath(cacheKey);
-        if (File.Exists(diskPath))
+        // 2/3. Disk or network path — ALL sync I/O (File.Exists, disk reads,
+        //      disk writes) is done inside a Task.Run so the UI thread never
+        //      blocks on the filesystem. Under contention (many downloads
+        //      completing concurrently), File.Exists alone can take 50-100ms
+        //      per call; times N visible cards that's a multi-second freeze.
+        return Task.Run(async () =>
         {
-            var diskBytes = await File.ReadAllBytesAsync(diskPath, ct);
-            AddToMemoryCache(cacheKey, diskBytes);
-            return diskBytes;
-        }
+            var diskPath = GetDiskPath(cacheKey);
+            if (File.Exists(diskPath))
+            {
+                var diskBytes = await File.ReadAllBytesAsync(diskPath, ct).ConfigureAwait(false);
+                AddToMemoryCache(cacheKey, diskBytes);
+                return (byte[]?)diskBytes;
+            }
 
-        // 3. Download with deduplication
-        var task = _inflightDownloads.GetOrAdd(cacheKey, _ => DownloadAndCacheAsync(cacheKey, diskPath, url, http, ct));
-        try
+            var task = _inflightDownloads.GetOrAdd(cacheKey, _ => DownloadAndCacheAsync(cacheKey, diskPath, url, http, ct));
+            try
+            {
+                return await task.ConfigureAwait(false);
+            }
+            finally
+            {
+                _inflightDownloads.TryRemove(cacheKey, out _);
+            }
+        }, ct);
+    }
+
+    /// <summary>
+    /// Ensures the image for the given cache key exists on disk (downloading
+    /// if necessary) and returns the local path. Lets callers point
+    /// <c>BitmapImage.UriSource</c> at a file:// URI, which is significantly
+    /// faster than <c>SetSourceAsync</c> on a <c>MemoryStream</c> because
+    /// WinUI's native decoder does the work off the UI thread without the
+    /// COM interop overhead of <c>AsRandomAccessStream</c>.
+    /// Returns null when download fails.
+    /// </summary>
+    public Task<string?> GetImageDiskPathAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default)
+    {
+        var cacheKey = $"{contentId}_{imageType}";
+
+        // All sync I/O (File.Exists) goes on the thread pool so the UI thread
+        // never blocks on disk ops. Fast-path: if download is already inflight,
+        // reuse its Task.
+        return Task.Run(async () =>
         {
-            return await task;
-        }
-        finally
-        {
-            _inflightDownloads.TryRemove(cacheKey, out _);
-        }
+            var diskPath = GetDiskPath(cacheKey);
+            if (File.Exists(diskPath)) return (string?)diskPath;
+
+            var task = _inflightDownloads.GetOrAdd(cacheKey, _ => DownloadAndCacheAsync(cacheKey, diskPath, url, http, ct));
+            try
+            {
+                var bytes = await task.ConfigureAwait(false);
+                return bytes != null ? diskPath : null;
+            }
+            finally
+            {
+                _inflightDownloads.TryRemove(cacheKey, out _);
+            }
+        }, ct);
     }
 
     private async Task<byte[]?> DownloadAndCacheAsync(string cacheKey, string diskPath, string url, HttpClient http, CancellationToken ct)
     {
-        await _downloadLock.WaitAsync(ct);
+        await _downloadLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             // Double-check after acquiring lock
             if (_memoryCache.TryGetValue(cacheKey, out var cached))
                 return cached;
 
-            var response = await http.GetAsync(url, ct);
+            var response = await http.GetAsync(url, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode) return null;
 
-            var bytes = await response.Content.ReadAsByteArrayAsync(ct);
-            await File.WriteAllBytesAsync(diskPath, bytes, ct);
+            var bytes = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+            await File.WriteAllBytesAsync(diskPath, bytes, ct).ConfigureAwait(false);
             AddToMemoryCache(cacheKey, bytes);
             return bytes;
         }

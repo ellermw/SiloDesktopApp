@@ -19,6 +19,26 @@ public class AuthApi(ContinuumApiClient client)
     public Task<Profile> CreateProfileAsync(string name, CancellationToken ct = default)
         => client.PostAsync<Profile>("/api/v1/profiles", new CreateProfileRequest { Name = name }, ct);
 
+    public Task DeleteProfileAsync(string profileId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}", ct);
+
+    /// <summary>
+    /// Updates a profile's name and optional PIN. Pass an empty string for
+    /// <paramref name="pin"/> to clear the existing PIN (webui parity with
+    /// the "Remove PIN" toggle in the profile editor). Pass null to leave it
+    /// unchanged.
+    /// </summary>
+    public Task<Profile> UpdateProfileAsync(string profileId, string name, string? pin, CancellationToken ct = default)
+    {
+        var body = new Dictionary<string, object?>
+        {
+            ["name"] = name,
+        };
+        // Send pin explicitly so server can tell "clear" ("") from "unchanged" (missing).
+        if (pin != null) body["pin"] = pin;
+        return client.PutAsync<Profile>($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}", body, ct);
+    }
+
     // ===== Signup =====
 
     public Task<LoginResponse> SignupAsync(SignupRequest request, CancellationToken ct = default)

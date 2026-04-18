@@ -238,6 +238,15 @@ public sealed class MpvVideoWindow : IDisposable
     private bool _isMiniBar;
     private RECT _savedRect;
 
+    // Click-to-pause detection: a "clean" click is a short press with minimal
+    // pointer movement. On WM_LBUTTONUP we hand the hit-test to Lua
+    // (osc-video-click), which toggles pause iff the point is empty video.
+    private long _lbuttonDownTicks;
+    private int _lbuttonDownX;
+    private int _lbuttonDownY;
+    private const int CleanClickMaxMs = 300;
+    private const int CleanClickMaxDeltaPx = 5;
+
     public void Hide()
     {
         if (_hwnd == IntPtr.Zero) return;
@@ -304,6 +313,9 @@ public sealed class MpvVideoWindow : IDisposable
 
             int x = loWord(lParam), y = hiWord(lParam);
             SetCapture(hWnd); // Capture mouse so we get WM_LBUTTONUP even outside window
+            _lbuttonDownTicks = Environment.TickCount64;
+            _lbuttonDownX = x;
+            _lbuttonDownY = y;
             _mpv?.SendMousePos(x, y);
             _mpv?.SendScriptMessage("osc-mouse-move", x.ToString(), y.ToString());
             _mpv?.SendScriptMessage("osc-mouse-down", x.ToString(), y.ToString());
@@ -316,6 +328,19 @@ public sealed class MpvVideoWindow : IDisposable
             _mpv?.SendMousePos(x, y);
             _mpv?.SendScriptMessage("osc-mouse-up", x.ToString(), y.ToString());
             _mpv?.SendKeyup("MBTN_LEFT");
+
+            // Clean click? Delegate hit-check to Lua which toggles pause if
+            // the point isn't on OSC chrome or an open menu overlay.
+            long elapsed = Environment.TickCount64 - _lbuttonDownTicks;
+            int dx = x - _lbuttonDownX, dy = y - _lbuttonDownY;
+            if (_lbuttonDownTicks > 0
+                && elapsed <= CleanClickMaxMs
+                && Math.Abs(dx) <= CleanClickMaxDeltaPx
+                && Math.Abs(dy) <= CleanClickMaxDeltaPx)
+            {
+                _mpv?.SendScriptMessage("osc-video-click", x.ToString(), y.ToString());
+            }
+            _lbuttonDownTicks = 0;
         }
         else if (msg == WM_LBUTTONDBLCLK)
         {

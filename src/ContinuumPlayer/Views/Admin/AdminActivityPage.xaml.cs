@@ -2,10 +2,15 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using Windows.UI;
 using ContinuumPlayer.Core.Models.Admin;
+using ContinuumPlayer.Core.Services;
+using ContinuumPlayer.Helpers;
+using ContinuumPlayer.Services;
 using ContinuumPlayer.ViewModels.Admin;
 using System.Collections.Specialized;
+using System.Net.WebSockets;
 
 namespace ContinuumPlayer.Views.Admin;
 
@@ -14,6 +19,11 @@ public sealed partial class AdminActivityPage : Page
     public AdminActivityViewModel ViewModel { get; }
     private bool _rebuildStreamPending;
     private bool _rebuildIpPending;
+
+    // Event channel subscription for realtime refresh
+    private IDisposable? _eventSubscription;
+    private EventChannelClient? _eventChannel;
+    private DateTime _lastEventRefresh = DateTime.MinValue;
 
     // Web UI colors
     private static readonly Color Green400 = Color.FromArgb(255, 74, 222, 128);
@@ -43,6 +53,45 @@ public sealed partial class AdminActivityPage : Page
         {
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
+
+        // Subscribe to realtime session events for live refresh
+        try
+        {
+            _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
+            _eventChannel.EventReceived += OnEventReceived;
+            _eventChannel.StateChanged += OnConnectionStateChanged;
+            _eventSubscription = _eventChannel.Subscribe("sessions");
+            // Set initial connection state
+            UpdateConnectionState(_eventChannel.State);
+        }
+        catch { }
+
+        // Set initial sort indicator (default: started desc)
+        UpdateSortIndicators();
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        if (_eventChannel != null)
+        {
+            _eventChannel.EventReceived -= OnEventReceived;
+            _eventChannel.StateChanged -= OnConnectionStateChanged;
+        }
+        _eventSubscription?.Dispose();
+        _eventSubscription = null;
+    }
+
+    private void OnEventReceived(string channel, string eventName, System.Text.Json.JsonElement data)
+    {
+        if (channel != "sessions") return;
+        if ((DateTime.UtcNow - _lastEventRefresh).TotalMilliseconds < 1000) return;
+        _lastEventRefresh = DateTime.UtcNow;
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            try { await ViewModel.RefreshSilentAsync(); RebuildAll(); }
+            catch { }
+        });
     }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -83,6 +132,7 @@ public sealed partial class AdminActivityPage : Page
         UpdateSummaryStrip();
         RebuildStreamTable();
         UpdateFilterBar();
+        UpdateSortIndicators();
     }
 
     // ===== Header =====
@@ -103,6 +153,63 @@ public sealed partial class AdminActivityPage : Page
             var nodes = ViewModel.GetNodeCounts();
             int nodeCount = nodes.Count;
             SubtitleText.Text = $"{total} active stream{(total != 1 ? "s" : "")} across {nodeCount} node{(nodeCount != 1 ? "s" : "")}";
+        }
+    }
+
+    // ===== Connection State =====
+
+    private void OnConnectionStateChanged(WebSocketState state)
+    {
+        DispatcherQueue.TryEnqueue(() => UpdateConnectionState(state));
+    }
+
+    private void UpdateConnectionState(WebSocketState state)
+    {
+        string text = state switch
+        {
+            WebSocketState.Open => "Live",
+            WebSocketState.Connecting => "Connecting",
+            _ => "Disconnected"
+        };
+        ConnectionStateText.Text = text;
+    }
+
+    // ===== Sort Headers =====
+
+    private void SortHeader_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button btn && btn.Tag is string field)
+        {
+            ViewModel.ToggleSort(field);
+            UpdateSortIndicators();
+        }
+    }
+
+    private void UpdateSortIndicators()
+    {
+        var indicators = new (string Field, TextBlock Indicator, Button Btn)[]
+        {
+            ("username", SortUserIndicator, SortUser),
+            ("media", SortStreamIndicator, SortStream),
+            ("method", SortVideoIndicator, SortVideo),
+            ("node", SortNodeIndicator, SortNode),
+            ("started", SortTimeIndicator, SortTime)
+        };
+
+        var accentBrush = (SolidColorBrush)Application.Current.Resources["AccentBrush"];
+        var tertiaryBrush = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"];
+        var primaryBrush = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"];
+
+        foreach (var (field, indicator, btn) in indicators)
+        {
+            bool isActive = ViewModel.SortField == field;
+            indicator.Text = isActive ? (ViewModel.SortAscending ? "\u25B2" : "\u25BC") : "";
+
+            // Highlight active sort header text
+            if (btn.Content is StackPanel sp && sp.Children.Count > 0 && sp.Children[0] is TextBlock headerText)
+            {
+                headerText.Foreground = isActive ? primaryBrush : tertiaryBrush;
+            }
         }
     }
 
@@ -145,10 +252,23 @@ public sealed partial class AdminActivityPage : Page
             var seg = new Border
             {
                 Background = new SolidColorBrush(GetMethodBarColor(method)),
-                // h-1.5 rounded-full: each segment fills the 6px bar, rounded is handled by parent
+                Opacity = 0,
             };
             Grid.SetColumn(seg, colIdx++);
             MethodBar.Children.Add(seg);
+
+            // Smooth fade-in transition (webui uses 500ms width animation)
+            var fadeIn = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+            {
+                From = 0, To = 1,
+                Duration = new Duration(TimeSpan.FromMilliseconds(400)),
+                EasingFunction = new Microsoft.UI.Xaml.Media.Animation.CubicEase { EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut },
+            };
+            var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fadeIn, seg);
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fadeIn, "Opacity");
+            sb.Children.Add(fadeIn);
+            sb.Begin();
         }
     }
 
@@ -274,6 +394,22 @@ public sealed partial class AdminActivityPage : Page
             btn.Content = sp;
             btn.Click += NodeButton_Click;
 
+            // Hover: border-primary/20 equivalent
+            if (!isActive)
+            {
+                var defaultBorder = btn.BorderBrush;
+                btn.PointerEntered += (s, _) =>
+                {
+                    if (s is Button b)
+                        b.BorderBrush = new SolidColorBrush(Color.FromArgb(51, 120, 174, 252));
+                };
+                btn.PointerExited += (s, _) =>
+                {
+                    if (s is Button b)
+                        b.BorderBrush = defaultBorder;
+                };
+            }
+
             NodeButtonsPanel.Children.Add(btn);
         }
     }
@@ -340,6 +476,18 @@ public sealed partial class AdminActivityPage : Page
         if (sessions.Count == 0)
         {
             EmptyState.Visibility = Visibility.Visible;
+
+            // Contextual empty state: Filter icon when filters active, Play icon otherwise
+            if (ViewModel.HasActiveFilters)
+            {
+                EmptyStateIcon.Glyph = "\uE71C"; // Filter icon
+                EmptyStateText.Text = "No streams match your filters";
+            }
+            else
+            {
+                EmptyStateIcon.Glyph = "\uE768"; // Play icon
+                EmptyStateText.Text = "No active streams";
+            }
             return;
         }
 
@@ -401,14 +549,18 @@ public sealed partial class AdminActivityPage : Page
         };
 
         var userStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        userStack.Children.Add(new TextBlock
+        // Username as clickable link -> AdminPlaybackHistoryPage with user_id
+        var capturedUserId = session.UserId;
+        var userLink = new HyperlinkButton
         {
-            Text = username,
+            Content = username,
+            Padding = new Thickness(0),
             FontSize = 13,
             FontWeight = FontWeights.Medium,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis
-        });
+        };
+        userLink.Click += (_, _) => Frame.Navigate(typeof(AdminPlaybackHistoryPage), capturedUserId);
+        userStack.Children.Add(userLink);
         string userMeta = session.ClientIp?.Trim() ?? "\u2014";
         userStack.Children.Add(new TextBlock
         {
@@ -434,14 +586,37 @@ public sealed partial class AdminActivityPage : Page
         string streamMeta = string.Join(" \u00b7 ", new[] { sourceContainer, streamBitrate }.Where(s => !string.IsNullOrEmpty(s)));
 
         var streamStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        streamStack.Children.Add(new TextBlock
+        // Stream title as clickable link -> ItemDetailPage when content_id is available
+        if (!string.IsNullOrEmpty(session.ContentId))
         {
-            Text = title,
-            FontSize = 13,
-            FontWeight = FontWeights.Medium,
-            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis
-        });
+            var capturedContentId = session.ContentId;
+            var titleLink = new HyperlinkButton
+            {
+                Content = title,
+                Padding = new Thickness(0),
+                FontSize = 13,
+                FontWeight = FontWeights.Medium,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            };
+            titleLink.Click += (_, _) =>
+            {
+                // Navigate to ItemDetailPage via main NavigationService (main frame, not admin sub-frame)
+                var nav = App.Services.GetRequiredService<NavigationService>();
+                nav.Navigate<ItemDetailPage>(capturedContentId);
+            };
+            streamStack.Children.Add(titleLink);
+        }
+        else
+        {
+            streamStack.Children.Add(new TextBlock
+            {
+                Text = title,
+                FontSize = 13,
+                FontWeight = FontWeights.Medium,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+        }
         if (!string.IsNullOrEmpty(subtitle))
         {
             streamStack.Children.Add(new TextBlock
@@ -513,7 +688,7 @@ public sealed partial class AdminActivityPage : Page
         {
             Text = nodeName,
             FontSize = 12,
-            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis
         });
         if (!string.IsNullOrEmpty(session.ProfileName) || !string.IsNullOrEmpty(session.ProfileId))
@@ -540,57 +715,62 @@ public sealed partial class AdminActivityPage : Page
         };
         Grid.SetColumn(timeBlock, 5);
 
-        // Col 6: Session controls — pause/resume/stop/message
-        var controlPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        // Col 6: Action overflow menu + deep links
         var capturedSession = session;
         var adminApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AdminApi>();
+        var toastService = App.Services.GetRequiredService<ToastService>();
+        bool isPaused = session.IsPaused;
+
+        // Build MenuFlyout with Pause/Resume, Stop, Message, Terminate
+        var flyout = new MenuFlyout();
 
         // Pause/Resume toggle
-        bool isPaused = session.IsPaused;
-        var pauseBtn = MakeSmallIconButton(isPaused ? "\uE768" : "\uE769", isPaused ? "Resume" : "Pause");
-        pauseBtn.Click += async (_, _) =>
+        var pauseItem = new MenuFlyoutItem
         {
-            pauseBtn.IsEnabled = false;
+            Text = isPaused ? "Resume" : "Pause",
+            Icon = new FontIcon { Glyph = isPaused ? "\uE768" : "\uE769" }
+        };
+        pauseItem.Click += async (_, _) =>
+        {
             try
             {
                 if (isPaused)
                     await adminApi.ResumeSessionAsync(capturedSession.SessionId);
                 else
                     await adminApi.PauseSessionAsync(capturedSession.SessionId);
+                toastService.Success(isPaused ? "Session resumed" : "Session paused");
                 await ViewModel.LoadCommand.ExecuteAsync(null);
             }
-            catch { }
-            pauseBtn.IsEnabled = true;
+            catch (Exception ex) { toastService.Error($"Failed: {ex.Message}"); }
         };
-        controlPanel.Children.Add(pauseBtn);
+        flyout.Items.Add(pauseItem);
 
         // Stop
-        var stopBtn = MakeSmallIconButton("\uE71A", "Stop");
-        stopBtn.Click += async (_, _) =>
+        var stopItem = new MenuFlyoutItem
         {
-            stopBtn.IsEnabled = false;
+            Text = "Stop",
+            Icon = new FontIcon { Glyph = "\uE71A" }
+        };
+        stopItem.Click += async (_, _) =>
+        {
             try
             {
                 await adminApi.StopSessionAsync(capturedSession.SessionId);
-                await Task.Delay(500); // Give server time to process
+                toastService.Success("Session stopped");
+                await Task.Delay(500);
                 await ViewModel.LoadCommand.ExecuteAsync(null);
             }
-            catch (Exception ex)
-            {
-                try
-                {
-                    var dlg = new ContentDialog { XamlRoot = this.XamlRoot, Title = "Stop failed", Content = ex.Message, CloseButtonText = "OK" };
-                    await dlg.ShowAsync();
-                }
-                catch { }
-            }
-            stopBtn.IsEnabled = true;
+            catch (Exception ex) { toastService.Error($"Stop failed: {ex.Message}"); }
         };
-        controlPanel.Children.Add(stopBtn);
+        flyout.Items.Add(stopItem);
 
         // Message
-        var msgBtn = MakeSmallIconButton("\uE8BD", "Send message");
-        msgBtn.Click += async (_, _) =>
+        var msgItem = new MenuFlyoutItem
+        {
+            Text = "Message",
+            Icon = new FontIcon { Glyph = "\uE8BD" }
+        };
+        msgItem.Click += async (_, _) =>
         {
             var msgBox = new TextBox { PlaceholderText = "Message to display", CornerRadius = new CornerRadius(8), FontSize = 13 };
             var dlg = new ContentDialog
@@ -604,28 +784,93 @@ public sealed partial class AdminActivityPage : Page
             };
             if (await dlg.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(msgBox.Text))
             {
-                try { await adminApi.MessageSessionAsync(capturedSession.SessionId, msgBox.Text.Trim()); }
-                catch { }
+                try
+                {
+                    await adminApi.MessageSessionAsync(capturedSession.SessionId, msgBox.Text.Trim());
+                    toastService.Success("Message sent");
+                }
+                catch (Exception ex) { toastService.Error($"Message failed: {ex.Message}"); }
             }
         };
-        controlPanel.Children.Add(msgBtn);
+        flyout.Items.Add(msgItem);
 
-        // Terminate
-        var terminateBtn = MakeSmallIconButton("\uE74D", "Terminate");
-        terminateBtn.Click += async (_, _) =>
+        flyout.Items.Add(new MenuFlyoutSeparator());
+
+        // Terminate (destructive — red text + confirmation dialog)
+        var terminateItem = new MenuFlyoutItem
         {
-            terminateBtn.IsEnabled = false;
-            try
-            {
-                await adminApi.TerminateSessionAsync(capturedSession.SessionId);
-                await ViewModel.LoadCommand.ExecuteAsync(null);
-            }
-            catch { }
-            terminateBtn.IsEnabled = true;
+            Text = "Terminate",
+            Icon = new FontIcon { Glyph = "\uE74D" },
+            Foreground = (SolidColorBrush)Application.Current.Resources["ErrorBrush"]
         };
-        controlPanel.Children.Add(terminateBtn);
+        terminateItem.Click += async (_, _) =>
+        {
+            var confirmDlg = new ContentDialog
+            {
+                Title = "Terminate Session",
+                Content = "This will forcefully terminate the session. This action cannot be undone.",
+                PrimaryButtonText = "Terminate",
+                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
+                CloseButtonText = "Cancel",
+                XamlRoot = this.XamlRoot,
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await confirmDlg.ShowAsync() == ContentDialogResult.Primary)
+            {
+                try
+                {
+                    await adminApi.TerminateSessionAsync(capturedSession.SessionId);
+                    toastService.Success("Session terminated");
+                    await ViewModel.LoadCommand.ExecuteAsync(null);
+                }
+                catch (Exception ex) { toastService.Error($"Terminate failed: {ex.Message}"); }
+            }
+        };
+        flyout.Items.Add(terminateItem);
 
-        Grid.SetColumn(controlPanel, 5); // Share with time column
+        // Action button that opens the flyout
+        var actionBtn = new Button
+        {
+            Width = 24, Height = 24, Padding = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(4),
+            Content = new FontIcon
+            {
+                Glyph = "\uE712", // More (ellipsis) icon
+                FontSize = 12,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+            },
+            Flyout = flyout
+        };
+        ToolTipService.SetToolTip(actionBtn, "Actions");
+
+        // Deep links: View Logs + FFmpeg Logs
+        var viewLogsLink = new HyperlinkButton
+        {
+            Content = "Logs",
+            Padding = new Thickness(0),
+            FontSize = 10,
+            Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+        };
+        viewLogsLink.Click += (_, _) => Frame.Navigate(typeof(AdminLogsPage), capturedSession.SessionId);
+
+        var ffmpegLogsLink = new HyperlinkButton
+        {
+            Content = "FFmpeg",
+            Padding = new Thickness(0),
+            FontSize = 10,
+            Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+        };
+        ffmpegLogsLink.Click += (_, _) => Frame.Navigate(typeof(AdminLogsPage), $"{capturedSession.SessionId}|ffmpeg");
+
+        var linksPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        linksPanel.Children.Add(viewLogsLink);
+        linksPanel.Children.Add(ffmpegLogsLink);
+
+        var controlPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        controlPanel.Children.Add(actionBtn);
+        controlPanel.Children.Add(linksPanel);
 
         // Wrap time and controls vertically
         var timeControlStack = new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
@@ -640,7 +885,159 @@ public sealed partial class AdminActivityPage : Page
         row.Children.Add(nodeStack);
         row.Children.Add(timeControlStack);
 
-        return row;
+        // FFmpeg inline log panel — collapsible, loads on demand
+        var ffmpegPanel = new StackPanel
+        {
+            Spacing = 4,
+            Visibility = Visibility.Collapsed,
+            Padding = new Thickness(16, 8, 16, 12),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x14, 0x15, 0x1E, 0x2B)),
+        };
+
+        // Add FFmpeg toggle to the control panel (next to logs links)
+        var capturedSessionId = session.SessionId;
+        var ffmpegToggle = new Button
+        {
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(4),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var ffmpegContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        ffmpegContent.Children.Add(new FontIcon
+        {
+            Glyph = "\uE756", // Terminal
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+        });
+        ffmpegContent.Children.Add(new TextBlock
+        {
+            Text = "FFmpeg",
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+        });
+        var ffmpegChevron = new FontIcon
+        {
+            Glyph = "\uE70D", // ChevronDown
+            FontSize = 10,
+            Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+        };
+        ffmpegContent.Children.Add(ffmpegChevron);
+        ffmpegToggle.Content = ffmpegContent;
+
+        bool ffmpegLoaded = false;
+        ffmpegToggle.Click += async (_, _) =>
+        {
+            bool isNowOpen = ffmpegPanel.Visibility == Visibility.Collapsed;
+            ffmpegPanel.Visibility = isNowOpen ? Visibility.Visible : Visibility.Collapsed;
+            ffmpegChevron.Glyph = isNowOpen ? "\uE70E" : "\uE70D"; // ChevronUp / ChevronDown
+
+            if (isNowOpen && !ffmpegLoaded)
+            {
+                ffmpegLoaded = true;
+                ffmpegPanel.Children.Clear();
+                ffmpegPanel.Children.Add(new TextBlock
+                {
+                    Text = "Loading ffmpeg output...",
+                    FontSize = 11,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                    FontFamily = new FontFamily("Consolas"),
+                });
+
+                try
+                {
+                    var adminApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AdminApi>();
+                    var resp = await adminApi.GetAppLogsAsync(
+                        playbackSessionId: capturedSessionId, component: "ffmpeg", limit: 12);
+                    ffmpegPanel.Children.Clear();
+
+                    if (resp.Entries.Count == 0)
+                    {
+                        ffmpegPanel.Children.Add(new TextBlock
+                        {
+                            Text = "No ffmpeg rows yet for this session.",
+                            FontSize = 11,
+                            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                            FontFamily = new FontFamily("Consolas"),
+                        });
+                    }
+                    else
+                    {
+                        // Header pill
+                        var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 6) };
+                        var pill = new Border
+                        {
+                            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x33, 0x60, 0xA5, 0xFA)),
+                            CornerRadius = new CornerRadius(10),
+                            Padding = new Thickness(8, 2, 8, 2),
+                        };
+                        pill.Child = new TextBlock
+                        {
+                            Text = "FFMPEG",
+                            FontSize = 10, FontWeight = FontWeights.SemiBold,
+                            CharacterSpacing = 200,
+                            Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+                        };
+                        headerRow.Children.Add(pill);
+                        headerRow.Children.Add(new TextBlock
+                        {
+                            Text = "Live transcode console",
+                            FontSize = 11,
+                            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                            VerticalAlignment = VerticalAlignment.Center,
+                        });
+                        ffmpegPanel.Children.Add(headerRow);
+
+                        foreach (var entry in resp.Entries)
+                        {
+                            var logRow = new Grid { ColumnSpacing = 12, Padding = new Thickness(0, 3, 0, 3) };
+                            logRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
+                            logRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                            var timeCol = new TextBlock
+                            {
+                                Text = entry.Timestamp != null ? DateTime.Parse(entry.Timestamp).ToLocalTime().ToString("HH:mm:ss") : "",
+                                FontSize = 10, FontFamily = new FontFamily("Consolas"),
+                                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                            };
+                            Grid.SetColumn(timeCol, 0);
+                            logRow.Children.Add(timeCol);
+
+                            var msgCol = new TextBlock
+                            {
+                                Text = entry.Message ?? "",
+                                FontSize = 11, FontFamily = new FontFamily("Consolas"),
+                                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+                                TextWrapping = TextWrapping.Wrap,
+                            };
+                            Grid.SetColumn(msgCol, 1);
+                            logRow.Children.Add(msgCol);
+
+                            ffmpegPanel.Children.Add(logRow);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ffmpegPanel.Children.Clear();
+                    ffmpegPanel.Children.Add(new TextBlock
+                    {
+                        Text = $"Failed to load: {ex.Message}",
+                        FontSize = 11,
+                        Foreground = (SolidColorBrush)Application.Current.Resources["ErrorBrush"],
+                        FontFamily = new FontFamily("Consolas"),
+                    });
+                }
+            }
+        };
+        controlPanel.Children.Add(ffmpegToggle);
+
+        // Wrap row + ffmpeg panel in a container
+        var wrapper = new StackPanel { Spacing = 0 };
+        wrapper.Children.Add(row);
+        wrapper.Children.Add(ffmpegPanel);
+
+        return wrapper;
     }
 
     private static Button MakeSmallIconButton(string glyph, string tooltip)
@@ -697,9 +1094,11 @@ public sealed partial class AdminActivityPage : Page
                 label = "Remux";
                 break;
             default:
-                bg = Color.FromArgb(26, 100, 100, 100);
-                fg = Color.FromArgb(255, 160, 160, 160);
-                border = Color.FromArgb(38, 100, 100, 100);
+                // Webui: neutral theme badge (muted-foreground)
+                var mutedColor = ((SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]).Color;
+                bg = Color.FromArgb(26, mutedColor.R, mutedColor.G, mutedColor.B);
+                fg = mutedColor;
+                border = Color.FromArgb(38, mutedColor.R, mutedColor.G, mutedColor.B);
                 label = AdminActivityViewModel.FormatDecision(decision);
                 break;
         }
@@ -729,6 +1128,37 @@ public sealed partial class AdminActivityPage : Page
     private void RebuildIpResults()
     {
         var results = ViewModel.IPLookupResults;
+
+        // Show "Searching..." while loading
+        if (ViewModel.IpLookupLoading)
+        {
+            IpResultsPanel.Visibility = Visibility.Visible;
+            IpResultsRows.Children.Clear();
+            IpResultsRows.Children.Add(new TextBlock
+            {
+                Text = "Searching...",
+                FontSize = 13,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                Margin = new Thickness(0, 8, 0, 0),
+            });
+            return;
+        }
+
+        // Empty state: search was performed (IP text non-empty) but no results
+        if (results.Count == 0 && !string.IsNullOrWhiteSpace(ViewModel.IpLookupText))
+        {
+            IpResultsPanel.Visibility = Visibility.Visible;
+            IpResultsRows.Children.Clear();
+            IpResultsRows.Children.Add(new TextBlock
+            {
+                Text = $"No users found for {ViewModel.IpLookupText} in the last 30 days.",
+                FontSize = 13,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                Margin = new Thickness(0, 8, 0, 0),
+            });
+            return;
+        }
+
         if (results.Count == 0)
         {
             IpResultsPanel.Visibility = Visibility.Collapsed;
@@ -746,8 +1176,21 @@ public sealed partial class AdminActivityPage : Page
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
 
-            // User column (font-medium, primary link color)
-            row.Children.Add(MakeCell(0, entry.Username ?? $"User #{entry.UserId}", true));
+            // User column — clickable link to AdminUserDetailPage
+            var capturedEntryUserId = entry.UserId;
+            var userLink = new HyperlinkButton
+            {
+                Content = entry.Username ?? $"User #{entry.UserId}",
+                Padding = new Thickness(0),
+                FontSize = 13,
+                FontWeight = FontWeights.Medium,
+                Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            userLink.Click += (_, _) => Frame.Navigate(typeof(AdminUserDetailPage), capturedEntryUserId);
+            Grid.SetColumn(userLink, 0);
+            row.Children.Add(userLink);
+
             // First Seen / Last Seen: full locale datetime (not relative time)
             row.Children.Add(MakeCell(1, AdminActivityViewModel.FormatLocaleDateTime(entry.FirstSeen), false));
             row.Children.Add(MakeCell(2, AdminActivityViewModel.FormatLocaleDateTime(entry.LastSeen), false));

@@ -17,37 +17,8 @@
     </Page.Resources>
 
     <Grid>
-        <!-- Loading indicator -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
-
-        <!-- Error state -->
-        <StackPanel
-            VerticalAlignment="Center"
-            HorizontalAlignment="Center"
-            Spacing="12"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-            <TextBlock
-                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource BodyTextStyle}"
-                HorizontalAlignment="Center"
-                TextWrapping="Wrap"
-                MaxWidth="400" />
-            <Button
-                Content="Retry"
-                Style="{StaticResource AccentButtonStyle}"
-                HorizontalAlignment="Center"
-                Command="{x:Bind ViewModel.LoadCommand}" />
-        </StackPanel>
-
         <!-- Main content -->
         <ScrollViewer
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
             <StackPanel Padding="40,28,40,40" Spacing="24">
@@ -148,10 +119,23 @@
                             CornerRadius="8"
                             FontSize="13"
                             TextChanged="SearchBox_TextChanged" />
+                        <Button
+                            x:Name="SearchClearButton"
+                            Grid.Column="0"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Margin="0,0,6,0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="4"
+                            Visibility="Collapsed"
+                            Click="SearchClearButton_Click">
+                            <FontIcon Glyph="&#xE711;" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                        </Button>
                     </Grid>
 
                     <!-- Users Table — borderless surface-panel style -->
-                    <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="26" Padding="0"
+                    <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="0"
                             BorderThickness="0">
                         <StackPanel>
                             <!-- Table header -->
@@ -163,17 +147,54 @@
                                     <ColumnDefinition Width="80" />
                                     <ColumnDefinition Width="120" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="USERNAME" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="EMAIL" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="2" Text="ROLE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="3" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="4" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="0" Text="USERNAME" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="1" Text="EMAIL" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Text="ROLE" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="4" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             </Grid>
 
                             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
 
+                            <!-- Inline loading indicator -->
+                            <ProgressRing
+                                IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                                Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                                HorizontalAlignment="Center"
+                                Margin="0,24"
+                                Width="32" Height="32" />
+
+                            <!-- Inline error state -->
+                            <StackPanel
+                                HorizontalAlignment="Center"
+                                Spacing="8"
+                                Padding="0,16"
+                                Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                                <TextBlock
+                                    Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                                    Foreground="{StaticResource ErrorBrush}"
+                                    FontSize="13"
+                                    HorizontalAlignment="Center"
+                                    TextWrapping="Wrap"
+                                    MaxWidth="400" />
+                                <Button
+                                    Content="Retry"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    HorizontalAlignment="Center"
+                                    Command="{x:Bind ViewModel.LoadCommand}" />
+                            </StackPanel>
+
                             <!-- User rows — populated in code-behind -->
                             <StackPanel x:Name="UsersPanel" Spacing="0" />
+
+                            <!-- Pagination bar -->
+                            <StackPanel
+                                x:Name="UserPaginationBar"
+                                Orientation="Horizontal"
+                                Spacing="12"
+                                Padding="20,10"
+                                HorizontalAlignment="Right"
+                                Visibility="Collapsed" />
 
                             <!-- Empty state -->
                             <Border x:Name="EmptyState" Padding="20,40" Visibility="Collapsed">
@@ -224,7 +245,7 @@
                         Width="36" Height="36" />
 
                     <!-- Invite codes table -->
-                    <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="26" Padding="0"
+                    <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="0"
                             BorderThickness="0">
                         <StackPanel>
                             <!-- Table header -->
@@ -238,13 +259,13 @@
                                     <ColumnDefinition Width="120" />
                                     <ColumnDefinition Width="90" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="CODE" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="LABEL" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="2" Text="MAX USES" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="3" Text="USED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="4" Text="STATUS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="5" Text="CREATED" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="6" Text="ACTIONS" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="0" Text="Code" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="1" Text="Label" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Text="MAX USES" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="USED" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="4" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="5" Text="Created" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="6" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             </Grid>
 
                             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />

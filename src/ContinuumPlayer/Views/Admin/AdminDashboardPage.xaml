@@ -34,38 +34,9 @@
     </Page.Resources>
 
     <Grid>
-        <!-- Loading indicator -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
-
-        <!-- Error message -->
-        <StackPanel
-            VerticalAlignment="Center"
-            HorizontalAlignment="Center"
-            Spacing="12"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-            <TextBlock
-                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource BodyTextStyle}"
-                HorizontalAlignment="Center"
-                TextWrapping="Wrap"
-                MaxWidth="400" />
-            <Button
-                Content="Retry"
-                Style="{StaticResource AccentButtonStyle}"
-                HorizontalAlignment="Center"
-                Command="{x:Bind ViewModel.LoadCommand}" />
-        </StackPanel>
-
-        <!-- Main content (hidden while loading) -->
+        <!-- Main content -->
         <ScrollViewer
             x:Name="ContentScrollViewer"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
             <StackPanel Padding="40,28,40,40" Spacing="28">
@@ -102,6 +73,34 @@
                             Command="{x:Bind ViewModel.ScanAllCommand}" />
                     </StackPanel>
                 </Grid>
+
+                <!-- Inline loading indicator -->
+                <ProgressRing
+                    IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                    HorizontalAlignment="Center"
+                    Margin="0,24"
+                    Width="32" Height="32" />
+
+                <!-- Inline error state -->
+                <StackPanel
+                    HorizontalAlignment="Center"
+                    Spacing="8"
+                    Padding="0,16"
+                    Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                    <TextBlock
+                        Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                        Foreground="{StaticResource ErrorBrush}"
+                        FontSize="13"
+                        HorizontalAlignment="Center"
+                        TextWrapping="Wrap"
+                        MaxWidth="400" />
+                    <Button
+                        Content="Retry"
+                        Style="{StaticResource AccentButtonStyle}"
+                        HorizontalAlignment="Center"
+                        Command="{x:Bind ViewModel.LoadCommand}" />
+                </StackPanel>
 
                 <!-- ===== Stats Row ===== -->
                 <Grid x:Name="StatsGrid" ColumnSpacing="14">

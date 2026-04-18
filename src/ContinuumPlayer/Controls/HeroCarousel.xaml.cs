@@ -185,6 +185,15 @@ public sealed partial class HeroCarousel : UserControl
         HeroTitleShadow.Text = item.Title;
         HeroOverview.Text = item.Overview ?? "";
 
+        // Eyebrow: "FEATURED — No. 01"
+        HeroEyebrow.Text = $"FEATURED \u2014 No. {(_currentIndex + 1):D2}";
+
+        // Slide counter: "01 / 04"
+        SlideCounterText.Text = $"{(_currentIndex + 1):D2} / {_items.Count:D2}";
+
+        // Restart progress rail animation
+        AnimateProgressRail();
+
         // Metadata pills row: year · IMDb badge · first 3 genres as dark-glass
         // pills matching the webui .metadata-badge hero pattern.
         HeroMetaPillsRow.Children.Clear();
@@ -362,6 +371,29 @@ public sealed partial class HeroCarousel : UserControl
         VerticalAlignment = VerticalAlignment.Center,
         Child = content,
     };
+
+    // ── Progress rail animation ────────────────────────────────────────
+
+    private Storyboard? _progressStoryboard;
+
+    private void AnimateProgressRail()
+    {
+        _progressStoryboard?.Stop();
+        ProgressRailFill.Width = 0;
+
+        var anim = new DoubleAnimation
+        {
+            From = 0,
+            To = 100,
+            Duration = new Duration(TimeSpan.FromSeconds(8)),
+        };
+        Storyboard.SetTarget(anim, ProgressRailFill);
+        Storyboard.SetTargetProperty(anim, "Width");
+
+        _progressStoryboard = new Storyboard();
+        _progressStoryboard.Children.Add(anim);
+        _progressStoryboard.Begin();
+    }
 
     // ── Keyboard navigation ─────────────────────────────────────────────
 

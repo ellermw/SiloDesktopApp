@@ -75,6 +75,17 @@ public partial class App : Application
         _window = new MainWindow();
         MainWindowInstance = (MainWindow)_window;
         _window.Activate();
+
+        // Diagnostic UI-thread lag detector removed after data collection
+        // confirmed the freeze is from ItemsRepeater accumulating unreleased
+        // PosterCard instances (alive count 400+). See LibraryViewModel
+        // sliding-window cap for the workaround.
+    }
+
+    private void StartUiThreadLagDetector()
+    {
+        // Intentionally empty — kept as a stub in case we need to reactivate
+        // lag detection during a future investigation.
     }
 
     private static IServiceProvider ConfigureServices()
@@ -155,6 +166,11 @@ public partial class App : Application
         // Player service (owns mpv lifecycle, not tied to page navigation)
         services.AddSingleton<PlayerService>();
 
+        // Watch-Together coordinator — bridges room VM and PlayerService so
+        // synced transport commands reach mpv. Must be constructed on the UI
+        // thread; resolved lazily by WatchTogetherRoomPage on load.
+        services.AddSingleton<WatchTogetherCoordinator>();
+
         // ViewModels
         services.AddTransient<ServerSelectViewModel>();
         services.AddTransient<LoginViewModel>();
@@ -195,7 +211,6 @@ public partial class App : Application
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminRecommendationsViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminPlaybackHistoryViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminPluginsViewModel>();
-        services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminProvidersViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminInviteCodesViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminMaintenanceViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminSubtitleProvidersViewModel>();

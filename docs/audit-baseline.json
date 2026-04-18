@@ -1,9 +1,9 @@
 ﻿{
     "$schema":  "./audit-baseline.schema.json",
-    "continuum_server_sha":  "4172a1622787a03e115bc304556e07ce579114e7",
-    "continuum_server_short_sha":  "4172a16",
-    "continuum_server_commit_message":  "Include viewer state in item details",
-    "audited_at":  "2026-04-11T01:04:22-05:00",
+    "continuum_server_sha":  "3760d0098ebacb30da4982bcf5b22b5f9ccf296c",
+    "continuum_server_short_sha":  "3760d00",
+    "continuum_server_commit_message":  "fix(scanner): upsert group snapshots on evidence-only changes",
+    "audited_at":  "2026-04-14T22:26:43-05:00",
     "notes":  "Baseline expanded 2026-04-10 after scanning edf2977..c16467c (340 changed files, 70+ commits). Discovered a massive new-feature wave â€” Watch Party, Watch Tonight, pre-play A/V selection, chapter thumbnails, device login, webhook sync, image selector, server activity dropdown, playing next screen, and more. Tracked root SHA remains 94c2f32 until one area is actually re-synced; new areas below default to \u0027missing\u0027 with the fresh source files listed so the next scan catches any upstream changes to them. Parity values: \u0027full\u0027 (desktop matches), \u0027partial\u0027 (some features done), \u0027rebuilding\u0027 (in progress), \u0027missing\u0027 (not yet started), \u0027desktop-only\u0027 (no webui counterpart).",
     "areas":  {
                   "events/realtime-channel":  {

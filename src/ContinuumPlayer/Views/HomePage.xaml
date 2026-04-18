@@ -49,13 +49,52 @@
             </StackPanel>
         </Border>
 
-        <!-- Loading indicator -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
+        <!-- Skeleton loading — approximates the real layout (hero + 3 section rows)
+             so first paint feels instant instead of a long spinner. -->
+        <ScrollViewer
+            x:Name="LoadingSkeleton"
+            VerticalScrollBarVisibility="Disabled"
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+            <StackPanel Padding="40,24,40,24" Spacing="36">
+                <!-- Hero carousel skeleton (16:9 backdrop) -->
+                <controls:SkeletonBackdrop Height="380" />
+
+                <!-- Three section-row skeletons -->
+                <StackPanel Spacing="12">
+                    <controls:SkeletonText Width="180" Height="20" HorizontalAlignment="Left" />
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Spacing="12">
+                    <controls:SkeletonText Width="220" Height="20" HorizontalAlignment="Left" />
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Spacing="12">
+                    <controls:SkeletonText Width="160" Height="20" HorizontalAlignment="Left" />
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                    </StackPanel>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
 
         <!-- Error message -->
         <StackPanel
@@ -132,12 +171,14 @@
                         Foreground="{StaticResource SecondaryTextBrush}"
                         HorizontalAlignment="Center" />
                     <TextBlock
+                        x:Name="EmptyHomeTitle"
                         Text="No sections configured"
                         FontSize="18"
                         FontWeight="SemiBold"
                         Foreground="{StaticResource PrimaryTextBrush}"
                         HorizontalAlignment="Center" />
                     <TextBlock
+                        x:Name="EmptyHomeDescription"
                         Text="Ask your administrator to set up the homepage in Admin → Home Sections."
                         FontSize="14"
                         Foreground="{StaticResource SecondaryTextBrush}"

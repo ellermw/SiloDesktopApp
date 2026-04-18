@@ -26,9 +26,50 @@ public sealed partial class PosterCard : UserControl
         set => SetValue(MediaItemProperty, value);
     }
 
+    /// <summary>
+    /// App-wide sort context consulted by PosterCard to choose its meta line.
+    /// LibraryPage sets this before reloading cards so each card can render a
+    /// sort-appropriate secondary line (e.g. IMDb rating when sorted by
+    /// rating_imdb instead of "Year · SERIES"). Null / empty = default.
+    /// </summary>
+    public static string? CurrentSortKey { get; set; }
+
     public PosterCard()
     {
         this.InitializeComponent();
+        // When ItemsRepeater recycles the card out of the viewport, Unloaded
+        // fires. Cancel any in-flight image download and release the decoded
+        // BitmapImage so its pixel data can be garbage-collected instead of
+        // piling up across 100k-scale libraries.
+        this.Unloaded += (_, _) =>
+        {
+            try { _loadCts?.Cancel(); } catch { }
+            _loadCts?.Dispose();
+            _loadCts = null;
+            PosterImage.Source = null;
+            ThumbhashImage.Source = null;
+        };
+        // Lazy context menu build — eager MediaItemMenu.Build() on every
+        // UpdateContent was the single biggest per-recycle cost. Now we only
+        // build the flyout when the user actually right-clicks (or long-
+        // presses), which during fast library scroll saves ~8 MenuFlyoutItem
+        // constructions + closures per recycled card.
+        this.ContextRequested += PosterCard_ContextRequested;
+    }
+
+    private void PosterCard_ContextRequested(UIElement sender, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs args)
+    {
+        if (MediaItem == null) return;
+        var flyout = MediaItemMenu.Build(MediaItem, MediaItemMenu.Surface.Default);
+        if (args.TryGetPosition(this, out var pos))
+        {
+            flyout.ShowAt(this, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions { Position = pos });
+        }
+        else
+        {
+            flyout.ShowAt(this);
+        }
+        args.Handled = true;
     }
 
     private static void OnMediaItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -46,17 +87,29 @@ public sealed partial class PosterCard : UserControl
         _loadCts = new CancellationTokenSource();
         var ct = _loadCts.Token;
 
-        // F10: attach right-click media menu (mark watched / favorite /
-        // watchlist / admin refresh / view details). Rebuilt on each item
-        // change so "Remove from Favorites" vs "Add" reflects fresh state.
-        this.ContextFlyout = MediaItemMenu.Build(item, MediaItemMenu.Surface.Default);
+        // Right-click flyout is built lazily by PosterCard_ContextRequested —
+        // building ~8 MenuFlyoutItems per card-recycle was the biggest scroll
+        // stall in large libraries.
 
         TitleText.Text = item.Title;
 
-        // Build subtitle line: "2024 Series" or "2024" (web: year + type in uppercase)
+        // Build subtitle line — sort-driven. When the hosting surface (Library,
+        // Search, etc.) has sorted by a specific key, surface that key's value
+        // so the meta line matches what the user is looking at.
         var parts = new List<string>();
         if (item.Year > 0) parts.Add(item.Year.ToString());
-        if (item.Type == "series") parts.Add("SERIES");
+        switch (CurrentSortKey)
+        {
+            case "rating_imdb":
+                if (item.RatingImdb.HasValue && item.RatingImdb.Value > 0)
+                    parts.Add($"\u2605 {item.RatingImdb.Value:0.0}");
+                else if (item.Type == "series")
+                    parts.Add("SERIES");
+                break;
+            default:
+                if (item.Type == "series") parts.Add("SERIES");
+                break;
+        }
         SubtitleText.Text = string.Join("  ", parts);
 
         PosterImage.Opacity = 0;
@@ -80,7 +133,6 @@ public sealed partial class PosterCard : UserControl
 
         UpdateBadges(item);
 
-        // Delay image load slightly so scrolling isn't blocked by hundreds of simultaneous loads
         _ = LoadPosterAsync(item, ct);
     }
 
@@ -162,9 +214,13 @@ public sealed partial class PosterCard : UserControl
         };
     }
 
-    // Limit concurrent image decodes on the UI thread to prevent bursts of
-    // SetSourceAsync calls from freezing the app during fast scrolling.
-    private static readonly SemaphoreSlim s_decodeLock = new(4);
+    // Global BitmapImage instantiation lock. The NATIVE decoder invoked by
+    // BitmapImage(UriSource) appears to serialize on a shared mutex inside
+    // WinUI composition. When 30+ cards try to create BitmapImages at once,
+    // the contention spikes UI-thread time to multi-second bursts. Serialize
+    // to one at a time across all cards. Creation itself is cheap; the
+    // actual decode happens async in native code regardless.
+    private static readonly SemaphoreSlim s_bitmapCreateLock = new(1);
 
     private async Task LoadPosterAsync(MediaItem item, CancellationToken ct)
     {
@@ -173,62 +229,48 @@ public sealed partial class PosterCard : UserControl
 
         try
         {
-            // Small delay: if user is scrolling fast, this card will be cancelled
-            // before we start the network request
-            await Task.Delay(50, ct);
+            // Grace window: cards recycled by ItemsRepeater within this window
+            // never hit the network. Longer window = cheaper fast-scroll.
+            await Task.Delay(300, ct);
             if (ct.IsCancellationRequested) return;
 
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
-
             var imageType = !string.IsNullOrEmpty(item.PosterUrl) ? "poster" : "backdrop";
 
-            // Run all I/O on a background thread — File.Exists, disk reads,
-            // and HTTP downloads were previously running on the UI thread
-            var bytes = await Task.Run(async () =>
-                await imageService.GetImageAsync(
-                    item.ContentId, imageType, imageUrl, httpClient, ct), ct);
+            var diskPath = await imageService.GetImageDiskPathAsync(
+                item.ContentId, imageType, imageUrl, httpClient, ct);
 
-            if (ct.IsCancellationRequested || bytes == null) return;
+            if (ct.IsCancellationRequested || string.IsNullOrEmpty(diskPath)) return;
 
-            // Throttle concurrent image decodes on the UI thread
-            await s_decodeLock.WaitAsync(ct);
+            await s_bitmapCreateLock.WaitAsync(ct);
             try
             {
                 if (ct.IsCancellationRequested) return;
-
                 var bitmapImage = new BitmapImage
                 {
-                    // Decode at display size, not full resolution -- huge perf win
                     DecodePixelWidth = 200,
-                    DecodePixelType = DecodePixelType.Logical
+                    DecodePixelType = DecodePixelType.Logical,
+                    UriSource = new Uri(diskPath),
                 };
-                using var stream = new MemoryStream(bytes);
-                await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
-
-                if (ct.IsCancellationRequested) return;
-
                 PosterImage.Source = bitmapImage;
-                // Smooth fade-in matching webui transition-opacity duration-300
-                var fadeIn = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
-                {
-                    To = 1,
-                    Duration = new Duration(TimeSpan.FromMilliseconds(250)),
-                    EasingFunction = new Microsoft.UI.Xaml.Media.Animation.CubicEase
-                    {
-                        EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut
-                    },
-                };
-                Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fadeIn, PosterImage);
-                Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fadeIn, "Opacity");
-                var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
-                sb.Children.Add(fadeIn);
-                sb.Begin();
             }
-            finally
+            finally { s_bitmapCreateLock.Release(); }
+
+            var fadeIn = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
             {
-                s_decodeLock.Release();
-            }
+                To = 1,
+                Duration = new Duration(TimeSpan.FromMilliseconds(250)),
+                EasingFunction = new Microsoft.UI.Xaml.Media.Animation.CubicEase
+                {
+                    EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut,
+                },
+            };
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fadeIn, PosterImage);
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fadeIn, "Opacity");
+            var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+            sb.Children.Add(fadeIn);
+            sb.Begin();
         }
         catch (OperationCanceledException) { }
         catch { }
@@ -242,15 +284,38 @@ public sealed partial class PosterCard : UserControl
         nav.Navigate<ItemDetailPage>(MediaItem.ContentId);
     }
 
+    // Hover animations are deferred: only fire if the pointer stays over the
+    // card for longer than the debounce. Fast scroll-through (where the
+    // pointer sweeps across many cards in <80ms each) cancels before any
+    // animation is created, avoiding a storm of ~7 DoubleAnimations per card
+    // that was freezing the UI thread for seconds at a time.
+    private DispatcherTimer? _hoverEnterTimer;
+    private bool _hoverActive;
+
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
     {
-        PosterBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
-            Application.Current.Resources["SurfaceHoverBrush"];
-        AnimateHover(scale: 1.04, borderOpacity: 1.0, dimOpacity: 1.0, playOpacity: 1.0, playScale: 1.0);
+        _hoverEnterTimer?.Stop();
+        _hoverEnterTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+        _hoverEnterTimer.Tick += (_, _) =>
+        {
+            _hoverEnterTimer?.Stop();
+            _hoverEnterTimer = null;
+            _hoverActive = true;
+            PosterBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
+                Application.Current.Resources["SurfaceHoverBrush"];
+            AnimateHover(scale: 1.04, borderOpacity: 1.0, dimOpacity: 1.0, playOpacity: 1.0, playScale: 1.0);
+        };
+        _hoverEnterTimer.Start();
     }
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
     {
+        // If the pointer never stayed long enough to commit a hover, just
+        // cancel the pending timer — nothing to animate back.
+        _hoverEnterTimer?.Stop();
+        _hoverEnterTimer = null;
+        if (!_hoverActive) return;
+        _hoverActive = false;
         PosterBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["CardBackgroundBrush"];
         AnimateHover(scale: 1.0, borderOpacity: 0.0, dimOpacity: 0.0, playOpacity: 0.0, playScale: 0.7);

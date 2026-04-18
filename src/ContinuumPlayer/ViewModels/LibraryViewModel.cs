@@ -61,7 +61,7 @@ public partial class LibraryViewModel : ObservableObject
     private bool _hasMore;
 
     private int _offset;
-    private const int PageSize = 100;
+    private const int PageSize = 40;
 
     // Enhanced filter properties
     [ObservableProperty]
@@ -295,7 +295,6 @@ public partial class LibraryViewModel : ObservableObject
             _offset += response.Items.Count;
             HasMore = response.HasMore;
 
-            // Signal that a page was loaded (UI can check if more is needed)
             PageLoaded?.Invoke();
         }
         catch (Exception ex)

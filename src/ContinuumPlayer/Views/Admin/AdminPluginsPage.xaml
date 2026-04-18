@@ -17,37 +17,8 @@
     </Page.Resources>
 
     <Grid>
-        <!-- Loading -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
-
-        <!-- Error -->
-        <StackPanel
-            VerticalAlignment="Center"
-            HorizontalAlignment="Center"
-            Spacing="12"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-            <TextBlock
-                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource BodyTextStyle}"
-                HorizontalAlignment="Center"
-                TextWrapping="Wrap"
-                MaxWidth="400" />
-            <Button
-                Content="Retry"
-                Style="{StaticResource AccentButtonStyle}"
-                HorizontalAlignment="Center"
-                Command="{x:Bind ViewModel.LoadCommand}" />
-        </StackPanel>
-
         <!-- Main content -->
         <ScrollViewer
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
             <StackPanel Padding="40,28,40,40" Spacing="24">
@@ -59,7 +30,7 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" Spacing="4">
+                    <StackPanel Grid.Column="0" Spacing="12">
                         <TextBlock
                             Text="Plugins"
                             FontSize="42"
@@ -96,6 +67,34 @@
                         FontSize="13"
                         Foreground="{StaticResource AccentBrush}" />
                 </Border>
+
+                <!-- Inline loading indicator -->
+                <ProgressRing
+                    IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                    HorizontalAlignment="Center"
+                    Margin="0,24"
+                    Width="32" Height="32" />
+
+                <!-- Inline error state -->
+                <StackPanel
+                    HorizontalAlignment="Center"
+                    Spacing="8"
+                    Padding="0,16"
+                    Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                    <TextBlock
+                        Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                        Foreground="{StaticResource ErrorBrush}"
+                        FontSize="13"
+                        HorizontalAlignment="Center"
+                        TextWrapping="Wrap"
+                        MaxWidth="400" />
+                    <Button
+                        Content="Retry"
+                        Style="{StaticResource AccentButtonStyle}"
+                        HorizontalAlignment="Center"
+                        Command="{x:Bind ViewModel.LoadCommand}" />
+                </StackPanel>
 
                 <!-- Tab bar -->
                 <StackPanel Orientation="Horizontal" Spacing="4">
@@ -181,7 +180,7 @@
 
                         <Border
                             Background="{StaticResource CardBackgroundBrush}"
-                            CornerRadius="24"
+                            CornerRadius="16"
                             BorderThickness="0"
                             Padding="0">
                             <StackPanel>
@@ -189,8 +188,8 @@
                                 <Border x:Name="RepoEmpty" Padding="20,30" Visibility="Collapsed">
                                     <TextBlock
                                         Text="No repositories configured."
-                                        FontSize="13"
-                                        Foreground="{StaticResource TertiaryTextBrush}"
+                                        FontSize="14"
+                                        Foreground="{StaticResource SecondaryTextBrush}"
                                         HorizontalAlignment="Center" />
                                 </Border>
                             </StackPanel>

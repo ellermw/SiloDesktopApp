@@ -5,7 +5,9 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using System.Text.Json;
 using Windows.UI;
+using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Admin;
+using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.ViewModels.Admin;
 
 namespace ContinuumPlayer.Views.Admin;
@@ -18,6 +20,14 @@ public sealed partial class AdminLogsPage : Page
     private OperationalLogEntry? _selectedAppEntry;
     private bool _rebuildAppPending;
     private bool _rebuildAuditPending;
+
+    // Debounce timer for live-filter (webui has no Search button — inputs filter on change)
+    private DispatcherTimer? _filterDebounce;
+
+    // Live log stream (webui parity — /api/v1/admin/logs/ws). One client per
+    // active tab; reconnect on tab switch or filter change.
+    private AdminLogStreamClient? _stream;
+    private const int LogStreamCap = 500;
 
     // Navigation parameter: pass a string "sessionId" or "sessionId|ffmpeg" to pre-filter logs
     private string? _pendingSessionId;
@@ -46,8 +56,17 @@ public sealed partial class AdminLogsPage : Page
         ViewModel.AuditLogs.CollectionChanged += (_, _) => ScheduleRebuildAudit();
         ViewModel.PropertyChanged += (_, args) =>
         {
-            if (args.PropertyName == nameof(ViewModel.PlaybackSessionId))
-                DispatcherQueue.TryEnqueue(UpdatePlaybackSessionTag);
+            switch (args.PropertyName)
+            {
+                case nameof(ViewModel.PlaybackSessionId):
+                    DispatcherQueue.TryEnqueue(UpdatePlaybackSessionTag);
+                    break;
+                case nameof(ViewModel.AppLogsHasMore):
+                case nameof(ViewModel.AuditLogsHasMore):
+                case nameof(ViewModel.IsLoadingMore):
+                    DispatcherQueue.TryEnqueue(UpdateLoadMoreState);
+                    break;
+            }
         };
 
         // Apply navigation parameter (from "View Logs" / "FFmpeg Logs" links)
@@ -59,10 +78,46 @@ public sealed partial class AdminLogsPage : Page
             _pendingSessionId = null;
         }
 
+        // Live-filter: debounce text changes. Restarting the stream pushes
+        // new filter params to the server; the incoming snapshot replaces
+        // the current rows.
+        _filterDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _filterDebounce.Tick += async (_, _) =>
+        {
+            _filterDebounce!.Stop();
+            await RestartStreamAsync();
+        };
+        AppRequestIdBox.TextChanged += (_, _) => RestartFilterDebounce();
+        AppMessageBox.TextChanged += (_, _) => RestartFilterDebounce();
+        AppComponentBox.TextChanged += (_, _) => RestartFilterDebounce();
+        AuditRequestIdBox.TextChanged += (_, _) => RestartFilterDebounce();
+        AuditMethodBox.TextChanged += (_, _) => RestartFilterDebounce();
+        AuditClientIpBox.TextChanged += (_, _) => RestartFilterDebounce();
+
         SetActiveTab(true);
         UpdatePlaybackSessionTag();
-        try { await ViewModel.LoadAppLogsCommand.ExecuteAsync(null); }
-        catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+
+        // Live stream replaces the old "load once, refresh manually" pattern.
+        // On connect the server pushes a snapshot of recent rows; subsequent
+        // appends show up immediately via the OnAppAppend / OnAuditAppend paths.
+        await RestartStreamAsync();
+    }
+
+    protected override async void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        if (_stream != null)
+        {
+            try { await _stream.StopAsync(); } catch { }
+            _stream.Dispose();
+            _stream = null;
+        }
+    }
+
+    private void RestartFilterDebounce()
+    {
+        _filterDebounce?.Stop();
+        _filterDebounce?.Start();
     }
 
     private void ScheduleRebuildApp()
@@ -93,16 +148,126 @@ public sealed partial class AdminLogsPage : Page
     {
         if (_isAppTab) return;
         SetActiveTab(true);
-        if (ViewModel.AppLogs.Count == 0)
-            _ = ViewModel.LoadAppLogsCommand.ExecuteAsync(null);
+        _ = RestartStreamAsync();
     }
 
     private void TabAudit_Click(object sender, RoutedEventArgs e)
     {
         if (!_isAppTab) return;
         SetActiveTab(false);
-        if (ViewModel.AuditLogs.Count == 0)
-            _ = ViewModel.LoadAuditLogsCommand.ExecuteAsync(null);
+        _ = RestartStreamAsync();
+    }
+
+    // ===== Live log stream (webui parity: /admin/logs/ws) =====
+
+    private async Task RestartStreamAsync()
+    {
+        try
+        {
+            if (_stream != null)
+            {
+                await _stream.StopAsync();
+            }
+            else
+            {
+                var api = App.Services.GetRequiredService<ContinuumApiClient>();
+                if (string.IsNullOrEmpty(api.BaseUrl) || string.IsNullOrEmpty(api.AccessToken)) return;
+                _stream = new AdminLogStreamClient(api.BaseUrl, api.AccessToken!);
+                _stream.AppSnapshotReceived += OnAppSnapshot;
+                _stream.AuditSnapshotReceived += OnAuditSnapshot;
+                _stream.AppEntryAppended += OnAppAppend;
+                _stream.AuditEntryAppended += OnAuditAppend;
+                _stream.StateChanged += OnStreamStateChanged;
+                _stream.ErrorReceived += (msg) => DispatcherQueue.TryEnqueue(() => ViewModel.ConnectionState = "Disconnected");
+            }
+
+            var filters = BuildCurrentFilters();
+            var stream = _isAppTab ? AdminLogStreamClient.Stream.App : AdminLogStreamClient.Stream.Audit;
+            await _stream.StartAsync(stream, filters);
+        }
+        catch { /* surfaced via StateChanged */ }
+    }
+
+    private Dictionary<string, string> BuildCurrentFilters()
+    {
+        var map = new Dictionary<string, string> { ["limit"] = "200" };
+        var playback = ViewModel.PlaybackSessionId?.Trim();
+        if (!string.IsNullOrEmpty(playback)) map["playback_session_id"] = playback;
+        if (_isAppTab)
+        {
+            if (!string.IsNullOrWhiteSpace(ViewModel.AppRequestId)) map["request_id"] = ViewModel.AppRequestId.Trim();
+            if (!string.IsNullOrWhiteSpace(ViewModel.AppMessageQuery)) map["q"] = ViewModel.AppMessageQuery.Trim();
+            if (!string.IsNullOrWhiteSpace(ViewModel.AppComponent)) map["component"] = ViewModel.AppComponent.Trim();
+        }
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(ViewModel.AuditRequestId)) map["request_id"] = ViewModel.AuditRequestId.Trim();
+            if (!string.IsNullOrWhiteSpace(ViewModel.AuditMethod)) map["method"] = ViewModel.AuditMethod.Trim();
+            if (!string.IsNullOrWhiteSpace(ViewModel.AuditClientIp)) map["client_ip"] = ViewModel.AuditClientIp.Trim();
+        }
+        return map;
+    }
+
+    private void OnAppSnapshot(List<OperationalLogEntry> entries, string? nextCursor)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            ViewModel.AppLogs.Clear();
+            foreach (var e in entries) ViewModel.AppLogs.Add(e);
+            ViewModel.AppLogsNextCursor = nextCursor;
+        });
+    }
+
+    private void OnAuditSnapshot(List<AuditLogEntry> entries, string? nextCursor)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            ViewModel.AuditLogs.Clear();
+            foreach (var e in entries) ViewModel.AuditLogs.Add(e);
+            ViewModel.AuditLogsNextCursor = nextCursor;
+        });
+    }
+
+    private void OnAppAppend(OperationalLogEntry entry)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            // Prepend newest entry at index 0, dedupe by id, cap collection size.
+            for (int i = 0; i < ViewModel.AppLogs.Count; i++)
+            {
+                if (ViewModel.AppLogs[i].Id == entry.Id) { ViewModel.AppLogs.RemoveAt(i); break; }
+            }
+            ViewModel.AppLogs.Insert(0, entry);
+            while (ViewModel.AppLogs.Count > LogStreamCap)
+                ViewModel.AppLogs.RemoveAt(ViewModel.AppLogs.Count - 1);
+        });
+    }
+
+    private void OnAuditAppend(AuditLogEntry entry)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            for (int i = 0; i < ViewModel.AuditLogs.Count; i++)
+            {
+                if (ViewModel.AuditLogs[i].Id == entry.Id) { ViewModel.AuditLogs.RemoveAt(i); break; }
+            }
+            ViewModel.AuditLogs.Insert(0, entry);
+            while (ViewModel.AuditLogs.Count > LogStreamCap)
+                ViewModel.AuditLogs.RemoveAt(ViewModel.AuditLogs.Count - 1);
+        });
+    }
+
+    private void OnStreamStateChanged(AdminLogStreamClient.ConnectionState state)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            ViewModel.ConnectionState = state switch
+            {
+                AdminLogStreamClient.ConnectionState.Connecting => "Connecting…",
+                AdminLogStreamClient.ConnectionState.Live => "Live",
+                _ => "Disconnected",
+            };
+        });
     }
 
     private void SetActiveTab(bool appTab)
@@ -285,13 +450,13 @@ public sealed partial class AdminLogsPage : Page
                 ? new SolidColorBrush(Color.FromArgb(12, 99, 102, 241))  // bg-primary/5
                 : new SolidColorBrush(Colors.Transparent)
         };
-        // Web has: Time / Level / Component / Status / Duration / Message
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        // Proportional columns matching XAML header: Time / Level / Component / Status / Duration / Message
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.7, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.6, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.8, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
 
         var defaultBg = row.Background;
 
@@ -573,15 +738,16 @@ public sealed partial class AdminLogsPage : Page
             Padding = new Thickness(16, 8, 16, 8),
             ColumnSpacing = 8
         };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(130) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(65) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(55) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(55) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+        // Proportional columns matching XAML header
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.3, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.6, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.5, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.5, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.5, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
 
         // Time (formatted, whitespace-nowrap)
         row.Children.Add(MakeMonoCell(0, AdminLogsViewModel.FormatDateTime(entry.Timestamp), 11));
@@ -691,4 +857,37 @@ public sealed partial class AdminLogsPage : Page
             >= 200 and < 300 => new SolidColorBrush(Color.FromArgb(255, 63, 185, 80)),
             _ => (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
         };
+
+    // ===== Cursor pagination =====
+
+    private void UpdateLoadMoreState()
+    {
+        // App logs footer.
+        AppLogsLoadMorePanel.Visibility = ViewModel.AppLogsHasMore
+            ? Visibility.Visible : Visibility.Collapsed;
+        AppLogsLoadMoreButton.IsEnabled = !ViewModel.IsLoadingMore;
+        AppLogsLoadMoreRing.IsActive = ViewModel.IsLoadingMore;
+        AppLogsLoadMoreRing.Visibility = ViewModel.IsLoadingMore
+            ? Visibility.Visible : Visibility.Collapsed;
+
+        // Audit logs footer.
+        AuditLogsLoadMorePanel.Visibility = ViewModel.AuditLogsHasMore
+            ? Visibility.Visible : Visibility.Collapsed;
+        AuditLogsLoadMoreButton.IsEnabled = !ViewModel.IsLoadingMore;
+        AuditLogsLoadMoreRing.IsActive = ViewModel.IsLoadingMore;
+        AuditLogsLoadMoreRing.Visibility = ViewModel.IsLoadingMore
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async void AppLogsLoadMore_Click(object sender, RoutedEventArgs e)
+    {
+        try { await ViewModel.LoadMoreAppLogsCommand.ExecuteAsync(null); }
+        catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+    }
+
+    private async void AuditLogsLoadMore_Click(object sender, RoutedEventArgs e)
+    {
+        try { await ViewModel.LoadMoreAuditLogsCommand.ExecuteAsync(null); }
+        catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+    }
 }

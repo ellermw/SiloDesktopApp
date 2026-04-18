@@ -6,131 +6,143 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:converters="using:ContinuumPlayer.Converters"
-    xmlns:local="using:ContinuumPlayer.Views.Admin"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}"
     Loaded="Page_Loaded">
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
-        <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
+        <converters:NullToVisibilityConverter x:Key="NullToVis" />
     </Page.Resources>
 
     <Grid>
-        <!-- Loading -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center" VerticalAlignment="Center"
-            Width="48" Height="48" />
-
-        <!-- Content -->
-        <ScrollViewer
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
-            VerticalScrollBarVisibility="Auto">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" IsScrollInertiaEnabled="True">
             <StackPanel Padding="40,28,40,40" Spacing="24">
 
                 <!-- Header -->
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Spacing="4">
-                        <TextBlock Text="History Import"
-                                   FontSize="{StaticResource FontSizeDisplayLarge}"
-                                   FontWeight="Bold"
-                                   Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Import watch history from external servers into Continuum user profiles."
-                                   FontSize="14"
-                                   Foreground="{StaticResource SecondaryTextBrush}" />
-                    </StackPanel>
-                    <Button Grid.Column="1"
-                            Content="Add Source"
-                            Style="{StaticResource AccentButtonStyle}"
-                            Click="NewSource_Click"
-                            VerticalAlignment="Top" />
-                </Grid>
+                <StackPanel Spacing="12">
+                    <TextBlock Text="History Import"
+                               FontSize="42" FontWeight="Bold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Import watch history from external Plex, Emby, or Jellyfin servers into Continuum user profiles."
+                               FontSize="14"
+                               Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+
+                <!-- Loading -->
+                <ProgressRing
+                    IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                    HorizontalAlignment="Center" Width="32" Height="32" />
 
                 <!-- Error -->
                 <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
                            Foreground="{StaticResource ErrorBrush}"
-                           Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                           Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
                            TextWrapping="Wrap" />
 
-                <!-- Source servers section -->
-                <TextBlock Text="SOURCE SERVERS"
-                           Style="{StaticResource SectionHeaderTextStyle}" />
+                <!-- ===== Source Bar ===== -->
+                <Border Background="{StaticResource CardBackgroundBrush}"
+                        CornerRadius="{StaticResource RadiusLG}" Padding="16">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
 
-                <ItemsRepeater ItemsSource="{x:Bind ViewModel.Sources, Mode=OneWay}">
-                    <ItemsRepeater.Layout>
-                        <StackLayout Spacing="8" />
-                    </ItemsRepeater.Layout>
-                    <ItemsRepeater.ItemTemplate>
-                        <DataTemplate x:DataType="local:HistoryImportSourceDisplay">
-                            <Border Background="{StaticResource CardBackgroundBrush}"
-                                    CornerRadius="12" Padding="16,12">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Spacing="2">
-                                        <TextBlock Text="{x:Bind Display}"
-                                                   FontSize="14" FontWeight="SemiBold"
-                                                   Foreground="{StaticResource PrimaryTextBrush}" />
-                                        <TextBlock Text="{x:Bind SubDisplay}"
-                                                   FontSize="12"
-                                                   Foreground="{StaticResource SecondaryTextBrush}" />
-                                    </StackPanel>
-                                    <Button Grid.Column="1"
-                                            Tag="{x:Bind Id}"
-                                            Click="DeleteSource_Click"
-                                            Background="Transparent" BorderThickness="0"
-                                            VerticalAlignment="Center"
-                                            ToolTipService.ToolTip="Delete source">
-                                        <FontIcon Glyph="&#xE74D;" FontSize="14"
-                                                  Foreground="{StaticResource ErrorBrush}" />
-                                    </Button>
-                                </Grid>
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                            <ComboBox x:Name="SourceComboBox"
+                                      MinWidth="220" FontSize="13"
+                                      PlaceholderText="Select a source..."
+                                      SelectionChanged="SourceComboBox_SelectionChanged" />
+                            <!-- Token status badge -->
+                            <Border x:Name="TokenBadge" Visibility="Collapsed"
+                                    CornerRadius="6" Padding="8,3,8,3" VerticalAlignment="Center">
+                                <TextBlock x:Name="TokenBadgeText" FontSize="11" FontWeight="SemiBold" />
                             </Border>
-                        </DataTemplate>
-                    </ItemsRepeater.ItemTemplate>
-                </ItemsRepeater>
+                        </StackPanel>
 
-                <!-- Empty state -->
-                <TextBlock x:Name="EmptyText"
-                           Text="No import sources. Click 'Add Source' to configure a Plex, Emby, or Jellyfin server."
-                           Foreground="{StaticResource SecondaryTextBrush}"
-                           HorizontalAlignment="Center"
-                           FontSize="14"
-                           Visibility="Collapsed" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <Button x:Name="BtnDiscoverUsers" Content="Discover Users"
+                                    Style="{StaticResource OutlineButtonStyle}" FontSize="13"
+                                    Click="BtnDiscoverUsers_Click" />
+                            <Button x:Name="BtnSetToken" Content="Set Token"
+                                    Style="{StaticResource OutlineButtonStyle}" FontSize="13"
+                                    Click="BtnSetToken_Click" />
+                            <Button x:Name="BtnEditSource" Content="Edit"
+                                    Style="{StaticResource OutlineButtonStyle}" FontSize="13"
+                                    Click="BtnEditSource_Click" />
+                            <Button x:Name="BtnDeleteSource" FontSize="13"
+                                    Style="{StaticResource OutlineButtonStyle}"
+                                    Click="BtnDeleteSource_Click">
+                                <FontIcon Glyph="&#xE74D;" FontSize="12" />
+                            </Button>
+                            <Button x:Name="BtnNewSource" Content="New Source"
+                                    Style="{StaticResource AccentButtonStyle}" FontSize="13"
+                                    Click="BtnNewSource_Click" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
 
-                <!-- Runs section -->
-                <TextBlock Text="RECENT IMPORTS"
-                           Style="{StaticResource SectionHeaderTextStyle}"
-                           Margin="0,16,0,0" />
+                <!-- ===== Mappings Section ===== -->
+                <StackPanel x:Name="MappingsSection" Spacing="12" Visibility="Collapsed">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="User Mappings" FontSize="18" FontWeight="Medium"
+                                   Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="BtnBulkRun" Content="Run All"
+                                    Style="{StaticResource OutlineButtonStyle}" FontSize="13"
+                                    Click="BtnBulkRun_Click" />
+                            <Button x:Name="BtnAddMapping" Content="Add Mapping"
+                                    Style="{StaticResource AccentButtonStyle}" FontSize="13"
+                                    Click="BtnAddMapping_Click" />
+                        </StackPanel>
+                    </Grid>
 
-                <ItemsRepeater ItemsSource="{x:Bind ViewModel.Runs, Mode=OneWay}">
-                    <ItemsRepeater.Layout>
-                        <StackLayout Spacing="8" />
-                    </ItemsRepeater.Layout>
-                    <ItemsRepeater.ItemTemplate>
-                        <DataTemplate x:DataType="local:HistoryImportRunDisplay">
-                            <Border Background="{StaticResource CardBackgroundBrush}"
-                                    CornerRadius="12" Padding="16,12">
-                                <StackPanel Spacing="2">
-                                    <TextBlock Text="{x:Bind Display}"
-                                               FontSize="14" FontWeight="SemiBold"
-                                               Foreground="{StaticResource PrimaryTextBrush}" />
-                                    <TextBlock Text="{x:Bind SubDisplay}"
-                                               FontSize="12"
-                                               Foreground="{StaticResource SecondaryTextBrush}" />
-                                </StackPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsRepeater.ItemTemplate>
-                </ItemsRepeater>
+                    <Border Background="{StaticResource CardBackgroundBrush}"
+                            CornerRadius="{StaticResource RadiusLG}">
+                        <StackPanel>
+                            <!-- Table header -->
+                            <Grid Padding="16,10" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="1.5*" />
+                                    <ColumnDefinition Width="1.5*" />
+                                    <ColumnDefinition Width="1.2*" />
+                                    <ColumnDefinition Width="1.2*" />
+                                    <ColumnDefinition Width="100" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Source User" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="1" Text="Continuum User" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Text="Profile" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="Last Imported" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="4" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Right" />
+                            </Grid>
+                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
+                            <StackPanel x:Name="MappingsRowsPanel" Spacing="0" />
+                            <TextBlock x:Name="NoMappingsText" Text="No user mappings configured. Click 'Add Mapping' or 'Discover Users' to get started."
+                                       FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                                       HorizontalAlignment="Center" Padding="0,24"
+                                       Visibility="Collapsed" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- ===== Runs Section ===== -->
+                <StackPanel x:Name="RunsSection" Spacing="12" Visibility="Collapsed">
+                    <TextBlock Text="Recent Imports" FontSize="18" FontWeight="Medium"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+
+                    <StackPanel x:Name="RunsPanel" Spacing="8" />
+
+                    <TextBlock x:Name="NoRunsText" Text="No import runs yet."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                               HorizontalAlignment="Center"
+                               Visibility="Collapsed" />
+                </StackPanel>
 
             </StackPanel>
         </ScrollViewer>

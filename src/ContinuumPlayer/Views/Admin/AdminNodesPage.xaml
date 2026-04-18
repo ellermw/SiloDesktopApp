@@ -18,43 +18,14 @@
 
     <Grid>
 
-        <!-- Loading indicator -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
-
-        <!-- Error state -->
-        <StackPanel
-            VerticalAlignment="Center"
-            HorizontalAlignment="Center"
-            Spacing="12"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-            <TextBlock
-                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource BodyTextStyle}"
-                HorizontalAlignment="Center"
-                TextWrapping="Wrap"
-                MaxWidth="400" />
-            <Button
-                Content="Retry"
-                Style="{StaticResource AccentButtonStyle}"
-                HorizontalAlignment="Center"
-                Command="{x:Bind ViewModel.LoadCommand}" />
-        </StackPanel>
-
         <!-- Main content -->
         <ScrollViewer
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,28,40,40" Spacing="32">
+            <StackPanel Padding="40,28,40,40" Spacing="32" MaxWidth="1440" HorizontalAlignment="Stretch">
 
                 <!-- ===== Header ===== -->
-                <StackPanel Spacing="4">
+                <StackPanel Spacing="12">
                     <TextBlock
                         Text="Stream nodes"
                         FontSize="42"
@@ -98,7 +69,7 @@
                                 VerticalAlignment="Center" />
                             <Border
                                 x:Name="ProxyNodeCountBadge"
-                                Background="{StaticResource CardBackgroundBrush}"
+                                Background="{StaticResource SurfaceRaisedBrush}"
                                 CornerRadius="10"
                                 Padding="7,2,7,2">
                                 <TextBlock
@@ -116,16 +87,18 @@
                             Click="AddProxyNodeButton_Click">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <FontIcon Glyph="&#xE710;" FontSize="13" />
-                                <TextBlock Text="Add Proxy Node" />
+                                <TextBlock Text="Add Proxy" />
                             </StackPanel>
                         </Button>
                     </Grid>
 
-                    <!-- Info banner (blue — surface-panel-subtle) -->
+                    <!-- Info banner (blue-tinted surface-panel-subtle) -->
                     <Border
-                        Background="{StaticResource SurfaceBrush}"
-                        CornerRadius="22"
+                        CornerRadius="12"
                         Padding="12">
+                        <Border.Background>
+                            <SolidColorBrush Color="{StaticResource AccentColor}" Opacity="0.06" />
+                        </Border.Background>
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <FontIcon
                                 Glyph="&#xE946;"
@@ -144,7 +117,7 @@
                     <!-- Table card (surface-panel: CardBackgroundBrush, CornerRadius=26, border-0) -->
                     <Border
                         Background="{StaticResource CardBackgroundBrush}"
-                        CornerRadius="26"
+                        CornerRadius="16"
                         BorderThickness="0"
                         Padding="0">
                         <StackPanel>
@@ -158,14 +131,42 @@
                                     <ColumnDefinition Width="130" />
                                     <ColumnDefinition Width="110" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="Name" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="URL" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="2" Text="Status" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="3" Text="Health" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="4" Text="Last Check" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="5" Text="Actions" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="0" Text="Name" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="1" Text="URL" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="Health" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="4" Text="Last Check" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="5" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             </Grid>
                             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
+
+                            <!-- Inline loading indicator -->
+                            <ProgressRing
+                                IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                                Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                                HorizontalAlignment="Center"
+                                Margin="0,24"
+                                Width="32" Height="32" />
+
+                            <!-- Inline error state -->
+                            <StackPanel
+                                HorizontalAlignment="Center"
+                                Spacing="8"
+                                Padding="0,16"
+                                Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                                <TextBlock
+                                    Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                                    Foreground="{StaticResource ErrorBrush}"
+                                    FontSize="13"
+                                    HorizontalAlignment="Center"
+                                    TextWrapping="Wrap"
+                                    MaxWidth="400" />
+                                <Button
+                                    Content="Retry"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    HorizontalAlignment="Center"
+                                    Command="{x:Bind ViewModel.LoadCommand}" />
+                            </StackPanel>
 
                             <!-- Proxy rows — populated in code-behind -->
                             <StackPanel x:Name="ProxyNodesPanel" Spacing="0" />
@@ -175,8 +176,8 @@
                                 <StackPanel HorizontalAlignment="Center" Spacing="8">
                                     <TextBlock
                                         Text="No proxy nodes configured. Add a proxy node to enable distributed stream delivery."
-                                        FontSize="13"
-                                        Foreground="{StaticResource TertiaryTextBrush}"
+                                        FontSize="14"
+                                        Foreground="{StaticResource SecondaryTextBrush}"
                                         HorizontalAlignment="Center"
                                         TextAlignment="Center"
                                         TextWrapping="Wrap"
@@ -216,7 +217,7 @@
                                 VerticalAlignment="Center" />
                             <Border
                                 x:Name="TranscodeNodeCountBadge"
-                                Background="{StaticResource CardBackgroundBrush}"
+                                Background="{StaticResource SurfaceRaisedBrush}"
                                 CornerRadius="10"
                                 Padding="7,2,7,2">
                                 <TextBlock
@@ -239,11 +240,13 @@
                         </Button>
                     </Grid>
 
-                    <!-- Info banner (amber — surface-panel-subtle) -->
+                    <!-- Info banner (amber-tinted surface-panel-subtle) -->
                     <Border
-                        Background="{StaticResource SurfaceBrush}"
-                        CornerRadius="22"
+                        CornerRadius="12"
                         Padding="12">
+                        <Border.Background>
+                            <SolidColorBrush Color="#F59E0B" Opacity="0.06" />
+                        </Border.Background>
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <FontIcon
                                 Glyph="&#xE7BA;"
@@ -259,7 +262,7 @@
                                 Foreground="{StaticResource SecondaryTextBrush}"
                                 TextWrapping="Wrap">
                                 <Run Text="Transcode nodes handle video transcoding internally. " />
-                                <Run Text="Must be on the same network as proxy nodes and the backend." FontWeight="SemiBold" />
+                                <Run Text="Must be on the same network as proxy nodes and the backend." FontWeight="Bold" />
                                 <Run Text=" Does not need a public URL." />
                             </TextBlock>
                         </StackPanel>
@@ -268,7 +271,7 @@
                     <!-- Table card (surface-panel: CardBackgroundBrush, CornerRadius=26, border-0) -->
                     <Border
                         Background="{StaticResource CardBackgroundBrush}"
-                        CornerRadius="26"
+                        CornerRadius="16"
                         BorderThickness="0"
                         Padding="0">
                         <StackPanel>
@@ -283,13 +286,13 @@
                                     <ColumnDefinition Width="130" />
                                     <ColumnDefinition Width="110" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="Name" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="URL" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="2" Text="Status" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="3" Text="Health" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="4" Text="Jobs" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="5" Text="Last Check" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
-                                <TextBlock Grid.Column="6" Text="Actions" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="0" Text="Name" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="1" Text="URL" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="Health" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="4" Text="Jobs" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="5" Text="Last Check" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="6" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             </Grid>
                             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
 
@@ -301,8 +304,8 @@
                                 <StackPanel HorizontalAlignment="Center" Spacing="8">
                                     <TextBlock
                                         Text="No transcode nodes configured. Add a transcode node to offload video transcoding from the main server."
-                                        FontSize="13"
-                                        Foreground="{StaticResource TertiaryTextBrush}"
+                                        FontSize="14"
+                                        Foreground="{StaticResource SecondaryTextBrush}"
                                         HorizontalAlignment="Center"
                                         TextAlignment="Center"
                                         TextWrapping="Wrap"

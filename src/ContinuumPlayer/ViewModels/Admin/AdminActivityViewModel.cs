@@ -29,10 +29,32 @@ public partial class AdminActivityViewModel : ObservableObject
     [ObservableProperty] private int _remuxCount;
     [ObservableProperty] private int _transcodeCount;
 
+    // Sort state: field name + direction
+    [ObservableProperty] private string _sortField = "started";
+    [ObservableProperty] private bool _sortAscending;
+
     partial void OnSearchTextChanged(string value) => ApplyFilters();
     partial void OnMethodFilterChanged(string? value) => ApplyFilters();
     partial void OnNodeFilterChanged(string? value) => ApplyFilters();
     partial void OnTypeFilterChanged(string? value) => ApplyFilters();
+    partial void OnSortFieldChanged(string value) => ApplyFilters();
+    partial void OnSortAscendingChanged(bool value) => ApplyFilters();
+
+    /// <summary>
+    /// Toggle sort: same field flips direction; new field defaults desc for "started", asc for others.
+    /// </summary>
+    public void ToggleSort(string field)
+    {
+        if (SortField == field)
+        {
+            SortAscending = !SortAscending;
+        }
+        else
+        {
+            SortField = field;
+            SortAscending = field != "started"; // "started" defaults desc, others default asc
+        }
+    }
 
     /// <summary>
     /// Returns method -> count dictionary from all sessions.
@@ -74,10 +96,18 @@ public partial class AdminActivityViewModel : ObservableObject
         + (TypeFilter != null ? 1 : 0);
 
     [RelayCommand]
-    private async Task LoadAsync()
+    private Task LoadAsync() => LoadInternalAsync(silent: false);
+
+    /// <summary>
+    /// Realtime event-channel refresh path — skips toggling IsLoading so the
+    /// ProgressRing doesn't flash on every websocket update.
+    /// </summary>
+    public Task RefreshSilentAsync() => LoadInternalAsync(silent: true);
+
+    private async Task LoadInternalAsync(bool silent)
     {
-        IsLoading = true;
-        ErrorMessage = null;
+        if (!silent) IsLoading = true;
+        if (!silent) ErrorMessage = null;
         try
         {
             _allSessions = await _adminApi.GetSessionsAsync();
@@ -87,8 +117,8 @@ public partial class AdminActivityViewModel : ObservableObject
             TranscodeCount = _allSessions.Count(s => s.PlayMethod == "transcode");
             ApplyFilters();
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
-        finally { IsLoading = false; }
+        catch (Exception ex) { if (!silent) ErrorMessage = ex.Message; }
+        finally { if (!silent) IsLoading = false; }
     }
 
     [RelayCommand]
@@ -109,7 +139,7 @@ public partial class AdminActivityViewModel : ObservableObject
     [RelayCommand]
     private void ClearFilters()
     {
-        SearchText = "";
+        // Only reset filter toggles — do NOT reset SearchText (webui behaviour)
         MethodFilter = null;
         NodeFilter = null;
         TypeFilter = null;
@@ -129,8 +159,28 @@ public partial class AdminActivityViewModel : ObservableObject
         if (NodeFilter != null) result = result.Where(s => s.ReportingNode == NodeFilter);
         if (TypeFilter != null) result = result.Where(s => s.MediaType == TypeFilter);
 
+        // Apply sort
+        result = ApplySort(result);
+
         FilteredSessions.Clear();
         foreach (var s in result) FilteredSessions.Add(s);
+    }
+
+    private IEnumerable<AdminSession> ApplySort(IEnumerable<AdminSession> sessions)
+    {
+        Func<AdminSession, string> keySelector = SortField switch
+        {
+            "username" => s => s.Username ?? "",
+            "media" => s => GetDisplayTitle(s),
+            "method" => s => s.VideoDecision ?? s.PlayMethod ?? "",
+            "node" => s => s.NodeDisplayName ?? s.ReportingNode ?? "",
+            "started" => s => s.StartedAt ?? "",
+            _ => s => s.StartedAt ?? ""
+        };
+
+        return SortAscending
+            ? sessions.OrderBy(keySelector, StringComparer.OrdinalIgnoreCase)
+            : sessions.OrderByDescending(keySelector, StringComparer.OrdinalIgnoreCase);
     }
 
     // ===== Formatting helpers =====
@@ -204,6 +254,21 @@ public partial class AdminActivityViewModel : ObservableObject
     public static string FormatVideoDetail(AdminSession session)
     {
         var decision = session.VideoDecision ?? session.PlayMethod;
+
+        // Auto-switched source hint: server chose a different file than requested
+        string switchPrefix = "";
+        if (session.RequestedMediaFileId > 0 && session.MediaFileId > 0
+            && session.RequestedMediaFileId != session.MediaFileId)
+        {
+            var reqParts = new List<string>();
+            var reqCodec = FormatCodecLabel(session.RequestedVideoCodec);
+            if (reqCodec != "\u2014") reqParts.Add(reqCodec);
+            var reqRes = session.RequestedVideoResolution?.Trim();
+            if (!string.IsNullOrEmpty(reqRes)) reqParts.Add(reqRes);
+            var reqSrc = reqParts.Count > 0 ? string.Join(" \u00b7 ", reqParts) : "original";
+            switchPrefix = $"Auto-switched from {reqSrc}. ";
+        }
+
         if (decision == "transcode")
         {
             var parts = new List<string>();
@@ -212,10 +277,11 @@ public partial class AdminActivityViewModel : ObservableObject
             var res = session.TargetResolution?.Trim();
             if (!string.IsNullOrEmpty(res)) parts.Add(res);
             var target = string.Join(" \u00b7 ", parts);
-            return !string.IsNullOrEmpty(target) ? $"\u2192 {target}" : "Transcoding";
+            var detail = !string.IsNullOrEmpty(target) ? $"Output \u2192 {target}" : "Transcoding";
+            return switchPrefix + detail;
         }
-        if (decision == "remux") return "Container remux";
-        if (decision == "direct") return "No video conversion";
+        if (decision == "remux") return switchPrefix + "Container remux";
+        if (decision == "direct") return switchPrefix + "No video conversion";
         return "\u2014";
     }
 
@@ -287,6 +353,6 @@ public partial class AdminActivityViewModel : ObservableObject
     public static string FormatLocaleDateTime(string dateStr)
     {
         if (!DateTime.TryParse(dateStr, out var dt)) return "";
-        return dt.ToLocalTime().ToString("g");
+        return dt.ToLocalTime().ToString("G");
     }
 }

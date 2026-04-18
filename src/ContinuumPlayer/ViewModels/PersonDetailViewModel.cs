@@ -39,7 +39,16 @@ public partial class PersonDetailViewModel : ObservableObject
     [ObservableProperty]
     private int _filmographyTotal;
 
+    [ObservableProperty]
+    private bool _isLoadingMoreFilmography;
+
     public ObservableCollection<MediaItem> Filmography { get; } = [];
+
+    /// <summary>Page size for filmography pagination (matches webui 60).</summary>
+    private const int FilmographyPageSize = 60;
+
+    /// <summary>Whether there are more filmography items to fetch.</summary>
+    public bool FilmographyHasMore => Filmography.Count < FilmographyTotal;
 
     public bool IsAdmin => _authService.CurrentUser?.Role == "admin";
 
@@ -159,15 +168,44 @@ public partial class PersonDetailViewModel : ObservableObject
         try
         {
             var type = SelectedTypeFilter == "all" ? null : SelectedTypeFilter;
-            var response = await _catalogApi.GetPersonFilmographyAsync(personId, type);
+            var response = await _catalogApi.GetPersonFilmographyAsync(
+                personId, type, limit: FilmographyPageSize, offset: 0);
             Filmography.Clear();
             FilmographyTotal = response.Total;
             foreach (var item in response.Items)
                 Filmography.Add(item);
+            OnPropertyChanged(nameof(FilmographyHasMore));
         }
         catch
         {
             // Filmography load failure is non-fatal
+        }
+    }
+
+    /// <summary>
+    /// Incrementally fetches the next page of filmography items when the user
+    /// scrolls near the bottom of the grid. Guarded against concurrent fetches
+    /// and no-ops once <see cref="FilmographyHasMore"/> is false.
+    /// </summary>
+    [RelayCommand]
+    private async Task LoadMoreFilmographyAsync()
+    {
+        if (IsLoadingMoreFilmography || !FilmographyHasMore || Person == null) return;
+
+        IsLoadingMoreFilmography = true;
+        try
+        {
+            var type = SelectedTypeFilter == "all" ? null : SelectedTypeFilter;
+            var response = await _catalogApi.GetPersonFilmographyAsync(
+                Person.Id, type, limit: FilmographyPageSize, offset: Filmography.Count);
+            foreach (var item in response.Items)
+                Filmography.Add(item);
+            OnPropertyChanged(nameof(FilmographyHasMore));
+        }
+        catch { /* non-fatal */ }
+        finally
+        {
+            IsLoadingMoreFilmography = false;
         }
     }
 }

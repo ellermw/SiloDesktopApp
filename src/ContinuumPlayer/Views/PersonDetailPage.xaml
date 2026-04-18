@@ -43,13 +43,47 @@
     </Page.Resources>
 
     <Grid>
-        <!-- Loading -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+        <!-- Skeleton while the person detail + filmography load.
+             Approximates photo + header text + filmography grid. -->
+        <ScrollViewer
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
+            VerticalScrollBarVisibility="Disabled">
+            <StackPanel Padding="40,24,40,48" Spacing="24">
+                <Grid ColumnSpacing="24">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <controls:SkeletonBox Grid.Column="0" Width="180" Height="270" CornerRadius="8" />
+                    <StackPanel Grid.Column="1" Spacing="10" VerticalAlignment="Top" Margin="0,8,0,0">
+                        <controls:SkeletonText Width="320" Height="32" HorizontalAlignment="Left" />
+                        <controls:SkeletonText Width="220" Height="14" HorizontalAlignment="Left" />
+                        <controls:SkeletonText Width="600" Height="14" HorizontalAlignment="Left" />
+                        <controls:SkeletonText Width="580" Height="14" HorizontalAlignment="Left" />
+                        <controls:SkeletonText Width="540" Height="14" HorizontalAlignment="Left" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- Filmography grid skeleton (inline poster placeholders — virtualization not needed for 12 lightweight controls). -->
+                <controls:SkeletonText Width="140" Height="20" HorizontalAlignment="Left" />
+                <StackPanel x:Name="PersonSkeletonGrid" Orientation="Horizontal" Spacing="12">
+                    <controls:SkeletonPoster />
+                    <controls:SkeletonPoster />
+                    <controls:SkeletonPoster />
+                    <controls:SkeletonPoster />
+                    <controls:SkeletonPoster />
+                    <controls:SkeletonPoster />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <controls:SkeletonPoster />
+                    <controls:SkeletonPoster />
+                    <controls:SkeletonPoster />
+                    <controls:SkeletonPoster />
+                    <controls:SkeletonPoster />
+                    <controls:SkeletonPoster />
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
 
         <!-- Error -->
         <TextBlock
@@ -117,11 +151,11 @@
                                 FontWeight="Bold"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
 
-                            <TextBlock
-                                x:Name="AgeText"
-                                FontSize="20"
-                                Foreground="{StaticResource TertiaryTextBrush}"
-                                VerticalAlignment="Center" />
+                            <Border Background="{StaticResource SurfaceRaisedBrush}"
+                                    CornerRadius="12" Padding="10,4,10,4" VerticalAlignment="Center">
+                                <TextBlock x:Name="AgeText" FontSize="13" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                            </Border>
 
                             <!-- Refresh metadata (all users; admins refresh immediately, others queue) -->
                             <Button
@@ -135,6 +169,20 @@
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon Glyph="&#xE72C;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
                                     <TextBlock Text="Refresh metadata" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+
+                            <!-- Edit metadata (admin only) -->
+                            <Button
+                                x:Name="EditMetadataButton"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                CornerRadius="16"
+                                Padding="12,6"
+                                Click="EditMetadataButton_Click"
+                                Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE70F;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock Text="Edit metadata" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
 
@@ -270,6 +318,21 @@
                         HorizontalAlignment="Center"
                         Margin="0,24,0,0"
                         Visibility="Collapsed" />
+
+                    <!-- Loading-more spinner shown while the next filmography page is fetched -->
+                    <StackPanel
+                        x:Name="FilmographyLoadingMore"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Center"
+                        Spacing="10"
+                        Margin="0,16,0,0"
+                        Visibility="Collapsed">
+                        <ProgressRing IsActive="True" Width="18" Height="18" />
+                        <TextBlock Text="Loading more…"
+                                   FontSize="13"
+                                   Foreground="{StaticResource SecondaryTextBrush}"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>

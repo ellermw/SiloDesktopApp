@@ -41,3 +41,9 @@ public class UnmatchedLibraryItem
     public string LibraryName { get; set; } = "";
     public string Status { get; set; } = "";
 }
+
+public class UnmatchedLibraryItemsResponse
+{
+    public List<UnmatchedLibraryItem> Items { get; set; } = [];
+    public int Total { get; set; }
+}

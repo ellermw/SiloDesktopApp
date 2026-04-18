@@ -9,6 +9,12 @@ public class Profile
     public string Name { get; set; } = "";
     public bool HasPin { get; set; }
     public bool IsChild { get; set; }
+    /// <summary>
+    /// Upstream commit c3f2da5: household primary profile. First profile per
+    /// user is auto-flagged; can manage sibling profiles without server-admin
+    /// rights and is protected from direct deletion.
+    /// </summary>
+    public bool IsPrimary { get; set; }
     public string QualityPreference { get; set; } = "";
     public string SubtitleLanguage { get; set; } = "";
     public string SubtitleMode { get; set; } = "";

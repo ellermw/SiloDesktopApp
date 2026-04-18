@@ -171,6 +171,8 @@
                                     <ComboBoxItem Content="Movies" Tag="movies" />
                                     <ComboBoxItem Content="Series" Tag="series" />
                                     <ComboBoxItem Content="Mixed" Tag="mixed" />
+                                    <ComboBoxItem Content="Music" Tag="music" />
+                                    <ComboBoxItem Content="Live TV" Tag="live-tv" />
                                 </ComboBox>
                             </StackPanel>
 
@@ -312,11 +314,221 @@
                                     Style="{StaticResource DarkTextBoxStyle}"
                                     PlaceholderText="My Continuum (optional)" />
                             </StackPanel>
+
+                            <!-- Optional: S3 Storage. Collapsed by default so the
+                                 wizard stays light for users who don't need S3. -->
+                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                                <ToggleSwitch
+                                    IsOn="{x:Bind ViewModel.ConfigureStorage, Mode=TwoWay}"
+                                    OnContent="" OffContent="" />
+                                <TextBlock Text="Configure S3 storage now (optional)" FontSize="13"
+                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+
+                            <StackPanel x:Name="StoragePanel" Spacing="16"
+                                        Visibility="{x:Bind ViewModel.ConfigureStorage, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                                <TextBlock
+                                    Text="Public Assets Storage (S3)"
+                                    FontSize="12" FontWeight="SemiBold"
+                                    Foreground="{StaticResource SecondaryTextBrush}"
+                                    CharacterSpacing="120" />
+                                <TextBlock
+                                    Text="Stores client-facing assets: artwork, chapter thumbnails, subtitle files."
+                                    FontSize="11" Opacity="0.75"
+                                    Foreground="{StaticResource TertiaryTextBrush}"
+                                    TextWrapping="Wrap" />
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Spacing="4">
+                                        <TextBlock Text="Endpoint" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <TextBox
+                                            Text="{x:Bind ViewModel.S3PublicEndpoint, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            Style="{StaticResource DarkTextBoxStyle}"
+                                            PlaceholderText="https://s3.amazonaws.com" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Spacing="4">
+                                        <TextBlock Text="Bucket" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <TextBox
+                                            Text="{x:Bind ViewModel.S3PublicBucket, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            Style="{StaticResource DarkTextBoxStyle}" />
+                                    </StackPanel>
+                                </Grid>
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="Key Prefix (optional)" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBox
+                                        Text="{x:Bind ViewModel.S3PublicKeyPrefix, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                        Style="{StaticResource DarkTextBoxStyle}"
+                                        PlaceholderText="continuum/prod" />
+                                </StackPanel>
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Spacing="4">
+                                        <TextBlock Text="Access Key" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <PasswordBox
+                                            Password="{x:Bind ViewModel.S3PublicAccessKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Spacing="4">
+                                        <TextBlock Text="Secret Key" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <PasswordBox
+                                            Password="{x:Bind ViewModel.S3PublicSecretKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="URL Auth Method" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <ComboBox x:Name="PublicUrlAuthComboBox" Width="260"
+                                              SelectionChanged="PublicUrlAuthComboBox_SelectionChanged">
+                                        <ComboBoxItem Content="S3 Presigned URLs (Recommended)" Tag="presigned" IsSelected="True" />
+                                        <ComboBoxItem Content="Public (no auth)" Tag="public" />
+                                        <ComboBoxItem Content="Cloudflare Token Auth" Tag="cloudflare_token" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Spacing="4"
+                                            Visibility="{x:Bind ViewModel.IsPublicReadEndpointVisible, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="Read Endpoint" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBox
+                                        Text="{x:Bind ViewModel.S3PublicReadEndpoint, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                        Style="{StaticResource DarkTextBoxStyle}"
+                                        PlaceholderText="https://cdn.example.com" />
+                                </StackPanel>
+
+                                <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.35" />
+
+                                <TextBlock
+                                    Text="Private Internal Storage (S3)"
+                                    FontSize="12" FontWeight="SemiBold"
+                                    Foreground="{StaticResource SecondaryTextBrush}"
+                                    CharacterSpacing="120" />
+                                <TextBlock
+                                    Text="Non-public objects: imports, exports, internal artifacts."
+                                    FontSize="11" Opacity="0.75"
+                                    Foreground="{StaticResource TertiaryTextBrush}"
+                                    TextWrapping="Wrap" />
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Spacing="4">
+                                        <TextBlock Text="Endpoint" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <TextBox
+                                            Text="{x:Bind ViewModel.S3PrivateEndpoint, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            Style="{StaticResource DarkTextBoxStyle}"
+                                            PlaceholderText="https://s3.amazonaws.com" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Spacing="4">
+                                        <TextBlock Text="Bucket" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <TextBox
+                                            Text="{x:Bind ViewModel.S3PrivateBucket, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            Style="{StaticResource DarkTextBoxStyle}" />
+                                    </StackPanel>
+                                </Grid>
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="Key Prefix (optional)" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBox
+                                        Text="{x:Bind ViewModel.S3PrivateKeyPrefix, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                        Style="{StaticResource DarkTextBoxStyle}"
+                                        PlaceholderText="continuum/internal" />
+                                </StackPanel>
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Spacing="4">
+                                        <TextBlock Text="Access Key" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <PasswordBox
+                                            Password="{x:Bind ViewModel.S3PrivateAccessKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Spacing="4">
+                                        <TextBlock Text="Secret Key" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <PasswordBox
+                                            Password="{x:Bind ViewModel.S3PrivateSecretKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.35" />
+
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <ToggleSwitch
+                                        IsOn="{x:Bind ViewModel.CacheImages, Mode=TwoWay}"
+                                        OnContent="" OffContent="" />
+                                    <StackPanel>
+                                        <TextBlock Text="Cache artwork in public storage" FontSize="13"
+                                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                                        <TextBlock Text="Instead of proxying external URLs."
+                                                   FontSize="11" Opacity="0.7"
+                                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </StackPanel>
                         </StackPanel>
                     </StackPanel>
                 </Border>
 
-                <!-- Step 5: Metadata -->
+                <!-- Step 5: Integrations (subtitle providers) -->
+                <Border x:Name="Step5IntegrationsPanel" Style="{StaticResource GlassCardStyle}" Visibility="Collapsed">
+                    <StackPanel Spacing="20">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Integrations" FontSize="20" FontWeight="SemiBold"
+                                       Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock Text="Configure subtitle providers for automatic subtitle downloading."
+                                       Style="{StaticResource SecondaryTextStyle}" FontSize="13" />
+                        </StackPanel>
+                        <TextBlock Text="Subtitle providers can be configured later in Admin Settings → Integrations. You can skip this step."
+                                   FontSize="13" Foreground="{StaticResource TertiaryTextBrush}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Step 6: Downloads -->
+                <Border x:Name="Step6DownloadsPanel" Style="{StaticResource GlassCardStyle}" Visibility="Collapsed">
+                    <StackPanel Spacing="20">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Downloads" FontSize="20" FontWeight="SemiBold"
+                                       Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock Text="Allow users to download media files for offline viewing."
+                                       Style="{StaticResource SecondaryTextStyle}" FontSize="13" />
+                        </StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2" VerticalAlignment="Center">
+                                <TextBlock Text="Enable Downloads" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="When enabled, users can download media to their devices."
+                                           FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
+                            </StackPanel>
+                            <ToggleSwitch x:Name="DownloadsEnabledToggle" Grid.Column="1"
+                                          OnContent="" OffContent="" VerticalAlignment="Center" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- Step 7: Recommendations -->
+                <Border x:Name="Step7RecommendationsPanel" Style="{StaticResource GlassCardStyle}" Visibility="Collapsed">
+                    <StackPanel Spacing="20">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Recommendations" FontSize="20" FontWeight="SemiBold"
+                                       Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock Text="Configure the AI-powered recommendation engine. Requires pgvector and an embedding endpoint."
+                                       Style="{StaticResource SecondaryTextStyle}" FontSize="13" />
+                        </StackPanel>
+                        <TextBlock Text="Recommendation settings can be configured later in Admin → Recommendations. You can skip this step."
+                                   FontSize="13" Foreground="{StaticResource TertiaryTextBrush}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Step 8: Metadata -->
                 <Border x:Name="Step5Panel" Style="{StaticResource GlassCardStyle}" Visibility="Collapsed">
                     <StackPanel Spacing="20">
                         <StackPanel Spacing="4">

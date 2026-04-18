@@ -12,6 +12,10 @@ public sealed partial class HomePage : Page
 {
     public HomeViewModel ViewModel { get; }
     private bool _eventsAttached;
+    // Tracks whether the section panel has been populated for the current
+    // data. When the user navigates away and back, skip rebuilding so we
+    // don't spike the UI thread tearing down and rebuilding ~60 PosterCards.
+    private bool _contentBuilt;
 
     public HomePage()
     {
@@ -27,9 +31,14 @@ public sealed partial class HomePage : Page
             if (ViewModel.Sections.Count == 0 && ViewModel.FeaturedSections.Count == 0)
             {
                 await ViewModel.LoadCommand.ExecuteAsync(null);
+                _contentBuilt = false; // fresh data → rebuild
             }
 
-            BuildContent();
+            if (!_contentBuilt)
+            {
+                BuildContent();
+                _contentBuilt = true;
+            }
 
             if (!_eventsAttached)
             {
@@ -88,8 +97,28 @@ public sealed partial class HomePage : Page
             SectionsPanel.Children.Add(row);
         }
 
-        // Empty state when the server returned zero sections.
+        // Empty state when the server returned zero sections. Message text
+        // depends on whether this profile has ANY visible libraries: if zero,
+        // the real issue is library-access permissions; otherwise it's a
+        // home-sections admin config issue.
         bool hasSections = ViewModel.FeaturedSections.Count > 0 || ViewModel.Sections.Count > 0;
+        if (!hasSections)
+        {
+            bool hasLibraries = mainVm.Libraries.Count > 0;
+            if (hasLibraries)
+            {
+                EmptyHomeTitle.Text = "No sections configured";
+                EmptyHomeDescription.Text =
+                    "Ask your administrator to set up the homepage in Admin \u2192 Home Sections.";
+            }
+            else
+            {
+                EmptyHomeTitle.Text = "No libraries available";
+                EmptyHomeDescription.Text =
+                    "Your profile has no libraries assigned. Ask your administrator to grant access, "
+                    + "or check Settings \u2192 Libraries if you have admin privileges.";
+            }
+        }
         EmptyHomeState.Visibility = hasSections ? Visibility.Collapsed : Visibility.Visible;
     }
 
@@ -128,7 +157,7 @@ public sealed partial class HomePage : Page
 
     private void OnSectionsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
-        DispatcherQueue.TryEnqueue(() => BuildContent());
+        DispatcherQueue.TryEnqueue(() => { BuildContent(); _contentBuilt = true; });
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

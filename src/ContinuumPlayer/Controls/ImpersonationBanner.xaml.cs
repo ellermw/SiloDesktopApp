@@ -43,20 +43,17 @@ public sealed partial class ImpersonationBanner : UserControl
 
     private void UpdateText()
     {
-        // Match WebUI format: "Impersonating {user} as requested by {impersonator}".
-        // Fall back gracefully when fields are missing.
-        if (string.IsNullOrEmpty(ImpersonatedUsername))
-        {
-            ImpersonatingText.Text = "Impersonating user";
-        }
-        else if (string.IsNullOrEmpty(ImpersonatorUsername))
-        {
-            ImpersonatingText.Text = $"Impersonating {ImpersonatedUsername}";
-        }
-        else
-        {
-            ImpersonatingText.Text = $"Impersonating {ImpersonatedUsername} as requested by {ImpersonatorUsername}";
-        }
+        // Webui parity (commit 73a8fea): avatar chip + username on the left,
+        // "authorized by {admin}" beside it, end-session button on the right.
+        ImpersonatingText.Text = string.IsNullOrEmpty(ImpersonatedUsername)
+            ? "user"
+            : ImpersonatedUsername;
+        InitialText.Text = string.IsNullOrEmpty(ImpersonatedUsername)
+            ? "?"
+            : ImpersonatedUsername[..1].ToUpperInvariant();
+        ImpersonatorText.Text = string.IsNullOrEmpty(ImpersonatorUsername)
+            ? ""
+            : ImpersonatorUsername;
     }
 
     /// <summary>

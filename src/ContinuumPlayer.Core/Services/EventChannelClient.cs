@@ -23,7 +23,11 @@ public sealed class EventChannelClient : IDisposable
     private Task? _runTask;
     private readonly object _lock = new();
 
-    private readonly HashSet<string> _requestedChannels = new(StringComparer.OrdinalIgnoreCase);
+    // Ref-counted channel subscriptions — multiple features (settings/import,
+    // admin/server-activity, watch-party, …) share a single WebSocket. Each call
+    // to Subscribe increments the count; Dispose on the returned handle
+    // decrements. The live subscription set is `keys where count > 0`.
+    private readonly Dictionary<string, int> _channelRefs = new(StringComparer.OrdinalIgnoreCase);
     private string? _connectionId;
 
     /// <summary>Fired after the server accepts a subscribe and sends the snapshot frame.
@@ -50,46 +54,138 @@ public sealed class EventChannelClient : IDisposable
     public WebSocketState State => _ws?.State ?? WebSocketState.None;
 
     /// <summary>
-    /// Start the client and subscribe to the given channel(s). Safe to call more than
-    /// once; calling with a new channel list triggers a reconnect with the updated
-    /// subscription set.
+    /// Subscribe to one or more channels. Multiple concurrent subscribers can coexist
+    /// (ref-counted): settings may watch <c>history_import</c> while admin watches
+    /// <c>sessions,tasks,scans</c>. Dispose the returned handle to release this
+    /// subscription's hold; channels with zero remaining refs drop out of the set
+    /// and the client reconnects with the reduced union.
     /// </summary>
-    public void Start(params string[] channels)
+    public IDisposable Subscribe(params string[] channels)
+    {
+        if (channels.Length == 0) return new SubscriptionHandle(this, Array.Empty<string>());
+        var added = new List<string>();
+        lock (_lock)
+        {
+            bool changed = false;
+            foreach (var ch in channels)
+            {
+                if (!_channelRefs.TryGetValue(ch, out var count))
+                {
+                    _channelRefs[ch] = 1;
+                    changed = true;
+                }
+                else
+                {
+                    _channelRefs[ch] = count + 1;
+                }
+                added.Add(ch);
+            }
+            EnsureRunning_NoLock(forceReconnect: changed);
+        }
+        return new SubscriptionHandle(this, added);
+    }
+
+    private void Release(IEnumerable<string> channels)
     {
         lock (_lock)
         {
-            _requestedChannels.Clear();
-            foreach (var ch in channels) _requestedChannels.Add(ch);
-
-            if (_runTask != null && !_runTask.IsCompleted)
+            bool changed = false;
+            foreach (var ch in channels)
             {
-                // Already running — force a reconnect so the new subscription takes effect.
-                Log($"Start called with new channels [{string.Join(",", channels)}]; forcing reconnect");
+                if (_channelRefs.TryGetValue(ch, out var count))
+                {
+                    if (count <= 1) { _channelRefs.Remove(ch); changed = true; }
+                    else _channelRefs[ch] = count - 1;
+                }
+            }
+            if (!changed) return;
+            if (_channelRefs.Count == 0)
+            {
+                StopInternal_NoLock();
+            }
+            else
+            {
+                // Force reconnect with reduced channel set.
                 _cts?.Cancel();
                 try { _runTask?.Wait(500); } catch { }
+                _cts = new CancellationTokenSource();
+                _runTask = Task.Run(() => RunLoop(_cts.Token));
             }
-
-            _cts = new CancellationTokenSource();
-            _runTask = Task.Run(() => RunLoop(_cts.Token));
         }
     }
 
-    public void Stop()
+    private void EnsureRunning_NoLock(bool forceReconnect)
     {
+        if (_runTask != null && !_runTask.IsCompleted)
+        {
+            if (!forceReconnect) return;
+            Log($"Channel set changed; forcing reconnect");
+            _cts?.Cancel();
+            try { _runTask?.Wait(500); } catch { }
+        }
+        _cts = new CancellationTokenSource();
+        _runTask = Task.Run(() => RunLoop(_cts.Token));
+    }
+
+    private void StopInternal_NoLock()
+    {
+        try { _cts?.Cancel(); } catch { }
+        try { _runTask?.Wait(1000); } catch { }
+        try
+        {
+            if (_ws?.State == WebSocketState.Open)
+                _ = _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "client stop", CancellationToken.None);
+        }
+        catch { }
+        _ws?.Dispose();
+        _ws = null;
+        _runTask = null;
+    }
+
+    /// <summary>
+    /// Legacy entry point — subscribes without returning a handle. Retained for
+    /// the original <c>SettingsPage</c> import-events caller; new callers should
+    /// use <see cref="Subscribe"/> and dispose the handle.
+    /// </summary>
+    public void Start(params string[] channels)
+    {
+        // Replace the "start" semantics with "ensure subscribed" — any channels
+        // added via this path are anchored until Stop() is called. We track the
+        // anchor set separately so Stop() only releases what Start added.
+        var toAdd = channels.Where(c => !_legacyStartChannels.Contains(c)).ToArray();
         lock (_lock)
         {
-            try { _cts?.Cancel(); } catch { }
-            try { _runTask?.Wait(1000); } catch { }
-            try
-            {
-                if (_ws?.State == WebSocketState.Open)
-                    _ = _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "client stop", CancellationToken.None);
-            }
-            catch { }
-            _ws?.Dispose();
-            _ws = null;
-            _runTask = null;
-            _requestedChannels.Clear();
+            foreach (var ch in channels) _legacyStartChannels.Add(ch);
+        }
+        if (toAdd.Length > 0) _ = Subscribe(toAdd); // Fire-and-forget ref-counted subscribe.
+    }
+
+    private readonly HashSet<string> _legacyStartChannels = new(StringComparer.OrdinalIgnoreCase);
+
+    public void Stop()
+    {
+        string[] toRelease;
+        lock (_lock)
+        {
+            toRelease = _legacyStartChannels.ToArray();
+            _legacyStartChannels.Clear();
+        }
+        if (toRelease.Length > 0) Release(toRelease);
+    }
+
+    private sealed class SubscriptionHandle : IDisposable
+    {
+        private readonly EventChannelClient _client;
+        private string[]? _channels;
+        public SubscriptionHandle(EventChannelClient client, IEnumerable<string> channels)
+        {
+            _client = client;
+            _channels = channels.ToArray();
+        }
+        public void Dispose()
+        {
+            var chans = Interlocked.Exchange(ref _channels, null);
+            if (chans != null && chans.Length > 0) _client.Release(chans);
         }
     }
 
@@ -127,7 +223,7 @@ public sealed class EventChannelClient : IDisposable
         string[] channelsSnapshot;
         lock (_lock)
         {
-            channelsSnapshot = _requestedChannels.ToArray();
+            channelsSnapshot = _channelRefs.Keys.ToArray();
         }
         if (channelsSnapshot.Length == 0)
         {

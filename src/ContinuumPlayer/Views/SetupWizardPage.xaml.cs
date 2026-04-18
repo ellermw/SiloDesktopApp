@@ -62,7 +62,10 @@ public sealed partial class SetupWizardPage : Page
         Step2Panel.Visibility = step == 2 ? Visibility.Visible : Visibility.Collapsed;
         Step3Panel.Visibility = step == 3 ? Visibility.Visible : Visibility.Collapsed;
         Step4Panel.Visibility = step == 4 ? Visibility.Visible : Visibility.Collapsed;
-        Step5Panel.Visibility = step == 5 ? Visibility.Visible : Visibility.Collapsed;
+        Step5IntegrationsPanel.Visibility = step == 5 ? Visibility.Visible : Visibility.Collapsed;
+        Step6DownloadsPanel.Visibility = step == 6 ? Visibility.Visible : Visibility.Collapsed;
+        Step7RecommendationsPanel.Visibility = step == 7 ? Visibility.Visible : Visibility.Collapsed;
+        Step5Panel.Visibility = step == 8 ? Visibility.Visible : Visibility.Collapsed;
 
         BackButton.Visibility = step > 1 ? Visibility.Visible : Visibility.Collapsed;
         NextButton.Visibility = step < ViewModel.TotalSteps ? Visibility.Visible : Visibility.Collapsed;
@@ -75,7 +78,7 @@ public sealed partial class SetupWizardPage : Page
     {
         StepIndicator.Children.Clear();
 
-        var labels = new[] { "Account", "Profile", "Library", "Server", "Metadata" };
+        var labels = new[] { "Account", "Profile", "Library", "Server", "Integrations", "Downloads", "Recommendations", "Metadata" };
 
         for (int i = 0; i < ViewModel.TotalSteps; i++)
         {
@@ -220,6 +223,14 @@ public sealed partial class SetupWizardPage : Page
         if (HardwareAccelComboBox.SelectedItem is ComboBoxItem item && item.Tag is string tag)
         {
             ViewModel.HardwareAccel = tag;
+        }
+    }
+
+    private void PublicUrlAuthComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PublicUrlAuthComboBox.SelectedItem is ComboBoxItem item && item.Tag is string tag)
+        {
+            ViewModel.S3PublicUrlAuth = tag;
         }
     }
 
