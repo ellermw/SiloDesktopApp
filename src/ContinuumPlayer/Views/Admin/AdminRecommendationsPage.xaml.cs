@@ -284,13 +284,12 @@ public sealed partial class AdminRecommendationsPage : Page
         storageDim ??= 3072;
         const string note = "Changing this config requires a manual reset, which is not currently supported in-product.";
 
+        // Width + left-alignment come from SettingsSectionsPanel (MaxWidth=768, Left).
         var card = new Border
         {
             Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"],
             CornerRadius = new CornerRadius(16),
             Padding = new Thickness(20, 16, 20, 16),
-            MaxWidth = 1080,
-            HorizontalAlignment = HorizontalAlignment.Left,
         };
 
         var outer = new StackPanel { Spacing = 16 };
@@ -392,12 +391,11 @@ public sealed partial class AdminRecommendationsPage : Page
         string title,
         (string Key, string Label, SettingFieldType Type, string? Hint)[] fields)
     {
+        // Width + left-alignment come from SettingsSectionsPanel (MaxWidth=768, Left).
         var card = new Border
         {
             Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"],
             CornerRadius = new CornerRadius(16),
-            MaxWidth = 1080,
-            HorizontalAlignment = HorizontalAlignment.Left,
         };
 
         var outer = new StackPanel();
@@ -549,7 +547,7 @@ public sealed partial class AdminRecommendationsPage : Page
             {
                 Style = (Microsoft.UI.Xaml.Style)Application.Current.Resources["DarkPasswordBoxStyle"],
                 PlaceholderText = isConfigured ? "configured" : (hint ?? "Not configured"),
-                MaxWidth = 480,
+                MaxWidth = 448,
                 HorizontalAlignment = HorizontalAlignment.Left,
             };
             pb.LostFocus += (_, _) =>
@@ -595,7 +593,7 @@ public sealed partial class AdminRecommendationsPage : Page
                 Style = (Microsoft.UI.Xaml.Style)Application.Current.Resources["DarkTextBoxStyle"],
                 Text = serverVal,
                 PlaceholderText = hint ?? "",
-                MaxWidth = 480,
+                MaxWidth = 448,
                 HorizontalAlignment = HorizontalAlignment.Left,
             };
             tb.LostFocus += (_, _) =>

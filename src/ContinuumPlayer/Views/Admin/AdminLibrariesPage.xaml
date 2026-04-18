@@ -21,6 +21,7 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
+            <!-- webui parity: AdminLibraries inherits .admin-shell (1560px) from AdminLayout. -->
             <StackPanel Padding="48,28,48,40" Spacing="24">
 
                 <!-- ===== Page Header (.page-header: flex items-end justify-between) ===== -->

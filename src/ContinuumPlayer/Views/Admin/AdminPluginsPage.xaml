@@ -21,7 +21,11 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <!-- webui parity: admin pages sit inside .admin-shell (1560); we cap at 1400 for
+                 consistency with sibling admin pages that use .page-shell. -->
+            <StackPanel
+                Padding="40,28,40,40"
+                Spacing="24">
 
                 <!-- Header — matches web AdminPlugins: title/subtitle left, Check for updates button right -->
                 <Grid>

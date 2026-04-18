@@ -29,7 +29,10 @@
                 IsScrollInertiaEnabled="True"
                 VerticalScrollBarVisibility="Auto">
 
-                <StackPanel Padding="40,28,40,40" Spacing="24">
+                <!-- webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
+                <StackPanel
+                    Padding="40,28,40,40"
+                    Spacing="24">
 
                     <!-- Header -->
                     <StackPanel Spacing="4">

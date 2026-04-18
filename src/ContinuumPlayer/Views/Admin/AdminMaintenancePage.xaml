@@ -20,7 +20,8 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="48,28,48,48" Spacing="24" MaxWidth="1200" HorizontalAlignment="Stretch">
+            <!-- webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
+            <StackPanel Padding="40,28,40,40" Spacing="24">
 
                 <!-- ===== Page header ===== -->
                 <StackPanel Spacing="6">

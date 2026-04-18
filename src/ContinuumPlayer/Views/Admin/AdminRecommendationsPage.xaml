@@ -17,9 +17,11 @@
 
     <Grid>
 
-        <!-- Main content -->
+        <!-- Main content. Webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
         <ScrollViewer IsScrollInertiaEnabled="True">
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <StackPanel
+                Padding="40,28,40,40"
+                Spacing="24">
 
                 <!-- ===== Header ===== -->
                 <StackPanel Spacing="12">
@@ -38,7 +40,7 @@
                 <!-- ===== Restart-required banner ===== -->
                 <Border
                     x:Name="RestartBanner"
-                    MaxWidth="1080"
+                    MaxWidth="768"
                     HorizontalAlignment="Left"
                     Background="#1AF59E0B"
                     BorderBrush="#4DF59E0B"
@@ -88,7 +90,7 @@
                             Grid.Column="0"
                             Background="{StaticResource CardBackgroundBrush}"
                             CornerRadius="16"
-                            Padding="16">
+                            Padding="20,16">
                             <StackPanel Spacing="12">
                                 <!-- Title + count -->
                                 <StackPanel Spacing="4">
@@ -148,7 +150,7 @@
                             Grid.Column="1"
                             Background="{StaticResource CardBackgroundBrush}"
                             CornerRadius="16"
-                            Padding="16">
+                            Padding="20,16">
                             <StackPanel Spacing="12">
                                 <StackPanel Spacing="4">
                                     <TextBlock
@@ -187,7 +189,7 @@
                             Grid.Column="2"
                             Background="{StaticResource CardBackgroundBrush}"
                             CornerRadius="16"
-                            Padding="16">
+                            Padding="20,16">
                             <StackPanel Spacing="12">
                                 <StackPanel Spacing="4">
                                     <TextBlock
@@ -242,7 +244,7 @@
                             Grid.Column="3"
                             Background="{StaticResource CardBackgroundBrush}"
                             CornerRadius="16"
-                            Padding="16">
+                            Padding="20,16">
                             <StackPanel Spacing="12">
                                 <StackPanel Spacing="4">
                                     <TextBlock
@@ -294,8 +296,13 @@
                     </Grid>
                 </StackPanel>
 
-                <!-- ===== Settings sections (embedding lock + collapsible panels) ===== -->
-                <StackPanel x:Name="SettingsSectionsPanel" Spacing="12" />
+                <!-- ===== Settings sections (embedding lock + collapsible panels) =====
+                     Webui: each card is max-w-3xl (768) and flush-left within page-shell. -->
+                <StackPanel
+                    x:Name="SettingsSectionsPanel"
+                    MaxWidth="768"
+                    HorizontalAlignment="Left"
+                    Spacing="12" />
 
             </StackPanel>
         </ScrollViewer>

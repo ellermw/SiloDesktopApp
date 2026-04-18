@@ -39,6 +39,8 @@
             x:Name="ContentScrollViewer"
             IsScrollInertiaEnabled="True">
 
+            <!-- webui parity: AdminDashboard inherits .admin-shell (1560px) from AdminLayout.
+                 Match exactly at 1560 so the data grid has full webui breathing room. -->
             <StackPanel Padding="40,28,40,40" Spacing="28">
 
                 <!-- ===== Header ===== -->

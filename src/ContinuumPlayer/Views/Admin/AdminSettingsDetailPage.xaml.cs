@@ -198,9 +198,11 @@ public sealed partial class AdminSettingsDetailPage : Page
     {
         ContentPanel.Children.Clear();
         _fieldRebuilders.Clear();
-        // Reset per-tab layout overrides
-        ContentPanel.MaxWidth = double.PositiveInfinity;
-        ContentPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
+        // webui parity: each settings tab is rendered inside a max-w-3xl (768px) column,
+        // flush-left within the sidebar+content shell. Individual tabs may tighten this further
+        // (e.g. Rate Limiting uses max-w-2xl = 672).
+        ContentPanel.MaxWidth = 768;
+        ContentPanel.HorizontalAlignment = HorizontalAlignment.Left;
 
         switch (tabName)
         {

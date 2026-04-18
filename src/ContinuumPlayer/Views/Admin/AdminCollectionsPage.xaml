@@ -21,6 +21,7 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
+            <!-- webui parity: AdminCollections inherits .admin-shell (1560px) from AdminLayout. -->
             <StackPanel Padding="40,28,40,40" Spacing="24">
 
                 <!-- ===== Header ===== -->
