@@ -1364,11 +1364,22 @@ local function show_osc()
     if state.hide_timer then
         state.hide_timer:kill()
     end
-    state.hide_timer = mp.add_timeout(config.hide_timeout, function()
-        if not state.mouse_in_bar and not state.pause and not state.dragging_seek and not state.dragging_volume then
-            hide_osc()
+    -- The timer re-arms itself while hide is blocked (mouse hovering the bar,
+    -- dragging, or paused). Without re-arming, a blocked hide means the OSC
+    -- can be stuck visible forever when stale state (e.g. mouse_in_bar) is
+    -- left over after the cursor has actually left the window.
+    local function check_hide()
+        if state.pause or state.dragging_seek or state.dragging_volume then
+            state.hide_timer = mp.add_timeout(config.hide_timeout, check_hide)
+            return
         end
-    end)
+        if state.mouse_in_bar and state.mouse_in_window then
+            state.hide_timer = mp.add_timeout(config.hide_timeout, check_hide)
+            return
+        end
+        hide_osc()
+    end
+    state.hide_timer = mp.add_timeout(config.hide_timeout, check_hide)
 end
 
 hide_osc = function()
@@ -1384,13 +1395,15 @@ end
 
 local last_cursor_visible = nil
 local function request_cursor_visibility(visible)
-    -- Tell mpv / the host app whether to show the cursor (only on change)
+    -- Tell the host app whether to show the cursor (only on change). The
+    -- "continuum-" prefix is required: MpvPlayer.HandleClientMessage filters
+    -- out everything else as host→Lua echo-backs.
     if visible == last_cursor_visible then return end
     last_cursor_visible = visible
     if visible then
-        mp.commandv("script-message", "osc-cursor-visible")
+        mp.commandv("script-message", "continuum-cursor-visible")
     else
-        mp.commandv("script-message", "osc-cursor-hidden")
+        mp.commandv("script-message", "continuum-cursor-hidden")
     end
 end
 
@@ -2605,6 +2618,18 @@ local function setup_key_bindings()
     -- Stats toggle
     mp.add_key_binding("i", "continuum-osc-toggle-stats", toggle_stats)
     mp.add_key_binding("I", "continuum-osc-toggle-stats-shift", toggle_stats)
+
+    -- Subtitle delay nudge (matches mpv defaults but bound explicitly because
+    -- input-default-bindings=no in the host). Z slows subs (shows them later
+    -- relative to audio); X speeds them up. Each press shifts by 100 ms; the
+    -- OSD shows the current absolute delay so the user can dial it in.
+    local function nudge_sub_delay(delta)
+        mp.commandv("add", "sub-delay", tostring(delta))
+        local d = mp.get_property_number("sub-delay") or 0
+        mp.osd_message(string.format("Subtitle delay: %+.0f ms", d * 1000), 1.5)
+    end
+    mp.add_key_binding("z", "continuum-sub-delay-back", function() nudge_sub_delay(-0.1) end)
+    mp.add_key_binding("x", "continuum-sub-delay-fwd",  function() nudge_sub_delay( 0.1) end)
 
     -- Override F key — prevent mpv's default "cycle fullscreen" from firing
     -- Arrow keys: Left/Right = seek ±10s, Up/Down = volume ±5% (matching web player)

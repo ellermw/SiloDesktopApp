@@ -32,6 +32,14 @@ public class PlayerService : IDisposable
     private int? _pendingSubtitleSelection;
     private volatile bool _qualitySwitchActive;
     private bool _playingNextShown;
+    // Premature-EOF loop-breaker. mpv keep-open=yes pauses at EOF; our handler
+    // re-seeks + plays to punch through transient CDN drops. But when the stream
+    // is genuinely stuck at a position, mpv re-hits EOF within ~30ms of every
+    // Seek+Play, and we flicker pause/play forever. Track last attempt time and
+    // streak length so we can ignore rapid duplicate EOFs and bail after 3
+    // same-position retries.
+    private long _prematureEofLastAttemptMs;
+    private int _prematureEofStreak;
     private string _activeQualityTier = "original";
     private HlsProxy? _hlsProxy;
     private PlaybackWebSocket? _webSocket;
@@ -678,7 +686,8 @@ public class PlayerService : IDisposable
         catch (Exception ex)
         {
             LogToFile("player_crash.txt", ex.ToString());
-            ErrorMessage = $"Failed to start playback: {ex.Message}";
+            var (errTitle, errDetail) = DescribePlaybackError(ex);
+            ErrorMessage = errDetail;
             IsLoading = false;
             _switchingContent = false;
 
@@ -690,8 +699,36 @@ public class PlayerService : IDisposable
                 _playbackManager = null;
             }
             SetState(PlayerState.Idle);
-            App.MainWindowInstance?.ShowPlaybackError(ex.Message);
+            App.MainWindowInstance?.ShowPlaybackError(errTitle, errDetail);
         }
+    }
+
+    // Mirrors webui describePlaybackSessionError (commit 8115bdb). Returns a
+    // (title, detail) pair tuned to the failure mode so the user sees a useful
+    // message instead of a raw exception string.
+    private static (string Title, string Detail) DescribePlaybackError(Exception ex)
+    {
+        if (ex is ApiException api)
+        {
+            if (api.StatusCode == 404 && api.ErrorCode == "not_found")
+            {
+                if (api.Message == "Source media file is missing")
+                    return ("This video is no longer available",
+                        "The file needed to play it can't be found right now. Go back and try another version if one is available.");
+                return ("This item is no longer available",
+                    "The file needed to play this item can't be found right now. Go back and try another version if one is available.");
+            }
+            if (api.StatusCode == 403)
+                return ("Playback unavailable", "You do not have permission to play this item.");
+            if (api.StatusCode >= 500)
+                return ("Playback unavailable", "Continuum could not start playback right now. Please try again.");
+            return ("Playback unavailable", string.IsNullOrWhiteSpace(api.Message) ? "Playback could not start." : api.Message);
+        }
+        if (ex.Message == "No compatible file version found")
+            return ("No compatible version found", "Continuum could not find a playable version for this device.");
+        if (!string.IsNullOrWhiteSpace(ex.Message))
+            return ("Playback unavailable", ex.Message);
+        return ("Playback unavailable", "Playback could not start.");
     }
 
     private double _resumePosition;
@@ -1026,6 +1063,8 @@ public class PlayerService : IDisposable
             _switchingContent = false; // Safe to receive PlaybackEnded now
             _qualitySwitchActive = false;
             _playingNextShown = false;
+            _prematureEofStreak = 0;
+            _prematureEofLastAttemptMs = 0;
             App.MainWindowInstance?.HideLoadingOverlay();
             LogToFile("state_trace.txt", "FileLoaded fired");
 
@@ -1096,23 +1135,54 @@ public class PlayerService : IDisposable
             // the current position which forces mpv to re-open the stream.
             // This handles the "Coneheads 16 minutes left" scenario where a
             // long-running byte-range connection gets reset by the CDN.
+            //
+            // Loop guard: mpv keep-open=yes re-emits eof-reached within ~30ms
+            // of every Seek+Play when the stream is genuinely stuck. Without
+            // this guard we hammer mpv 40 times/second and the pause icon
+            // flickers forever. Ignore repeat EOFs within 1.5s of the last
+            // retry; allow at most 3 retries in a row before giving up.
             var pos = _mpv?.Position ?? 0;
             var dur = _mpv?.Duration ?? 0;
             if (dur > 0 && pos > 10 && pos < dur * 0.95)
             {
-                LogToFile("state_trace.txt", $"  → Premature EOF detected (pos={pos:F1} dur={dur:F1}, {(1 - pos/dur)*100:F0}% remaining). Auto-resuming...");
-                try
+                var nowMs = Environment.TickCount64;
+                var sinceLastAttempt = nowMs - _prematureEofLastAttemptMs;
+
+                if (_prematureEofLastAttemptMs > 0 && sinceLastAttempt < 1500)
                 {
-                    // Re-load the same stream URL at the current position.
-                    // This creates a fresh HTTP connection to the CDN.
-                    _mpv?.Seek(pos);
-                    _mpv?.Play();
+                    // Previous Seek+Play hasn't had time to settle. Ignore.
+                    LogToFile("state_trace.txt", $"  → Premature EOF at pos={pos:F1} — retry in progress ({sinceLastAttempt}ms since last), ignoring");
+                    return;
                 }
-                catch (Exception ex)
+
+                // New EOF event (or cooldown elapsed). Count against the streak.
+                _prematureEofStreak = (_prematureEofLastAttemptMs > 0 && sinceLastAttempt < 5000)
+                    ? _prematureEofStreak + 1
+                    : 1;
+
+                if (_prematureEofStreak >= 3)
                 {
-                    LogToFile("state_trace.txt", $"  → Auto-resume failed: {ex.Message}");
+                    LogToFile("state_trace.txt", $"  → Premature EOF stuck at pos={pos:F1} (streak={_prematureEofStreak}). Giving up, closing player.");
+                    _prematureEofStreak = 0;
+                    _prematureEofLastAttemptMs = 0;
+                    ErrorMessage = "Playback stalled and couldn't resume. The stream may be corrupted at this position.";
+                    // Fall through to the normal close path below.
                 }
-                return;
+                else
+                {
+                    _prematureEofLastAttemptMs = nowMs;
+                    LogToFile("state_trace.txt", $"  → Premature EOF detected (pos={pos:F1} dur={dur:F1}, {(1 - pos/dur)*100:F0}% remaining, streak={_prematureEofStreak}). Auto-resuming...");
+                    try
+                    {
+                        _mpv?.Seek(pos);
+                        _mpv?.Play();
+                    }
+                    catch (Exception ex)
+                    {
+                        LogToFile("state_trace.txt", $"  → Auto-resume failed: {ex.Message}");
+                    }
+                    return;
+                }
             }
 
             // Phase 3b: if the caller set a next-episode hint before playback,
@@ -1784,6 +1854,12 @@ public class PlayerService : IDisposable
                 // tears down the current session and starts the next one.
                 LogToFile("state_trace.txt", "Next Episode button clicked");
                 dispatch.TryEnqueue(() => _ = ContinuePlayingNextAsync());
+                break;
+            case "continuum-cursor-hidden":
+                dispatch.TryEnqueue(() => _videoWindow?.SetCursorVisible(false));
+                break;
+            case "continuum-cursor-visible":
+                dispatch.TryEnqueue(() => _videoWindow?.SetCursorVisible(true));
                 break;
         }
     }

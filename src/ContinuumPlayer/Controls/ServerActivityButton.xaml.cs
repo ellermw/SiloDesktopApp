@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Admin;
+using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Helpers;
 
@@ -36,6 +37,7 @@ public sealed partial class ServerActivityButton : UserControl
     private List<AdminSession> _lastSessions = [];
     private List<TaskInfo> _lastRunningTasks = [];
     private List<AdminScanRun> _lastActiveScans = [];
+    private Dictionary<int, string> _libraryNames = [];
 
     /// <summary>
     /// Kept for backwards compatibility with the admin shell XAML attribute
@@ -193,9 +195,12 @@ public sealed partial class ServerActivityButton : UserControl
     {
         try
         {
-            // Run both calls in parallel; isolate failures so one doesn't block the other
+            // Run calls in parallel; isolate failures so one doesn't block the others
             var sessionsTask = _adminApi.GetSessionsAsync();
             var tasksTask = _adminApi.GetTasksAsync();
+            var librariesTask = _libraryNames.Count == 0
+                ? _adminApi.GetAdminLibrariesAsync()
+                : null;
 
             try { _lastSessions = await sessionsTask ?? []; } catch { }
             try
@@ -204,6 +209,15 @@ public sealed partial class ServerActivityButton : UserControl
                 _lastRunningTasks = allTasks.Where(t => t.State == "running").ToList();
             }
             catch { }
+            if (librariesTask != null)
+            {
+                try
+                {
+                    var libs = await librariesTask ?? [];
+                    _libraryNames = libs.ToDictionary(l => l.Id, l => l.Name);
+                }
+                catch { }
+            }
 
             DispatcherQueue.TryEnqueue(UpdateBadgeState);
         }
@@ -326,7 +340,7 @@ public sealed partial class ServerActivityButton : UserControl
             headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             headerRow.Children.Add(new TextBlock
             {
-                Text = $"Library #{scan.LibraryId}",
+                Text = ResolveLibraryName(scan.LibraryId),
                 FontSize = 12,
                 FontWeight = FontWeights.Medium,
                 TextTrimming = TextTrimming.CharacterEllipsis,
@@ -377,6 +391,11 @@ public sealed partial class ServerActivityButton : UserControl
         }
         return stack;
     }
+
+    private string ResolveLibraryName(int id) =>
+        _libraryNames.TryGetValue(id, out var name) && !string.IsNullOrEmpty(name)
+            ? name
+            : $"Library #{id}";
 
     private static string? FormatScanProgress(AdminScanRun scan)
     {

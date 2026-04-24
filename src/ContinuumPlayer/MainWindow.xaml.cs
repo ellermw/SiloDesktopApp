@@ -564,12 +564,16 @@ public sealed partial class MainWindow : Window
     }
 
     public void ShowPlaybackError(string message)
+        => ShowPlaybackError("Media Unavailable", message);
+
+    public void ShowPlaybackError(string title, string detail)
     {
         DispatcherQueue.TryEnqueue(() =>
         {
             LoadingState.Visibility = Visibility.Collapsed;
             ErrorState.Visibility = Visibility.Visible;
-            ErrorDetail.Text = message;
+            ErrorTitle.Text = title;
+            ErrorDetail.Text = detail;
             LoadingOverlay.Visibility = Visibility.Visible;
         });
     }

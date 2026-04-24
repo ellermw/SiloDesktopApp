@@ -105,7 +105,31 @@ public sealed class MpvVideoWindow : IDisposable
     [DllImport("user32.dll")]
     private static extern IntPtr SetCursor(IntPtr hCursor);
 
+    [DllImport("user32.dll")]
+    private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT lpEventTrack);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TRACKMOUSEEVENT
+    {
+        public uint cbSize;
+        public uint dwFlags;
+        public IntPtr hwndTrack;
+        public uint dwHoverTime;
+    }
+
+    private const uint TME_LEAVE = 0x00000002;
+
     private static readonly IntPtr IDC_ARROW = new(32512);
+
+    // Set when TrackMouseEvent is armed; cleared when WM_MOUSELEAVE fires.
+    // Ensures we only re-arm after each leave — avoids piling up tracking requests.
+    private bool _mouseTracking;
+
+    // Cursor visibility — driven by the Lua OSC. When the controls fade out,
+    // Lua sends `continuum-cursor-hidden`; PlayerService routes that to
+    // SetCursorVisible(false), which makes WM_SETCURSOR return a NULL cursor
+    // until the OSC reappears. Mirrors webui's `cursor-none` toggle (16cf2b4).
+    private bool _cursorHidden;
 
     private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
@@ -132,6 +156,24 @@ public sealed class MpvVideoWindow : IDisposable
     public IntPtr Hwnd => _hwnd;
 
     public void SetMpv(ContinuumPlayer.Player.MpvPlayer mpv) => _mpv = mpv;
+
+    /// <summary>
+    /// Toggle the Win32 cursor over the mpv video window. The Lua OSC
+    /// drives this in lock-step with control bar visibility — controls
+    /// fade out → cursor hides; mouse moves or controls reappear →
+    /// cursor restored.
+    /// </summary>
+    public void SetCursorVisible(bool visible)
+    {
+        bool hide = !visible;
+        if (_cursorHidden == hide) return;
+        _cursorHidden = hide;
+        // Apply immediately if the cursor is currently over our window —
+        // SetCursor only takes effect synchronously when we own the
+        // message; otherwise the next WM_SETCURSOR will pick up the flag.
+        if (_hwnd != IntPtr.Zero)
+            SetCursor(hide ? IntPtr.Zero : LoadCursorW(IntPtr.Zero, IDC_ARROW));
+    }
 
     public void Create(IntPtr parentHwnd)
     {
@@ -290,6 +332,8 @@ public sealed class MpvVideoWindow : IDisposable
         const uint WM_MBUTTONDOWN = 0x0207;
         const uint WM_MBUTTONUP = 0x0208;
         const uint WM_MOUSEWHEEL = 0x020A;
+        const uint WM_MOUSELEAVE = 0x02A3;
+        const uint WM_SETCURSOR = 0x0020;
         const uint WM_KEYDOWN = 0x0100;
         const uint WM_KEYUP = 0x0101;
 
@@ -305,6 +349,38 @@ public sealed class MpvVideoWindow : IDisposable
             int x = loWord(lParam), y = hiWord(lParam);
             _mpv?.SendMousePos(x, y);
             _mpv?.SendScriptMessage("osc-mouse-move", x.ToString(), y.ToString());
+
+            // Arm TrackMouseEvent so we get a single WM_MOUSELEAVE when the cursor
+            // leaves this window. Without this, the OSC can stay visible forever
+            // if the user flicks the mouse off-window while it's over the bar —
+            // the Lua hide timer skips hiding while mouse_in_bar is true.
+            if (!_mouseTracking)
+            {
+                var tme = new TRACKMOUSEEVENT
+                {
+                    cbSize = (uint)Marshal.SizeOf<TRACKMOUSEEVENT>(),
+                    dwFlags = TME_LEAVE,
+                    hwndTrack = hWnd,
+                    dwHoverTime = 0,
+                };
+                if (TrackMouseEvent(ref tme)) _mouseTracking = true;
+            }
+        }
+        else if (msg == WM_MOUSELEAVE)
+        {
+            _mouseTracking = false;
+            _mpv?.SendScriptMessage("osc-mouse-leave");
+        }
+        else if (msg == WM_SETCURSOR)
+        {
+            // Only override when the hit-test target is the window's client
+            // area (low word of lParam == HTCLIENT == 1). Otherwise let the
+            // default proc handle frame/border cursors.
+            if ((lParam.ToInt64() & 0xFFFF) == 1 && _cursorHidden)
+            {
+                SetCursor(IntPtr.Zero);
+                return new IntPtr(1); // TRUE — we handled it
+            }
         }
         else if (msg == WM_LBUTTONDOWN)
         {

@@ -146,8 +146,11 @@ public sealed partial class LandscapeCard : UserControl
 
     private async Task LoadImageAsync(MediaItem item, CancellationToken ct)
     {
-        // Prefer backdrop, fall back to poster
-        var imageUrl = !string.IsNullOrEmpty(item.BackdropUrl) ? item.BackdropUrl : item.PosterUrl;
+        // Match webui ContinueWatchingCard: poster first, backdrop fallback.
+        // For episodes the server populates poster_url with the per-episode
+        // still (correct 16:9 aspect); using backdrop_url instead gives a
+        // generic series backdrop that often looks miscropped here.
+        var imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
         if (string.IsNullOrEmpty(imageUrl)) return;
 
         try
@@ -158,16 +161,21 @@ public sealed partial class LandscapeCard : UserControl
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
-            var imageType = !string.IsNullOrEmpty(item.BackdropUrl) ? "backdrop" : "poster";
+            var imageType = !string.IsNullOrEmpty(item.PosterUrl) ? "poster" : "backdrop";
 
             var diskPath = await imageService.GetImageDiskPathAsync(
                 item.ContentId, imageType, imageUrl, httpClient, ct);
 
             if (ct.IsCancellationRequested || string.IsNullOrEmpty(diskPath)) return;
 
+            // Decode at 2x logical width so hi-DPI displays (and the 1.04× hover
+            // scale) keep the source crisp. Logical means WinUI also multiplies
+            // by RasterizationScale, so 560 logical → 1120 physical at 2× DPI.
+            // Any smaller (e.g. 280) and source detail is thrown away before
+            // the rendering pipeline ever scales it up.
             var bitmapImage = new BitmapImage
             {
-                DecodePixelWidth = 280,
+                DecodePixelWidth = 560,
                 DecodePixelType = DecodePixelType.Logical,
                 UriSource = new Uri(diskPath),
             };
