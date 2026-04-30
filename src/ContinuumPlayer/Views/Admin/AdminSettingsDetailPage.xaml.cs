@@ -1194,12 +1194,14 @@ public sealed partial class AdminSettingsDetailPage : Page
         testBtn.Click += async (_, _) =>
         {
             if (_subsVm == null) return;
+            var providerName = capturedProvider.ProviderName;
+            if (string.IsNullOrWhiteSpace(providerName)) return;
             testBtn.IsEnabled = false;
             testBtn.Content = "Testing...";
             resultText.Visibility = Visibility.Collapsed;
             try
             {
-                var r = await _subsVm.TestProviderAsync(capturedProvider.ProviderName);
+                var r = await _subsVm.TestProviderAsync(providerName);
                 resultText.Text = r?.Success == true ? "Connection successful" : (r?.Error ?? "Connection failed");
                 resultText.Foreground = new SolidColorBrush(r?.Success == true
                     ? Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80)
@@ -1222,6 +1224,8 @@ public sealed partial class AdminSettingsDetailPage : Page
         saveBtn.Click += async (_, _) =>
         {
             if (_subsVm == null) return;
+            var providerName = capturedProvider.ProviderName;
+            if (string.IsNullOrWhiteSpace(providerName)) return;
             saveBtn.IsEnabled = false;
             try
             {
@@ -1232,7 +1236,7 @@ public sealed partial class AdminSettingsDetailPage : Page
                     Username = !isOpenSubtitles || string.IsNullOrWhiteSpace(usernameBox?.Text) ? null : usernameBox.Text,
                     Password = !isOpenSubtitles || string.IsNullOrWhiteSpace(passwordBox?.Password) ? null : passwordBox.Password,
                 };
-                await _subsVm.UpdateProviderAsync(capturedProvider.ProviderName, req);
+                await _subsVm.UpdateProviderAsync(providerName, req);
                 resultText.Text = "Saved.";
                 resultText.Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80));
                 resultText.Visibility = Visibility.Visible;
@@ -3218,8 +3222,6 @@ public sealed partial class AdminSettingsDetailPage : Page
         "server.mode", "server.bind_address", "server.port",
     };
 
-    private bool _restartRequired;
-
     private async void SaveButton_Click(object sender, RoutedEventArgs e)
     {
         // Check if any dirty keys require restart BEFORE saving (dirty set clears after save).
@@ -3242,7 +3244,6 @@ public sealed partial class AdminSettingsDetailPage : Page
 
         if (needsRestart)
         {
-            _restartRequired = true;
             RestartServerButton.Visibility = Visibility.Visible;
             RestartHintText.Visibility = Visibility.Visible;
         }
@@ -3259,7 +3260,6 @@ public sealed partial class AdminSettingsDetailPage : Page
             DefaultButton = ContentDialogButton.Primary,
         };
         await dialog.ShowAsync();
-        _restartRequired = false;
         RestartServerButton.Visibility = Visibility.Collapsed;
         RestartHintText.Visibility = Visibility.Collapsed;
     }

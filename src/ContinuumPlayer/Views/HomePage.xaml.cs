@@ -157,7 +157,126 @@ public sealed partial class HomePage : Page
 
     private void OnSectionsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
-        DispatcherQueue.TryEnqueue(() => { BuildContent(); _contentBuilt = true; });
+        // Incremental updates only. Before: any CollectionChanged event fired
+        // BuildContent() which cleared and recreated every SectionRow. During
+        // a home load this rebuilt ~15 rows up to 15 times on the UI thread,
+        // freezing the app for seconds. Now we patch just the affected row.
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            bool isFeaturedCollection = ReferenceEquals(sender, ViewModel.FeaturedSections);
+
+            switch (e.Action)
+            {
+                case System.Collections.Specialized.NotifyCollectionChangedAction.Replace:
+                    if (e.NewItems != null)
+                    {
+                        foreach (HomeSectionWithItems updated in e.NewItems)
+                        {
+                            if (isFeaturedCollection)
+                                RefreshHero();
+                            else
+                                UpdateSectionRow(updated);
+                        }
+                    }
+                    break;
+
+                case System.Collections.Specialized.NotifyCollectionChangedAction.Remove:
+                    if (e.OldItems != null)
+                    {
+                        foreach (HomeSectionWithItems removed in e.OldItems)
+                        {
+                            if (isFeaturedCollection)
+                                RefreshHero();
+                            else
+                                RemoveSectionRow(removed.Id);
+                        }
+                    }
+                    break;
+
+                case System.Collections.Specialized.NotifyCollectionChangedAction.Add:
+                    if (e.NewItems != null)
+                    {
+                        foreach (HomeSectionWithItems added in e.NewItems)
+                        {
+                            if (isFeaturedCollection)
+                                RefreshHero();
+                            else
+                                AddSectionRow(added);
+                        }
+                    }
+                    break;
+
+                default:
+                    // Reset / Move: fall back to a full rebuild.
+                    BuildContent();
+                    _contentBuilt = true;
+                    return;
+            }
+
+            // Empty-state visibility may need to flip on add/remove.
+            bool hasSections = ViewModel.FeaturedSections.Count > 0 || ViewModel.Sections.Count > 0;
+            EmptyHomeState.Visibility = hasSections ? Visibility.Collapsed : Visibility.Visible;
+        });
+    }
+
+    private void RefreshHero()
+    {
+        var heroSection = ViewModel.FeaturedSections.FirstOrDefault(s => s.Items.Count > 0);
+        if (heroSection != null)
+        {
+            var limit = heroSection.ItemLimit > 0 ? heroSection.ItemLimit : heroSection.Items.Count;
+            HeroCarouselControl.ItemsSource = heroSection.Items.Take(limit).ToList();
+            HeroCarouselControl.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            HeroCarouselControl.ItemsSource = null;
+            HeroCarouselControl.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void UpdateSectionRow(HomeSectionWithItems updated)
+    {
+        foreach (var child in SectionsPanel.Children)
+        {
+            if (child is SectionRow row && row.Section?.Id == updated.Id)
+            {
+                row.Section = updated;
+                return;
+            }
+        }
+        // Row didn't exist yet (section arrived after initial build) — append it.
+        AddSectionRow(updated);
+    }
+
+    private void AddSectionRow(HomeSectionWithItems section)
+    {
+        var mainVm = App.Services.GetRequiredService<MainViewModel>();
+        var row = new SectionRow { Section = section };
+        var library = TryResolveLibrary(section, mainVm);
+        if (library != null)
+        {
+            var lib = library;
+            row.OnViewAll = () =>
+            {
+                var nav = App.Services.GetRequiredService<NavigationService>();
+                nav.Navigate<LibraryPage>(lib);
+            };
+            row.Section = section;
+        }
+        SectionsPanel.Children.Add(row);
+    }
+
+    private void RemoveSectionRow(string sectionId)
+    {
+        for (int i = 0; i < SectionsPanel.Children.Count; i++)
+        {
+            if (SectionsPanel.Children[i] is SectionRow row && row.Section?.Id == sectionId)
+            {
+                SectionsPanel.Children.RemoveAt(i);
+                return;
+            }
+        }
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

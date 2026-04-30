@@ -447,11 +447,10 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     private void StopWebSocket()
     {
         try { _wsCts?.Cancel(); } catch { }
-        try { _wsRunTask?.Wait(500); } catch { }
         try
         {
-            if (_ws?.State == WebSocketState.Open)
-                _ = _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "client stop", CancellationToken.None);
+            if (_ws?.State == WebSocketState.Open || _ws?.State == WebSocketState.CloseReceived)
+                _ws.Abort();
         }
         catch { }
         _ws?.Dispose();

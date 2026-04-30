@@ -664,14 +664,14 @@ public sealed class MpvPlayer : IDisposable
         Command("show-text", text, durationMs.ToString());
     }
 
-    public void AddSubtitle(string url, string? title = null, string? lang = null)
+    public void AddSubtitle(string url, string? title = null, string? lang = null, bool select = false)
     {
         ThrowIfNotInitialized();
 
         var args = new List<string> { "sub-add", url };
         if (!string.IsNullOrEmpty(title))
         {
-            args.Add("auto"); // flags
+            args.Add(select ? "select" : "auto"); // flags
             args.Add(title);
             if (!string.IsNullOrEmpty(lang))
                 args.Add(lang);
@@ -846,12 +846,10 @@ public sealed class MpvPlayer : IDisposable
                 break;
 
             case UD_EOF_REACHED:
-                if (prop.Format == MPV_FORMAT_FLAG && prop.Data != IntPtr.Zero)
-                {
-                    int flag = Marshal.PtrToStructure<int>(prop.Data);
-                    if (flag != 0)
-                        PlaybackEnded?.Invoke();
-                }
+                // MPV_EVENT_END_FILE is the authoritative end signal. With
+                // keep-open=yes, eof-reached is a noisy property transition and
+                // can arrive in addition to END_FILE, causing duplicate
+                // PlaybackEnded handling and repeated recovery attempts.
                 break;
 
             case UD_PAUSED_FOR_CACHE:

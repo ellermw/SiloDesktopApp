@@ -76,8 +76,8 @@ public sealed class PlaybackWebSocket : IDisposable
         _cts?.Cancel();
         try
         {
-            if (_ws?.State == WebSocketState.Open)
-                _ = _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "closing", CancellationToken.None);
+            if (_ws?.State == WebSocketState.Open || _ws?.State == WebSocketState.CloseReceived)
+                _ws.Abort();
         }
         catch { }
         _ws?.Dispose();

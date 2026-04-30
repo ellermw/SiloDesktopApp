@@ -167,7 +167,7 @@ public partial class HomeViewModel : ObservableObject,
                     ItemLimit = meta.ItemLimit,
                     IsCustom = meta.IsCustom,
                     Customized = meta.Customized,
-                    Items = new List<MediaItem>(),
+                    Items = new ObservableCollection<MediaItem>(),
                 };
                 if (meta.Featured)
                     FeaturedSections.Add(placeholder);
@@ -202,25 +202,87 @@ public partial class HomeViewModel : ObservableObject,
             await gate.WaitAsync();
             try
             {
-                var resp = await _homeApi.GetSectionItemsAsync(section.Id);
-                if (resp.Section?.Items != null && resp.Section.Items.Count > 0)
+                var sectionId = section.Id;
+                var resp = await _homeApi.GetSectionItemsAsync(sectionId).ConfigureAwait(false);
+                await RunOnUiThreadAsync(() =>
                 {
-                    section.Items = resp.Section.Items;
-                    ReplaceInBoundCollection(section);
+                    if (resp.Section?.Items != null && resp.Section.Items.Count > 0)
+                    {
+                        // Replace the placeholder with the populated response
+                        // object. Mutating the placeholder and "replacing" it
+                        // with itself does not fire SectionRow.SectionChanged,
+                        // leaving the row bound to the original empty Items
+                        // collection and showing skeletons forever.
+                        ReplaceInBoundCollection(resp.Section);
+                    }
+                    else
+                    {
+                        // Section fetched but has no items (e.g. empty Next Up).
+                        // Remove the placeholder so the skeleton row disappears
+                        // instead of flashing indefinitely.
+                        RemoveFromBoundCollection(sectionId);
+                    }
+                }).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LogSectionFetchFailure(section.Id, ex);
+                try
+                {
+                    await RunOnUiThreadAsync(() => RemoveFromBoundCollection(section.Id)).ConfigureAwait(false);
                 }
-                else
+                catch (Exception uiEx)
                 {
-                    // Section fetched but has no items (e.g. empty Next Up).
-                    // Remove the placeholder so the skeleton row disappears
-                    // instead of flashing indefinitely.
-                    RemoveFromBoundCollection(section.Id);
+                    LogSectionFetchFailure(section.Id, uiEx);
                 }
             }
-            catch { /* per-section failure is non-fatal; leave skeleton. */ }
             finally { gate.Release(); }
         }).ToList();
 
         await Task.WhenAll(tasks);
+    }
+
+    private static Task RunOnUiThreadAsync(Action action)
+    {
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+        if (dispatcher == null || dispatcher.HasThreadAccess)
+        {
+            action();
+            return Task.CompletedTask;
+        }
+
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!dispatcher.TryEnqueue(() =>
+        {
+            try
+            {
+                action();
+                tcs.SetResult();
+            }
+            catch (Exception ex)
+            {
+                tcs.SetException(ex);
+            }
+        }))
+        {
+            tcs.SetException(new InvalidOperationException("Failed to enqueue home section update on the UI thread."));
+        }
+
+        return tcs.Task;
+    }
+
+    private static void LogSectionFetchFailure(string sectionId, Exception ex)
+    {
+        try
+        {
+            var logPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ContinuumPlayer", "home_error.txt");
+            Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+            File.AppendAllText(logPath,
+                $"{DateTime.Now} | section={sectionId} | {ex.GetType().Name}: {ex.Message}{Environment.NewLine}");
+        }
+        catch { }
     }
 
     private void RemoveFromBoundCollection(string sectionId)

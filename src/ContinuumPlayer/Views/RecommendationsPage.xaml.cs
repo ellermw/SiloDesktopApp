@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using Microsoft.Extensions.DependencyInjection;
 using ContinuumPlayer.Controls;
 using ContinuumPlayer.Core.Models.Catalog;
@@ -152,7 +153,7 @@ public sealed partial class RecommendationsPage : Page
             var section = new HomeSectionWithItems
             {
                 Title = row.Label,
-                Items = new List<MediaItem>(row.Items)
+                Items = new ObservableCollection<MediaItem>(row.Items)
             };
 
             RowsPanel.Children.Add(new SectionRow { Section = section });

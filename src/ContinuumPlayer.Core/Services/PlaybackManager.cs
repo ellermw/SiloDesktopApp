@@ -15,6 +15,16 @@ public class PlaybackManager : IDisposable
     private double _lastReportedPosition;
     private bool _isPaused;
     private readonly SemaphoreSlim _progressGuard = new(1, 1);
+    private int _consecutiveProgressFailures;
+
+    /// <summary>
+    /// Fires when progress reporting has failed 3 consecutive times (network
+    /// stall, server-side session reaping, etc.). The server reaps sessions
+    /// after ~45s of no progress — once that happens the stream URL 404s and
+    /// mpv hangs with an audio buffer loop. Subscribers should surface an
+    /// error to the user and tear down playback cleanly.
+    /// </summary>
+    public event Action<string>? ProgressReportingFailed;
 
     public PlaybackManager(PlaybackApi playbackApi, CatalogApi catalogApi, AuthService authService, ContinuumApiClient apiClient)
     {
@@ -148,6 +158,7 @@ public class PlaybackManager : IDisposable
     private void StartProgressReporting()
     {
         StopProgressReporting();
+        _consecutiveProgressFailures = 0;
         _progressTimer = new Timer(async _ =>
         {
             var sessionId = _sessionId; // Capture to avoid race with StopSessionAsync
@@ -155,10 +166,19 @@ public class PlaybackManager : IDisposable
             if (!_progressGuard.Wait(0)) return; // skip if previous report still in-flight
             try
             {
-                await _playbackApi.ReportProgressAsync(sessionId, _lastReportedPosition, _isPaused);
+                // Per-call 10s timeout. Without this the default HttpClient
+                // timeout is 100s — long enough for the server to reap the
+                // session (45s) and the stream to start 404'ing while we're
+                // still hung on one progress POST. Subsequent Wait(0) checks
+                // would then silently skip, so we'd never notice.
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await _playbackApi.ReportProgressAsync(sessionId, _lastReportedPosition, _isPaused, cts.Token);
+                _consecutiveProgressFailures = 0;
             }
             catch (Exception ex)
             {
+                _consecutiveProgressFailures++;
+
                 // Log progress failures so we can diagnose session reaping
                 try
                 {
@@ -167,9 +187,20 @@ public class PlaybackManager : IDisposable
                         "ContinuumPlayer", "progress_error.txt");
                     System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(logPath)!);
                     System.IO.File.AppendAllText(logPath,
-                        $"{DateTime.Now} | session={_sessionId} pos={_lastReportedPosition:F1} paused={_isPaused} err={ex.Message}\n");
+                        $"{DateTime.Now} | session={_sessionId} pos={_lastReportedPosition:F1} paused={_isPaused} consec={_consecutiveProgressFailures} err={ex.Message}\n");
                 }
                 catch { }
+
+                if (_consecutiveProgressFailures >= 3)
+                {
+                    var msg = ex is OperationCanceledException
+                        ? "Playback session timed out — the server stopped responding."
+                        : $"Playback session lost contact with the server: {ex.Message}";
+                    // Stop the timer first so we don't keep firing after the
+                    // subscriber tears the session down.
+                    StopProgressReporting();
+                    try { ProgressReportingFailed?.Invoke(msg); } catch { }
+                }
             }
             finally
             {

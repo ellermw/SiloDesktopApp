@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+
 namespace ContinuumPlayer.Core.Models.Home;
 public class HomeSectionsResponse
 {
@@ -13,7 +15,10 @@ public class HomeSectionWithItems
     public int TotalCount { get; set; }
     public bool IsCustom { get; set; }
     public bool Customized { get; set; }
-    public List<MediaItem> Items { get; set; } = [];
+    // ObservableCollection so in-place mutations (e.g. removing an item from
+    // Continue Watching when it's marked watched) propagate to the UI without
+    // requiring a section swap + full row rebuild.
+    public ObservableCollection<MediaItem> Items { get; set; } = [];
 }
 public class MediaItem
 {

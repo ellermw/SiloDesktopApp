@@ -12,6 +12,8 @@ namespace ContinuumPlayer.Controls;
 public sealed partial class PosterCard : UserControl
 {
     private CancellationTokenSource? _loadCts;
+    private MediaItem? _deferredPosterItem;
+    private MediaItem? _deferredOverlayItem;
 
     public static readonly DependencyProperty MediaItemProperty =
         DependencyProperty.Register(
@@ -33,6 +35,10 @@ public sealed partial class PosterCard : UserControl
     /// rating_imdb instead of "Year · SERIES"). Null / empty = default.
     /// </summary>
     public static string? CurrentSortKey { get; set; }
+
+    public bool DeferImageLoading { get; set; }
+    public bool DeferOverlayLoading { get; set; }
+    public bool SuppressImageLoading { get; set; }
 
     public PosterCard()
     {
@@ -74,10 +80,41 @@ public sealed partial class PosterCard : UserControl
 
     private static void OnMediaItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
-        if (d is PosterCard card && e.NewValue is MediaItem item)
+        if (d is not PosterCard card) return;
+
+        if (e.NewValue is MediaItem item)
         {
             card.UpdateContent(item);
         }
+        else
+        {
+            card.ShowPlaceholder();
+        }
+    }
+
+    private void ShowPlaceholder()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = null;
+        _deferredPosterItem = null;
+
+        TitleText.Text = "";
+        SubtitleText.Text = "";
+        FallbackTitle.Text = "";
+        FallbackTitle.Visibility = Visibility.Collapsed;
+        PosterImage.Source = null;
+        PosterImage.Opacity = 0;
+        ThumbhashImage.Source = null;
+        ClearOverlayPanels();
+    }
+
+    private void ClearOverlayPanels()
+    {
+        OverlayTopLeft.Children.Clear();
+        OverlayTopRight.Children.Clear();
+        OverlayBottomLeft.Children.Clear();
+        OverlayBottomRight.Children.Clear();
     }
 
     private void UpdateContent(MediaItem item)
@@ -121,19 +158,83 @@ public sealed partial class PosterCard : UserControl
         // Fallback title: when no poster URL is available, show the item's
         // title centered on the card background (webui: line-clamp-3).
         string? imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
-        if (string.IsNullOrEmpty(imageUrl))
+        if (SuppressImageLoading || string.IsNullOrEmpty(imageUrl))
         {
             FallbackTitle.Text = item.Title;
             FallbackTitle.Visibility = Visibility.Visible;
+            if (SuppressImageLoading)
+                PosterImage.Source = null;
         }
         else
         {
             FallbackTitle.Visibility = Visibility.Collapsed;
         }
 
-        UpdateBadges(item);
+        if (DeferOverlayLoading)
+        {
+            ClearOverlayPanels();
+            _deferredOverlayItem = item;
+        }
+        else
+        {
+            _deferredOverlayItem = null;
+            UpdateBadges(item);
+        }
 
+        if (SuppressImageLoading)
+        {
+            _deferredPosterItem = null;
+            return;
+        }
+
+        if (DeferImageLoading)
+        {
+            _deferredPosterItem = item;
+            return;
+        }
+
+        _deferredPosterItem = null;
         _ = LoadPosterAsync(item, ct);
+    }
+
+    public void LoadDeferredPoster()
+    {
+        if (SuppressImageLoading)
+        {
+            _deferredPosterItem = null;
+            return;
+        }
+
+        if (_deferredPosterItem == null || !ReferenceEquals(_deferredPosterItem, MediaItem))
+            return;
+
+        var item = _deferredPosterItem;
+        _deferredPosterItem = null;
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        _ = LoadPosterAsync(item, _loadCts.Token);
+    }
+
+    public void LoadDeferredOverlays()
+    {
+        if (_deferredOverlayItem == null || !ReferenceEquals(_deferredOverlayItem, MediaItem))
+            return;
+
+        var item = _deferredOverlayItem;
+        _deferredOverlayItem = null;
+        UpdateBadges(item);
+    }
+
+    public void DeferCurrentPosterLoad()
+    {
+        if (SuppressImageLoading || MediaItem == null || PosterImage.Source != null)
+            return;
+
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = null;
+        _deferredPosterItem = MediaItem;
     }
 
     /// <summary>
@@ -221,6 +322,7 @@ public sealed partial class PosterCard : UserControl
     // to one at a time across all cards. Creation itself is cheap; the
     // actual decode happens async in native code regardless.
     private static readonly SemaphoreSlim s_bitmapCreateLock = new(1);
+    private static readonly SemaphoreSlim s_imageLoadLock = new(6);
 
     private async Task LoadPosterAsync(MediaItem item, CancellationToken ct)
     {
@@ -231,15 +333,24 @@ public sealed partial class PosterCard : UserControl
         {
             // Grace window: cards recycled by ItemsRepeater within this window
             // never hit the network. Longer window = cheaper fast-scroll.
-            await Task.Delay(300, ct);
+            await Task.Delay(350, ct);
             if (ct.IsCancellationRequested) return;
 
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
             var imageType = !string.IsNullOrEmpty(item.PosterUrl) ? "poster" : "backdrop";
 
-            var diskPath = await imageService.GetImageDiskPathAsync(
-                item.ContentId, imageType, imageUrl, httpClient, ct);
+            await s_imageLoadLock.WaitAsync(ct);
+            string? diskPath;
+            try
+            {
+                diskPath = await imageService.GetImageDiskPathAsync(
+                    item.ContentId, imageType, imageUrl, httpClient, ct);
+            }
+            finally
+            {
+                s_imageLoadLock.Release();
+            }
 
             if (ct.IsCancellationRequested || string.IsNullOrEmpty(diskPath)) return;
 
@@ -254,23 +365,9 @@ public sealed partial class PosterCard : UserControl
                     UriSource = new Uri(diskPath),
                 };
                 PosterImage.Source = bitmapImage;
+                PosterImage.Opacity = 1;
             }
             finally { s_bitmapCreateLock.Release(); }
-
-            var fadeIn = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
-            {
-                To = 1,
-                Duration = new Duration(TimeSpan.FromMilliseconds(250)),
-                EasingFunction = new Microsoft.UI.Xaml.Media.Animation.CubicEase
-                {
-                    EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut,
-                },
-            };
-            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fadeIn, PosterImage);
-            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fadeIn, "Opacity");
-            var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
-            sb.Children.Add(fadeIn);
-            sb.Begin();
         }
         catch (OperationCanceledException) { }
         catch { }

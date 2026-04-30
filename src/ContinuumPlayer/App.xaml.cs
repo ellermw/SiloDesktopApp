@@ -11,6 +11,9 @@ public partial class App : Application
 {
     private static IServiceProvider? _services;
     private Window? _window;
+    private DispatcherTimer? _uiLagTimer;
+    private long _lastUiLagTick;
+    private int _uiLagSample;
 
     public static IServiceProvider Services =>
         _services ?? throw new InvalidOperationException("Service provider not initialized.");
@@ -76,16 +79,37 @@ public partial class App : Application
         MainWindowInstance = (MainWindow)_window;
         _window.Activate();
 
-        // Diagnostic UI-thread lag detector removed after data collection
-        // confirmed the freeze is from ItemsRepeater accumulating unreleased
-        // PosterCard instances (alive count 400+). See LibraryViewModel
-        // sliding-window cap for the workaround.
+        StartUiThreadLagDetector();
     }
+
+    public static string PerfBreadcrumb { get; private set; } = "";
+
+    public static void SetPerfBreadcrumb(string value) => PerfBreadcrumb = value;
 
     private void StartUiThreadLagDetector()
     {
-        // Intentionally empty — kept as a stub in case we need to reactivate
-        // lag detection during a future investigation.
+        _lastUiLagTick = Environment.TickCount64;
+        _uiLagTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _uiLagTimer.Tick += (_, _) =>
+        {
+            var now = Environment.TickCount64;
+            var delay = now - _lastUiLagTick;
+            _lastUiLagTick = now;
+            if (delay < 500) return;
+
+            try
+            {
+                var logPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "ContinuumPlayer", "ui_lag.txt");
+                Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+                var managedMb = GC.GetTotalMemory(false) / (1024 * 1024);
+                File.AppendAllText(logPath,
+                    $"{DateTime.Now:O} | sample={++_uiLagSample} | delay_ms={delay} | managed_mb={managedMb} | breadcrumb={PerfBreadcrumb}\n");
+            }
+            catch { }
+        };
+        _uiLagTimer.Start();
     }
 
     private static IServiceProvider ConfigureServices()

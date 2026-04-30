@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using ContinuumPlayer.Core.Models.Admin;
@@ -33,24 +35,58 @@ public sealed partial class LibraryPage : Page
         public string? YearMax { get; set; }
     }
 
+    private sealed class FilterOption(string label, string value)
+    {
+        public string Label { get; } = label;
+        public string Value { get; } = value;
+
+        public override string ToString() => Label;
+    }
+
     private static readonly Dictionary<int, LibraryViewState> _viewStateByLibrary = new();
 
     public LibraryViewModel ViewModel { get; }
     private bool _suppressFilterEvents;
     private bool _recommendedLoaded;
     private bool _collectionsLoaded;
+    private bool _libraryCatalogLoaded;
+    private int _recommendationsVersion;
     private bool _orderAsc = true;
     private string _currentTab = "Recommended";
     private bool _overlayMode;
     private bool _scrollListenerAttached;
     private DispatcherTimer? _yearDebounceTimer;
+    private DispatcherTimer? _visibleRangeDebounceTimer;
+    private bool _forceVisibleRangeLoad;
+    private int _lastRequestedStartIndex = -1;
+    private int _lastRequestedEndIndex = -1;
+    private int _currentFirstRow;
+    private bool _suppressScrollBarValueChanged;
+    private readonly Dictionary<int, LibraryGridCard> _visibleLibraryCards = [];
+    private readonly List<LibraryGridCard> _libraryCardSlots = [];
+    private readonly Queue<int> _pendingCardBinds = [];
+    private readonly HashSet<int> _pendingCardBindSet = [];
+    private int _lastRenderedStartIndex = -1;
+    private int _lastRenderedEndIndex = -1;
+    private bool _renderQueued;
+    private bool _forceQueuedRender;
+    private DispatcherTimer? _cardBindTimer;
+    private bool _isNavigated;
+    private bool _viewModelEventsAttached;
+    private const int CardBindsPerTick = 4;
+    private const int MaxRealizedLibraryCards = 40;
+    private const int LibraryOverscanRows = 0;
 
     public LibraryPage()
     {
         ViewModel = App.Services.GetRequiredService<LibraryViewModel>();
         this.InitializeComponent();
-        // GridView has its own internal ScrollViewer. ItemsSource is wired via
-        // x:Bind in the XAML; PosterRepeater no longer exists.
+        AttachViewModelEvents();
+        UpdateVirtualGridMetrics();
+        _visibleRangeDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+        _visibleRangeDebounceTimer.Tick += VisibleRangeDebounceTimer_Tick;
+        _cardBindTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _cardBindTimer.Tick += CardBindTimer_Tick;
 
         _suppressFilterEvents = true;
         SortComboBox.SelectedIndex = 0;
@@ -76,7 +112,8 @@ public sealed partial class LibraryPage : Page
 
         ViewModel.PropertyChanged += (_, args) =>
         {
-            if (args.PropertyName == nameof(ViewModel.TotalCount))
+            if (args.PropertyName == nameof(ViewModel.TotalCount) ||
+                args.PropertyName == nameof(ViewModel.DisplayTotalCount))
             {
                 DispatcherQueue.TryEnqueue(() => UpdateCountDisplay());
             }
@@ -86,6 +123,8 @@ public sealed partial class LibraryPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _isNavigated = true;
+        AttachViewModelEvents();
 
         if (e.Parameter is Library library)
         {
@@ -130,6 +169,7 @@ public sealed partial class LibraryPage : Page
             _suppressFilterEvents = false;
             _recommendedLoaded = false;
             _collectionsLoaded = false;
+            _libraryCatalogLoaded = false;
             ActiveFiltersBar.Visibility = Visibility.Collapsed;
 
             ShowTab(state.Tab);
@@ -137,13 +177,40 @@ public sealed partial class LibraryPage : Page
             if (state.Tab == "Recommended" && !_recommendedLoaded)
                 await LoadRecommendationsAsync();
 
-            await ViewModel.LoadCommand.ExecuteAsync(null);
-            // Initial page size (40) may not be tall enough to fill the
-            // viewport on wide displays, leaving the user with no way to
-            // trigger LoadMore via scrolling. Keep loading pages until the
-            // content exceeds viewport threshold.
-            await FillViewportAsync();
+            if (state.Tab == "Library")
+            {
+                await EnsureLibraryCatalogLoadedAsync();
+                await FillViewportAsync();
+            }
         }
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        _isNavigated = false;
+        _visibleRangeDebounceTimer?.Stop();
+        _cardBindTimer?.Stop();
+        _currentFirstRow = 0;
+        _pendingCardBinds.Clear();
+        _pendingCardBindSet.Clear();
+        ViewModel.CancelCatalogLoads();
+        DetachViewModelEvents();
+        ClearVirtualCards();
+    }
+
+    private void AttachViewModelEvents()
+    {
+        if (_viewModelEventsAttached) return;
+        ViewModel.WindowLoaded += OnLibraryWindowLoaded;
+        _viewModelEventsAttached = true;
+    }
+
+    private void DetachViewModelEvents()
+    {
+        if (!_viewModelEventsAttached) return;
+        ViewModel.WindowLoaded -= OnLibraryWindowLoaded;
+        _viewModelEventsAttached = false;
     }
 
     private static int IndexOfSortTag(string tag) => tag switch
@@ -201,6 +268,9 @@ public sealed partial class LibraryPage : Page
         activeTab.Style = (Style)Resources["PillTabButtonActiveStyle"];
 
         // Toggle panel visibility
+        if (tag == "Library")
+            ReleaseRecommendedContent();
+
         FilterBar.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
         LibraryContentArea.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
         RecommendedPanel.Visibility = tag == "Recommended" ? Visibility.Visible : Visibility.Collapsed;
@@ -216,34 +286,32 @@ public sealed partial class LibraryPage : Page
     }
 
     /// <summary>
-    /// Keeps loading pages until the GridView has enough items to fill the
-    /// viewport. With the GridView migration, per-item height is known but
-    /// we don't have a direct ScrollableHeight — approximate by item count.
+    /// Keeps the virtualized library grid backed by data for the visible
+    /// viewport after first load and filter changes.
     /// </summary>
     private async Task FillViewportAsync()
     {
-        await Task.Delay(200);
+        if (!_isNavigated || LibraryContentArea == null)
+            return;
 
-        // Keep loading until ~3 pages worth of items are present OR there are
-        // no more. GridView's container-based trigger (ContainerContentChanging)
-        // takes over once the user scrolls, so we just need a baseline to
-        // make the grid scrollable.
-        const int MinItemsForViewport = 120;
-        while (ViewModel.HasMore && !ViewModel.IsLoading &&
-               ViewModel.Items.Count < MinItemsForViewport &&
-               LibraryContentArea.Visibility == Visibility.Visible)
-        {
-            await ViewModel.LoadMoreCommand.ExecuteAsync(null);
-            await Task.Delay(100);
-        }
+        UpdateVirtualGridMetrics();
+        RenderVirtualGrid();
+        _lastRequestedStartIndex = -1;
+        _lastRequestedEndIndex = -1;
+        await EnsureVisibleRangeLoadedAsync(force: true);
     }
 
     private void UpdateCountDisplay()
     {
-        if (ViewModel.TotalCount > 0)
+        if (ViewModel.DisplayTotalCount > 0)
         {
-            CountText.Text = ViewModel.TotalCount.ToString("N0");
-            CountLabel.Text = ViewModel.TotalCount == 1 ? "item" : "items";
+            CountText.Text = ViewModel.DisplayTotalCount.ToString("N0");
+            CountLabel.Text = ViewModel.DisplayTotalCount == 1 ? "item" : "items";
+        }
+        else if (ViewModel.TotalCount > 0)
+        {
+            CountText.Text = "...";
+            CountLabel.Text = "items";
         }
         else
         {
@@ -252,32 +320,57 @@ public sealed partial class LibraryPage : Page
         }
     }
 
+    private static List<FilterOption> BuildFilterOptions(IEnumerable<string> values, string allLabel)
+    {
+        var options = new List<FilterOption> { new(allLabel, "") };
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                options.Add(new FilterOption(value, value));
+        }
+
+        return options;
+    }
+
+    private void UpdateFilterCombo(
+        ComboBox comboBox,
+        IEnumerable<string> values,
+        string allLabel,
+        string? selectedValue,
+        string breadcrumbName)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var options = BuildFilterOptions(values, allLabel);
+        App.SetPerfBreadcrumb($"Library filters {breadcrumbName} start count={options.Count}");
+
+        _suppressFilterEvents = true;
+        comboBox.DisplayMemberPath = nameof(FilterOption.Label);
+        comboBox.SelectedValuePath = nameof(FilterOption.Value);
+        comboBox.ItemsSource = options;
+        comboBox.SelectedItem = options.FirstOrDefault(option => option.Value == selectedValue) ?? options[0];
+        _suppressFilterEvents = false;
+
+        App.SetPerfBreadcrumb($"Library filters {breadcrumbName} end count={options.Count} elapsed_ms={stopwatch.ElapsedMilliseconds}");
+    }
+
+    private static string? SelectedFilterValue(ComboBox comboBox)
+    {
+        return comboBox.SelectedItem switch
+        {
+            FilterOption option => string.IsNullOrEmpty(option.Value) ? null : option.Value,
+            ComboBoxItem item when item.Tag is string tag => string.IsNullOrEmpty(tag) ? null : tag,
+            _ => null
+        };
+    }
+
     private void UpdateGenreCombo()
     {
-        _suppressFilterEvents = true;
-        GenreComboBox.Items.Clear();
-        GenreComboBox.Items.Add(new ComboBoxItem { Content = "All Genres", Tag = "" });
-        foreach (var genre in ViewModel.Genres)
-        {
-            if (!string.IsNullOrEmpty(genre))
-                GenreComboBox.Items.Add(new ComboBoxItem { Content = genre, Tag = genre });
-        }
-        GenreComboBox.SelectedIndex = 0;
-        _suppressFilterEvents = false;
+        UpdateFilterCombo(GenreComboBox, ViewModel.Genres, "All Genres", ViewModel.SelectedGenre, "genres");
     }
 
     private void UpdateContentRatingCombo()
     {
-        _suppressFilterEvents = true;
-        ContentRatingComboBox.Items.Clear();
-        ContentRatingComboBox.Items.Add(new ComboBoxItem { Content = "All Ratings", Tag = "" });
-        foreach (var rating in ViewModel.ContentRatings)
-        {
-            if (!string.IsNullOrEmpty(rating))
-                ContentRatingComboBox.Items.Add(new ComboBoxItem { Content = rating, Tag = rating });
-        }
-        ContentRatingComboBox.SelectedIndex = 0;
-        _suppressFilterEvents = false;
+        UpdateFilterCombo(ContentRatingComboBox, ViewModel.ContentRatings, "All Ratings", ViewModel.SelectedContentRating, "ratings");
     }
 
     private void UpdateOrderButton()
@@ -292,9 +385,8 @@ public sealed partial class LibraryPage : Page
         if (SortComboBox.SelectedItem is ComboBoxItem item && item.Tag is string sort)
         {
             ViewModel.SelectedSort = sort;
-            // Tell PosterCards to render a sort-appropriate meta line (e.g.
-            // IMDb rating when sorting by rating_imdb). Must be set BEFORE
-            // ApplyFilter triggers the reload so new cards pick it up.
+            // Keep non-library PosterCards in sync with the current sort meta.
+            // The virtualized Library tab passes ViewModel.SelectedSort directly.
             Controls.PosterCard.CurrentSortKey = sort;
             await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
             await FillViewportAsync();
@@ -328,27 +420,23 @@ public sealed partial class LibraryPage : Page
     private async void GenreComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressFilterEvents) return;
-        if (GenreComboBox.SelectedItem is ComboBoxItem item && item.Tag is string genre)
-        {
-            ViewModel.SelectedGenre = string.IsNullOrEmpty(genre) ? null : genre;
-            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
-            await FillViewportAsync();
-            UpdateActiveFilterBadges();
-            SaveViewState(_currentTab); // B42
-        }
+
+        ViewModel.SelectedGenre = SelectedFilterValue(GenreComboBox);
+        await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+        await FillViewportAsync();
+        UpdateActiveFilterBadges();
+        SaveViewState(_currentTab); // B42
     }
 
     private async void ContentRatingComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressFilterEvents) return;
-        if (ContentRatingComboBox.SelectedItem is ComboBoxItem item && item.Tag is string rating)
-        {
-            ViewModel.SelectedContentRating = string.IsNullOrEmpty(rating) ? null : rating;
-            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
-            await FillViewportAsync();
-            UpdateActiveFilterBadges();
-            SaveViewState(_currentTab); // B42
-        }
+
+        ViewModel.SelectedContentRating = SelectedFilterValue(ContentRatingComboBox);
+        await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+        await FillViewportAsync();
+        UpdateActiveFilterBadges();
+        SaveViewState(_currentTab); // B42
     }
 
     private void YearFilter_TextChanged(object sender, TextChangedEventArgs e)
@@ -373,44 +461,452 @@ public sealed partial class LibraryPage : Page
         _yearDebounceTimer.Start();
     }
 
-    /// <summary>
-    /// GridView's container-prep callback. Fires as containers are realized.
-    /// When the item being prepared is within a window of the end, trigger
-    /// LoadMore. This replaces the old ScrollViewer.ViewChanged trigger and
-    /// is the GridView-idiomatic way to do infinite scroll.
-    /// </summary>
-    private async void PosterGrid_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+    private void LibraryScrollBar_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
-        if (!ViewModel.HasMore || ViewModel.IsLoading) return;
+        if (!_isNavigated || _suppressScrollBarValueChanged)
+            return;
 
-        // Trigger a new page when the GridView is realizing an item near the
-        // tail of the current collection.
-        const int PrefetchDistance = 20;
-        if (args.ItemIndex >= ViewModel.Items.Count - PrefetchDistance)
+        SetLibraryFirstRow((int)Math.Round(e.NewValue));
+    }
+
+    private void LibraryViewport_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (!_isNavigated)
+            return;
+
+        UpdateVirtualGridMetrics();
+        QueueRenderVirtualGrid(force: true);
+        ScheduleVisibleRangeLoad(force: true);
+    }
+
+    private void LibraryViewport_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_isNavigated)
+            return;
+
+        var delta = e.GetCurrentPoint(LibraryViewportHost).Properties.MouseWheelDelta;
+        if (delta == 0)
+            return;
+
+        var layout = GetGridLayout();
+        var visibleRows = VirtualGridScrollGate.GetVisibleRowCount(GetLibraryViewportHeight(), layout.RowHeight);
+        var rows = delta < 0 ? visibleRows : -visibleRows;
+        SetLibraryFirstRow(_currentFirstRow + rows);
+        e.Handled = true;
+    }
+
+    private void SetLibraryFirstRow(int firstRow, bool force = false)
+    {
+        var layout = GetGridLayout();
+        var visibleRows = VirtualGridScrollGate.GetVisibleRowCount(GetLibraryViewportHeight(), layout.RowHeight);
+        var maxFirstRow = VirtualGridScrollGate.GetMaxFirstVisibleRow(ViewModel.TotalCount, layout.Columns, visibleRows);
+        var clamped = Math.Clamp(firstRow, 0, maxFirstRow);
+
+        if (!force && clamped == _currentFirstRow)
+            return;
+
+        _currentFirstRow = clamped;
+        SetScrollBarValue(clamped);
+
+        var scrollToTopVisibility = clamped > 1 ? Visibility.Visible : Visibility.Collapsed;
+        if (ScrollToTopButton.Visibility != scrollToTopVisibility)
+            ScrollToTopButton.Visibility = scrollToTopVisibility;
+
+        App.SetPerfBreadcrumb($"Library scroll row={clamped} cards={_visibleLibraryCards.Count} pending={_pendingCardBinds.Count} loading={ViewModel.IsLoading}");
+        QueueRenderVirtualGrid(force);
+        ScheduleVisibleRangeLoad(force);
+    }
+
+    private void SetScrollBarValue(double value)
+    {
+        if (LibraryScrollBar.Value == value)
+            return;
+
+        _suppressScrollBarValueChanged = true;
+        try { LibraryScrollBar.Value = value; }
+        finally { _suppressScrollBarValueChanged = false; }
+    }
+
+    private void OnLibraryWindowLoaded()
+    {
+        DispatcherQueue.TryEnqueue(() =>
         {
-            await ViewModel.LoadMoreCommand.ExecuteAsync(null);
+            if (!_isNavigated)
+                return;
+
+            UpdateVirtualGridMetrics();
+            QueueRenderVirtualGrid(force: true);
+        });
+    }
+
+    private void QueueRenderVirtualGrid(bool force = false)
+    {
+        if (!_isNavigated)
+            return;
+
+        _forceQueuedRender |= force;
+        if (_renderQueued) return;
+
+        _renderQueued = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_isNavigated)
+            {
+                _renderQueued = false;
+                _forceQueuedRender = false;
+                return;
+            }
+
+            _renderQueued = false;
+            var shouldForce = _forceQueuedRender;
+            _forceQueuedRender = false;
+            RenderVirtualGrid(shouldForce);
+        });
+    }
+
+    private void UpdateVirtualGridMetrics()
+    {
+        var total = ViewModel.TotalCount;
+        var layout = GetGridLayout();
+        var viewportHeight = GetLibraryViewportHeight();
+        var visibleRows = VirtualGridScrollGate.GetVisibleRowCount(viewportHeight, layout.RowHeight);
+        var maxFirstRow = VirtualGridScrollGate.GetMaxFirstVisibleRow(total, layout.Columns, visibleRows);
+
+        VirtualGridCanvas.Width = layout.AvailableWidth;
+        VirtualGridCanvas.Height = Math.Max(layout.RowHeight, viewportHeight);
+
+        LibraryScrollBar.Maximum = maxFirstRow;
+        LibraryScrollBar.ViewportSize = Math.Max(1, visibleRows);
+        LibraryScrollBar.LargeChange = Math.Max(1, visibleRows - 1);
+
+        if (_currentFirstRow > maxFirstRow)
+            _currentFirstRow = maxFirstRow;
+        SetScrollBarValue(_currentFirstRow);
+    }
+
+    private void RenderVirtualGrid(bool force = false)
+    {
+        App.SetPerfBreadcrumb($"Library render start force={force} cards={_visibleLibraryCards.Count} total={ViewModel.TotalCount}");
+        var total = ViewModel.TotalCount;
+        if (!_isNavigated || total <= 0 || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible)
+        {
+            App.SetPerfBreadcrumb($"Library render clear cards={_visibleLibraryCards.Count} total={total}");
+            ClearVirtualCards();
+            _lastRenderedStartIndex = -1;
+            _lastRenderedEndIndex = -1;
+            App.SetPerfBreadcrumb("Library render clear end");
+            return;
         }
 
-        // Scroll-to-top button shows after ~4 rows have been realized past
-        // the start. Cheap proxy for "user has scrolled far enough to need
-        // a quick back-to-top". Real scroll offset would require walking the
-        // GridView's internal ScrollViewer, not worth the complexity.
-        if (args.ItemIndex > 40 && ScrollToTopButton.Visibility != Visibility.Visible)
+        EnsureVirtualCardSlots();
+
+        var layout = GetGridLayout();
+        var range = GetVisibleItemRange(layout);
+        range = ClampRealizedRange(range, layout);
+        var windowStartRow = range.StartIndex / layout.Columns;
+
+        App.SetPerfBreadcrumb($"Library render range {range.StartIndex}-{range.EndIndex} row={windowStartRow} last={_lastRenderedStartIndex}-{_lastRenderedEndIndex} cards={_visibleLibraryCards.Count}");
+        if (!force &&
+            range.StartIndex == _lastRenderedStartIndex &&
+            range.EndIndex == _lastRenderedEndIndex)
         {
-            ScrollToTopButton.Visibility = Visibility.Visible;
+            App.SetPerfBreadcrumb($"Library render unchanged end cards={_visibleLibraryCards.Count} pending={_pendingCardBinds.Count}");
+            return;
         }
+
+        _lastRenderedStartIndex = range.StartIndex;
+        _lastRenderedEndIndex = range.EndIndex;
+
+        _cardBindTimer?.Stop();
+        _pendingCardBinds.Clear();
+        _pendingCardBindSet.Clear();
+        _visibleLibraryCards.Clear();
+
+        var slotIndex = 0;
+        for (int index = range.StartIndex; index <= range.EndIndex; index++)
+        {
+            if (slotIndex >= _libraryCardSlots.Count)
+                break;
+
+            var card = _libraryCardSlots[slotIndex];
+            _visibleLibraryCards[index] = card;
+            card.Tag = index;
+            PositionVirtualCardSlot(card, slotIndex, layout);
+            if (card.Visibility != Visibility.Visible)
+                card.Visibility = Visibility.Visible;
+            slotIndex++;
+
+            var item = ViewModel.GetWindowItem(index);
+            if (item == null)
+            {
+                card.BindPlaceholder();
+                continue;
+            }
+
+            QueueCardBind(index);
+        }
+
+        for (int i = slotIndex; i < _libraryCardSlots.Count; i++)
+            HideVirtualCardSlot(_libraryCardSlots[i]);
+
+        App.SetPerfBreadcrumb($"Library render end cards={_visibleLibraryCards.Count} pending={_pendingCardBinds.Count} row={windowStartRow} total={ViewModel.TotalCount}");
+    }
+
+    private void UpdateVisibleCardItems()
+    {
+        App.SetPerfBreadcrumb($"Library update visible start cards={_visibleLibraryCards.Count}");
+        foreach (var (index, card) in _visibleLibraryCards)
+        {
+            if (ViewModel.GetWindowItem(index) == null) continue;
+            card.Tag = index;
+            QueueCardBind(index);
+        }
+        App.SetPerfBreadcrumb($"Library update visible end cards={_visibleLibraryCards.Count} pending={_pendingCardBinds.Count}");
+    }
+
+    private void RefreshChangedVirtualItems(int startIndex, int count)
+    {
+        if (startIndex < 0 || count <= 0) return;
+
+        var endIndex = startIndex + count - 1;
+        foreach (var (index, card) in _visibleLibraryCards)
+        {
+            if (index < startIndex || index > endIndex || ViewModel.GetWindowItem(index) == null)
+                continue;
+
+            card.Tag = index;
+            QueueCardBind(index);
+        }
+
+        QueueRenderVirtualGrid(force: true);
+    }
+
+    private void EnsureVirtualCardSlots()
+    {
+        while (_libraryCardSlots.Count < MaxRealizedLibraryCards)
+        {
+            var card = new LibraryGridCard();
+            HideVirtualCardSlot(card);
+            _libraryCardSlots.Add(card);
+            VirtualGridCanvas.Children.Add(card);
+        }
+    }
+
+    private static void HideVirtualCardSlot(LibraryGridCard card)
+    {
+        card.Tag = null;
+        card.Reset();
+        Canvas.SetLeft(card, -10000);
+        Canvas.SetTop(card, -10000);
+        card.Visibility = Visibility.Collapsed;
+    }
+
+    private void QueueCardBind(int index)
+    {
+        if (!_visibleLibraryCards.ContainsKey(index))
+            return;
+
+        if (_pendingCardBindSet.Add(index))
+        {
+            _pendingCardBinds.Enqueue(index);
+            _cardBindTimer?.Start();
+        }
+    }
+
+    private void CardBindTimer_Tick(object? sender, object e)
+    {
+        App.SetPerfBreadcrumb($"Library bind tick pending={_pendingCardBinds.Count} cards={_visibleLibraryCards.Count}");
+        int attempts = 0;
+        int processed = 0;
+
+        while (attempts < CardBindsPerTick && _pendingCardBinds.Count > 0)
+        {
+            attempts++;
+            var index = _pendingCardBinds.Dequeue();
+            _pendingCardBindSet.Remove(index);
+
+            if (!_visibleLibraryCards.TryGetValue(index, out var card))
+                continue;
+
+            if (card.Tag is not int cardIndex || cardIndex != index)
+                continue;
+
+            var item = ViewModel.GetWindowItem(index);
+            App.SetPerfBreadcrumb($"Library bind item index={index} hasItem={item != null} attempt={attempts} processed={processed}");
+            if (item != null && (!ReferenceEquals(card.MediaItem, item) || card.SortKey != ViewModel.SelectedSort))
+                card.Bind(item, ViewModel.SelectedSort);
+
+            processed++;
+        }
+
+        if (_pendingCardBinds.Count == 0)
+            _cardBindTimer?.Stop();
+        App.SetPerfBreadcrumb($"Library bind end pending={_pendingCardBinds.Count} processed={processed} attempts={attempts}");
+    }
+
+    private static void PositionVirtualCardSlot(LibraryGridCard card, int slotIndex, GridLayoutInfo layout)
+    {
+        var (left, top) = VirtualGridScrollGate.GetSlotPosition(
+            slotIndex,
+            layout.Columns,
+            layout.ItemWidth,
+            layout.ColumnGap,
+            layout.RowHeight);
+        SetCanvasCoordinateIfChanged(card, left, top);
+    }
+
+    private static void SetCanvasCoordinateIfChanged(UIElement element, double left, double top)
+    {
+        if (!AreClose(Canvas.GetLeft(element), left))
+            Canvas.SetLeft(element, left);
+        if (!AreClose(Canvas.GetTop(element), top))
+            Canvas.SetTop(element, top);
+    }
+
+    private static bool AreClose(double a, double b)
+    {
+        if (double.IsNaN(a) || double.IsNaN(b))
+            return false;
+        return Math.Abs(a - b) < 0.1;
+    }
+
+    private void ClearVirtualCards()
+    {
+        _cardBindTimer?.Stop();
+        _pendingCardBinds.Clear();
+        _pendingCardBindSet.Clear();
+        _visibleLibraryCards.Clear();
+        _lastRenderedStartIndex = -1;
+        _lastRenderedEndIndex = -1;
+        foreach (var card in _libraryCardSlots)
+            HideVirtualCardSlot(card);
+    }
+
+    private void ScheduleVisibleRangeLoad(bool force = false)
+    {
+        _forceVisibleRangeLoad |= force;
+        _visibleRangeDebounceTimer?.Stop();
+        _visibleRangeDebounceTimer?.Start();
+    }
+
+    private async void VisibleRangeDebounceTimer_Tick(object? sender, object e)
+    {
+        _visibleRangeDebounceTimer?.Stop();
+        var force = _forceVisibleRangeLoad;
+        _forceVisibleRangeLoad = false;
+        await EnsureVisibleRangeLoadedAsync(force);
+    }
+
+    private async Task EnsureVisibleRangeLoadedAsync(bool force = false)
+    {
+        if (!_isNavigated || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible || ViewModel.TotalCount <= 0)
+            return;
+
+        var range = GetVisibleItemRange(GetGridLayout());
+        range = ClampRealizedRange(range, GetGridLayout());
+        if (range.EndIndex < range.StartIndex)
+            return;
+
+        if (!force &&
+            range.StartIndex == _lastRequestedStartIndex &&
+            range.EndIndex == _lastRequestedEndIndex)
+        {
+            return;
+        }
+
+        _lastRequestedStartIndex = range.StartIndex;
+        _lastRequestedEndIndex = range.EndIndex;
+        await ViewModel.EnsureRangeLoadedAsync(range.StartIndex, range.EndIndex);
+    }
+
+    private (int StartIndex, int EndIndex) GetVisibleItemRange(GridLayoutInfo layout)
+    {
+        var total = ViewModel.TotalCount;
+        if (total <= 0)
+            return (0, -1);
+
+        var visibleRows = VirtualGridScrollGate.GetVisibleRowCount(GetLibraryViewportHeight(), layout.RowHeight);
+        return VirtualGridScrollGate.GetWindowedItemRange(
+            total,
+            layout.Columns,
+            _currentFirstRow,
+            visibleRows,
+            LibraryOverscanRows,
+            MaxRealizedLibraryCards);
+    }
+
+    private (int StartIndex, int EndIndex) ClampRealizedRange(
+        (int StartIndex, int EndIndex) range,
+        GridLayoutInfo layout)
+    {
+        var total = ViewModel.TotalCount;
+        if (total <= 0 || range.EndIndex < range.StartIndex)
+            return range;
+
+        var maxItems = Math.Max(layout.Columns, MaxRealizedLibraryCards);
+        var (startIndex, endIndex) = VirtualGridScrollGate.ClampRealizedItemRange(
+            total,
+            layout.Columns,
+            _currentFirstRow,
+            range.StartIndex,
+            range.EndIndex,
+            maxItems);
+
+        return (startIndex, endIndex);
+    }
+
+    private double GetLibraryViewportWidth()
+    {
+        var padding = LibraryViewportHost?.Padding ?? default;
+        var scrollBarWidth = (LibraryScrollBar?.ActualWidth ?? 0) + 12;
+        return Math.Max(
+            (double)Application.Current.Resources["PosterCardWidth"],
+            (LibraryViewportHost?.ActualWidth ?? 0) - padding.Left - padding.Right - scrollBarWidth);
+    }
+
+    private double GetLibraryViewportHeight()
+    {
+        var padding = LibraryViewportHost?.Padding ?? default;
+        return Math.Max(
+            (double)Application.Current.Resources["PosterCardTotalHeight"],
+            (LibraryViewportHost?.ActualHeight ?? 0) - padding.Top - padding.Bottom);
+    }
+
+    private GridLayoutInfo GetGridLayout()
+    {
+        const double columnGap = 12;
+        const double rowGap = 16;
+        var itemWidth = (double)Application.Current.Resources["PosterCardWidth"];
+        var itemHeight = (double)Application.Current.Resources["PosterCardTotalHeight"];
+        var availableWidth = Math.Max(
+            itemWidth,
+            GetLibraryViewportWidth());
+        var columns = Math.Max(1, (int)Math.Floor((availableWidth + columnGap) / (itemWidth + columnGap)));
+        return new GridLayoutInfo(
+            Columns: columns,
+            AvailableWidth: availableWidth,
+            ItemWidth: itemWidth,
+            ItemHeight: itemHeight,
+            ColumnGap: columnGap,
+            RowGap: rowGap);
+    }
+
+    private readonly record struct GridLayoutInfo(
+        int Columns,
+        double AvailableWidth,
+        double ItemWidth,
+        double ItemHeight,
+        double ColumnGap,
+        double RowGap)
+    {
+        public double RowHeight => ItemHeight + RowGap;
     }
 
     private void ScrollToTop_Click(object sender, RoutedEventArgs e)
     {
-        // GridView has its own internal ScrollViewer. ScrollIntoView(first
-        // item) is the cleanest way to jump to the top without FindDescendant
-        // gymnastics.
-        if (ViewModel.Items.Count > 0)
-        {
-            PosterGrid.ScrollIntoView(ViewModel.Items[0]);
-        }
+        SetLibraryFirstRow(0, force: true);
         ScrollToTopButton.Visibility = Visibility.Collapsed;
+        _ = EnsureVisibleRangeLoadedAsync(force: true);
     }
 
     // ===== Overlay Header (webui: LibraryHeader with glass-on-scroll) =====
@@ -471,16 +967,45 @@ public sealed partial class LibraryPage : Page
         if (tag == "Collections" && !_collectionsLoaded)
             await LoadCollectionsAsync();
 
-        // When the user switches TO the Library tab, top up loads so the
-        // viewport is full. Required because the initial LoadCommand fires
-        // while LibraryContentArea is still collapsed (default tab is
-        // "Recommended"), so FillViewportAsync bails on its visibility check.
         if (tag == "Library")
+        {
+            await EnsureLibraryCatalogLoadedAsync();
             await FillViewportAsync();
+        }
+    }
+
+    private async Task EnsureLibraryCatalogLoadedAsync()
+    {
+        if (_libraryCatalogLoaded) return;
+        _libraryCatalogLoaded = true;
+
+        var overlayWarmup = App.Services.GetRequiredService<global::ContinuumPlayer.Services.CardOverlayService>().EnsureLoadedAsync();
+        await ViewModel.LoadCommand.ExecuteAsync(null);
+        try { await overlayWarmup; } catch { }
+    }
+
+    private void ReleaseRecommendedContent()
+    {
+        _recommendationsVersion++;
+        if (!_recommendedLoaded) return;
+
+        RecommendedHeroCarousel.ItemsSource = null;
+        RecommendedHeroCarousel.Visibility = Visibility.Collapsed;
+        RecommendedLoading.IsActive = false;
+        RecommendedLoading.Visibility = Visibility.Collapsed;
+
+        for (int i = RecommendedSectionsPanel.Children.Count - 1; i >= 0; i--)
+        {
+            if (RecommendedSectionsPanel.Children[i] is SectionRow)
+                RecommendedSectionsPanel.Children.RemoveAt(i);
+        }
+
+        _recommendedLoaded = false;
     }
 
     private async Task LoadRecommendationsAsync()
     {
+        var version = ++_recommendationsVersion;
         _recommendedLoaded = true;
         RecommendedLoading.IsActive = true;
         RecommendedLoading.Visibility = Visibility.Visible;
@@ -499,6 +1024,8 @@ public sealed partial class LibraryPage : Page
             var catalogApi = App.Services.GetRequiredService<CatalogApi>();
             var libraryId = ViewModel.Library?.Id ?? 0;
             var response = await catalogApi.GetLibrarySectionsAsync(libraryId);
+            if (version != _recommendationsVersion || _currentTab != "Recommended")
+                return;
 
             RecommendedLoading.IsActive = false;
             RecommendedLoading.Visibility = Visibility.Collapsed;
@@ -541,6 +1068,9 @@ public sealed partial class LibraryPage : Page
         }
         catch (Exception ex)
         {
+            if (version != _recommendationsVersion)
+                return;
+
             RecommendedLoading.IsActive = false;
             RecommendedLoading.Visibility = Visibility.Collapsed;
             RecommendedError.Text = $"Failed to load recommendations: {ex.Message}";
@@ -797,110 +1327,66 @@ public sealed partial class LibraryPage : Page
 
     private void UpdateStudioCombo()
     {
-        _suppressFilterEvents = true;
-        StudioComboBox.Items.Clear();
-        StudioComboBox.Items.Add(new ComboBoxItem { Content = "All Studios", Tag = "" });
-        foreach (var studio in ViewModel.Studios)
-        {
-            if (!string.IsNullOrEmpty(studio))
-                StudioComboBox.Items.Add(new ComboBoxItem { Content = studio, Tag = studio });
-        }
-        StudioComboBox.SelectedIndex = 0;
-        _suppressFilterEvents = false;
+        UpdateFilterCombo(StudioComboBox, ViewModel.Studios, "All Studios", ViewModel.SelectedStudio, "studios");
     }
 
     private void UpdateCountryCombo()
     {
-        _suppressFilterEvents = true;
-        CountryComboBox.Items.Clear();
-        CountryComboBox.Items.Add(new ComboBoxItem { Content = "All Countries", Tag = "" });
-        foreach (var country in ViewModel.Countries)
-        {
-            if (!string.IsNullOrEmpty(country))
-                CountryComboBox.Items.Add(new ComboBoxItem { Content = country, Tag = country });
-        }
-        CountryComboBox.SelectedIndex = 0;
-        _suppressFilterEvents = false;
+        UpdateFilterCombo(CountryComboBox, ViewModel.Countries, "All Countries", ViewModel.SelectedCountry, "countries");
     }
 
     private void UpdateResolutionCombo()
     {
-        _suppressFilterEvents = true;
-        ResolutionComboBox.Items.Clear();
-        ResolutionComboBox.Items.Add(new ComboBoxItem { Content = "All Quality", Tag = "" });
-        foreach (var res in ViewModel.Resolutions)
-        {
-            if (!string.IsNullOrEmpty(res))
-                ResolutionComboBox.Items.Add(new ComboBoxItem { Content = res, Tag = res });
-        }
-        ResolutionComboBox.SelectedIndex = 0;
-        _suppressFilterEvents = false;
+        UpdateFilterCombo(ResolutionComboBox, ViewModel.Resolutions, "All Quality", ViewModel.SelectedResolution, "resolutions");
     }
 
     private void UpdateAudioLangCombo()
     {
-        _suppressFilterEvents = true;
-        AudioLangComboBox.Items.Clear();
-        AudioLangComboBox.Items.Add(new ComboBoxItem { Content = "All Audio", Tag = "" });
-        foreach (var lang in ViewModel.AudioLanguages)
-        {
-            if (!string.IsNullOrEmpty(lang))
-                AudioLangComboBox.Items.Add(new ComboBoxItem { Content = lang, Tag = lang });
-        }
-        AudioLangComboBox.SelectedIndex = 0;
-        _suppressFilterEvents = false;
+        UpdateFilterCombo(AudioLangComboBox, ViewModel.AudioLanguages, "All Audio", ViewModel.SelectedAudioLanguage, "audio");
     }
 
     private async void StudioComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressFilterEvents) return;
-        if (StudioComboBox.SelectedItem is ComboBoxItem item && item.Tag is string studio)
-        {
-            ViewModel.SelectedStudio = string.IsNullOrEmpty(studio) ? null : studio;
-            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
-            await FillViewportAsync();
-            UpdateActiveFilterBadges();
-            SaveViewState(_currentTab); // B42
-        }
+
+        ViewModel.SelectedStudio = SelectedFilterValue(StudioComboBox);
+        await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+        await FillViewportAsync();
+        UpdateActiveFilterBadges();
+        SaveViewState(_currentTab); // B42
     }
 
     private async void CountryComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressFilterEvents) return;
-        if (CountryComboBox.SelectedItem is ComboBoxItem item && item.Tag is string country)
-        {
-            ViewModel.SelectedCountry = string.IsNullOrEmpty(country) ? null : country;
-            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
-            await FillViewportAsync();
-            UpdateActiveFilterBadges();
-            SaveViewState(_currentTab); // B42
-        }
+
+        ViewModel.SelectedCountry = SelectedFilterValue(CountryComboBox);
+        await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+        await FillViewportAsync();
+        UpdateActiveFilterBadges();
+        SaveViewState(_currentTab); // B42
     }
 
     private async void ResolutionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressFilterEvents) return;
-        if (ResolutionComboBox.SelectedItem is ComboBoxItem item && item.Tag is string res)
-        {
-            ViewModel.SelectedResolution = string.IsNullOrEmpty(res) ? null : res;
-            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
-            await FillViewportAsync();
-            UpdateActiveFilterBadges();
-            SaveViewState(_currentTab); // B42
-        }
+
+        ViewModel.SelectedResolution = SelectedFilterValue(ResolutionComboBox);
+        await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+        await FillViewportAsync();
+        UpdateActiveFilterBadges();
+        SaveViewState(_currentTab); // B42
     }
 
     private async void AudioLangComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressFilterEvents) return;
-        if (AudioLangComboBox.SelectedItem is ComboBoxItem item && item.Tag is string lang)
-        {
-            ViewModel.SelectedAudioLanguage = string.IsNullOrEmpty(lang) ? null : lang;
-            await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
-            await FillViewportAsync();
-            UpdateActiveFilterBadges();
-            SaveViewState(_currentTab); // B42
-        }
+
+        ViewModel.SelectedAudioLanguage = SelectedFilterValue(AudioLangComboBox);
+        await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+        await FillViewportAsync();
+        UpdateActiveFilterBadges();
+        SaveViewState(_currentTab); // B42
     }
 
     private void UpdateActiveFilterBadges()

@@ -9,6 +9,7 @@ obj/
 
 # Claude local settings (permissions, session-specific)
 .claude/settings.local.json
+.claude/worktrees/
 
 # Development reference files (not needed in repo)
 test_images/
@@ -46,6 +47,8 @@ installer/publish/
 # Diagnostic / intermediate publish directories
 publish_test*
 publish-test/
+publish-window-test/
+screenshots/
 
 # Generated audit scan reports (regenerated on each audit-scan.ps1 run)
 docs/audit-reports/

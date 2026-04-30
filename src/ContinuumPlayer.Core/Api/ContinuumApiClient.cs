@@ -222,18 +222,18 @@ public class ContinuumApiClient
         System.Net.Http.Headers.MediaTypeHeaderValue? contentType = null;
         if (request.Content != null)
         {
-            contentBytes = await request.Content.ReadAsByteArrayAsync(ct);
+            contentBytes = await request.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
             contentType = request.Content.Headers.ContentType;
         }
 
-        var response = await _http.SendAsync(request, ct);
+        var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
 
         // On 401, try refreshing the token and retry once
         if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized && _tokenRefresher != null)
         {
             bool refreshed = false;
-            await _refreshLock.WaitAsync(ct);
-            try { refreshed = await _tokenRefresher(ct); }
+            await _refreshLock.WaitAsync(ct).ConfigureAwait(false);
+            try { refreshed = await _tokenRefresher(ct).ConfigureAwait(false); }
             finally { _refreshLock.Release(); }
 
             if (refreshed)
@@ -245,7 +245,7 @@ public class ContinuumApiClient
                     retry.Content = new ByteArrayContent(contentBytes);
                     retry.Content.Headers.ContentType = contentType;
                 }
-                response = await _http.SendAsync(retry, ct);
+                response = await _http.SendAsync(retry, ct).ConfigureAwait(false);
             }
         }
 
@@ -272,7 +272,7 @@ public class ContinuumApiClient
     private static async Task ThrowApiException(HttpResponseMessage response, CancellationToken ct)
     {
         ApiError? error = null;
-        try { error = await response.Content.ReadFromJsonAsync<ApiError>(JsonOptions, ct); } catch { }
+        try { error = await response.Content.ReadFromJsonAsync<ApiError>(JsonOptions, ct).ConfigureAwait(false); } catch { }
         throw new ApiException(error?.Error ?? "unknown", error?.Message ?? $"HTTP {(int)response.StatusCode}", (int)response.StatusCode);
     }
 }

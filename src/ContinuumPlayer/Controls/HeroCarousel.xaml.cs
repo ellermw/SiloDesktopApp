@@ -17,6 +17,7 @@ public sealed partial class HeroCarousel : UserControl
     private int _currentIndex;
     private DispatcherTimer? _autoAdvanceTimer;
     private CancellationTokenSource? _imageCts;
+    private readonly AsyncLoadVersionGate _imageLoadGate = new();
 
     // F-series hero polish:
     // - Crossfade between BackdropImageA / BackdropImageB. `_activeIsA`
@@ -46,6 +47,7 @@ public sealed partial class HeroCarousel : UserControl
     {
         if (d is HeroCarousel carousel)
         {
+            carousel.CancelBackdropLoad(clearImages: e.NewValue == null);
             carousel._items = e.NewValue as IList<MediaItem>;
             carousel._currentIndex = 0;
             carousel.BuildDots();
@@ -74,7 +76,7 @@ public sealed partial class HeroCarousel : UserControl
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         StopAutoAdvance();
-        _imageCts?.Cancel();
+        CancelBackdropLoad(clearImages: false);
     }
 
     private void StartAutoAdvance()
@@ -174,6 +176,7 @@ public sealed partial class HeroCarousel : UserControl
     {
         if (_items == null || _items.Count == 0 || _currentIndex >= _items.Count)
         {
+            CancelBackdropLoad(clearImages: true);
             Visibility = Visibility.Collapsed;
             return;
         }
@@ -226,10 +229,27 @@ public sealed partial class HeroCarousel : UserControl
         UpdateDots();
 
         // Load backdrop image into the INACTIVE layer, then crossfade.
-        _imageCts?.Cancel();
+        CancelBackdropLoad(clearImages: false);
         _imageCts = new CancellationTokenSource();
-        _ = LoadBackdropAsync(item, _imageCts.Token);
+        var version = _imageLoadGate.BeginNextLoad();
+        _ = LoadBackdropAsync(item, version, _imageCts.Token);
     }
+
+    private void CancelBackdropLoad(bool clearImages)
+    {
+        _imageLoadGate.Cancel();
+        try { _imageCts?.Cancel(); } catch { }
+        _imageCts = null;
+
+        if (!clearImages)
+            return;
+
+        BackdropImageA.ClearValue(Image.SourceProperty);
+        BackdropImageB.ClearValue(Image.SourceProperty);
+    }
+
+    private bool IsCurrentBackdropLoad(int version, CancellationToken ct) =>
+        !ct.IsCancellationRequested && _imageLoadGate.IsCurrent(version);
 
     private void PlayButton_Click(object sender, RoutedEventArgs e)
     {
@@ -241,11 +261,13 @@ public sealed partial class HeroCarousel : UserControl
         nav.Navigate<ItemDetailPage>(item.ContentId);
     }
 
-    private async Task LoadBackdropAsync(MediaItem item, CancellationToken ct)
+    private async Task LoadBackdropAsync(MediaItem item, int version, CancellationToken ct)
     {
         // Load into the INACTIVE layer so when we crossfade the user never
         // sees a blank frame between slides.
         var incoming = _activeIsA ? BackdropImageB : BackdropImageA;
+        if (!IsCurrentBackdropLoad(version, ct))
+            return;
 
         // Show thumbhash placeholder first so there's SOMETHING to fade to
         // while the real backdrop fetches.
@@ -254,6 +276,9 @@ public sealed partial class HeroCarousel : UserControl
             try
             {
                 var decoded = ThumbhashDecoder.Decode(item.BackdropThumbhash);
+                if (!IsCurrentBackdropLoad(version, ct))
+                    return;
+
                 var bitmap = new WriteableBitmap(decoded.Width, decoded.Height);
 
                 var bgra = new byte[decoded.Rgba.Length];
@@ -267,22 +292,28 @@ public sealed partial class HeroCarousel : UserControl
 
                 System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.CopyTo(bgra, bitmap.PixelBuffer);
                 bitmap.Invalidate();
+                if (!IsCurrentBackdropLoad(version, ct))
+                    return;
+
                 incoming.Source = bitmap;
             }
             catch
             {
-                incoming.Source = null;
+                if (IsCurrentBackdropLoad(version, ct))
+                    incoming.ClearValue(Image.SourceProperty);
             }
         }
         else
         {
-            incoming.Source = null;
+            if (IsCurrentBackdropLoad(version, ct))
+                incoming.ClearValue(Image.SourceProperty);
         }
 
         // Load the actual backdrop
         if (string.IsNullOrEmpty(item.BackdropUrl))
         {
-            Crossfade();
+            if (IsCurrentBackdropLoad(version, ct))
+                Crossfade();
             return;
         }
 
@@ -294,16 +325,19 @@ public sealed partial class HeroCarousel : UserControl
             var bytes = await imageService.GetImageAsync(
                 item.ContentId, "backdrop", item.BackdropUrl, httpClient, ct);
 
-            if (ct.IsCancellationRequested || bytes == null) return;
+            if (!IsCurrentBackdropLoad(version, ct) || bytes == null) return;
 
+            App.SetPerfBreadcrumb($"Hero backdrop decode start item={item.ContentId}");
             var bitmapImage = new BitmapImage();
             using var stream = new MemoryStream(bytes);
             await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
 
-            if (ct.IsCancellationRequested) return;
+            if (!IsCurrentBackdropLoad(version, ct)) return;
 
+            App.SetPerfBreadcrumb($"Hero backdrop source assign item={item.ContentId}");
             incoming.Source = bitmapImage;
             Crossfade();
+            App.SetPerfBreadcrumb($"Hero backdrop source end item={item.ContentId}");
         }
         catch (OperationCanceledException)
         {
@@ -313,7 +347,8 @@ public sealed partial class HeroCarousel : UserControl
         {
             // Backdrop load failed, placeholder remains — still crossfade so
             // at least the gradient moves.
-            Crossfade();
+            if (IsCurrentBackdropLoad(version, ct))
+                Crossfade();
         }
     }
 

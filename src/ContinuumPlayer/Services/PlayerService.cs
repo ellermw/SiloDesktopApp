@@ -33,11 +33,11 @@ public class PlayerService : IDisposable
     private volatile bool _qualitySwitchActive;
     private bool _playingNextShown;
     // Premature-EOF loop-breaker. mpv keep-open=yes pauses at EOF; our handler
-    // re-seeks + plays to punch through transient CDN drops. But when the stream
-    // is genuinely stuck at a position, mpv re-hits EOF within ~30ms of every
-    // Seek+Play, and we flicker pause/play forever. Track last attempt time and
-    // streak length so we can ignore rapid duplicate EOFs and bail after 3
-    // same-position retries.
+    // restarts the stream to punch through transient CDN/server drops. Track
+    // last attempt time and streak length so rapid duplicate EOFs do not spawn
+    // overlapping recovery attempts.
+    private volatile bool _prematureEofRecoveryActive;
+    private double _prematureEofRecoveryPosition;
     private long _prematureEofLastAttemptMs;
     private int _prematureEofStreak;
     private string _activeQualityTier = "original";
@@ -272,7 +272,10 @@ public class PlayerService : IDisposable
     /// </summary>
     public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)
     {
-        _mpv?.SetSubtitleTrack(mpvTrackIndex);
+        if (track != null)
+            SelectSubtitleTrack(track);
+        else
+            _mpv?.SetSubtitleTrack(mpvTrackIndex);
 
         var key = GetPrefsKey();
         if (string.IsNullOrEmpty(key)) return;
@@ -597,6 +600,7 @@ public class PlayerService : IDisposable
                 await _playbackManager.StopSessionAsync();
             }
             catch (Exception ex) { LogToFile("state_trace.txt", $"Stop previous session error: {ex.Message}"); }
+            _playbackManager.ProgressReportingFailed -= OnProgressReportingFailed;
             _playbackManager.Dispose();
             _playbackManager = null;
             await Task.Delay(200);
@@ -606,6 +610,10 @@ public class PlayerService : IDisposable
         IsLoading = true;
         ContentId = contentId;
         _resumePosition = 0;
+        _prematureEofRecoveryActive = false;
+        _prematureEofRecoveryPosition = 0;
+        _prematureEofLastAttemptMs = 0;
+        _prematureEofStreak = 0;
         _playbackCts?.Cancel();
         _playbackCts?.Dispose();
         _playbackCts = new CancellationTokenSource();
@@ -615,6 +623,7 @@ public class PlayerService : IDisposable
         try
         {
             _playbackManager = new PlaybackManager(_playbackApi, _catalogApi, _authService, _apiClient);
+            _playbackManager.ProgressReportingFailed += OnProgressReportingFailed;
 
             var watchDetail = await FetchWatchDetailAsync(contentId);
             SetTitleFromWatchDetail(watchDetail);
@@ -640,13 +649,14 @@ public class PlayerService : IDisposable
                 LogToFile("state_trace.txt", $"Using server session position: {session.Position:F1}");
             }
 
-            var streamUrl = _playbackManager.StreamUrl;
-            if (string.IsNullOrEmpty(streamUrl))
+            var initialStreamUrl = _playbackManager.StreamUrl;
+            if (string.IsNullOrEmpty(initialStreamUrl))
             {
                 ErrorMessage = "No stream URL available.";
                 IsLoading = false;
                 return;
             }
+            string streamUrl = initialStreamUrl;
 
             // HLS transcode fallback
             var (transcodeUrl, transcodeStartPos) = await HandleTranscodeFallbackAsync(session, bestVersion, startPosition);
@@ -668,14 +678,14 @@ public class PlayerService : IDisposable
 
             _resumePosition = startPosition;
 
-            LogToFile("state_trace.txt", $"LoadFile: url={streamUrl?.Substring(0, Math.Min(80, streamUrl?.Length ?? 0))}...");
+            LogToFile("state_trace.txt", $"LoadFile: url={streamUrl.Substring(0, Math.Min(80, streamUrl.Length))}...");
 
             // Phase 2b: apply pre-play subtitle selection by setting mpv's "sid"
             // property BEFORE loadfile so the initial state is the user's choice.
             // -1 = "no" (off), 0+ = 1-based mpv sid. null = don't touch, let mpv default.
             ApplyPendingSubtitleSelection();
 
-            _mpv!.LoadFile(streamUrl, session.PlayMethod == "transcode" ? null : authHeader);
+            _mpv!.LoadFile(streamUrl!, session.PlayMethod == "transcode" ? null : authHeader);
             _mpv.Play();
             LogToFile("state_trace.txt", "Play() called");
             IsPaused = false;
@@ -695,6 +705,7 @@ public class PlayerService : IDisposable
             if (_playbackManager != null)
             {
                 try { await _playbackManager.StopSessionAsync(); } catch (Exception stopEx) { LogToFile("state_trace.txt", $"StopSession error: {stopEx.Message}"); }
+                _playbackManager.ProgressReportingFailed -= OnProgressReportingFailed;
                 _playbackManager.Dispose();
                 _playbackManager = null;
             }
@@ -729,6 +740,138 @@ public class PlayerService : IDisposable
         if (!string.IsNullOrWhiteSpace(ex.Message))
             return ("Playback unavailable", ex.Message);
         return ("Playback unavailable", "Playback could not start.");
+    }
+
+    /// <summary>
+    /// Handles <see cref="PlaybackManager.ProgressReportingFailed"/>. Fired
+    /// when 3 consecutive progress POSTs fail or time out — the server has
+    /// almost certainly reaped the session, so keeping mpv alive just leaves
+    /// it chirping the last audio buffer until the user force-closes. Surface
+    /// a clear error and tear the session down on the UI thread.
+    /// </summary>
+    private void OnProgressReportingFailed(string message)
+    {
+        LogToFile("state_trace.txt", $"ProgressReportingFailed: {message}");
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+        Action handle = () =>
+        {
+            ErrorMessage = message;
+            App.MainWindowInstance?.ShowPlaybackError("Connection Lost", message);
+            _ = CloseAsync();
+        };
+        if (dispatcher != null)
+            dispatcher.TryEnqueue(() => handle());
+        else
+            handle();
+    }
+
+    private async Task RecoverFromPrematureEofAsync(double currentPosition)
+    {
+        var manager = _playbackManager;
+        var session = manager?.CurrentSession;
+        if (_mpv == null || manager == null || session == null)
+        {
+            LogToFile("state_trace.txt", "Premature EOF recovery skipped: player/session unavailable");
+            return;
+        }
+
+        var fileId = session.MediaFileId;
+        int? audioTrackIndex = session.AudioTrackIndex >= 0 ? session.AudioTrackIndex : null;
+        var resumePosition = Math.Max(0, currentPosition - 2);
+        var ct = _playbackCts?.Token ?? CancellationToken.None;
+
+        _prematureEofRecoveryActive = true;
+        _prematureEofRecoveryPosition = resumePosition;
+        _switchingContent = true;
+        IsLoading = true;
+
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+        dispatcher?.TryEnqueue(() => App.MainWindowInstance?.ShowLoadingOverlay());
+
+        try
+        {
+            LogToFile("state_trace.txt", $"Premature EOF recovery: restarting session fileId={fileId} pos={resumePosition:F1} audioTrack={audioTrackIndex?.ToString() ?? "auto"}");
+
+            if (!string.IsNullOrEmpty(manager.SessionId))
+            {
+                try
+                {
+                    using var progressCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    await _playbackApi.ReportProgressAsync(manager.SessionId, resumePosition, false, progressCts.Token);
+                }
+                catch (Exception ex)
+                {
+                    LogToFile("state_trace.txt", $"Premature EOF recovery progress sync failed: {ex.Message}");
+                }
+            }
+
+            try { await manager.StopSessionAsync(); }
+            catch (Exception ex) { LogToFile("state_trace.txt", $"Premature EOF recovery stop-session failed: {ex.Message}"); }
+
+            if (_closing || State == PlayerState.Idle || !ReferenceEquals(_playbackManager, manager) || ct.IsCancellationRequested)
+                return;
+
+            var newSession = await manager.StartSessionAsync(fileId, resumePosition, forceStartPosition: true, audioTrackIndex: audioTrackIndex, ct);
+            try { SessionStarted?.Invoke(newSession.SessionId); } catch { }
+            PlayMethod = newSession.PlayMethod;
+
+            var streamUrl = manager.StreamUrl;
+            if (string.IsNullOrEmpty(streamUrl))
+                throw new InvalidOperationException("No stream URL returned during premature EOF recovery.");
+
+            var version = Versions.FirstOrDefault(v => v.FileId == fileId);
+            if (newSession.PlayMethod == "transcode" && version != null)
+            {
+                var (transcodeUrl, transcodeStartPos) = await HandleTranscodeFallbackAsync(newSession, version, resumePosition);
+                if (transcodeUrl != null)
+                {
+                    streamUrl = transcodeUrl;
+                    resumePosition = transcodeStartPos!.Value;
+                    _prematureEofRecoveryPosition = resumePosition;
+                }
+            }
+
+            if (_closing || State == PlayerState.Idle || !ReferenceEquals(_playbackManager, manager) || ct.IsCancellationRequested)
+                return;
+
+            var token = _apiClient.AccessToken;
+            var authHeader = token != null ? $"Bearer {token}" : null;
+            if (newSession.PlayMethod != "transcode")
+                streamUrl = UrlHelper.AppendToken(streamUrl, token);
+
+            _resumePosition = resumePosition;
+            _mpv!.LoadFile(streamUrl, newSession.PlayMethod == "transcode" ? null : authHeader);
+            _mpv.Play();
+            IsPaused = false;
+            _mpv.SendScriptMessage("osc-set-play-method", newSession.PlayMethod ?? "direct");
+            LogToFile("state_trace.txt", $"Premature EOF recovery LoadFile issued at pos={resumePosition:F1} playMethod={newSession.PlayMethod}");
+        }
+        catch (OperationCanceledException) when (_closing || ct.IsCancellationRequested)
+        {
+            LogToFile("state_trace.txt", "Premature EOF recovery canceled");
+        }
+        catch (Exception ex)
+        {
+            LogToFile("player_recovery_error.txt", ex.ToString());
+            _prematureEofRecoveryActive = false;
+            _prematureEofRecoveryPosition = 0;
+            _switchingContent = false;
+            IsLoading = false;
+
+            var message = $"Playback stalled and could not resume: {ex.Message}";
+            ErrorMessage = message;
+            Action handleFailure = () =>
+            {
+                App.MainWindowInstance?.HideLoadingOverlay();
+                App.MainWindowInstance?.ShowPlaybackError("Playback Stalled", message);
+                _ = CloseAsync();
+            };
+
+            if (dispatcher != null)
+                dispatcher.TryEnqueue(() => handleFailure());
+            else
+                handleFailure();
+        }
     }
 
     private double _resumePosition;
@@ -1036,7 +1179,14 @@ public class PlayerService : IDisposable
             Position = pos;
             _playbackManager?.UpdatePosition(pos, IsPaused);
             PositionChanged?.Invoke(pos);
-            MaybeFirePlayingNextAtCredits(pos);
+
+            if (_prematureEofRecoveryPosition > 0 && pos > _prematureEofRecoveryPosition + 30)
+            {
+                LogToFile("state_trace.txt", $"Premature EOF recovery confirmed: advanced from {_prematureEofRecoveryPosition:F1} to {pos:F1}");
+                _prematureEofRecoveryPosition = 0;
+                _prematureEofLastAttemptMs = 0;
+                _prematureEofStreak = 0;
+            }
         };
         _mpv.PositionChanged += _mpvPositionHandler;
 
@@ -1059,14 +1209,22 @@ public class PlayerService : IDisposable
 
         _mpvFileLoadedHandler = () =>
         {
+            var wasPrematureEofRecovery = _prematureEofRecoveryActive;
             IsLoading = false;
             _switchingContent = false; // Safe to receive PlaybackEnded now
             _qualitySwitchActive = false;
             _playingNextShown = false;
-            _prematureEofStreak = 0;
-            _prematureEofLastAttemptMs = 0;
+            _prematureEofRecoveryActive = false;
+            if (!wasPrematureEofRecovery)
+            {
+                _prematureEofStreak = 0;
+                _prematureEofLastAttemptMs = 0;
+                _prematureEofRecoveryPosition = 0;
+            }
             App.MainWindowInstance?.HideLoadingOverlay();
-            LogToFile("state_trace.txt", "FileLoaded fired");
+            LogToFile("state_trace.txt", wasPrematureEofRecovery
+                ? "FileLoaded fired (premature EOF recovery)"
+                : "FileLoaded fired");
 
             ContentLoaded?.Invoke();
 
@@ -1111,8 +1269,8 @@ public class PlayerService : IDisposable
 
         _mpvPlaybackEndedHandler = () =>
         {
-            LogToFile("state_trace.txt", $"PlaybackEnded fired: _switchingContent={_switchingContent} _qualitySwitchActive={_qualitySwitchActive} _closing={_closing} nextEpisode={NextEpisodeContentId ?? "none"} State={State} thread={Environment.CurrentManagedThreadId}");
-            if (_switchingContent || _qualitySwitchActive)
+            LogToFile("state_trace.txt", $"PlaybackEnded fired: _switchingContent={_switchingContent} _qualitySwitchActive={_qualitySwitchActive} _prematureEofRecoveryActive={_prematureEofRecoveryActive} _closing={_closing} nextEpisode={NextEpisodeContentId ?? "none"} State={State} thread={Environment.CurrentManagedThreadId}");
+            if (_switchingContent || _qualitySwitchActive || _prematureEofRecoveryActive)
             {
                 LogToFile("state_trace.txt", "  → Suppressed (switching content)");
                 return;
@@ -1131,16 +1289,13 @@ public class PlayerService : IDisposable
 
             // Premature EOF detection: if mpv says "end of file" but we're
             // nowhere near the actual end (>5% remaining), the HTTP connection
-            // was dropped by the CDN/server. Instead of closing, re-seek to
-            // the current position which forces mpv to re-open the stream.
-            // This handles the "Coneheads 16 minutes left" scenario where a
-            // long-running byte-range connection gets reset by the CDN.
+            // was dropped by the CDN/server. Instead of closing or seeking in
+            // place, restart the server playback session and reload mpv from
+            // a fresh stream URL at the same timestamp.
             //
-            // Loop guard: mpv keep-open=yes re-emits eof-reached within ~30ms
-            // of every Seek+Play when the stream is genuinely stuck. Without
-            // this guard we hammer mpv 40 times/second and the pause icon
-            // flickers forever. Ignore repeat EOFs within 1.5s of the last
-            // retry; allow at most 3 retries in a row before giving up.
+            // The old Seek+Play recovery could land inside mpv's cached EOF
+            // range, leaving the play button visible but unable to resume.
+            // Keep a loop guard so genuinely stuck files still bail out.
             var pos = _mpv?.Position ?? 0;
             var dur = _mpv?.Duration ?? 0;
             if (dur > 0 && pos > 10 && pos < dur * 0.95)
@@ -1150,7 +1305,7 @@ public class PlayerService : IDisposable
 
                 if (_prematureEofLastAttemptMs > 0 && sinceLastAttempt < 1500)
                 {
-                    // Previous Seek+Play hasn't had time to settle. Ignore.
+                    // Previous restart has not had time to settle. Ignore.
                     LogToFile("state_trace.txt", $"  → Premature EOF at pos={pos:F1} — retry in progress ({sinceLastAttempt}ms since last), ignoring");
                     return;
                 }
@@ -1171,15 +1326,14 @@ public class PlayerService : IDisposable
                 else
                 {
                     _prematureEofLastAttemptMs = nowMs;
-                    LogToFile("state_trace.txt", $"  → Premature EOF detected (pos={pos:F1} dur={dur:F1}, {(1 - pos/dur)*100:F0}% remaining, streak={_prematureEofStreak}). Auto-resuming...");
+                    LogToFile("state_trace.txt", $"  → Premature EOF detected (pos={pos:F1} dur={dur:F1}, {(1 - pos/dur)*100:F0}% remaining, streak={_prematureEofStreak}). Restarting stream...");
                     try
                     {
-                        _mpv?.Seek(pos);
-                        _mpv?.Play();
+                        _ = RecoverFromPrematureEofAsync(pos);
                     }
                     catch (Exception ex)
                     {
-                        LogToFile("state_trace.txt", $"  → Auto-resume failed: {ex.Message}");
+                        LogToFile("state_trace.txt", $"  → Premature EOF recovery dispatch failed: {ex.Message}");
                     }
                     return;
                 }
@@ -1188,16 +1342,18 @@ public class PlayerService : IDisposable
             // Phase 3b: if the caller set a next-episode hint before playback,
             // show the Playing Next overlay instead of closing the player.
             // The overlay will call ContinuePlayingNextAsync or CancelPlayingNext.
-            // Fallback path for episodes without a credits marker — the normal
-            // path fires at credits.Start via MaybeFirePlayingNextAtCredits.
+            // Playing Next is intentionally tied to the real end-of-file.
+            // Credits markers are useful for UI markers/skip affordances, but
+            // auto-detected credits can be wrong by many minutes; they must not
+            // force the video into the mini bar or start the next-episode timer.
             if (!string.IsNullOrEmpty(NextEpisodeContentId))
             {
                 if (_playingNextShown)
                 {
-                    LogToFile("state_trace.txt", "  → Next-episode prompt already shown at credits.Start");
+                    LogToFile("state_trace.txt", "  → Next-episode prompt already shown");
                     return;
                 }
-                LogToFile("state_trace.txt", "  → Next-episode prompt requested (end-of-file fallback)");
+                LogToFile("state_trace.txt", "  → Next-episode prompt requested (end-of-file)");
                 _playingNextShown = true;
                 ShowPlayingNextRequested?.Invoke();
                 return;
@@ -1218,12 +1374,14 @@ public class PlayerService : IDisposable
 
         _mpvPlaybackErrorHandler = (msg) =>
         {
-            LogToFile("state_trace.txt", $"PlaybackError: {msg} _switchingContent={_switchingContent}");
+            LogToFile("state_trace.txt", $"PlaybackError: {msg} _switchingContent={_switchingContent} _prematureEofRecoveryActive={_prematureEofRecoveryActive}");
             // If we were waiting for a file to load and it failed, show error
             if (_switchingContent)
             {
                 _switchingContent = false;
                 _qualitySwitchActive = false;
+                _prematureEofRecoveryActive = false;
+                _prematureEofRecoveryPosition = 0;
                 IsLoading = false;
                 ErrorMessage = msg;
                 App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() =>
@@ -1406,49 +1564,99 @@ public class PlayerService : IDisposable
         public double WindowDuration { get; set; }
     }
 
-    private const int SubtitleWindowDurationSeconds = 3600; // Server max.
+    private const int SubtitleWindowDurationSeconds = 600;  // Match WebUI sliding-window fetch.
     private const int SubtitleSlidePreloadSeconds = 120;    // 2-min lead time.
     private readonly List<EmbeddedSubWindow> _embeddedSubWindows = [];
+    private readonly Dictionary<int, int> _loadedExternalSubtitleSids = [];
 
     private void LoadSubtitles()
     {
         if (_playbackManager?.CurrentSession == null || _mpv == null) return;
 
         _embeddedSubWindows.Clear();
-        var subtitleUrls = _playbackManager.GetSubtitleUrls();
-        int sid = 1;
-        foreach (var (track, fullUrl) in subtitleUrls)
-        {
-            var codec = track.Codec?.ToLowerInvariant() ?? "";
-            if (codec is "pgs" or "pgssub" or "dvdsub" or "vobsub")
-                continue;
+        _loadedExternalSubtitleSids.Clear();
 
-            var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language ?? "Unknown";
-            var isEmbedded = string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase);
-
-            if (isEmbedded)
-            {
-                // Load the initial window at position 0 (playback typically
-                // starts there; TickSubtitleWindows slides forward as needed).
-                var windowed = AppendPositionDuration(fullUrl, 0, SubtitleWindowDurationSeconds);
-                _mpv.AddSubtitle(windowed, label, track.Language);
-                _embeddedSubWindows.Add(new EmbeddedSubWindow
-                {
-                    Sid = sid,
-                    BaseUrl = fullUrl,
-                    Label = label,
-                    Language = track.Language,
-                    WindowStart = 0,
-                    WindowDuration = SubtitleWindowDurationSeconds,
-                });
-            }
-            else
-            {
-                _mpv.AddSubtitle(fullUrl, label, track.Language);
-            }
-            sid++;
-        }
+        // Do not eagerly sub-add every server subtitle URL. mpv already sees
+        // embedded text tracks on direct/remux playback, and adding all VTT
+        // URLs upfront can fan out dozens of HTTP/ffmpeg subtitle fetches
+        // during 4K startup. External/downloaded tracks are loaded on demand
+        // when the user selects one, matching the WebUI's active-track model.
     }
+
+    private static bool IsBitmapSubtitle(SubtitleTrackInfo track)
+    {
+        var codec = track.Codec?.ToLowerInvariant() ?? "";
+        return codec is "pgs" or "pgssub" or "dvdsub" or "vobsub";
+    }
+
+    private void SelectSubtitleByServerIndex(int serverTrackIndex)
+    {
+        if (_mpv == null) return;
+        if (serverTrackIndex < 0)
+        {
+            _mpv.SetSubtitleTrack(0);
+            return;
+        }
+
+        var track = _playbackManager?.CurrentSession?.SubtitleUrls?
+            .FirstOrDefault(t => t.Index == serverTrackIndex);
+        if (track == null)
+        {
+            // Pre-play embedded selection still passes an embedded ordinal.
+            _mpv.SetSubtitleTrack(serverTrackIndex + 1);
+            return;
+        }
+
+        SelectSubtitleTrack(track);
+    }
+
+    private void SelectSubtitleTrack(SubtitleTrackInfo track)
+    {
+        if (_mpv == null || IsBitmapSubtitle(track)) return;
+
+        if (string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase))
+        {
+            var sid = ResolveNativeEmbeddedSid(track);
+            _mpv.SetSubtitleTrack(sid > 0 ? sid : track.Index + 1);
+            return;
+        }
+
+        if (_loadedExternalSubtitleSids.TryGetValue(track.Index, out var loadedSid))
+        {
+            _mpv.SetSubtitleTrack(loadedSid);
+            return;
+        }
+
+        var pair = _playbackManager?.GetSubtitleUrls()
+            .FirstOrDefault(p => p.Track.Index == track.Index);
+        if (pair == null || string.IsNullOrWhiteSpace(pair.Value.FullUrl))
+            return;
+
+        var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language ?? "Unknown";
+        var guessedSid = ResolveNativeEmbeddedCount() + _loadedExternalSubtitleSids.Count + 1;
+        _loadedExternalSubtitleSids[track.Index] = guessedSid;
+        _mpv.AddSubtitle(pair.Value.FullUrl, label, track.Language, select: true);
+    }
+
+    private int ResolveNativeEmbeddedSid(SubtitleTrackInfo track)
+    {
+        var embeddedTracks = _playbackManager?.CurrentSession?.SubtitleUrls?
+            .Where(t => string.Equals(t.Source, "embedded", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(t => t.Index)
+            .ToList() ?? [];
+
+        for (int i = 0; i < embeddedTracks.Count; i++)
+        {
+            if (embeddedTracks[i].Index == track.Index)
+                return i + 1;
+        }
+
+        return 0;
+    }
+
+    private int ResolveNativeEmbeddedCount()
+        => _playbackManager?.CurrentSession?.SubtitleUrls?
+            .Count(t => string.Equals(t.Source, "embedded", StringComparison.OrdinalIgnoreCase)) ?? 0;
 
     private static string AppendPositionDuration(string url, double position, int durationSeconds)
     {
@@ -1676,22 +1884,6 @@ public class PlayerService : IDisposable
         _mpv.SendScriptMessage("osc-set-active-subtitle", "-1");
     }
 
-    // Webui parity (useNextEpisode.ts): fire the cinematic Playing Next
-    // overlay as soon as position crosses into the credits marker, instead
-    // of waiting for end-of-file. _playingNextShown guards against refiring
-    // every mpv position tick; it resets on FileLoaded.
-    private void MaybeFirePlayingNextAtCredits(double pos)
-    {
-        if (_playingNextShown) return;
-        if (string.IsNullOrEmpty(NextEpisodeContentId)) return;
-        var credits = _playbackManager?.WatchDetail?.Credits;
-        if (credits == null) return;
-        if (credits.End <= credits.Start) return;
-        if (pos < credits.Start) return;
-        _playingNextShown = true;
-        ShowPlayingNextRequested?.Invoke();
-    }
-
     private void SendMarkersToOsc()
     {
         if (_mpv == null || _playbackManager?.WatchDetail == null) return;
@@ -1810,7 +2002,7 @@ public class PlayerService : IDisposable
             case "continuum-subtitle-select":
                 if (args.Length > 1 && int.TryParse(args[1], out var subIdx))
                 {
-                    _mpv?.SetSubtitleTrack(subIdx <= 0 ? 0 : subIdx);
+                    SelectSubtitleByServerIndex(subIdx);
                     _mpv?.SendScriptMessage("osc-set-active-subtitle", args[1]);
                 }
                 break;
@@ -2051,7 +2243,7 @@ public class PlayerService : IDisposable
             _mpv?.ShowOsdText($"Downloaded: {label}", 3000);
 
             // Reload subtitles
-            Task.Run(() => LoadSubtitles());
+            _ = Task.Run(LoadSubtitles);
             SendSubtitleListToOsc();
         }
         catch (Exception ex)
@@ -2207,6 +2399,7 @@ public class PlayerService : IDisposable
         {
             try { await _playbackManager.StopSessionAsync(); }
             catch (Exception ex) { LogToFile("state_trace.txt", $"Stop previous session error: {ex.Message}"); }
+            _playbackManager.ProgressReportingFailed -= OnProgressReportingFailed;
             _playbackManager.Dispose();
             _playbackManager = null;
         }
@@ -2220,6 +2413,10 @@ public class PlayerService : IDisposable
         IsLoading = false;
         _switchingContent = false;
         _qualitySwitchActive = false;
+        _prematureEofRecoveryActive = false;
+        _prematureEofRecoveryPosition = 0;
+        _prematureEofLastAttemptMs = 0;
+        _prematureEofStreak = 0;
         _hlsProxy?.Stop();
         _hlsProxy = null;
         DisconnectWebSocket();
@@ -2305,54 +2502,56 @@ public class PlayerService : IDisposable
         }
     }
 
-    private async Task<CommandResult> HandleWebSocketCommand(WebSocketCommand cmd)
+    private Task<CommandResult> HandleWebSocketCommand(WebSocketCommand cmd)
     {
+        static Task<CommandResult> Complete(CommandResult result) => Task.FromResult(result);
+
         switch (cmd.Name)
         {
             case "pause":
                 _mpv?.Pause();
-                return new CommandResult();
+                return Complete(new CommandResult());
 
             case "unpause":
                 _mpv?.Play();
-                return new CommandResult();
+                return Complete(new CommandResult());
 
             case "play_pause":
                 _mpv?.TogglePause();
-                return new CommandResult();
+                return Complete(new CommandResult());
 
             case "seek":
                 var pos = cmd.GetNumber("position", "position_seconds", "seconds");
-                if (pos == null) return new CommandResult { Status = "rejected", Error = "missing_seek_position" };
+                if (pos == null) return Complete(new CommandResult { Status = "rejected", Error = "missing_seek_position" });
                 _mpv?.Seek(pos.Value);
-                return new CommandResult();
+                return Complete(new CommandResult());
 
             case "set_volume":
                 var vol = cmd.GetNumber("volume", "level");
-                if (vol == null) return new CommandResult { Status = "rejected", Error = "missing_volume" };
+                if (vol == null) return Complete(new CommandResult { Status = "rejected", Error = "missing_volume" });
                 _mpv?.SetVolume(Math.Min(100, Math.Max(0, vol.Value * 100)));
-                return new CommandResult();
+                return Complete(new CommandResult());
 
             case "display_message":
                 ShowNotice(
                     cmd.GetString("title") ?? "Playback notice",
                     cmd.GetString("message") ?? "A server message was received.",
                     "info");
-                return new CommandResult();
+                return Complete(new CommandResult());
 
             case "server_restarting":
                 ShowNotice(
                     cmd.GetString("title") ?? "Server restarting",
                     cmd.GetString("message") ?? "Playback may end shortly while the server restarts.",
                     "warning");
-                return new CommandResult();
+                return Complete(new CommandResult());
 
             case "server_shutting_down":
                 ShowNotice(
                     cmd.GetString("title") ?? "Server shutting down",
                     cmd.GetString("message") ?? "Playback may end shortly while the server shuts down.",
                     "warning");
-                return new CommandResult();
+                return Complete(new CommandResult());
 
             case "stop":
             case "terminate":
@@ -2365,10 +2564,10 @@ public class PlayerService : IDisposable
                         "warning");
                 }
                 App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => _ = CloseAsync());
-                return new CommandResult();
+                return Complete(new CommandResult());
 
             default:
-                return new CommandResult { Status = "rejected", Error = "unsupported" };
+                return Complete(new CommandResult { Status = "rejected", Error = "unsupported" });
         }
     }
 

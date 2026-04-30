@@ -27,9 +27,9 @@
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
         <!-- Version -->
-        <Version>1.0.131</Version>
-        <FileVersion>1.0.131.0</FileVersion>
-        <AssemblyVersion>1.0.131.0</AssemblyVersion>
+        <Version>1.0.205</Version>
+        <FileVersion>1.0.205.0</FileVersion>
+        <AssemblyVersion>1.0.205.0</AssemblyVersion>
 
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>
@@ -60,8 +60,8 @@
         <PackageReference Include="CommunityToolkit.WinUI.Controls.Primitives" Version="8.2.251219" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.5" />
         <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
-        <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.*" />
-        <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.*" />
+        <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003" />
+        <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7705" />
 
         <Manifest Include="$(ApplicationManifest)" />
     </ItemGroup>

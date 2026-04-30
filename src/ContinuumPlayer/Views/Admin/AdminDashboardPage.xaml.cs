@@ -64,7 +64,12 @@ public sealed partial class AdminDashboardPage : Page
         _lastEventRefresh = DateTime.UtcNow;
         DispatcherQueue.TryEnqueue(async () =>
         {
-            try { await ViewModel.RefreshSilentAsync(); BuildContent(); }
+            try
+            {
+                await ViewModel.RefreshSessionsOnlyAsync();
+                UpdateStats();
+                BuildStreamCards();
+            }
             catch { }
         });
     }

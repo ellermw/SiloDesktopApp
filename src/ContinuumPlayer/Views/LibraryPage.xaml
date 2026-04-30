@@ -340,52 +340,39 @@
                 Visibility="Collapsed" />
         </StackPanel>
 
-        <!-- Content area: GridView uses ItemsWrapGrid virtualization which
-             reliably recycles containers on huge datasets (100k+ items). The
-             previous ItemsRepeater + UniformGridLayout combination did not
-             recycle PosterCards, causing unbounded visual-tree growth and
-             multi-second UI-thread freezes around the 3rd LoadMore. -->
+        <!-- Content area: fixed viewport plus row scrollbar for 100k-scale libraries. -->
         <Grid x:Name="LibraryContentArea" Grid.Row="3" Visibility="Collapsed">
-            <GridView
-                x:Name="PosterGrid"
-                ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
-                SelectionMode="None"
-                IsItemClickEnabled="False"
-                ScrollViewer.IsScrollInertiaEnabled="True"
-                ScrollViewer.HorizontalScrollMode="Disabled"
-                ScrollViewer.HorizontalScrollBarVisibility="Hidden"
-                ContainerContentChanging="PosterGrid_ContainerContentChanging"
-                Padding="40,0,40,24">
-                <GridView.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <ItemsWrapGrid Orientation="Horizontal" />
-                    </ItemsPanelTemplate>
-                </GridView.ItemsPanel>
-                <GridView.ItemContainerStyle>
-                    <!-- Strip GridViewItem chrome so PosterCard keeps its web-parity
-                         look (no selection highlight, no built-in padding). -->
-                    <Style TargetType="GridViewItem">
-                        <Setter Property="Margin" Value="0,0,12,16" />
-                        <Setter Property="Padding" Value="0" />
-                        <Setter Property="Background" Value="Transparent" />
-                        <Setter Property="BorderThickness" Value="0" />
-                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                        <Setter Property="VerticalContentAlignment" Value="Stretch" />
-                        <Setter Property="UseSystemFocusVisuals" Value="False" />
-                    </Style>
-                </GridView.ItemContainerStyle>
-                <GridView.ItemTemplate>
-                    <DataTemplate x:DataType="models:MediaItem">
-                        <controls:PosterCard MediaItem="{x:Bind}" />
-                    </DataTemplate>
-                </GridView.ItemTemplate>
-            </GridView>
+            <Border
+                x:Name="LibraryViewportHost"
+                Padding="40,0,40,24"
+                SizeChanged="LibraryViewport_SizeChanged"
+                PointerWheelChanged="LibraryViewport_PointerWheelChanged">
+                <Grid ColumnDefinitions="*,Auto">
+                    <Canvas
+                        x:Name="VirtualGridCanvas"
+                        Grid.Column="0"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Top" />
+                    <ScrollBar
+                        x:Name="LibraryScrollBar"
+                        Grid.Column="1"
+                        Orientation="Vertical"
+                        Width="14"
+                        Margin="12,0,0,0"
+                        Minimum="0"
+                        Maximum="0"
+                        SmallChange="1"
+                        LargeChange="3"
+                        ValueChanged="LibraryScrollBar_ValueChanged" />
+                </Grid>
+            </Border>
 
             <!-- Loading indicator overlaid at bottom of viewport -->
             <ProgressRing
                 x:Name="LoadingRing"
                 IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
                 Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                IsHitTestVisible="False"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Bottom"
                 Margin="0,0,0,24"

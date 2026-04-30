@@ -60,6 +60,22 @@ public partial class AdminDashboardViewModel : ObservableObject
     /// </summary>
     public Task RefreshSilentAsync() => LoadInternalAsync(silent: true);
 
+    public async Task RefreshSessionsOnlyAsync()
+    {
+        try
+        {
+            var sessions = await _adminApi.GetSessionsAsync();
+            Sessions.Clear();
+            foreach (var s in sessions)
+                Sessions.Add(s);
+            OnPropertyChanged(nameof(SessionCount));
+        }
+        catch
+        {
+            // Realtime updates are best-effort; keep current dashboard state.
+        }
+    }
+
     private async Task LoadInternalAsync(bool silent)
     {
         if (IsLoading) return;

@@ -79,6 +79,20 @@ public partial class AdminLibrariesViewModel : ObservableObject
         _ = LoadActiveRefreshJobsAsync();
     }
 
+    public async Task RefreshLibrariesOnlyAsync()
+    {
+        try
+        {
+            var libs = await _adminApi.GetAdminLibrariesAsync();
+            Libraries.Clear();
+            foreach (var l in libs) Libraries.Add(l);
+        }
+        catch
+        {
+            // Scan events are noisy; keep the current rows if a silent refresh misses.
+        }
+    }
+
     private async Task LoadSkippedRootsAsync()
     {
         try

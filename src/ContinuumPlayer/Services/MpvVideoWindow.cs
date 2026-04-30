@@ -327,15 +327,11 @@ public sealed class MpvVideoWindow : IDisposable
         const uint WM_LBUTTONDOWN = 0x0201;
         const uint WM_LBUTTONUP = 0x0202;
         const uint WM_LBUTTONDBLCLK = 0x0203;
-        const uint WM_RBUTTONDOWN = 0x0204;
         const uint WM_RBUTTONUP = 0x0205;
-        const uint WM_MBUTTONDOWN = 0x0207;
-        const uint WM_MBUTTONUP = 0x0208;
         const uint WM_MOUSEWHEEL = 0x020A;
         const uint WM_MOUSELEAVE = 0x02A3;
         const uint WM_SETCURSOR = 0x0020;
         const uint WM_KEYDOWN = 0x0100;
-        const uint WM_KEYUP = 0x0101;
 
         int loWord(IntPtr lp) => (short)(lp.ToInt64() & 0xFFFF);
         int hiWord(IntPtr lp) => (short)((lp.ToInt64() >> 16) & 0xFFFF);

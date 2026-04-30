@@ -292,7 +292,7 @@ public sealed partial class ServerActivityButton : UserControl
         PopoverRoot.Children.Add(headerRow);
         PopoverRoot.Children.Add(Divider());
 
-        int total = _lastSessions.Count + _lastRunningTasks.Count;
+        int total = _lastSessions.Count + _lastRunningTasks.Count + _lastActiveScans.Count;
         if (total == 0)
         {
             PopoverRoot.Children.Add(new TextBlock

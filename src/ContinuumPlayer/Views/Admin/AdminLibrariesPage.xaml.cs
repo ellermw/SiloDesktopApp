@@ -31,6 +31,10 @@ public sealed partial class AdminLibrariesPage : Page
     // Pagination
     private const int UNMATCHED_PAGE_SIZE = 10;
     private const int STALE_PAGE_SIZE = 10;
+    private const int ScanUiRefreshMs = 300;
+    private const int ScanLibraryRowsRefreshMs = 1500;
+    private const int ScanLibraryReloadMs = 10000;
+    private const int MaxScanRowsInPopover = 25;
     private int _staleCurrentPage;
     private string _unmatchedFilter = "";
     private string _staleFilter = "";
@@ -40,12 +44,23 @@ public sealed partial class AdminLibrariesPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminLibrariesViewModel>();
         this.InitializeComponent();
+        _scanUiRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(ScanUiRefreshMs) };
+        _scanUiRefreshTimer.Tick += ScanUiRefreshTimer_Tick;
+        ScanQueueFlyout.Opened += (_, _) =>
+        {
+            _scanQueueFlyoutOpen = true;
+            BuildScanQueuePopover(forceContent: true);
+        };
+        ScanQueueFlyout.Closed += (_, _) => _scanQueueFlyoutOpen = false;
     }
 
     // Event channel subscription for realtime refresh
     private IDisposable? _eventSubscription;
     private EventChannelClient? _eventChannel;
     private DateTime _lastEventRefresh = DateTime.MinValue;
+    private DateTime _lastScanLibraryRowsRefresh = DateTime.MinValue;
+    private DispatcherTimer? _scanUiRefreshTimer;
+    private bool _scanQueueFlyoutOpen;
 
     // Cached brush lookups to avoid repeated resource dictionary access
     private SolidColorBrush _primaryText = null!;
@@ -99,6 +114,7 @@ public sealed partial class AdminLibrariesPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        _scanUiRefreshTimer?.Stop();
         if (_eventChannel != null)
             _eventChannel.EventReceived -= OnEventReceived;
         _eventSubscription?.Dispose();
@@ -114,42 +130,75 @@ public sealed partial class AdminLibrariesPage : Page
     {
         if (channel != "scans") return;
 
-        // Handle scan snapshot and scan_updated events for the scan queue popover
-        if (eventName == "snapshot")
+        List<AdminScanRun>? snapshot = null;
+        AdminScanRun? updatedRun = null;
+
+        try
         {
-            try
+            if (eventName == "snapshot")
             {
-                var scans = data.Deserialize<List<AdminScanRun>>(_scanJsonOpts) ?? [];
-                ViewModel.ActiveScans = scans.Where(IsActiveScan).ToList();
+                snapshot = data.Deserialize<List<AdminScanRun>>(_scanJsonOpts) ?? [];
             }
-            catch { }
+            else if (eventName == "scan_updated")
+            {
+                updatedRun = data.Deserialize<AdminScanRun>(_scanJsonOpts);
+            }
         }
-        else if (eventName == "scan_updated")
+        catch { return; }
+
+        if (snapshot == null && updatedRun == null)
+            return;
+
+        DispatcherQueue.TryEnqueue(() =>
         {
-            try
+            if (snapshot != null)
             {
-                var run = data.Deserialize<AdminScanRun>(_scanJsonOpts);
-                if (run != null)
-                {
-                    ViewModel.ActiveScans = ViewModel.ActiveScans.Where(s => s.Id != run.Id).ToList();
-                    if (IsActiveScan(run)) ViewModel.ActiveScans.Add(run);
-                }
+                ViewModel.ActiveScans = snapshot.Where(IsActiveScan).ToList();
             }
-            catch { }
+            else if (updatedRun != null)
+            {
+                ViewModel.ActiveScans = ViewModel.ActiveScans.Where(s => s.Id != updatedRun.Id).ToList();
+                if (IsActiveScan(updatedRun)) ViewModel.ActiveScans.Add(updatedRun);
+            }
+
+            ScheduleScanUiRefresh();
+        });
+    }
+
+    private void ScheduleScanUiRefresh()
+    {
+        _scanUiRefreshTimer?.Stop();
+        _scanUiRefreshTimer?.Start();
+    }
+
+    private void ScanUiRefreshTimer_Tick(object? sender, object e)
+    {
+        _scanUiRefreshTimer?.Stop();
+
+        BuildScanQueuePopover();
+
+        var now = DateTime.UtcNow;
+        if ((now - _lastScanLibraryRowsRefresh).TotalMilliseconds >= ScanLibraryRowsRefreshMs)
+        {
+            _lastScanLibraryRowsRefresh = now;
+            BuildLibraryRows();
         }
 
-        // Throttle full rebuild to once per second
-        if ((DateTime.UtcNow - _lastEventRefresh).TotalMilliseconds < 1000)
+        if ((now - _lastEventRefresh).TotalMilliseconds >= ScanLibraryReloadMs)
         {
-            DispatcherQueue.TryEnqueue(BuildScanQueuePopover);
-            return;
+            _lastEventRefresh = now;
+            _ = RefreshLibrariesAfterScanEventAsync();
         }
-        _lastEventRefresh = DateTime.UtcNow;
-        DispatcherQueue.TryEnqueue(async () =>
+    }
+
+    private async Task RefreshLibrariesAfterScanEventAsync()
+    {
+        try
         {
-            try { await ViewModel.LoadCommand.ExecuteAsync(null); RebuildAll(); }
-            catch { }
-        });
+            await ViewModel.RefreshLibrariesOnlyAsync();
+            DispatcherQueue.TryEnqueue(BuildLibraryRows);
+        }
+        catch { }
     }
 
     private static bool IsActiveScan(AdminScanRun scan)
@@ -702,12 +751,13 @@ public sealed partial class AdminLibrariesPage : Page
     //  Scan Queue Popover (P0 Item 1)
     // ===================================================================
 
-    private void BuildScanQueuePopover()
+    private void BuildScanQueuePopover(bool forceContent = false)
     {
         var scans = ViewModel.ActiveScans;
         if (scans.Count == 0)
         {
             ScanQueueButton.Visibility = Visibility.Collapsed;
+            ScanQueueFlyoutContent.Children.Clear();
             return;
         }
 
@@ -716,6 +766,9 @@ public sealed partial class AdminLibrariesPage : Page
         var totalQueued = scans.Count - totalRunning;
         var totalScans = totalRunning + totalQueued;
         ScanQueueLabel.Text = totalScans == 1 ? "1 scan" : $"{totalScans} scans";
+
+        if (!_scanQueueFlyoutOpen && !forceContent)
+            return;
 
         // Build the flyout content
         ScanQueueFlyoutContent.Children.Clear();
@@ -762,9 +815,20 @@ public sealed partial class AdminLibrariesPage : Page
             .ToList();
 
         var groupsPanel = new StackPanel { Spacing = 4, Padding = new Thickness(12, 8, 12, 8) };
+        var visibleRows = 0;
+        var hiddenRows = 0;
 
         foreach (var group in groups)
         {
+            if (visibleRows >= MaxScanRowsInPopover)
+            {
+                hiddenRows += group.Scans.Count;
+                continue;
+            }
+
+            var visibleScans = group.Scans.Take(MaxScanRowsInPopover - visibleRows).ToList();
+            hiddenRows += group.Scans.Count - visibleScans.Count;
+
             // Library header
             var libHeader = new Grid { Padding = new Thickness(0, 6, 0, 6) };
             libHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -813,7 +877,7 @@ public sealed partial class AdminLibrariesPage : Page
             groupsPanel.Children.Add(libHeader);
 
             // Scan rows
-            foreach (var scan in group.Scans)
+            foreach (var scan in visibleScans)
             {
                 var scanRow = new StackPanel
                 {
@@ -882,7 +946,20 @@ public sealed partial class AdminLibrariesPage : Page
                 }
 
                 groupsPanel.Children.Add(scanRow);
+                visibleRows++;
             }
+        }
+
+        if (hiddenRows > 0)
+        {
+            groupsPanel.Children.Add(new TextBlock
+            {
+                Text = $"+{hiddenRows} more scans",
+                FontSize = 11,
+                Foreground = _tertiaryText,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 8, 0, 4),
+            });
         }
 
         ScanQueueFlyoutContent.Children.Add(groupsPanel);
@@ -891,7 +968,7 @@ public sealed partial class AdminLibrariesPage : Page
     private void ScanQueueButton_Click(object sender, RoutedEventArgs e)
     {
         // Flyout opens automatically via Button.Flyout property
-        BuildScanQueuePopover();
+        BuildScanQueuePopover(forceContent: true);
     }
 
     // ===================================================================

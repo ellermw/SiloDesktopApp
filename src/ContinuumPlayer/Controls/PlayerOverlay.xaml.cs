@@ -286,6 +286,7 @@ public sealed partial class PlayerOverlay : UserControl
 
         // Check skip markers
         UpdateSkipButtons(pos);
+        UpdateEpisodeNav(pos, dur);
 
         // Update stats if visible
         if (_statsVisible) UpdateStats();
@@ -298,8 +299,42 @@ public sealed partial class PlayerOverlay : UserControl
         SkipIntroButton.Visibility = showIntro ? Visibility.Visible : Visibility.Collapsed;
 
         var credits = _playerService.WatchDetail?.Credits;
-        bool showCredits = credits != null && pos >= credits.Start && pos < credits.End;
+        bool hasNextEpisode = !string.IsNullOrEmpty(_playerService.NextEpisodeContentId);
+        var dur = _playerService.Mpv?.Duration ?? _playerService.Duration;
+        bool showCredits = !hasNextEpisode
+            && credits != null
+            && IsPlausibleCreditsMarker(credits, dur)
+            && pos >= credits.Start
+            && pos < credits.End;
         SkipCreditsButton.Visibility = showCredits ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static bool IsPlausibleCreditsMarker(TimeRange credits, double duration)
+    {
+        if (duration <= 0) return false;
+        if (credits.End <= credits.Start) return false;
+        if (credits.Start < 0 || credits.Start >= duration) return false;
+
+        // Ignore credits markers that start far from the tail. A few server
+        // auto-detections land 10+ minutes early, which would otherwise make
+        // Skip Credits / Next Episode appear while the episode is still going.
+        var allowedWindow = Math.Max(TimeSpan.FromMinutes(5).TotalSeconds, duration * 0.10);
+        return duration - credits.Start <= allowedWindow;
+    }
+
+    private bool ShouldShowNextEpisodeButton(double pos, double duration)
+    {
+        if (string.IsNullOrEmpty(_playerService.NextEpisodeContentId)) return false;
+        if (pos <= 0 || duration <= 0) return false;
+
+        var credits = _playerService.WatchDetail?.Credits;
+        var inPlausibleCredits = credits != null
+            && IsPlausibleCreditsMarker(credits, duration)
+            && pos >= credits.Start
+            && pos < credits.End;
+        var nearEnd = pos >= duration * 0.95;
+
+        return inPlausibleCredits || nearEnd;
     }
 
     // ── Controls auto-hide ───────────────────────────────────────────────
@@ -544,12 +579,34 @@ public sealed partial class PlayerOverlay : UserControl
 
     private void SkipIntro_Click(object sender, RoutedEventArgs e)
     {
-        _playerService.Mpv?.Seek(_playerService.WatchDetail?.Intro?.End ?? 0);
+        SeekAndResume(_playerService.WatchDetail?.Intro?.End ?? 0);
     }
 
     private void SkipCredits_Click(object sender, RoutedEventArgs e)
     {
-        _playerService.Mpv?.Seek(_playerService.WatchDetail?.Credits?.End ?? 0);
+        var end = _playerService.WatchDetail?.Credits?.End ?? 0;
+        var dur = _playerService.Mpv?.Duration ?? _playerService.Duration;
+        if (dur > 0) end = Math.Min(end, dur);
+        SeekAndResume(end);
+    }
+
+    private void SeekAndResume(double seconds)
+    {
+        var mpv = _playerService.Mpv;
+        if (mpv == null) return;
+
+        mpv.Seek(seconds);
+        mpv.Play();
+        _ = ForceResumeAfterSeekAsync();
+    }
+
+    private async Task ForceResumeAfterSeekAsync()
+    {
+        foreach (var delayMs in new[] { 100, 350, 750 })
+        {
+            await Task.Delay(delayMs);
+            try { _playerService.Mpv?.Play(); } catch { }
+        }
     }
 
     // ── New center-cluster skip buttons (webui parity: back 10s, forward 30s) ──
@@ -582,9 +639,9 @@ public sealed partial class PlayerOverlay : UserControl
     /// logic — both slots are reserved when ANY episode nav exists so the
     /// play button stays on the cluster centerline.
     /// </summary>
-    private void UpdateEpisodeNav()
+    private void UpdateEpisodeNav(double pos = 0, double duration = 0)
     {
-        var hasNext = !string.IsNullOrEmpty(_playerService.NextEpisodeContentId);
+        var hasNext = ShouldShowNextEpisodeButton(pos, duration);
         // Desktop doesn't currently track PrevEpisode on the service; only
         // reserve the slot when next exists (asymmetric but honest).
         bool hasAnyEpisodeSlot = hasNext;

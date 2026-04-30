@@ -180,6 +180,7 @@ local state = {
     -- Drawn via ASS overlay, shown on pause, hidden on resume.
     pause_indicator_overlay = nil,
     pause_indicator_shown   = false,
+    ignore_video_click_until = 0,
 
     -- Content title (from host via osc-set-title)
     content_title   = "",
@@ -194,6 +195,19 @@ local state = {
     notice_overlay  = nil,
 }
 
+local function credits_marker_is_plausible()
+    local dur = state.duration
+    if dur <= 0 then return false end
+    if state.credits_end <= state.credits_start then return false end
+    if state.credits_start < 0 or state.credits_start >= dur then return false end
+
+    -- Server-provided credits markers can be wildly early on some episodes.
+    -- Treat credits as actionable only if the marker starts near the tail:
+    -- at least within the last 5 minutes, with a 10% allowance for long files.
+    local allowed_window = math.max(300, dur * 0.10)
+    return (dur - state.credits_start) <= allowed_window
+end
+
 local quality_tiers = {
     { id = "auto",       label = "Auto" },
     { id = "original",   label = "Original" },
@@ -204,6 +218,17 @@ local quality_tiers = {
     { id = "480p",       label = "480p",          sublabel = "~1.5 Mbps" },
     { id = "420p",       label = "420p",          sublabel = "~720 kbps" },
 }
+
+local function consume_video_click()
+    state.ignore_video_click_until = mp.get_time() + 0.5
+end
+
+local function resume_after_seek()
+    mp.set_property_bool("pause", false)
+    mp.add_timeout(0.10, function() mp.set_property_bool("pause", false) end)
+    mp.add_timeout(0.35, function() mp.set_property_bool("pause", false) end)
+    mp.add_timeout(0.75, function() mp.set_property_bool("pause", false) end)
+end
 
 --------------------------------------------------------------------------------
 -- Utility Functions
@@ -1974,8 +1999,9 @@ check_skip_markers = function()
         end
     end
 
-    -- Check credits range (credits takes priority if overlapping).
-    if state.credits_end > state.credits_start then
+    -- Check credits range. If a next episode exists, that affordance wins;
+    -- otherwise Skip Credits is available only for plausible tail markers.
+    if not state.next_ep_available and credits_marker_is_plausible() then
         if pos >= state.credits_start and pos < state.credits_end then
             state.skip_visible = true
             state.skip_label = "Skip Credits"
@@ -1992,10 +2018,10 @@ end
 -- Decide whether the Next Episode button should be visible right now.
 -- Called every tick. Rules:
 --   1. Host has flagged next_ep_available (AutoDetectNextEpisode ran)
---   2. Current position is either inside the credits marker range OR
---      in the final 5% of total duration (fallback for shows with no
---      credits marker). Using max of the two so credits at 88% still
---      shows the button early instead of waiting until 95%.
+--   2. Current position is either inside a plausible credits marker range OR
+--      in the final 5% of total duration. Bogus early credits markers are
+--      ignored so the button cannot appear while there is still substantial
+--      episode runtime left.
 check_next_episode_button = function()
     local was_visible = state.next_ep_visible
     state.next_ep_visible = false
@@ -2012,13 +2038,18 @@ check_next_episode_button = function()
         return
     end
 
-    local in_credits = state.credits_end > state.credits_start
+    local in_credits = credits_marker_is_plausible()
                    and pos >= state.credits_start
                    and pos < state.credits_end
     local near_end = pos >= dur * 0.95
 
     if in_credits or near_end then
         state.next_ep_visible = true
+    end
+
+    if state.next_ep_visible and state.skip_visible then
+        state.skip_visible = false
+        render_skip_button()
     end
 
     if state.next_ep_visible ~= was_visible then
@@ -2145,7 +2176,9 @@ local function handle_mouse_down()
     if state.skip_visible and state.skip_rect then
         local r = state.skip_rect
         if mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h then
+            consume_video_click()
             mp.commandv("seek", tostring(state.skip_target), "absolute")
+            resume_after_seek()
             state.skip_visible = false
             render_skip_button()
             return
@@ -2158,6 +2191,7 @@ local function handle_mouse_down()
     if state.next_ep_visible and state.next_ep_rect then
         local r = state.next_ep_rect
         if mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h then
+            consume_video_click()
             state.next_ep_visible = false
             state.next_ep_available = false
             render_next_episode_button()
@@ -2767,6 +2801,10 @@ local function setup_script_messages()
     -- any OSC chrome (bar, menu overlay, stats panel), we toggle pause so
     -- clicking the video body works like every other media player.
     mp.register_script_message("osc-video-click", function(x, y)
+        if mp.get_time() <= (state.ignore_video_click_until or 0) then
+            return
+        end
+
         local mx = tonumber(x) or 0
         local my = tonumber(y) or 0
         compute_layout()

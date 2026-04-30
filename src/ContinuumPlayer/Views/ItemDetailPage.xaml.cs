@@ -330,13 +330,13 @@ public sealed partial class ItemDetailPage : Page
             if ((episode.Crew == null || episode.Crew.Count == 0) && series.Crew?.Count > 0)
                 episode.Crew = series.Crew;
             if ((episode.Studios?.Count ?? 0) == 0 && (series.Studios?.Count ?? 0) > 0)
-                episode.Studios = series.Studios;
+                episode.Studios = series.Studios!;
             if ((episode.Networks?.Count ?? 0) == 0 && (series.Networks?.Count ?? 0) > 0)
-                episode.Networks = series.Networks;
+                episode.Networks = series.Networks!;
             if ((episode.Countries?.Count ?? 0) == 0 && (series.Countries?.Count ?? 0) > 0)
-                episode.Countries = series.Countries;
+                episode.Countries = series.Countries!;
             if ((episode.Genres?.Count ?? 0) == 0 && (series.Genres?.Count ?? 0) > 0)
-                episode.Genres = series.Genres;
+                episode.Genres = series.Genres!;
             if (string.IsNullOrEmpty(episode.ContentRating) && !string.IsNullOrEmpty(series.ContentRating))
                 episode.ContentRating = series.ContentRating;
         }
@@ -2447,7 +2447,7 @@ public sealed partial class ItemDetailPage : Page
                     Type = "episode",
                     BackdropUrl = ep.StillUrl,
                     BackdropThumbhash = ep.StillThumbhash,
-                    Overview = ep.Overview,
+                    Overview = ep.Overview ?? "",
                 };
                 if (ep.UserData != null)
                 {
@@ -2499,7 +2499,7 @@ public sealed partial class ItemDetailPage : Page
             }
             catch
             {
-                BackdropImage.Source = null;
+                BackdropImage.ClearValue(Image.SourceProperty);
             }
         }
 

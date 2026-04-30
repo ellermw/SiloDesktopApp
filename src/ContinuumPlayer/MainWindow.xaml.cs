@@ -607,7 +607,7 @@ public sealed partial class MainWindow : Window
         int headerIndex = -1;
         for (int i = 0; i < NavView.MenuItems.Count; i++)
         {
-            if (NavView.MenuItems[i] == LibrariesHeader)
+            if (ReferenceEquals(NavView.MenuItems[i], LibrariesHeader))
             {
                 headerIndex = i;
                 break;
@@ -620,7 +620,7 @@ public sealed partial class MainWindow : Window
         int removeStart = headerIndex + 1;
         while (removeStart < NavView.MenuItems.Count &&
                NavView.MenuItems[removeStart] is not NavigationViewItemHeader &&
-               NavView.MenuItems[removeStart] != LibrariesHeader)
+               !ReferenceEquals(NavView.MenuItems[removeStart], LibrariesHeader))
         {
             NavView.MenuItems.RemoveAt(removeStart);
         }
@@ -751,7 +751,7 @@ public sealed partial class MainWindow : Window
         int headerIndex = -1;
         for (int i = 0; i < NavView.MenuItems.Count; i++)
         {
-            if (NavView.MenuItems[i] == LibrariesHeader) { headerIndex = i; break; }
+            if (ReferenceEquals(NavView.MenuItems[i], LibrariesHeader)) { headerIndex = i; break; }
         }
         if (headerIndex < 0) return;
 

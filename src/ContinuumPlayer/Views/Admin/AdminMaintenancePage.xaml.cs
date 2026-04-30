@@ -73,7 +73,13 @@ public sealed partial class AdminMaintenancePage : Page
         _lastEventRefresh = DateTime.UtcNow;
         DispatcherQueue.TryEnqueue(async () =>
         {
-            try { await ViewModel.LoadCommand.ExecuteAsync(null); }
+            try
+            {
+                await Task.WhenAll(
+                    ViewModel.RefreshImportJobsAsync(),
+                    ViewModel.RefreshExportJobsAsync(),
+                    ViewModel.RefreshAllJobsAsync());
+            }
             catch { }
         });
     }

@@ -106,8 +106,7 @@ public sealed class EventChannelClient : IDisposable
             else
             {
                 // Force reconnect with reduced channel set.
-                _cts?.Cancel();
-                try { _runTask?.Wait(500); } catch { }
+                CancelCurrentRunLoop_NoLock();
                 _cts = new CancellationTokenSource();
                 _runTask = Task.Run(() => RunLoop(_cts.Token));
             }
@@ -120,8 +119,7 @@ public sealed class EventChannelClient : IDisposable
         {
             if (!forceReconnect) return;
             Log($"Channel set changed; forcing reconnect");
-            _cts?.Cancel();
-            try { _runTask?.Wait(500); } catch { }
+            CancelCurrentRunLoop_NoLock();
         }
         _cts = new CancellationTokenSource();
         _runTask = Task.Run(() => RunLoop(_cts.Token));
@@ -129,8 +127,7 @@ public sealed class EventChannelClient : IDisposable
 
     private void StopInternal_NoLock()
     {
-        try { _cts?.Cancel(); } catch { }
-        try { _runTask?.Wait(1000); } catch { }
+        CancelCurrentRunLoop_NoLock();
         try
         {
             if (_ws?.State == WebSocketState.Open)
@@ -140,6 +137,12 @@ public sealed class EventChannelClient : IDisposable
         _ws?.Dispose();
         _ws = null;
         _runTask = null;
+    }
+
+    private void CancelCurrentRunLoop_NoLock()
+    {
+        try { _cts?.Cancel(); } catch { }
+        try { _ws?.Abort(); } catch { }
     }
 
     /// <summary>
@@ -244,51 +247,54 @@ public sealed class EventChannelClient : IDisposable
         wsUrl += "/api/v1/events/ws";
         wsUrl = UrlHelper.AppendToken(wsUrl, _apiClient.AccessToken);
 
-        _ws = new ClientWebSocket();
+        var ws = new ClientWebSocket();
+        _ws = ws;
         try
         {
             var logUrl = wsUrl.Contains('?') ? wsUrl[..wsUrl.IndexOf('?')] : wsUrl;
             Log($"Connecting to {logUrl} (channels: {string.Join(",", channelsSnapshot)})");
-            await _ws.ConnectAsync(new Uri(wsUrl), ct);
-            StateChanged?.Invoke(_ws.State);
+            await ws.ConnectAsync(new Uri(wsUrl), ct);
+            StateChanged?.Invoke(ws.State);
             Log("Connected");
         }
         catch
         {
-            _ws?.Dispose();
-            _ws = null;
+            ws.Dispose();
+            if (ReferenceEquals(_ws, ws))
+                _ws = null;
             throw;
         }
 
         try
         {
-            await ReceiveLoop(channelsSnapshot, ct);
+            await ReceiveLoop(ws, channelsSnapshot, ct);
         }
         finally
         {
             try
             {
-                if (_ws?.State == WebSocketState.Open)
-                    await _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+                if (ws.State == WebSocketState.Open)
+                    await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
             }
             catch { }
-            _ws?.Dispose();
-            _ws = null;
+            ws.Dispose();
+            if (ReferenceEquals(_ws, ws))
+                _ws = null;
             StateChanged?.Invoke(WebSocketState.Closed);
         }
     }
 
-    private async Task ReceiveLoop(string[] channelsToSubscribe, CancellationToken ct)
+    private async Task ReceiveLoop(ClientWebSocket ws, string[] channelsToSubscribe, CancellationToken ct)
     {
         var buffer = new byte[16 * 1024];
         var messageBuffer = new StringBuilder();
 
-        while (!ct.IsCancellationRequested && _ws?.State == WebSocketState.Open)
+        while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
         {
             WebSocketReceiveResult result;
             try
             {
-                result = await _ws.ReceiveAsync(buffer, ct);
+                result = await ws.ReceiveAsync(buffer, ct);
             }
             catch (OperationCanceledException)
             {
@@ -312,11 +318,11 @@ public sealed class EventChannelClient : IDisposable
             var json = messageBuffer.ToString();
             messageBuffer.Clear();
 
-            await DispatchFrame(json, channelsToSubscribe, ct);
+            await DispatchFrame(ws, json, channelsToSubscribe, ct);
         }
     }
 
-    private async Task DispatchFrame(string json, string[] channelsToSubscribe, CancellationToken ct)
+    private async Task DispatchFrame(ClientWebSocket ws, string json, string[] channelsToSubscribe, CancellationToken ct)
     {
         JsonDocument? doc = null;
         try
@@ -340,7 +346,7 @@ public sealed class EventChannelClient : IDisposable
                         ["request_id"] = Guid.NewGuid().ToString("N"),
                         ["channels"] = channelsToSubscribe,
                     };
-                    await SendJsonAsync(subscribeMsg, ct);
+                    await SendJsonAsync(ws, subscribeMsg, ct);
                     Log($"Sent subscribe for channels: {string.Join(",", channelsToSubscribe)}");
                     break;
                 }
@@ -391,12 +397,12 @@ public sealed class EventChannelClient : IDisposable
         }
     }
 
-    private async Task SendJsonAsync(object obj, CancellationToken ct)
+    private static async Task SendJsonAsync(ClientWebSocket ws, object obj, CancellationToken ct)
     {
-        if (_ws?.State != WebSocketState.Open) return;
+        if (ws.State != WebSocketState.Open) return;
         var json = JsonSerializer.Serialize(obj);
         var bytes = Encoding.UTF8.GetBytes(json);
-        await _ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+        await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
     }
 
     private static void Log(string msg)

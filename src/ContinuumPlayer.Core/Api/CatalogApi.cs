@@ -37,6 +37,7 @@ public class CatalogApi(ContinuumApiClient client)
         string? country = null, string? resolution = null, string? audioLanguage = null,
         string? yearMin = null, string? yearMax = null,
         string? q = null, string? type = null, int limit = 40, int offset = 0,
+        bool includeTotal = true, string? snapshot = null,
         CancellationToken ct = default)
     {
         var query = $"/api/v1/catalog?library_id={libraryId}&limit={limit}&offset={offset}";
@@ -52,6 +53,8 @@ public class CatalogApi(ContinuumApiClient client)
         if (yearMax != null) query += $"&year_max={Uri.EscapeDataString(yearMax)}";
         if (q != null) query += $"&q={Uri.EscapeDataString(q)}";
         if (type != null) query += $"&type={Uri.EscapeDataString(type)}";
+        if (!includeTotal) query += "&include_total=false";
+        if (!string.IsNullOrWhiteSpace(snapshot)) query += $"&snapshot={Uri.EscapeDataString(snapshot)}";
         return client.GetAsync<CatalogResponse>(query, ct);
     }
 
