@@ -230,6 +230,22 @@ local function resume_after_seek()
     mp.add_timeout(0.75, function() mp.set_property_bool("pause", false) end)
 end
 
+local function seek_and_resume(target, flags)
+    local was_paused = mp.get_property_bool("pause")
+    mp.commandv("seek", tostring(target), flags)
+    if not was_paused then
+        resume_after_seek()
+    end
+end
+
+local function seek_relative_and_resume(delta)
+    local was_paused = mp.get_property_bool("pause")
+    mp.commandv("seek", tostring(delta), "relative+keyframes")
+    if not was_paused then
+        resume_after_seek()
+    end
+end
+
 --------------------------------------------------------------------------------
 -- Utility Functions
 --------------------------------------------------------------------------------
@@ -1246,9 +1262,11 @@ local function render_stats()
     if vw and vh and vw > 0 then
         table.insert(s2.rows, { label = "Video resolution", value = string.format("%dx%d", vw, vh) })
     end
-    local dropped = (mp.get_property_number("vo-delayed-frame-count") or 0)
+    local dropped = (mp.get_property_number("frame-drop-count") or 0)
                   + (mp.get_property_number("decoder-frame-drop-count") or 0)
     table.insert(s2.rows, { label = "Dropped frames", value = tostring(dropped) })
+    local delayed = mp.get_property_number("vo-delayed-frame-count") or 0
+    table.insert(s2.rows, { label = "Delayed frames", value = tostring(delayed) })
     table.insert(s2.rows, { label = "Corrupted frames", value = "0" })
     table.insert(sections, s2)
 
@@ -2177,8 +2195,7 @@ local function handle_mouse_down()
         local r = state.skip_rect
         if mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h then
             consume_video_click()
-            mp.commandv("seek", tostring(state.skip_target), "absolute")
-            resume_after_seek()
+            seek_and_resume(state.skip_target, "absolute+keyframes")
             state.skip_visible = false
             render_skip_button()
             return
@@ -2290,13 +2307,13 @@ local function handle_mouse_down()
 
     -- Check skip back
     if L.btn_skip_back and point_in_rect(mx, my, L.btn_skip_back) then
-        mp.commandv("seek", "-10", "relative")
+        seek_relative_and_resume(-10)
         return
     end
 
     -- Check skip forward
     if L.btn_skip_fwd and point_in_rect(mx, my, L.btn_skip_fwd) then
-        mp.commandv("seek", "30", "relative")
+        seek_relative_and_resume(30)
         return
     end
 
@@ -2377,7 +2394,7 @@ local function handle_mouse_up()
         state.dragging_seek = false
         if state.duration > 0 then
             local target_time = state.seek_drag_pos * state.duration
-            mp.commandv("seek", tostring(target_time), "absolute")
+            seek_and_resume(target_time, "absolute+keyframes")
         end
     end
 
@@ -2668,10 +2685,10 @@ local function setup_key_bindings()
     -- Override F key — prevent mpv's default "cycle fullscreen" from firing
     -- Arrow keys: Left/Right = seek ±10s, Up/Down = volume ±5% (matching web player)
     mp.add_forced_key_binding("LEFT", "continuum-seek-back", function()
-        mp.commandv("seek", "-10", "relative")
+        seek_relative_and_resume(-10)
     end)
     mp.add_forced_key_binding("RIGHT", "continuum-seek-fwd", function()
-        mp.commandv("seek", "10", "relative")
+        seek_relative_and_resume(10)
     end)
     mp.add_forced_key_binding("UP", "continuum-vol-up", function()
         mp.commandv("add", "volume", "5")

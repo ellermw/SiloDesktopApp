@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using static ContinuumPlayer.Player.MpvInterop;
 
 namespace ContinuumPlayer.Player;
@@ -180,8 +181,9 @@ public sealed class MpvPlayer : IDisposable
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "ContinuumPlayer", "mpv_log.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+        RotateLogIfNeeded(logPath);
         SetOption("log-file", logPath);
-        SetOption("msg-level", "all=status");
+        SetOption("msg-level", "all=warn");
 
         // Initialize mpv
         int err = mpv_initialize(_mpvHandle);
@@ -341,8 +343,9 @@ public sealed class MpvPlayer : IDisposable
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "ContinuumPlayer", "mpv_log.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+        RotateLogIfNeeded(logPath);
         SetOption("log-file", logPath);
-        SetOption("msg-level", "all=status");
+        SetOption("msg-level", "all=warn");
 
         // Initialize
         int err = mpv_initialize(_mpvHandle);
@@ -502,17 +505,17 @@ public sealed class MpvPlayer : IDisposable
     /// </summary>
     /// <param name="url">The URL or file path to load.</param>
     /// <param name="authHeader">Optional Authorization header value (e.g. "Bearer token").</param>
-    public void LoadFile(string url, string? authHeader = null)
+    public void LoadFile(string url, string? authHeader = null, double startSeconds = 0)
     {
         ThrowIfNotInitialized();
 
-        if (!string.IsNullOrEmpty(authHeader))
-        {
-            mpv_set_property_string(_mpvHandle, "http-header-fields",
-                $"Authorization: {authHeader}");
-        }
+        mpv_set_property_string(_mpvHandle, "http-header-fields",
+            !string.IsNullOrEmpty(authHeader) ? $"Authorization: {authHeader}" : "");
 
-        Command("loadfile", url);
+        if (startSeconds > 0.001)
+            Command("loadfile", url, "replace", "-1", $"start={FormatSeconds(startSeconds)}");
+        else
+            Command("loadfile", url);
     }
 
     /// <summary>Stops the current file without triggering end-of-file events.</summary>
@@ -549,7 +552,17 @@ public sealed class MpvPlayer : IDisposable
     public void Seek(double seconds)
     {
         ThrowIfNotInitialized();
-        Command("seek", seconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture), "absolute");
+        Command("seek", FormatSeconds(seconds), "absolute");
+    }
+
+    /// <summary>
+    /// Seeks to an absolute position using keyframe boundaries. This is much
+    /// faster for interactive scrubbing than mpv's default exact absolute seek.
+    /// </summary>
+    public void SeekFast(double seconds)
+    {
+        ThrowIfNotInitialized();
+        Command("seek", FormatSeconds(seconds), "absolute+keyframes");
     }
 
     /// <summary>
@@ -746,7 +759,7 @@ public sealed class MpvPlayer : IDisposable
             if (err < 0)
             {
                 string errMsg = GetErrorString(err);
-                Error?.Invoke($"mpv_command [{string.Join(" ", args)}] failed: {errMsg}");
+                Error?.Invoke($"mpv_command [{string.Join(" ", args.Select(RedactCommandArgument))}] failed: {errMsg}");
             }
         }
         finally
@@ -759,7 +772,38 @@ public sealed class MpvPlayer : IDisposable
         }
     }
 
+    private static string FormatSeconds(double seconds) =>
+        seconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static void RotateLogIfNeeded(string path, long maxBytes = 2 * 1024 * 1024)
+    {
+        try
+        {
+            if (!File.Exists(path) || new FileInfo(path).Length < maxBytes)
+                return;
+
+            var archivePath = $"{path}.1";
+            try { File.Delete(archivePath); } catch { }
+            File.Move(path, archivePath, overwrite: true);
+        }
+        catch
+        {
+        }
+    }
+
     // ── Event loop ───────────────────────────────────────────────────────
+
+    private static string RedactCommandArgument(string arg)
+    {
+        if (arg.StartsWith("Authorization: Bearer ", StringComparison.OrdinalIgnoreCase))
+            return "Authorization: Bearer <redacted>";
+
+        return Regex.Replace(
+            arg,
+            @"(?<key>[?&](?:access_token|refresh_token|profile_token|room_token|token|jwt|password|secret|api_key|apikey|key)=)[^&\s]+",
+            "${key}<redacted>",
+            RegexOptions.IgnoreCase);
+    }
 
     private void EventLoop()
     {

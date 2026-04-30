@@ -17,6 +17,7 @@ namespace ContinuumPlayer.Core.Services;
 public sealed class EventChannelClient : IDisposable
 {
     private readonly ContinuumApiClient _apiClient;
+    private readonly AuthService _authService;
 
     private ClientWebSocket? _ws;
     private CancellationTokenSource? _cts;
@@ -46,9 +47,12 @@ public sealed class EventChannelClient : IDisposable
     /// connection indicators.</summary>
     public event Action<WebSocketState>? StateChanged;
 
-    public EventChannelClient(ContinuumApiClient apiClient)
+    public EventChannelClient(ContinuumApiClient apiClient, AuthService authService)
     {
         _apiClient = apiClient;
+        _authService = authService;
+        _authService.TokenRefreshed += OnTokenRefreshed;
+        _authService.LoggedOut += OnLoggedOut;
     }
 
     public WebSocketState State => _ws?.State ?? WebSocketState.None;
@@ -143,6 +147,23 @@ public sealed class EventChannelClient : IDisposable
     {
         try { _cts?.Cancel(); } catch { }
         try { _ws?.Abort(); } catch { }
+    }
+
+    private void OnTokenRefreshed()
+    {
+        lock (_lock)
+        {
+            if (_channelRefs.Count == 0) return;
+            Log("Token refreshed; forcing reconnect");
+            CancelCurrentRunLoop_NoLock();
+            _cts = new CancellationTokenSource();
+            _runTask = Task.Run(() => RunLoop(_cts.Token));
+        }
+    }
+
+    private void OnLoggedOut()
+    {
+        Stop();
     }
 
     /// <summary>
@@ -407,19 +428,13 @@ public sealed class EventChannelClient : IDisposable
 
     private static void Log(string msg)
     {
-        try
-        {
-            var path = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ContinuumPlayer", "events_channel.txt");
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.AppendAllText(path, $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n");
-        }
-        catch { }
+        LocalLog.AppendLine("events_channel.txt", msg);
     }
 
     public void Dispose()
     {
+        _authService.TokenRefreshed -= OnTokenRefreshed;
+        _authService.LoggedOut -= OnLoggedOut;
         Stop();
         _cts?.Dispose();
     }

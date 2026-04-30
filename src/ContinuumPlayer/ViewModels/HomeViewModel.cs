@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Home;
+using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Messaging;
 
 namespace ContinuumPlayer.ViewModels;
@@ -273,16 +274,7 @@ public partial class HomeViewModel : ObservableObject,
 
     private static void LogSectionFetchFailure(string sectionId, Exception ex)
     {
-        try
-        {
-            var logPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ContinuumPlayer", "home_error.txt");
-            Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-            File.AppendAllText(logPath,
-                $"{DateTime.Now} | section={sectionId} | {ex.GetType().Name}: {ex.Message}{Environment.NewLine}");
-        }
-        catch { }
+        LocalLog.AppendLine("home_error.txt", $"section={sectionId} | {ex.GetType().Name}: {ex.Message}");
     }
 
     private void RemoveFromBoundCollection(string sectionId)

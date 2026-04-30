@@ -226,6 +226,7 @@ public class ContinuumApiClient
             contentType = request.Content.Headers.ContentType;
         }
 
+        var sentAccessToken = _accessToken;
         var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
 
         // On 401, try refreshing the token and retry once
@@ -233,11 +234,17 @@ public class ContinuumApiClient
         {
             bool refreshed = false;
             await _refreshLock.WaitAsync(ct).ConfigureAwait(false);
-            try { refreshed = await _tokenRefresher(ct).ConfigureAwait(false); }
+            try
+            {
+                refreshed = !string.Equals(_accessToken, sentAccessToken, StringComparison.Ordinal);
+                if (!refreshed)
+                    refreshed = await _tokenRefresher(ct).ConfigureAwait(false);
+            }
             finally { _refreshLock.Release(); }
 
             if (refreshed)
             {
+                response.Dispose();
                 using var retry = new HttpRequestMessage(request.Method, request.RequestUri);
                 AddHeaders(retry);
                 if (contentBytes != null)
@@ -258,14 +265,14 @@ public class ContinuumApiClient
         // doesn't capture the calling SynchronizationContext — on WinUI 3
         // the UI thread was the one doing deserialization, which caused
         // multi-second freezes on larger catalog/home-section responses.
-        var response = await SendWithRetryAsync(request, ct).ConfigureAwait(false);
+        using var response = await SendWithRetryAsync(request, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct).ConfigureAwait(false);
         return (await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct).ConfigureAwait(false))!;
     }
 
     private async Task SendNoContentAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        var response = await SendWithRetryAsync(request, ct).ConfigureAwait(false);
+        using var response = await SendWithRetryAsync(request, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct).ConfigureAwait(false);
     }
 

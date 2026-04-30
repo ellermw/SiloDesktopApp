@@ -2,9 +2,12 @@
 ; Inno Setup script for Continuum Desktop Player
 
 #define MyAppName "Continuum Desktop Player"
-#define MyAppVersion "1.0.205"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Continuum"
 #define MyAppExeName "ContinuumPlayer.exe"
+#ifndef PublishSourceDir
+#define PublishSourceDir "publish"
+#endif
 
 [Setup]
 AppId={{B8E2F4A1-3C5D-4E6F-9A1B-2D3E4F5A6B7C}
@@ -34,7 +37,7 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 
 [Files]
 ; Main application files from publish output
-Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishSourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Windows App SDK runtime installer
 Source: "deps\windowsappruntimeinstall-x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall

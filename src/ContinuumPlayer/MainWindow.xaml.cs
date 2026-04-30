@@ -212,15 +212,7 @@ public sealed partial class MainWindow : Window
             }
             catch (Exception ex)
             {
-                try
-                {
-                    var logPath = System.IO.Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        "ContinuumPlayer", "state_trace.txt");
-                    System.IO.File.AppendAllText(logPath,
-                        $"[{DateTime.Now:HH:mm:ss.fff}] PlayingNextTimer error: {ex}\n");
-                }
-                catch { }
+                LocalLog.AppendLine("state_trace.txt", $"PlayingNextTimer error: {ex}");
                 ShowPlaybackError($"Failed to start next episode: {ex.Message}");
             }
             return;
@@ -239,15 +231,7 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             // Log and surface the error instead of silently crashing.
-            try
-            {
-                var logPath = System.IO.Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "ContinuumPlayer", "state_trace.txt");
-                System.IO.File.AppendAllText(logPath,
-                    $"[{DateTime.Now:HH:mm:ss.fff}] PlayingNextPlayNow error: {ex}\n");
-            }
-            catch { }
+            LocalLog.AppendLine("state_trace.txt", $"PlayingNextPlayNow error: {ex}");
             ShowPlaybackError($"Failed to start next episode: {ex.Message}");
         }
     }
@@ -447,6 +431,14 @@ public sealed partial class MainWindow : Window
                 DispatcherQueue.TryEnqueue(() => UpdateLibraryNavItems());
             };
         }
+        else
+        {
+            _ = Task.Run(async () =>
+            {
+                await _viewModel.LoadLibrariesCommand.ExecuteAsync(null);
+                DispatcherQueue.TryEnqueue(async () => await RefreshSidebarPinsAsync());
+            });
+        }
     }
 
     private Task UpdateProfileDisplayAsync()
@@ -585,14 +577,7 @@ public sealed partial class MainWindow : Window
 
     private static void LogState(string msg)
     {
-        try
-        {
-            var logPath = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ContinuumPlayer", "state_trace.txt");
-            System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n");
-        }
-        catch { }
+        LocalLog.AppendLine("state_trace.txt", msg);
     }
 
     public void NavigateToHome()

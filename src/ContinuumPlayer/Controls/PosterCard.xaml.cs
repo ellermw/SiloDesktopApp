@@ -322,7 +322,7 @@ public sealed partial class PosterCard : UserControl
     // to one at a time across all cards. Creation itself is cheap; the
     // actual decode happens async in native code regardless.
     private static readonly SemaphoreSlim s_bitmapCreateLock = new(1);
-    private static readonly SemaphoreSlim s_imageLoadLock = new(6);
+    private static readonly SemaphoreSlim s_imageLoadLock = new(10);
 
     private async Task LoadPosterAsync(MediaItem item, CancellationToken ct)
     {
@@ -331,9 +331,9 @@ public sealed partial class PosterCard : UserControl
 
         try
         {
-            // Grace window: cards recycled by ItemsRepeater within this window
-            // never hit the network. Longer window = cheaper fast-scroll.
-            await Task.Delay(350, ct);
+            // Short grace window: skip transient recycle churn without making
+            // the visible page wait noticeably before poster fetches begin.
+            await Task.Delay(60, ct);
             if (ct.IsCancellationRequested) return;
 
             var imageService = App.Services.GetRequiredService<ImageService>();

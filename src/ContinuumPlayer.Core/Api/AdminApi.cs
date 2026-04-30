@@ -146,7 +146,10 @@ public class AdminApi(ContinuumApiClient client)
         => client.GetAsync<Dictionary<string, string>>("/api/v1/admin/settings", ct);
 
     public Task UpdateAdminSettingAsync(string key, string value, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/admin/settings/{Uri.EscapeDataString(key)}", new { value }, ct);
+        => client.PutNoContentAsync(
+            $"/api/v1/admin/settings/{Uri.EscapeDataString(key)}",
+            new Dictionary<string, object?> { ["value"] = value },
+            ct);
 
     public async Task<(HashSet<string> Configured, HashSet<string> ManagedByEnv)> GetSensitiveStatusAsync(CancellationToken ct = default)
     {
@@ -288,7 +291,12 @@ public class AdminApi(ContinuumApiClient client)
 
     public Task RestoreSectionDefaultsAsync(string scope, int? libraryId, bool resetProfiles, CancellationToken ct = default)
         => client.PostNoContentAsync("/api/v1/admin/sections/restore-defaults",
-            new { scope, library_id = libraryId, reset_profiles = resetProfiles }, ct);
+            new Dictionary<string, object?>
+            {
+                ["scope"] = scope,
+                ["library_id"] = libraryId,
+                ["reset_profiles"] = resetProfiles,
+            }, ct);
 
     // ===== Recommendations =====
 

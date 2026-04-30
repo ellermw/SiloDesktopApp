@@ -21,7 +21,6 @@ public sealed partial class HomePage : Page
     {
         ViewModel = App.Services.GetRequiredService<HomeViewModel>();
         this.InitializeComponent();
-        SmoothScrollHelper.Attach(ContentScrollViewer);
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)

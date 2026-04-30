@@ -18,7 +18,7 @@ public sealed class AdminLogStreamClient : IDisposable
     public enum ConnectionState { Disconnected, Connecting, Live }
 
     private readonly string _baseWsUrl;
-    private readonly string _accessToken;
+    private readonly Func<string?> _accessTokenProvider;
     private ClientWebSocket? _ws;
     private CancellationTokenSource? _readCts;
 
@@ -39,6 +39,11 @@ public sealed class AdminLogStreamClient : IDisposable
     /// class converts it to the equivalent WebSocket scheme.
     /// </summary>
     public AdminLogStreamClient(string httpBaseUrl, string accessToken)
+        : this(httpBaseUrl, () => accessToken)
+    {
+    }
+
+    public AdminLogStreamClient(string httpBaseUrl, Func<string?> accessTokenProvider)
     {
         if (string.IsNullOrEmpty(httpBaseUrl))
             throw new ArgumentException("httpBaseUrl required", nameof(httpBaseUrl));
@@ -46,7 +51,7 @@ public sealed class AdminLogStreamClient : IDisposable
                      : httpBaseUrl.StartsWith("http://",  StringComparison.OrdinalIgnoreCase) ? "ws://"
                      : throw new ArgumentException("httpBaseUrl must be http or https", nameof(httpBaseUrl));
         _baseWsUrl = wsScheme + httpBaseUrl[(httpBaseUrl.IndexOf("://") + 3)..];
-        _accessToken = accessToken ?? throw new ArgumentNullException(nameof(accessToken));
+        _accessTokenProvider = accessTokenProvider ?? throw new ArgumentNullException(nameof(accessTokenProvider));
     }
 
     /// <summary>
@@ -65,7 +70,10 @@ public sealed class AdminLogStreamClient : IDisposable
             if (string.IsNullOrEmpty(v)) continue;
             query.Append('&').Append(Uri.EscapeDataString(k)).Append('=').Append(Uri.EscapeDataString(v));
         }
-        query.Append("&token=").Append(Uri.EscapeDataString(_accessToken));
+        var accessToken = _accessTokenProvider();
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new InvalidOperationException("No access token is available for the admin log stream.");
+        query.Append("&token=").Append(Uri.EscapeDataString(accessToken));
         var url = $"{_baseWsUrl}/api/v1/admin/logs/ws?{query}";
 
         _ws = new ClientWebSocket();

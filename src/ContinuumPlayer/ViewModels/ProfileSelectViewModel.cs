@@ -11,13 +11,15 @@ public partial class ProfileSelectViewModel : ObservableObject
 {
     private readonly AuthApi _authApi;
     private readonly SettingsApi _settingsApi;
+    private readonly CatalogApi _catalogApi;
     private readonly AuthService _authService;
     private readonly SettingsService _settingsService;
 
-    public ProfileSelectViewModel(AuthApi authApi, SettingsApi settingsApi, AuthService authService, SettingsService settingsService)
+    public ProfileSelectViewModel(AuthApi authApi, SettingsApi settingsApi, CatalogApi catalogApi, AuthService authService, SettingsService settingsService)
     {
         _authApi = authApi;
         _settingsApi = settingsApi;
+        _catalogApi = catalogApi;
         _authService = authService;
         _settingsService = settingsService;
     }
@@ -199,9 +201,36 @@ public partial class ProfileSelectViewModel : ObservableObject
         }
     }
 
+    public async Task DeleteProfileAsync(Profile profile)
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+
+        try
+        {
+            await _authApi.DeleteProfileAsync(profile.Id);
+            Profiles.Remove(profile);
+            if (SelectedProfile?.Id == profile.Id)
+                SelectedProfile = null;
+        }
+        catch (ApiException ex)
+        {
+            ErrorMessage = $"Failed to delete profile: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to delete profile: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
     private async Task ActivateProfileAsync(Profile profile, string? profileToken)
     {
         _authService.SelectProfile(profile.Id, profileToken);
+        _catalogApi.InvalidateLibraryCache();
 
         // Save last profile and user info
         var settings = _settingsService.Load();

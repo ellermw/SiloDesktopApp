@@ -2654,23 +2654,18 @@ public sealed partial class AdminSettingsDetailPage : Page
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
 
-        var currentVal = ViewModel.GetSetting(key);
         bool isConfigured = ViewModel.IsSensitiveConfigured(key);
 
-        // Webui uses explicit Eye/EyeOff toggle, not native PasswordBox reveal.
-        // We use a TextBox (masked via FontFamily trick) + toggle button.
-        var inputBox = new TextBox
+        var passwordBox = new PasswordBox
         {
-            Text = "",
-            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
+            Password = "",
+            Style = (Style)Application.Current.Resources["DarkPasswordBoxStyle"],
             MaxWidth = 448,
             HorizontalAlignment = HorizontalAlignment.Left,
             PlaceholderText = isConfigured ? "\u2022\u2022\u2022\u2022 configured" : (hint ?? "Not configured"),
-            FontFamily = new FontFamily("Consolas"), // monospace for secrets
+            PasswordRevealMode = PasswordRevealMode.Hidden,
         };
-        // Start masked
         bool isRevealed = false;
-        var originalFont = inputBox.FontFamily;
 
         var eyeBtn = new Button
         {
@@ -2684,9 +2679,10 @@ public sealed partial class AdminSettingsDetailPage : Page
         eyeBtn.Click += (_, _) =>
         {
             isRevealed = !isRevealed;
+            passwordBox.PasswordRevealMode = isRevealed ? PasswordRevealMode.Visible : PasswordRevealMode.Hidden;
             if (isRevealed)
             {
-                // Show value — already in TextBox, just change icon
+                // Show value; the PasswordBox handles masking, this just swaps the icon.
                 ((FontIcon)eyeBtn.Content).Glyph = "\uE7B3"; // Eye
             }
             else
@@ -2698,18 +2694,15 @@ public sealed partial class AdminSettingsDetailPage : Page
         var inputRow = new Grid { ColumnSpacing = 4 };
         inputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         inputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumn(inputBox, 0);
+        Grid.SetColumn(passwordBox, 0);
         Grid.SetColumn(eyeBtn, 1);
-        inputRow.Children.Add(inputBox);
+        inputRow.Children.Add(passwordBox);
         inputRow.Children.Add(eyeBtn);
 
-        // Alias for backward compat with the rest of this method
-        var passwordBox = inputBox;
-
-        passwordBox.TextChanged += (s, e) =>
+        passwordBox.PasswordChanged += (s, e) =>
         {
-            if (!string.IsNullOrEmpty(passwordBox.Text))
-                ViewModel.SetSetting(key, passwordBox.Text);
+            if (!string.IsNullOrEmpty(passwordBox.Password))
+                ViewModel.SetSetting(key, passwordBox.Password);
             UpdateDirtyCountText();
         };
         field.Children.Add(inputRow);
@@ -3226,21 +3219,39 @@ public sealed partial class AdminSettingsDetailPage : Page
     {
         // Check if any dirty keys require restart BEFORE saving (dirty set clears after save).
         bool needsRestart = ViewModel.GetDirtyKeys().Any(k => RestartRequiredKeys.Contains(k));
+        var clickedButton = sender as Button ?? SaveButton;
+        var originalContent = clickedButton.Content;
 
         // Show "Saving..." on the button while save is in flight
-        SaveButton.Content = "Saving...";
-        SaveButton.IsEnabled = false;
+        clickedButton.Content = "Saving...";
+        clickedButton.IsEnabled = false;
 
-        // The command binding handles the save; after save, refresh the tab
-        await Task.Delay(100); // small delay to let binding update
-        if (ViewModel.StatusMessage != null)
+        try
         {
-            ShowTab(_activeTab);
-            ShowStatusToast(ViewModel.StatusMessage);
+            if (!ViewModel.IsSaving && ViewModel.HasDirtyChanges)
+            {
+                await ViewModel.SaveCommand.ExecuteAsync(null);
+            }
+            else
+            {
+                while (ViewModel.IsSaving)
+                    await Task.Delay(50);
+            }
+
+            if (ViewModel.StatusMessage != null)
+            {
+                ShowTab(_activeTab);
+                ShowStatusToast(ViewModel.StatusMessage);
+            }
         }
-        SaveButton.Content = "Save Changes";
-        SaveButton.IsEnabled = true;
-        UpdateDirtyCountText();
+        finally
+        {
+            clickedButton.Content = originalContent;
+            clickedButton.IsEnabled = true;
+            SaveButton.Content = "Save Changes";
+            SaveButton.IsEnabled = true;
+            UpdateDirtyCountText();
+        }
 
         if (needsRestart)
         {
@@ -3266,6 +3277,9 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void DiscardButton_Click(object sender, RoutedEventArgs e)
     {
+        if (ViewModel.HasDirtyChanges && ViewModel.DiscardCommand.CanExecute(null))
+            ViewModel.DiscardCommand.Execute(null);
+
         // Rebuild the current tab to reset all field values
         ShowTab(_activeTab);
         UpdateDirtyCountText();

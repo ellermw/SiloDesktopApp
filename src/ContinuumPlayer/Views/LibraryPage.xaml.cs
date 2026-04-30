@@ -73,9 +73,9 @@ public sealed partial class LibraryPage : Page
     private DispatcherTimer? _cardBindTimer;
     private bool _isNavigated;
     private bool _viewModelEventsAttached;
-    private const int CardBindsPerTick = 4;
+    private const int CardBindsPerTick = 12;
     private const int MaxRealizedLibraryCards = 40;
-    private const int LibraryOverscanRows = 0;
+    private const int LibraryOverscanRows = 1;
 
     public LibraryPage()
     {

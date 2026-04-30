@@ -72,7 +72,11 @@ public class AuthApi(ContinuumApiClient client)
 
     public Task<DeviceLoginStartResponse> DeviceStartAsync(string? deviceName = null, string? devicePlatform = null, CancellationToken ct = default)
         => client.PostAsync<DeviceLoginStartResponse>("/api/v1/auth/device/start",
-            new { device_name = deviceName ?? "", device_platform = devicePlatform ?? "" }, ct);
+            new Dictionary<string, object?>
+            {
+                ["device_name"] = deviceName ?? "",
+                ["device_platform"] = devicePlatform ?? "",
+            }, ct);
 
     /// <summary>
     /// Look up a pending device login request. Exactly one of <paramref name="token"/>
@@ -90,7 +94,7 @@ public class AuthApi(ContinuumApiClient client)
 
     public Task<DeviceLoginPollResponse> DevicePollAsync(string deviceCode, CancellationToken ct = default)
         => client.PostAsync<DeviceLoginPollResponse>("/api/v1/auth/device/poll",
-            new { device_code = deviceCode }, ct);
+            new Dictionary<string, object?> { ["device_code"] = deviceCode }, ct);
 
     public Task DeviceApproveAsync(string? token, string? code, CancellationToken ct = default)
         => client.PostNoContentAsync("/api/v1/auth/device/approve",
@@ -103,7 +107,7 @@ public class AuthApi(ContinuumApiClient client)
     // ===== Session Management =====
 
     public Task LogoutAsync(CancellationToken ct = default)
-        => client.PostNoContentAsync("/api/v1/auth/logout", new { }, ct);
+        => client.PostNoContentAsync("/api/v1/auth/logout", new Dictionary<string, object?>(), ct);
 
     public Task<UserInfo> GetMeAsync(CancellationToken ct = default)
         => client.GetAsync<UserInfo>("/api/v1/auth/me", ct);

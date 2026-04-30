@@ -44,7 +44,6 @@ public sealed partial class ItemDetailPage : Page
     {
         ViewModel = App.Services.GetRequiredService<ItemDetailViewModel>();
         this.InitializeComponent();
-        SmoothScrollHelper.Attach(ContentScroll);
 
         // Listen for async property changes (e.g., rating loaded after initial UI update)
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
@@ -1673,14 +1672,7 @@ public sealed partial class ItemDetailPage : Page
         catch (Exception ex)
         {
             // Log the error so we can debug
-            try
-            {
-                var logPath = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "ContinuumPlayer", "watch_detail_error.txt");
-                File.AppendAllText(logPath, $"[{DateTime.Now}] LoadWatchDetailAsync failed for contentId={contentId}: {ex}\n\n");
-            }
-            catch { }
+            LocalLog.AppendLine("watch_detail_error.txt", $"LoadWatchDetailAsync failed for contentId={contentId}: {ex}");
         }
     }
 

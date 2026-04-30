@@ -172,7 +172,7 @@ public sealed partial class AdminLogsPage : Page
             {
                 var api = App.Services.GetRequiredService<ContinuumApiClient>();
                 if (string.IsNullOrEmpty(api.BaseUrl) || string.IsNullOrEmpty(api.AccessToken)) return;
-                _stream = new AdminLogStreamClient(api.BaseUrl, api.AccessToken!);
+                _stream = new AdminLogStreamClient(api.BaseUrl, () => api.AccessToken);
                 _stream.AppSnapshotReceived += OnAppSnapshot;
                 _stream.AuditSnapshotReceived += OnAuditSnapshot;
                 _stream.AppEntryAppended += OnAppAppend;

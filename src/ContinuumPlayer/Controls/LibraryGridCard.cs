@@ -19,7 +19,7 @@ public sealed class LibraryGridCard : Canvas
     private CancellationTokenSource? _posterLoadCts;
     private int _posterLoadVersion;
 
-    private static readonly AsyncWorkThrottle s_imageLoadThrottle = new(maxConcurrency: 2);
+    private static readonly AsyncWorkThrottle s_imageLoadThrottle = new(maxConcurrency: 8);
     private static readonly SemaphoreSlim s_bitmapCreateLock = new(1);
 
     public MediaItem? MediaItem { get; private set; }
@@ -163,7 +163,7 @@ public sealed class LibraryGridCard : Canvas
     {
         try
         {
-            await Task.Delay(120, ct);
+            await Task.Delay(25, ct);
             if (!IsCurrentPosterLoad(item, version, ct))
                 return;
 

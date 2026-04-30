@@ -188,7 +188,6 @@
                         <!-- Prev episode slot (visible only in series context) -->
                         <Button x:Name="PrevEpisodeButton"
                                 Style="{StaticResource PlayerDiscSecondaryStyle}"
-                                Click="PrevEpisode_Click"
                                 ToolTipService.ToolTip="Previous episode"
                                 Visibility="Collapsed">
                             <FontIcon Glyph="&#xE100;" FontSize="14" />

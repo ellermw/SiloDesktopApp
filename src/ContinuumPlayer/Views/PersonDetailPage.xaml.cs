@@ -16,7 +16,6 @@ public sealed partial class PersonDetailPage : Page
     {
         ViewModel = App.Services.GetRequiredService<PersonDetailViewModel>();
         this.InitializeComponent();
-        SmoothScrollHelper.Attach(ContentScroll);
 
         FilmographyRepeater.ItemsSource = ViewModel.Filmography;
 

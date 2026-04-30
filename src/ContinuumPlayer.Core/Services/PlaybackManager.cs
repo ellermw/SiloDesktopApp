@@ -11,6 +11,7 @@ public class PlaybackManager : IDisposable
     private readonly AuthService _authService;
     private readonly ContinuumApiClient _apiClient;
     private Timer? _progressTimer;
+    private CancellationTokenSource? _progressStopCts;
     private string? _sessionId;
     private double _lastReportedPosition;
     private bool _isPaused;
@@ -86,13 +87,11 @@ public class PlaybackManager : IDisposable
 
         var baseUrl = _apiClient.BaseUrl;
         var streamPath = response.StreamUrl;
-        var token = _apiClient.AccessToken;
 
         // The API returns paths like "/stream/{session}" -- prefix with /api/v1 if not already there
         if (!streamPath.StartsWith("http") && !streamPath.StartsWith("/api/v1"))
             streamPath = "/api/v1" + streamPath;
         var url = streamPath.StartsWith("http") ? streamPath : $"{baseUrl}{streamPath}";
-        url = UrlHelper.AppendToken(url, token);
         if (response.PlayMethod == "remux" && response.Position > 0)
             url += (url.Contains('?') ? "&" : "?") + $"seek={response.Position:F3}";
 
@@ -107,9 +106,23 @@ public class PlaybackManager : IDisposable
         _isPaused = isPaused;
     }
 
+    public void ApplyAudioChange(ChangeAudioResponse response)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        if (CurrentSession == null) return;
+
+        CurrentSession.AudioTrackIndex = response.AudioTrackIndex;
+        if (!string.IsNullOrWhiteSpace(response.PlayMethod))
+            CurrentSession.PlayMethod = response.PlayMethod;
+        if (!string.IsNullOrWhiteSpace(response.StreamUrl))
+            CurrentSession.StreamUrl = response.StreamUrl;
+        if (response.PlaybackInfo != null)
+            CurrentSession.PlaybackInfo = response.PlaybackInfo;
+    }
+
     public async Task StopSessionAsync()
     {
-        StopProgressReporting();
+        await StopProgressReportingAsync();
         if (_sessionId != null)
         {
             try { await _playbackApi.StopPlaybackAsync(_sessionId); }
@@ -158,11 +171,15 @@ public class PlaybackManager : IDisposable
     private void StartProgressReporting()
     {
         StopProgressReporting();
+        _progressStopCts = new CancellationTokenSource();
+        var stopToken = _progressStopCts.Token;
         _consecutiveProgressFailures = 0;
         _progressTimer = new Timer(async _ =>
         {
             var sessionId = _sessionId; // Capture to avoid race with StopSessionAsync
             if (sessionId == null) return;
+            if (stopToken.IsCancellationRequested) return;
+
             if (!_progressGuard.Wait(0)) return; // skip if previous report still in-flight
             try
             {
@@ -172,24 +189,23 @@ public class PlaybackManager : IDisposable
                 // still hung on one progress POST. Subsequent Wait(0) checks
                 // would then silently skip, so we'd never notice.
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                await _playbackApi.ReportProgressAsync(sessionId, _lastReportedPosition, _isPaused, cts.Token);
-                _consecutiveProgressFailures = 0;
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, stopToken);
+                await _playbackApi.ReportProgressAsync(sessionId, _lastReportedPosition, _isPaused, linkedCts.Token);
+                if (!stopToken.IsCancellationRequested)
+                    _consecutiveProgressFailures = 0;
+            }
+            catch (OperationCanceledException) when (stopToken.IsCancellationRequested)
+            {
+                // Playback is stopping; the in-flight keepalive was intentionally canceled.
             }
             catch (Exception ex)
             {
                 _consecutiveProgressFailures++;
 
-                // Log progress failures so we can diagnose session reaping
-                try
-                {
-                    var logPath = System.IO.Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        "ContinuumPlayer", "progress_error.txt");
-                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(logPath)!);
-                    System.IO.File.AppendAllText(logPath,
-                        $"{DateTime.Now} | session={_sessionId} pos={_lastReportedPosition:F1} paused={_isPaused} consec={_consecutiveProgressFailures} err={ex.Message}\n");
-                }
-                catch { }
+                // Log progress failures so we can diagnose session reaping.
+                LocalLog.AppendLine(
+                    "progress_error.txt",
+                    $"session={_sessionId} pos={_lastReportedPosition:F1} paused={_isPaused} consec={_consecutiveProgressFailures} err={ex.Message}");
 
                 if (_consecutiveProgressFailures >= 3)
                 {
@@ -211,22 +227,33 @@ public class PlaybackManager : IDisposable
 
     private void StopProgressReporting()
     {
+        _progressStopCts?.Cancel();
         _progressTimer?.Dispose();
         _progressTimer = null;
     }
 
-    private static void LogToStateTrace(string msg)
+    private async Task StopProgressReportingAsync()
     {
+        StopProgressReporting();
+
         try
         {
-            var logPath = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ContinuumPlayer", "state_trace.txt");
-            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(logPath)!);
-            System.IO.File.AppendAllText(logPath,
-                $"[{DateTime.Now:HH:mm:ss.fff}] PlaybackManager: {msg}\n");
+            using var drainCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await _progressGuard.WaitAsync(drainCts.Token).ConfigureAwait(false);
+            _progressGuard.Release();
         }
-        catch { }
+        catch (OperationCanceledException)
+        {
+            LocalLog.AppendLine("progress_error.txt", "Timed out waiting for in-flight progress report to stop.");
+        }
+
+        _progressStopCts?.Dispose();
+        _progressStopCts = null;
+    }
+
+    private static void LogToStateTrace(string msg)
+    {
+        LocalLog.AppendLine("state_trace.txt", $"PlaybackManager: {msg}");
     }
 
     public void Dispose()
@@ -240,6 +267,5 @@ public class PlaybackManager : IDisposable
                 catch { }
             });
         }
-        _progressGuard.Dispose();
     }
 }

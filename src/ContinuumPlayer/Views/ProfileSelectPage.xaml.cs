@@ -168,8 +168,7 @@ public sealed partial class ProfileSelectPage : Page
             var result = await dialog.ShowAsync();
             if (result == ContentDialogResult.Primary)
             {
-                // Reload profiles after deletion
-                await ViewModel.LoadProfilesCommand.ExecuteAsync(null);
+                await ViewModel.DeleteProfileAsync(profile);
             }
         }
     }

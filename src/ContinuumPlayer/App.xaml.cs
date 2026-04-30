@@ -72,7 +72,7 @@ public partial class App : Application
                 if (depth > 10) break;
             }
 
-            File.WriteAllText(crashLog, sb.ToString());
+            File.WriteAllText(crashLog, LocalLog.RedactSensitiveData(sb.ToString()));
         };
 
         _window = new MainWindow();
@@ -99,13 +99,10 @@ public partial class App : Application
 
             try
             {
-                var logPath = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "ContinuumPlayer", "ui_lag.txt");
-                Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
                 var managedMb = GC.GetTotalMemory(false) / (1024 * 1024);
-                File.AppendAllText(logPath,
-                    $"{DateTime.Now:O} | sample={++_uiLagSample} | delay_ms={delay} | managed_mb={managedMb} | breadcrumb={PerfBreadcrumb}\n");
+                LocalLog.AppendLine(
+                    "ui_lag.txt",
+                    $"sample={++_uiLagSample} | delay_ms={delay} | managed_mb={managedMb} | breadcrumb={PerfBreadcrumb}");
             }
             catch { }
         };

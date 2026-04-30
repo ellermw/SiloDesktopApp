@@ -12,7 +12,11 @@ public class PlaybackApi(ContinuumApiClient client)
 
     public Task ReportProgressAsync(string sessionId, double position, bool isPaused, CancellationToken ct = default)
         => client.PostNoContentAsync($"/api/v1/playback/{sessionId}/progress",
-            new { position, is_paused = isPaused }, ct);
+            new Dictionary<string, object?>
+            {
+                ["position"] = position,
+                ["is_paused"] = isPaused,
+            }, ct);
 
     public Task StopPlaybackAsync(string sessionId, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/playback/{sessionId}", ct);
@@ -22,7 +26,11 @@ public class PlaybackApi(ContinuumApiClient client)
 
     public Task<ChangeAudioResponse> ChangeAudioTrackAsync(string sessionId, int trackIndex, double position, CancellationToken ct = default)
         => client.PatchAsync<ChangeAudioResponse>($"/api/v1/playback/{sessionId}/audio",
-            new { audio_track_index = trackIndex, position }, ct);
+            new Dictionary<string, object?>
+            {
+                ["audio_track_index"] = trackIndex,
+                ["position"] = position,
+            }, ct);
 
     // ===== Subtitle Preferences =====
 
@@ -67,11 +75,11 @@ public class PlaybackApi(ContinuumApiClient client)
 
     public Task DismissContinueWatchingAsync(string itemId, string progressUpdatedAt, CancellationToken ct = default)
         => client.PutNoContentAsync($"/api/v1/home/dismissals/continue_watching/{Uri.EscapeDataString(itemId)}",
-            new { progress_updated_at = progressUpdatedAt }, ct);
+            new Dictionary<string, object?> { ["progress_updated_at"] = progressUpdatedAt }, ct);
 
     public Task DismissNextUpAsync(string itemId, string seriesId, CancellationToken ct = default)
         => client.PutNoContentAsync($"/api/v1/home/dismissals/next_up/{Uri.EscapeDataString(itemId)}",
-            new { series_id = seriesId }, ct);
+            new Dictionary<string, object?> { ["series_id"] = seriesId }, ct);
 
     // ===== Subtitles =====
 
@@ -83,11 +91,22 @@ public class PlaybackApi(ContinuumApiClient client)
 
     public Task<SubtitleSearchResponse> SearchSubtitlesAsync(int mediaFileId, string[] languages, CancellationToken ct = default)
         => client.PostAsync<SubtitleSearchResponse>("/api/v1/subtitles/search",
-            new { media_file_id = mediaFileId, languages }, ct);
+            new Dictionary<string, object?>
+            {
+                ["media_file_id"] = mediaFileId,
+                ["languages"] = languages,
+            }, ct);
 
     public Task<SubtitleDownloadResponse> DownloadSubtitleAsync(int mediaFileId, string provider, string subtitleId, string language, string format, CancellationToken ct = default)
         => client.PostAsync<SubtitleDownloadResponse>("/api/v1/subtitles/download",
-            new { media_file_id = mediaFileId, provider, subtitle_id = subtitleId, language, format }, ct);
+            new Dictionary<string, object?>
+            {
+                ["media_file_id"] = mediaFileId,
+                ["provider"] = provider,
+                ["subtitle_id"] = subtitleId,
+                ["language"] = language,
+                ["format"] = format,
+            }, ct);
 
     // ===== Watch Together (Watch Party) =====
     // Thin wrappers around /api/v1/watch-together/*. Mirrors webui's lib/watchTogether.ts.
@@ -101,17 +120,23 @@ public class PlaybackApi(ContinuumApiClient client)
         int? libraryId = null,
         CancellationToken ct = default)
     {
-        object body = fileId.HasValue && libraryId.HasValue
-            ? new { selection_mode = selectionMode, file_id = fileId.Value, library_id = libraryId.Value }
-            : (object)new { selection_mode = selectionMode };
+        var body = new Dictionary<string, object?>
+        {
+            ["selection_mode"] = selectionMode,
+        };
+        if (fileId.HasValue && libraryId.HasValue)
+        {
+            body["file_id"] = fileId.Value;
+            body["library_id"] = libraryId.Value;
+        }
         return client.PostAsync<WatchTogetherRoomResponse>("/api/v1/watch-together/rooms", body, ct);
     }
 
     public Task<WatchTogetherRoomResponse> JoinWatchTogetherRoomAsync(string? code, string? joinToken, CancellationToken ct = default)
     {
-        object body = !string.IsNullOrEmpty(joinToken)
-            ? new { join_token = joinToken! }
-            : (object)new { code = code ?? "" };
+        var body = !string.IsNullOrEmpty(joinToken)
+            ? new Dictionary<string, object?> { ["join_token"] = joinToken! }
+            : new Dictionary<string, object?> { ["code"] = code ?? "" };
         return client.PostAsync<WatchTogetherRoomResponse>("/api/v1/watch-together/join", body, ct);
     }
 
@@ -122,20 +147,19 @@ public class PlaybackApi(ContinuumApiClient client)
     public Task<WatchTogetherRoomResponse> UpdateWatchTogetherRoomPolicyAsync(string roomId, string guestControlPolicy, CancellationToken ct = default)
         => client.PatchAsync<WatchTogetherRoomResponse>(
             $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/policy",
-            new { guest_control_policy = guestControlPolicy }, ct);
+            new Dictionary<string, object?> { ["guest_control_policy"] = guestControlPolicy }, ct);
 
     public Task<WatchTogetherRoomResponse> SelectWatchTogetherRoomItemAsync(
         string roomId, string contentId, int? fileId = null, int? libraryId = null, CancellationToken ct = default)
     {
-        object body;
-        if (fileId.HasValue && libraryId.HasValue)
-            body = new { content_id = contentId, file_id = fileId.Value, library_id = libraryId.Value };
-        else if (fileId.HasValue)
-            body = new { content_id = contentId, file_id = fileId.Value };
-        else if (libraryId.HasValue)
-            body = new { content_id = contentId, library_id = libraryId.Value };
-        else
-            body = new { content_id = contentId };
+        var body = new Dictionary<string, object?>
+        {
+            ["content_id"] = contentId,
+        };
+        if (fileId.HasValue)
+            body["file_id"] = fileId.Value;
+        if (libraryId.HasValue)
+            body["library_id"] = libraryId.Value;
 
         return client.PutAsync<WatchTogetherRoomResponse>(
             $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/selection", body, ct);
@@ -154,14 +178,14 @@ public class PlaybackApi(ContinuumApiClient client)
         string? subtitle = null, string? posterUrl = null, string? note = null,
         CancellationToken ct = default)
     {
-        var body = new
+        var body = new Dictionary<string, object?>
         {
-            content_id = contentId,
-            content_type = contentType,
-            title,
-            subtitle = subtitle ?? "",
-            poster_url = posterUrl ?? "",
-            note = note ?? "",
+            ["content_id"] = contentId,
+            ["content_type"] = contentType,
+            ["title"] = title,
+            ["subtitle"] = subtitle ?? "",
+            ["poster_url"] = posterUrl ?? "",
+            ["note"] = note ?? "",
         };
         return client.PostAsync<WatchTogetherSuggestionsResponse>(
             $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions?room_token={Uri.EscapeDataString(roomToken)}",
@@ -190,7 +214,7 @@ public class PlaybackApi(ContinuumApiClient client)
         string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
         => client.PostAsync<WatchTogetherSuggestionsResponse>(
             $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions/{Uri.EscapeDataString(suggestionId)}/vote?room_token={Uri.EscapeDataString(roomToken)}",
-            new { }, ct);
+            new Dictionary<string, object?>(), ct);
 
     public async Task<WatchTogetherSuggestionsResponse> UnvoteWatchTogetherSuggestionAsync(
         string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
@@ -204,7 +228,7 @@ public class PlaybackApi(ContinuumApiClient client)
         string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
         => client.PostAsync<WatchTogetherRoomResponse>(
             $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions/promote?room_token={Uri.EscapeDataString(roomToken)}",
-            new { suggestion_id = suggestionId }, ct);
+            new Dictionary<string, object?> { ["suggestion_id"] = suggestionId }, ct);
 }
 
 public class SubtitleListResponse

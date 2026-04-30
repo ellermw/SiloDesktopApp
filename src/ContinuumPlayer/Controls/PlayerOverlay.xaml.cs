@@ -28,7 +28,7 @@ public sealed partial class PlayerOverlay : UserControl
         this.InitializeComponent();
         SeekBar.SeekRequested += (seconds) =>
         {
-            try { _playerService.Mpv?.Seek(seconds); } catch { }
+            SeekInteractive(seconds);
             ShowControls();
         };
     }
@@ -491,7 +491,7 @@ public sealed partial class PlayerOverlay : UserControl
 
         var newPos = _playerService.Mpv.Position + seconds;
         newPos = Math.Max(0, Math.Min(newPos, _playerService.Mpv.Duration));
-        _playerService.Mpv.Seek(newPos);
+        SeekInteractive(newPos);
     }
 
     private void AdjustVolume(double delta)
@@ -592,12 +592,21 @@ public sealed partial class PlayerOverlay : UserControl
 
     private void SeekAndResume(double seconds)
     {
+        SeekInteractive(seconds, forceResume: true);
+    }
+
+    private void SeekInteractive(double seconds, bool forceResume = false)
+    {
         var mpv = _playerService.Mpv;
         if (mpv == null) return;
 
-        mpv.Seek(seconds);
-        mpv.Play();
-        _ = ForceResumeAfterSeekAsync();
+        var wasPaused = mpv.IsPaused;
+        mpv.SeekFast(seconds);
+        if (forceResume || !wasPaused)
+        {
+            mpv.Play();
+            _ = ForceResumeAfterSeekAsync();
+        }
     }
 
     private async Task ForceResumeAfterSeekAsync()
@@ -618,11 +627,6 @@ public sealed partial class PlayerOverlay : UserControl
     private void SkipForward_Click(object sender, RoutedEventArgs e) => SeekRelative(SkipForwardSeconds);
 
     // ── Episode navigation stubs ───────────────────────────────────────────
-    // Wire these to PlayerService once prev/next episode context is exposed.
-    // Buttons are Collapsed in XAML today; flip visibility + populate via the
-    // same path that shows/hides the ClusterSlotSpacer pair (webui parity).
-
-    private void PrevEpisode_Click(object sender, RoutedEventArgs e) { /* TODO #166b */ }
     private async void NextEpisode_Click(object sender, RoutedEventArgs e)
     {
         // Fast-path to the next episode without waiting for the credits
@@ -1069,7 +1073,7 @@ public sealed partial class PlayerOverlay : UserControl
         {
             try
             {
-                _playerService.Mpv?.Seek(chapter.StartSeconds);
+                SeekInteractive(chapter.StartSeconds);
                 ChaptersFlyout.Hide();
             }
             catch { }

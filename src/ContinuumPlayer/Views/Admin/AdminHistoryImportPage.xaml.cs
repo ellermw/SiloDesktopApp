@@ -41,7 +41,7 @@ public sealed partial class AdminHistoryImportPage : Page
         try
         {
             _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
-            _eventSubscription = _eventChannel.Subscribe("history_imports");
+            _eventSubscription = _eventChannel.Subscribe("history_import");
             _eventChannel.EventReceived += OnEventReceived;
         }
         catch { }
@@ -57,7 +57,7 @@ public sealed partial class AdminHistoryImportPage : Page
 
     private void OnEventReceived(string channel, string eventName, System.Text.Json.JsonElement data)
     {
-        if (channel != "history_imports") return;
+        if (channel != "history_import") return;
         DispatcherQueue.TryEnqueue(async () =>
         {
             if (_selectedSource != null)

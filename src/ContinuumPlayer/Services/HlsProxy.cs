@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using ContinuumPlayer.Core.Helpers;
+using ContinuumPlayer.Core.Services;
 
 namespace ContinuumPlayer.Services;
 
@@ -148,12 +149,7 @@ public sealed class HlsProxy : IDisposable
         // (server copies rawQuery from manifest request to segment URLs).
         // Don't add a second token.
 
-        // Log segment path (strip token for security)
-        var logSegPath = remoteUrl.Contains('?') ? remoteUrl[..remoteUrl.IndexOf('?')] : remoteUrl;
-        Log($"Requesting segment (full URL in last_segment_url.txt)");
-
-        byte[]? data = null;
-        string? contentType = null;
+        Log("Requesting segment");
 
         for (int attempt = 0; attempt < 15 && !ct.IsCancellationRequested; attempt++)
         {
@@ -162,14 +158,19 @@ public sealed class HlsProxy : IDisposable
                 // NO Authorization header — token is in the query param (matching HLS.js).
                 // CDN blocks requests with Authorization header on segment paths.
                 using var segReq = new HttpRequestMessage(HttpMethod.Get, remoteUrl);
-                using var response = await _http.SendAsync(segReq, ct);
+                using var response = await _http.SendAsync(segReq, HttpCompletionOption.ResponseHeadersRead, ct);
 
                 if (response.IsSuccessStatusCode)
                 {
-                    data = await response.Content.ReadAsByteArrayAsync(ct);
-                    contentType = response.Content.Headers.ContentType?.MediaType;
-                    Log($"Served {segPath}: {data.Length} bytes");
-                    break;
+                    var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+                    var contentLength = response.Content.Headers.ContentLength;
+                    await WriteResponseHeader(stream, 200, "OK", contentType, contentLength, ct);
+                    await using var remoteStream = await response.Content.ReadAsStreamAsync(ct);
+                    await remoteStream.CopyToAsync(stream, ct);
+                    Log(contentLength.HasValue
+                        ? $"Served {segPath}: {contentLength.Value} bytes"
+                        : $"Served {segPath}: streamed");
+                    return;
                 }
 
                 if (response.StatusCode == HttpStatusCode.NotFound)
@@ -195,21 +196,23 @@ public sealed class HlsProxy : IDisposable
             }
         }
 
-        if (data != null)
-            await WriteResponse(stream, 200, "OK", contentType ?? "video/mp2t", data, ct);
-        else
-            await WriteResponse(stream, 404, "Not Found", null, null, ct);
+        await WriteResponse(stream, 404, "Not Found", null, null, ct);
     }
 
     private static async Task WriteResponse(NetworkStream stream, int code, string reason, string? contentType, byte[]? body, CancellationToken ct)
     {
+        await WriteResponseHeader(stream, code, reason, contentType, body?.Length, ct);
+        if (body != null) await stream.WriteAsync(body, ct);
+    }
+
+    private static async Task WriteResponseHeader(NetworkStream stream, int code, string reason, string? contentType, long? contentLength, CancellationToken ct)
+    {
         var sb = new StringBuilder();
         sb.Append($"HTTP/1.1 {code} {reason}\r\n");
         if (contentType != null) sb.Append($"Content-Type: {contentType}\r\n");
-        sb.Append($"Content-Length: {body?.Length ?? 0}\r\n");
+        if (contentLength.HasValue) sb.Append($"Content-Length: {contentLength.Value}\r\n");
         sb.Append("Connection: close\r\n\r\n");
         await stream.WriteAsync(Encoding.ASCII.GetBytes(sb.ToString()), ct);
-        if (body != null) await stream.WriteAsync(body, ct);
     }
 
     private static async Task<string?> ReadLineAsync(NetworkStream stream, CancellationToken ct)
@@ -242,15 +245,7 @@ public sealed class HlsProxy : IDisposable
 
     private static void Log(string msg)
     {
-        try
-        {
-            var p = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ContinuumPlayer", "hls_proxy.txt");
-            Directory.CreateDirectory(Path.GetDirectoryName(p)!);
-            File.AppendAllText(p, $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n");
-        }
-        catch { }
+        LocalLog.AppendLine("hls_proxy.txt", msg);
     }
 
     public void Dispose()

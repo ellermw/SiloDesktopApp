@@ -10,6 +10,7 @@ public class AuthService
     private readonly ContinuumApiClient _apiClient;
     private readonly AuthApi _authApi;
     private Timer? _refreshTimer;
+    private readonly SemaphoreSlim _refreshGuard = new(1, 1);
 
     public AuthService(ContinuumApiClient apiClient, AuthApi authApi)
     {
@@ -76,10 +77,16 @@ public class AuthService
 
     public async Task<bool> TryRefreshAsync(CancellationToken ct = default)
     {
-        if (RefreshToken == null) return false;
+        var refreshTokenSnapshot = RefreshToken;
+        if (refreshTokenSnapshot == null) return false;
+
+        await _refreshGuard.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var response = await _authApi.RefreshAsync(RefreshToken, ct);
+            if (!string.Equals(RefreshToken, refreshTokenSnapshot, StringComparison.Ordinal))
+                return RefreshToken != null && _apiClient.AccessToken != null;
+
+            var response = await _authApi.RefreshAsync(refreshTokenSnapshot, ct);
             _apiClient.SetAccessToken(response.AccessToken);
             RefreshToken = response.RefreshToken;
             ScheduleRefresh(response.ExpiresIn);
@@ -110,6 +117,10 @@ public class AuthService
         {
             Logout();
             return false;
+        }
+        finally
+        {
+            _refreshGuard.Release();
         }
     }
 

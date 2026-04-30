@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using ContinuumPlayer.Core.Api;
-using ContinuumPlayer.Core.Helpers;
 using ContinuumPlayer.Core.Models.Playback;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Messaging;
@@ -40,8 +39,14 @@ public class PlayerService : IDisposable
     private double _prematureEofRecoveryPosition;
     private long _prematureEofLastAttemptMs;
     private int _prematureEofStreak;
+    private readonly PlaybackStallDetector _stallDetector = new(
+        bufferingTimeout: TimeSpan.FromSeconds(20),
+        silentPlaybackTimeout: TimeSpan.FromSeconds(45));
+    private Timer? _stallWatchdogTimer;
+    private long _stallRecoveryLastAttemptMs;
     private string _activeQualityTier = "original";
     private HlsProxy? _hlsProxy;
+    private DirectStreamProxy? _directStreamProxy;
     private PlaybackWebSocket? _webSocket;
     private CancellationTokenSource? _playbackCts;
 
@@ -670,13 +675,11 @@ public class PlayerService : IDisposable
 
             SetState(PlayerState.Expanded);
 
-            // Build auth
-            var token = _apiClient.AccessToken;
-            var authHeader = token != null ? $"Bearer {token}" : null;
             if (session.PlayMethod != "transcode")
-                streamUrl = UrlHelper.AppendToken(streamUrl, token);
+                streamUrl = PrepareDirectStreamForMpv(streamUrl, session.PlayMethod);
 
-            _resumePosition = startPosition;
+            var mpvStartPosition = session.PlayMethod != "transcode" ? startPosition : 0;
+            _resumePosition = session.PlayMethod == "transcode" ? startPosition : 0;
 
             LogToFile("state_trace.txt", $"LoadFile: url={streamUrl.Substring(0, Math.Min(80, streamUrl.Length))}...");
 
@@ -685,7 +688,7 @@ public class PlayerService : IDisposable
             // -1 = "no" (off), 0+ = 1-based mpv sid. null = don't touch, let mpv default.
             ApplyPendingSubtitleSelection();
 
-            _mpv!.LoadFile(streamUrl!, session.PlayMethod == "transcode" ? null : authHeader);
+            _mpv!.LoadFile(streamUrl!, null, mpvStartPosition);
             _mpv.Play();
             LogToFile("state_trace.txt", "Play() called");
             IsPaused = false;
@@ -765,13 +768,70 @@ public class PlayerService : IDisposable
             handle();
     }
 
-    private async Task RecoverFromPrematureEofAsync(double currentPosition)
+    private void StartPlaybackStallWatchdog()
+    {
+        StopPlaybackStallWatchdog();
+        _stallDetector.Reset(_mpv?.Position ?? 0, DateTimeOffset.UtcNow);
+        _stallWatchdogTimer = new Timer(_ => CheckPlaybackStall(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private void StopPlaybackStallWatchdog()
+    {
+        _stallWatchdogTimer?.Dispose();
+        _stallWatchdogTimer = null;
+        _stallDetector.Reset();
+        _stallRecoveryLastAttemptMs = 0;
+    }
+
+    private void CheckPlaybackStall()
+    {
+        try
+        {
+            var mpv = _mpv;
+            var manager = _playbackManager;
+            var recoveryInProgress = _closing ||
+                State == PlayerState.Idle ||
+                _switchingContent ||
+                _qualitySwitchActive ||
+                _prematureEofRecoveryActive ||
+                manager?.CurrentSession == null;
+
+            if (mpv == null)
+                return;
+
+            var decision = _stallDetector.Observe(
+                mpv.Position,
+                mpv.Duration,
+                mpv.IsPaused,
+                mpv.IsBufferingForCache,
+                recoveryInProgress,
+                DateTimeOffset.UtcNow);
+
+            if (!decision.ShouldRecover)
+                return;
+
+            var nowMs = Environment.TickCount64;
+            if (_stallRecoveryLastAttemptMs > 0 && nowMs - _stallRecoveryLastAttemptMs < 30_000)
+                return;
+
+            _stallRecoveryLastAttemptMs = nowMs;
+            LogToFile("state_trace.txt",
+                $"Playback stall detected: reason={decision.Reason} pos={decision.Position:F1} dur={mpv.Duration:F1} paused={mpv.IsPaused} buffering={mpv.IsBufferingForCache}. Restarting stream...");
+            _ = RecoverInterruptedStreamAsync(decision.Position, decision.Reason);
+        }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"Playback stall watchdog error: {ex.Message}");
+        }
+    }
+
+    private async Task RecoverInterruptedStreamAsync(double currentPosition, string reason)
     {
         var manager = _playbackManager;
         var session = manager?.CurrentSession;
         if (_mpv == null || manager == null || session == null)
         {
-            LogToFile("state_trace.txt", "Premature EOF recovery skipped: player/session unavailable");
+            LogToFile("state_trace.txt", $"Stream recovery skipped ({reason}): player/session unavailable");
             return;
         }
 
@@ -790,7 +850,7 @@ public class PlayerService : IDisposable
 
         try
         {
-            LogToFile("state_trace.txt", $"Premature EOF recovery: restarting session fileId={fileId} pos={resumePosition:F1} audioTrack={audioTrackIndex?.ToString() ?? "auto"}");
+            LogToFile("state_trace.txt", $"Stream recovery ({reason}): restarting session fileId={fileId} pos={resumePosition:F1} audioTrack={audioTrackIndex?.ToString() ?? "auto"}");
 
             if (!string.IsNullOrEmpty(manager.SessionId))
             {
@@ -801,12 +861,12 @@ public class PlayerService : IDisposable
                 }
                 catch (Exception ex)
                 {
-                    LogToFile("state_trace.txt", $"Premature EOF recovery progress sync failed: {ex.Message}");
+                    LogToFile("state_trace.txt", $"Stream recovery ({reason}) progress sync failed: {ex.Message}");
                 }
             }
 
             try { await manager.StopSessionAsync(); }
-            catch (Exception ex) { LogToFile("state_trace.txt", $"Premature EOF recovery stop-session failed: {ex.Message}"); }
+            catch (Exception ex) { LogToFile("state_trace.txt", $"Stream recovery ({reason}) stop-session failed: {ex.Message}"); }
 
             if (_closing || State == PlayerState.Idle || !ReferenceEquals(_playbackManager, manager) || ct.IsCancellationRequested)
                 return;
@@ -834,21 +894,20 @@ public class PlayerService : IDisposable
             if (_closing || State == PlayerState.Idle || !ReferenceEquals(_playbackManager, manager) || ct.IsCancellationRequested)
                 return;
 
-            var token = _apiClient.AccessToken;
-            var authHeader = token != null ? $"Bearer {token}" : null;
             if (newSession.PlayMethod != "transcode")
-                streamUrl = UrlHelper.AppendToken(streamUrl, token);
+                streamUrl = PrepareDirectStreamForMpv(streamUrl, newSession.PlayMethod);
 
-            _resumePosition = resumePosition;
-            _mpv!.LoadFile(streamUrl, newSession.PlayMethod == "transcode" ? null : authHeader);
+            var mpvStartPosition = newSession.PlayMethod != "transcode" ? resumePosition : 0;
+            _resumePosition = newSession.PlayMethod == "transcode" ? resumePosition : 0;
+            _mpv!.LoadFile(streamUrl, null, mpvStartPosition);
             _mpv.Play();
             IsPaused = false;
             _mpv.SendScriptMessage("osc-set-play-method", newSession.PlayMethod ?? "direct");
-            LogToFile("state_trace.txt", $"Premature EOF recovery LoadFile issued at pos={resumePosition:F1} playMethod={newSession.PlayMethod}");
+            LogToFile("state_trace.txt", $"Stream recovery ({reason}) LoadFile issued at pos={resumePosition:F1} playMethod={newSession.PlayMethod}");
         }
         catch (OperationCanceledException) when (_closing || ct.IsCancellationRequested)
         {
-            LogToFile("state_trace.txt", "Premature EOF recovery canceled");
+            LogToFile("state_trace.txt", $"Stream recovery ({reason}) canceled");
         }
         catch (Exception ex)
         {
@@ -1108,6 +1167,7 @@ public class PlayerService : IDisposable
             // on segments the encoder hasn't produced yet and retries for up
             // to ~45 s — mpv alone just fails. Without this, starting on a
             // transcoded stream sometimes stalls on `seg_NNNNN.m4s` 404s.
+            StopDirectStreamProxy();
             _hlsProxy?.Stop();
             _hlsProxy = new HlsProxy(remoteManifestUrl, _apiClient.AccessToken);
             var localUrl = _hlsProxy.Start();
@@ -1118,7 +1178,38 @@ public class PlayerService : IDisposable
         catch (Exception ex)
         {
             LogToFile("player_transcode_error.txt", ex.ToString());
-            return (null, null);
+            throw new InvalidOperationException("Failed to start transcode playback.", ex);
+        }
+    }
+
+    private string PrepareDirectStreamForMpv(string remoteStreamUrl, string? playMethod)
+    {
+        if (string.IsNullOrWhiteSpace(remoteStreamUrl))
+            throw new InvalidOperationException("No direct stream URL available.");
+
+        StopDirectStreamProxy();
+        _hlsProxy?.Stop();
+        _hlsProxy = null;
+
+        _directStreamProxy = new DirectStreamProxy(remoteStreamUrl, () => _apiClient.AccessToken);
+        var localUrl = _directStreamProxy.Start();
+        LogToFile("state_trace.txt", $"Direct/remux stream via local proxy: method={playMethod ?? "direct"} local={localUrl}");
+        return localUrl;
+    }
+
+    private void StopDirectStreamProxy()
+    {
+        try
+        {
+            _directStreamProxy?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"Direct stream proxy stop error: {ex.Message}");
+        }
+        finally
+        {
+            _directStreamProxy = null;
         }
     }
 
@@ -1182,7 +1273,7 @@ public class PlayerService : IDisposable
 
             if (_prematureEofRecoveryPosition > 0 && pos > _prematureEofRecoveryPosition + 30)
             {
-                LogToFile("state_trace.txt", $"Premature EOF recovery confirmed: advanced from {_prematureEofRecoveryPosition:F1} to {pos:F1}");
+                LogToFile("state_trace.txt", $"Stream recovery confirmed: advanced from {_prematureEofRecoveryPosition:F1} to {pos:F1}");
                 _prematureEofRecoveryPosition = 0;
                 _prematureEofLastAttemptMs = 0;
                 _prematureEofStreak = 0;
@@ -1204,7 +1295,11 @@ public class PlayerService : IDisposable
         };
         _mpv.PauseChanged += _mpvPauseHandler;
 
-        _mpvBufferingHandler = (buffering) => BufferingChanged?.Invoke(buffering);
+        _mpvBufferingHandler = (buffering) =>
+        {
+            LogToFile("state_trace.txt", $"BufferingForCache changed: {buffering} pos={_mpv?.Position:F1} paused={_mpv?.IsPaused}");
+            BufferingChanged?.Invoke(buffering);
+        };
         _mpv.BufferingChanged += _mpvBufferingHandler;
 
         _mpvFileLoadedHandler = () =>
@@ -1225,6 +1320,7 @@ public class PlayerService : IDisposable
             LogToFile("state_trace.txt", wasPrematureEofRecovery
                 ? "FileLoaded fired (premature EOF recovery)"
                 : "FileLoaded fired");
+            StartPlaybackStallWatchdog();
 
             ContentLoaded?.Invoke();
 
@@ -1329,7 +1425,7 @@ public class PlayerService : IDisposable
                     LogToFile("state_trace.txt", $"  → Premature EOF detected (pos={pos:F1} dur={dur:F1}, {(1 - pos/dur)*100:F0}% remaining, streak={_prematureEofStreak}). Restarting stream...");
                     try
                     {
-                        _ = RecoverFromPrematureEofAsync(pos);
+                        _ = RecoverInterruptedStreamAsync(pos, "premature-eof");
                     }
                     catch (Exception ex)
                     {
@@ -1446,7 +1542,11 @@ public class PlayerService : IDisposable
                         streamUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
                         currentPos = transcodeResponse.PlayerStartSeconds;
                     }
-                    catch (Exception ex) { LogToFile("player_transcode_error.txt", ex.ToString()); }
+                    catch (Exception ex)
+                    {
+                        LogToFile("player_transcode_error.txt", ex.ToString());
+                        throw new InvalidOperationException("Failed to start transcode playback.", ex);
+                    }
                 }
 
                 return (session, streamUrl, currentPos);
@@ -1462,14 +1562,22 @@ public class PlayerService : IDisposable
                 return;
             }
 
-            var token = _apiClient.AccessToken;
-            var authHeader = token != null ? $"Bearer {token}" : null;
             var finalUrl = result.streamUrl;
             if (result.session.PlayMethod != "transcode")
-                finalUrl = UrlHelper.AppendToken(finalUrl, token);
+            {
+                finalUrl = PrepareDirectStreamForMpv(finalUrl, result.session.PlayMethod);
+            }
+            else
+            {
+                StopDirectStreamProxy();
+                _hlsProxy?.Stop();
+                _hlsProxy = new HlsProxy(finalUrl, _apiClient.AccessToken);
+                finalUrl = _hlsProxy.Start();
+            }
 
-            _resumePosition = result.currentPos;
-            _mpv.LoadFile(finalUrl, result.session.PlayMethod == "transcode" ? null : authHeader);
+            var mpvStartPosition = result.session.PlayMethod != "transcode" ? result.currentPos : 0;
+            _resumePosition = result.session.PlayMethod == "transcode" ? result.currentPos : 0;
+            _mpv.LoadFile(finalUrl, null, mpvStartPosition);
             _mpv.Play();
             LoadSubtitles();
             _switchingContent = false;
@@ -1495,6 +1603,7 @@ public class PlayerService : IDisposable
         {
             var response = await _playbackApi.ChangeAudioTrackAsync(
                 _playbackManager.SessionId!, trackIndex, currentPos);
+            _playbackManager.ApplyAudioChange(response);
 
             var baseUrl = _apiClient.BaseUrl;
             var token = _apiClient.AccessToken;
@@ -1502,13 +1611,46 @@ public class PlayerService : IDisposable
             if (!streamPath.StartsWith("http") && !streamPath.StartsWith("/api/v1"))
                 streamPath = "/api/v1" + streamPath;
             var url = streamPath.StartsWith("http") ? streamPath : $"{baseUrl}{streamPath}";
-            url = UrlHelper.AppendToken(url, token);
 
             PlayMethod = response.PlayMethod;
 
-            _resumePosition = currentPos;
-            var authHeader = token != null ? $"Bearer {token}" : null;
-            _mpv.LoadFile(url, authHeader);
+            if (response.PlayMethod == "transcode")
+            {
+                var version = Versions.FirstOrDefault(v => v.FileId == _playbackManager.CurrentSession?.MediaFileId)
+                    ?? throw new InvalidOperationException("No active version available for audio transcode switch.");
+
+                var transcodeResponse = await _playbackApi.StartTranscodeAsync(new TranscodeStartRequest
+                {
+                    SessionId = _playbackManager.SessionId!,
+                    SeekSeconds = currentPos,
+                    TargetResolution = version.Resolution,
+                    TargetCodecVideo = "h264",
+                    TargetCodecAudio = "aac",
+                    TargetBitrateKbps = 8000,
+                    SegmentDuration = 2,
+                    SubtitleTrackIndex = -1,
+                    SubtitleBurnIn = false
+                });
+
+                var manifestPath = transcodeResponse.ManifestUrl;
+                if (!manifestPath.StartsWith("http") && !manifestPath.StartsWith("/api/v1"))
+                    manifestPath = "/api/v1" + manifestPath;
+                var remoteManifestUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
+
+                StopDirectStreamProxy();
+                _hlsProxy?.Stop();
+                _hlsProxy = new HlsProxy(remoteManifestUrl, token);
+                url = _hlsProxy.Start();
+                currentPos = transcodeResponse.PlayerStartSeconds;
+            }
+            else
+            {
+                url = PrepareDirectStreamForMpv(url, response.PlayMethod);
+            }
+
+            var mpvStartPosition = response.PlayMethod != "transcode" ? currentPos : 0;
+            _resumePosition = response.PlayMethod == "transcode" ? currentPos : 0;
+            _mpv.LoadFile(url, null, mpvStartPosition);
             _mpv.Play();
             _switchingContent = false;
 
@@ -1701,108 +1843,6 @@ public class PlayerService : IDisposable
                 // If the reload fails the track may disappear; next tick will
                 // retry. Non-fatal — playback continues.
             }
-        }
-    }
-
-    /// <summary>
-    /// Downloads the HLS manifest, strips segments before the seek position,
-    /// writes a trimmed manifest to a temp file, and returns the file path.
-    /// </summary>
-    private async Task<string?> TrimHlsManifestAsync(string manifestUrl, string? authHeader, double playerStart, double seekPos)
-    {
-        try
-        {
-            var http = new HttpClient(); // Short-lived for manifest fetch (can't reuse singleton — need custom auth header)
-            if (_apiClient.AccessToken != null)
-                http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _apiClient.AccessToken);
-
-            var manifest = await http.GetStringAsync(manifestUrl);
-            var lines = manifest.Split('\n');
-
-            // Base URL for resolving relative segment paths
-            var baseUrl = manifestUrl;
-            var lastSlash = baseUrl.LastIndexOf('/');
-            if (lastSlash > 0) baseUrl = baseUrl.Substring(0, lastSlash + 1);
-            // Strip query from base URL (token is in manifest URL, not base)
-            var qIdx = baseUrl.IndexOf('?');
-            if (qIdx > 0) baseUrl = baseUrl.Substring(0, qIdx);
-
-            // Skip segments before the seek position (2s each)
-            int startSeg = Math.Max(0, (int)(seekPos / 2) - 2);
-
-            var sb = new System.Text.StringBuilder();
-            int segIndex = 0;
-            bool skipNextSegUrl = false;
-
-            for (int i = 0; i < lines.Length; i++)
-            {
-                var line = lines[i].TrimEnd();
-                if (line.Length == 0) { sb.AppendLine(); continue; }
-
-                if (line.StartsWith("#EXTINF:"))
-                {
-                    if (segIndex < startSeg)
-                    {
-                        skipNextSegUrl = true;
-                        segIndex++;
-                        continue;
-                    }
-                    segIndex++;
-                    sb.AppendLine(line);
-                }
-                else if (skipNextSegUrl && !line.StartsWith("#"))
-                {
-                    // This is the segment URL line after a skipped EXTINF
-                    skipNextSegUrl = false;
-                    continue;
-                }
-                else if (!line.StartsWith("#"))
-                {
-                    // Segment URL — make absolute
-                    if (!line.StartsWith("http"))
-                        sb.AppendLine(baseUrl + line);
-                    else
-                        sb.AppendLine(line);
-                }
-                else if (line.StartsWith("#EXT-X-MAP:"))
-                {
-                    // init segment — make URI absolute
-                    var uriStart = line.IndexOf("URI=\"");
-                    if (uriStart >= 0)
-                    {
-                        uriStart += 5;
-                        var uriEnd = line.IndexOf('"', uriStart);
-                        if (uriEnd > uriStart)
-                        {
-                            var uri = line.Substring(uriStart, uriEnd - uriStart);
-                            if (!uri.StartsWith("http"))
-                                uri = baseUrl + uri;
-                            sb.AppendLine($"#EXT-X-MAP:URI=\"{uri}\"");
-                            continue;
-                        }
-                    }
-                    sb.AppendLine(line);
-                }
-                else
-                {
-                    sb.AppendLine(line);
-                }
-            }
-
-            var tempDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ContinuumPlayer");
-            Directory.CreateDirectory(tempDir);
-            var tempPath = Path.Combine(tempDir, "transcode_manifest.m3u8");
-            await File.WriteAllTextAsync(tempPath, sb.ToString());
-
-            LogToFile("state_trace.txt", $"Trimmed manifest: skipped {startSeg} segments, wrote to {tempPath}");
-            return tempPath;
-        }
-        catch (Exception ex)
-        {
-            LogToFile("state_trace.txt", $"Manifest trim error: {ex.Message}");
-            return null;
         }
     }
 
@@ -2092,12 +2132,10 @@ public class PlayerService : IDisposable
                     try { SessionStarted?.Invoke(session.SessionId); } catch { }
                     PlayMethod = session.PlayMethod;
 
-                    var token = _apiClient.AccessToken;
-                    var authHeader = token != null ? $"Bearer {token}" : null;
-                    var streamUrl = UrlHelper.AppendToken(_playbackManager.StreamUrl ?? "", token);
+                    var streamUrl = PrepareDirectStreamForMpv(_playbackManager.StreamUrl ?? "", session.PlayMethod);
 
-                    _resumePosition = currentPos;
-                    _mpv.LoadFile(streamUrl, authHeader);
+                    _resumePosition = 0;
+                    _mpv.LoadFile(streamUrl, null, currentPos);
                     _mpv.Play();
                     SendMediaInfoToOsc();
                 }
@@ -2326,6 +2364,7 @@ public class PlayerService : IDisposable
         _closing = true;
 
         LogToFile("state_trace.txt", $"CloseAsync called: State={State} _switchingContent={_switchingContent}");
+        StopPlaybackStallWatchdog();
         if (State == PlayerState.Fullscreen)
             ExitAnyFullscreen();
 
@@ -2417,6 +2456,7 @@ public class PlayerService : IDisposable
         _prematureEofRecoveryPosition = 0;
         _prematureEofLastAttemptMs = 0;
         _prematureEofStreak = 0;
+        StopDirectStreamProxy();
         _hlsProxy?.Stop();
         _hlsProxy = null;
         DisconnectWebSocket();
@@ -2439,6 +2479,8 @@ public class PlayerService : IDisposable
 
     public void Dispose()
     {
+        StopPlaybackStallWatchdog();
+
         // Exit fullscreen BEFORE disposing the video window, so
         // ExitAnyFullscreen can still see which path is active.
         if (State == PlayerState.Fullscreen)
@@ -2464,6 +2506,9 @@ public class PlayerService : IDisposable
 
         _videoWindow?.Dispose();
         _videoWindow = null;
+        StopDirectStreamProxy();
+        _hlsProxy?.Stop();
+        _hlsProxy = null;
         if (State != PlayerState.Idle)
         {
             _playbackManager?.Dispose();
@@ -2642,7 +2687,7 @@ public class PlayerService : IDisposable
 
     private static void LogToFile(string fileName, string content)
     {
-        _logQueue.Enqueue((fileName, $"[{DateTime.Now:HH:mm:ss.fff}] {content}\n"));
+        _logQueue.Enqueue((fileName, content));
     }
 
     private static void FlushLogs()
@@ -2659,15 +2704,7 @@ public class PlayerService : IDisposable
         }
         foreach (var (fileName, lines) in batches)
         {
-            try
-            {
-                var logPath = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "ContinuumPlayer", fileName);
-                Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-                File.AppendAllText(logPath, string.Concat(lines));
-            }
-            catch { }
+            LocalLog.AppendLines(fileName, lines);
         }
     }
 }

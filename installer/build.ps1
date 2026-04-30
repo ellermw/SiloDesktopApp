@@ -36,7 +36,7 @@ $WinAppSdkInstaller = "$InstallerDir\deps\windowsappruntimeinstall-x64.exe"
 if (-not (Test-Path $WinAppSdkInstaller)) {
     Write-Host "Downloading Windows App SDK runtime installer..."
     $null = New-Item -ItemType Directory -Path "$InstallerDir\deps" -Force
-    Invoke-WebRequest -Uri "https://aka.ms/windowsappsdk/1.6/latest/windowsappruntimeinstall-x64.exe" -OutFile $WinAppSdkInstaller
+    Invoke-WebRequest -Uri "https://aka.ms/windowsappsdk/1.8/latest/windowsappruntimeinstall-x64.exe" -OutFile $WinAppSdkInstaller
 }
 
 Write-Host "=== Publishing app ($Configuration, $Runtime) ==="

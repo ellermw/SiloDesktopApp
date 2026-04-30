@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using ContinuumPlayer.Core.Helpers;
+using ContinuumPlayer.Core.Services;
 
 namespace ContinuumPlayer.Services;
 
@@ -204,15 +205,7 @@ public sealed class PlaybackWebSocket : IDisposable
 
     private static void Log(string msg)
     {
-        try
-        {
-            var path = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ContinuumPlayer", "websocket.txt");
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.AppendAllText(path, $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n");
-        }
-        catch { }
+        LocalLog.AppendLine("websocket.txt", msg);
     }
 
     public void Dispose()
