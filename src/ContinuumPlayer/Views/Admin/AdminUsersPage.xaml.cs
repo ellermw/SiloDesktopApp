@@ -208,6 +208,7 @@ public sealed partial class AdminUsersPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
 
         // ---- Username as clickable link ----
         var capturedUser = user;
@@ -307,6 +308,16 @@ public sealed partial class AdminUsersPage : Page
             };
         }
 
+        // ---- Last active ----
+        var lastActiveBlock = new TextBlock
+        {
+            Text = FormatLastActive(user.LastActiveAt),
+            FontSize = 12,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+
         // ---- Actions: 28x28 ghost-style icon buttons ----
         var actionsPanel = new StackPanel
         {
@@ -332,12 +343,14 @@ public sealed partial class AdminUsersPage : Page
         Grid.SetColumn(emailBlock, 1);
         Grid.SetColumn(roleBadge, 2);
         Grid.SetColumn(statusBadge, 3);
-        Grid.SetColumn(actionsPanel, 4);
+        Grid.SetColumn(lastActiveBlock, 4);
+        Grid.SetColumn(actionsPanel, 5);
 
         row.Children.Add(userCell);
         row.Children.Add(emailBlock);
         row.Children.Add(roleBadge);
         row.Children.Add(statusBadge);
+        row.Children.Add(lastActiveBlock);
         row.Children.Add(actionsPanel);
 
         return row;
@@ -1107,7 +1120,7 @@ public sealed partial class AdminUsersPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
 
         // Code (monospace)
         var codeBorder = new Border
@@ -1224,6 +1237,10 @@ public sealed partial class AdminUsersPage : Page
         };
         var capturedCode = code;
 
+        var topUpBtn = MakeGhostIconButton("\uE710", "Add uses");
+        topUpBtn.Click += async (_, _) => await OpenTopUpInviteCodeDialogAsync(capturedCode);
+        actions.Children.Add(topUpBtn);
+
         var toggleBtn = MakeGhostIconButton(code.Enabled ? "\uE8FB" : "\uE73E", code.Enabled ? "Disable" : "Enable");
         toggleBtn.Click += async (_, _) =>
         {
@@ -1276,7 +1293,7 @@ public sealed partial class AdminUsersPage : Page
         var maxUsesBox = new NumberBox
         {
             Value = 1,
-            Minimum = 0,
+            Minimum = 1,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
             CornerRadius = new CornerRadius(8),
             FontSize = 13
@@ -1285,7 +1302,7 @@ public sealed partial class AdminUsersPage : Page
         var form = new StackPanel { Width = 512, Spacing = 16 };
         AddInviteCodeFormField(form, "Code (optional)", codeBox);
         AddInviteCodeFormField(form, "Label", labelBox);
-        AddInviteCodeFormField(form, "Max Uses (0 = unlimited)", maxUsesBox);
+        AddInviteCodeFormField(form, "Max Uses", maxUsesBox);
 
         var dialog = new ContentDialog
         {
@@ -1303,9 +1320,43 @@ public sealed partial class AdminUsersPage : Page
         {
             Code = string.IsNullOrWhiteSpace(codeBox.Text) ? null : codeBox.Text.Trim(),
             Label = labelBox.Text.Trim(),
-            MaxUses = double.IsNaN(maxUsesBox.Value) ? 0 : (int)maxUsesBox.Value
+            MaxUses = double.IsNaN(maxUsesBox.Value) ? 1 : (int)maxUsesBox.Value
         });
         ShowStatus("Invite code created.");
+    }
+
+    private async Task OpenTopUpInviteCodeDialogAsync(InviteCode code)
+    {
+        var additionalUsesBox = new NumberBox
+        {
+            Value = 1,
+            Minimum = 1,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+            CornerRadius = new CornerRadius(8),
+            FontSize = 13
+        };
+
+        var form = new StackPanel { Width = 420, Spacing = 16 };
+        AddInviteCodeFormField(form, "Additional Uses", additionalUsesBox);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Add Invite Uses",
+            PrimaryButtonText = "Add",
+            CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot,
+            Content = form,
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var additionalUses = double.IsNaN(additionalUsesBox.Value) ? 0 : (int)additionalUsesBox.Value;
+        var updated = await InviteCodesViewModel.TopUpInviteCodeAsync(code, additionalUses);
+        if (updated != null)
+        {
+            ShowStatus(InviteCodesViewModel.StatusMessage ?? "Invite code updated.");
+        }
     }
 
     private static void AddInviteCodeFormField(StackPanel form, string label, FrameworkElement control)
@@ -1338,4 +1389,9 @@ public sealed partial class AdminUsersPage : Page
         };
         timer.Start();
     }
+
+    private static string FormatLastActive(string? value)
+        => string.IsNullOrWhiteSpace(value)
+            ? "Never"
+            : Core.Helpers.TimeAgo.FormatShort(value);
 }

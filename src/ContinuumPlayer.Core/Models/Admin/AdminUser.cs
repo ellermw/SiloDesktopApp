@@ -16,6 +16,7 @@ public class AdminUser
     public bool DownloadTranscodeAllowed { get; set; }
     public string CreatedAt { get; set; } = "";
     public string UpdatedAt { get; set; } = "";
+    public string? LastActiveAt { get; set; }
 }
 
 public class CreateUserRequest

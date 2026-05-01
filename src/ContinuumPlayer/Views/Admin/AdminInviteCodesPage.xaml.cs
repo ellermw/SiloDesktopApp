@@ -78,7 +78,7 @@ public sealed partial class AdminInviteCodesPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
 
         // Code (monospace)
         var codeBorder = new Border
@@ -178,6 +178,11 @@ public sealed partial class AdminInviteCodesPage : Page
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
         var capturedCode = code;
 
+        // Top up
+        var topUpBtn = MakeIconButton("\uE710", "Add uses");
+        topUpBtn.Click += async (_, _) => await OpenTopUpDialogAsync(capturedCode);
+        actions.Children.Add(topUpBtn);
+
         // Toggle
         var toggleBtn = MakeIconButton(code.Enabled ? "\uE8FB" : "\uE73E", code.Enabled ? "Disable" : "Enable");
         toggleBtn.Click += async (_, _) =>
@@ -223,7 +228,7 @@ public sealed partial class AdminInviteCodesPage : Page
         var form = new StackPanel { Width = 512, Spacing = 16 };
         AddField(form, "Code (optional)", codeBox);
         AddField(form, "Label", labelBox);
-        AddField(form, "Max Uses (0 = unlimited)", maxUsesBox);
+        AddField(form, "Max Uses", maxUsesBox);
 
         var dialog = new ContentDialog
         {
@@ -239,9 +244,43 @@ public sealed partial class AdminInviteCodesPage : Page
         {
             Code = string.IsNullOrWhiteSpace(codeBox.Text) ? null : codeBox.Text.Trim(),
             Label = labelBox.Text.Trim(),
-            MaxUses = (int)maxUsesBox.Value
+            MaxUses = double.IsNaN(maxUsesBox.Value) ? 1 : (int)maxUsesBox.Value
         });
         ShowStatus("Invite code created.");
+    }
+
+    private async Task OpenTopUpDialogAsync(InviteCode code)
+    {
+        var additionalUsesBox = new NumberBox
+        {
+            Value = 1,
+            Minimum = 1,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+            CornerRadius = new CornerRadius(6),
+            FontSize = 13
+        };
+
+        var form = new StackPanel { Width = 420, Spacing = 16 };
+        AddField(form, "Additional Uses", additionalUsesBox);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Add Invite Uses",
+            PrimaryButtonText = "Add",
+            CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot,
+            Content = form,
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var additionalUses = double.IsNaN(additionalUsesBox.Value) ? 0 : (int)additionalUsesBox.Value;
+        var updated = await ViewModel.TopUpInviteCodeAsync(code, additionalUses);
+        if (updated != null)
+        {
+            ShowStatus(ViewModel.StatusMessage ?? "Invite code updated.");
+        }
     }
 
     private static void AddField(StackPanel form, string label, FrameworkElement control)

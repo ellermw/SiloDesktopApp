@@ -76,6 +76,33 @@ public partial class AdminInviteCodesViewModel : ObservableObject
         }
     }
 
+    // ===== Top up =====
+
+    public async Task<InviteCode?> TopUpInviteCodeAsync(InviteCode code, int additionalUses)
+    {
+        try
+        {
+            if (additionalUses <= 0)
+            {
+                ErrorMessage = "Additional uses must be greater than 0.";
+                return null;
+            }
+
+            var updated = await _adminApi.TopUpInviteCodeAsync(code.Id, new TopUpInviteCodeRequest
+            {
+                AdditionalUses = additionalUses
+            });
+            StatusMessage = $"Added {additionalUses} use{(additionalUses == 1 ? "" : "s")} to \"{updated.Code}\".";
+            await LoadAsync();
+            return updated;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+            return null;
+        }
+    }
+
     // ===== Toggle =====
 
     [RelayCommand]

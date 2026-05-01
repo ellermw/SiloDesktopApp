@@ -146,12 +146,14 @@
                                     <ColumnDefinition Width="80" />
                                     <ColumnDefinition Width="80" />
                                     <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="120" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="USERNAME" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBlock Grid.Column="1" Text="EMAIL" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBlock Grid.Column="2" Text="ROLE" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBlock Grid.Column="3" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="4" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="4" Text="Last Active" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="5" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             </Grid>
 
                             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
@@ -257,7 +259,7 @@
                                     <ColumnDefinition Width="80" />
                                     <ColumnDefinition Width="80" />
                                     <ColumnDefinition Width="120" />
-                                    <ColumnDefinition Width="90" />
+                                    <ColumnDefinition Width="120" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Code" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBlock Grid.Column="1" Text="Label" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />

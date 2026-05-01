@@ -244,6 +244,7 @@ public sealed partial class AdminUserDetailPage : Page
         AddDetailRow(AccountRows, "Status",   user.Enabled ? "Active" : "Disabled");
         AddDetailRow(AccountRows, "Created",  AdminUserDetailViewModel.FormatDate(user.CreatedAt));
         AddDetailRow(AccountRows, "Updated",  AdminUserDetailViewModel.FormatDate(user.UpdatedAt));
+        AddDetailRow(AccountRows, "Last Active", FormatLastActive(user.LastActiveAt));
 
         // Library access — resolve names from ViewModel.Libraries
         string libraryAccess;
@@ -1200,6 +1201,11 @@ public sealed partial class AdminUserDetailPage : Page
 
     private static string FormatPlaybackQualityPreset(string? value)
         => Core.Helpers.PlaybackQuality.FormatPreset(value);
+
+    private static string FormatLastActive(string? value)
+        => string.IsNullOrWhiteSpace(value)
+            ? "Never"
+            : Core.Helpers.TimeAgo.FormatShort(value);
 
     // ===== Helpers =====
 

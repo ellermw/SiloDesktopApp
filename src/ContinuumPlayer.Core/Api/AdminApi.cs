@@ -450,6 +450,9 @@ public class AdminApi(ContinuumApiClient client)
     public Task<InviteCode> UpdateInviteCodeAsync(int id, UpdateInviteCodeRequest request, CancellationToken ct = default)
         => client.PutAsync<InviteCode>($"/api/v1/admin/invite-codes/{id}", request, ct);
 
+    public Task<InviteCode> TopUpInviteCodeAsync(int id, TopUpInviteCodeRequest request, CancellationToken ct = default)
+        => client.PostAsync<InviteCode>($"/api/v1/admin/invite-codes/{id}/top-up", request, ct);
+
     public Task DeleteInviteCodeAsync(int id, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/admin/invite-codes/{id}", ct);
 

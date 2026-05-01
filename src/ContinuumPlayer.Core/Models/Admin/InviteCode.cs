@@ -26,3 +26,8 @@ public class UpdateInviteCodeRequest
     public int? MaxUses { get; set; }
     public bool? Enabled { get; set; }
 }
+
+public class TopUpInviteCodeRequest
+{
+    public int AdditionalUses { get; set; }
+}
