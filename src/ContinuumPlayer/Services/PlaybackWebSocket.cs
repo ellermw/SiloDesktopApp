@@ -28,6 +28,7 @@ public sealed class PlaybackWebSocket : IDisposable
 
     /// <summary>Fired when a command is received from the server.</summary>
     public event Func<WebSocketCommand, Task<CommandResult>>? CommandReceived;
+    public event Action<PlaybackRealtimeEvent>? EventReceived;
 
     public PlaybackWebSocket(string baseUrl, string sessionId, string? token)
     {
@@ -130,6 +131,35 @@ public sealed class PlaybackWebSocket : IDisposable
             var root = doc.RootElement;
 
             var type = root.GetProperty("type").GetString();
+            if (type == "event")
+            {
+                var eventName = root.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
+                var sessionId = root.TryGetProperty("session_id", out var sessionEl) ? sessionEl.GetString() ?? "" : "";
+                var eventPayload = root.TryGetProperty("payload", out var eventPayloadEl)
+                    ? eventPayloadEl.Clone()
+                    : default;
+
+                if (!string.IsNullOrEmpty(eventName))
+                {
+                    Log($"Event received: {eventName}");
+                    try
+                    {
+                        EventReceived?.Invoke(new PlaybackRealtimeEvent
+                        {
+                            SessionId = sessionId,
+                            Name = eventName,
+                            Payload = eventPayload
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"EventReceived handler error: {ex.Message}");
+                    }
+                }
+
+                return;
+            }
+
             if (type != "command") return;
 
             var commandId = root.GetProperty("command_id").GetString() ?? "";
@@ -243,6 +273,13 @@ public class WebSocketCommand
         }
         return null;
     }
+}
+
+public class PlaybackRealtimeEvent
+{
+    public string SessionId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public JsonElement Payload { get; set; }
 }
 
 public class CommandResult

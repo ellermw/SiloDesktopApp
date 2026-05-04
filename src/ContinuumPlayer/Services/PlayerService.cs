@@ -1,5 +1,6 @@
 // src/ContinuumPlayer/Services/PlayerService.cs
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using ContinuumPlayer.Core.Api;
@@ -357,6 +358,9 @@ public class PlayerService : IDisposable
     public PlaybackManager? Manager => _playbackManager;
     public WatchDetailResponse? WatchDetail => _playbackManager?.WatchDetail;
     public List<FileVersion> Versions { get; private set; } = [];
+    public FileVersion? ActiveVersion => Versions.FirstOrDefault(v => v.FileId == (_playbackManager?.CurrentSession?.MediaFileId ?? 0));
+    public TimeRange? ActiveIntro => ActiveVersion?.Intro ?? WatchDetail?.Intro;
+    public TimeRange? ActiveCredits => ActiveVersion?.Credits ?? WatchDetail?.Credits;
 
     // ── Events ───────────────────────────────────────────────────────────
 
@@ -380,6 +384,7 @@ public class PlayerService : IDisposable
     public event Action<bool>? PauseChanged;
     public event Action? PlaybackEnded;
     public event Action? ContentLoaded; // fired when file is loaded and decoding starts
+    public event Action? MarkersChanged;
     /// <summary>
     /// Fired instead of <see cref="PlaybackEnded"/> when the current episode
     /// finishes AND a next episode is available (NextEpisode* fields are set).
@@ -2605,6 +2610,7 @@ public class PlayerService : IDisposable
 
         _webSocket = new PlaybackWebSocket(baseUrl, sessionId, token);
         _webSocket.CommandReceived += HandleWebSocketCommand;
+        _webSocket.EventReceived += HandleWebSocketEvent;
         _ = Task.Run(async () =>
         {
             try { await _webSocket.ConnectAsync(); }
@@ -2617,10 +2623,65 @@ public class PlayerService : IDisposable
         if (_webSocket != null)
         {
             _webSocket.CommandReceived -= HandleWebSocketCommand;
+            _webSocket.EventReceived -= HandleWebSocketEvent;
             _webSocket.Disconnect();
             _webSocket = null;
         }
     }
+
+    private void HandleWebSocketEvent(PlaybackRealtimeEvent ev)
+    {
+        if (ev.Name == "markers_updated")
+            ApplyRealtimeMarkersUpdated(ev.Payload);
+    }
+
+    private void ApplyRealtimeMarkersUpdated(JsonElement payload)
+    {
+        try
+        {
+            if (payload.ValueKind != JsonValueKind.Object) return;
+            if (!payload.TryGetProperty("file_id", out var fileIdEl) || !fileIdEl.TryGetInt32(out var fileId))
+                return;
+
+            var version = Versions.FirstOrDefault(v => v.FileId == fileId);
+            if (version == null) return;
+
+            if (payload.TryGetProperty("intro", out var introEl))
+                version.Intro = ReadMarkerRange(introEl);
+            if (payload.TryGetProperty("credits", out var creditsEl))
+                version.Credits = ReadMarkerRange(creditsEl);
+
+            var activeFileId = _playbackManager?.CurrentSession?.MediaFileId ?? 0;
+            if (activeFileId == fileId && _playbackManager?.WatchDetail != null)
+            {
+                _playbackManager.WatchDetail.Intro = version.Intro;
+                _playbackManager.WatchDetail.Credits = version.Credits;
+                MarkersChanged?.Invoke();
+            }
+
+            LogToFile("state_trace.txt", $"Realtime markers_updated applied: fileId={fileId} intro={FormatMarker(version.Intro)} credits={FormatMarker(version.Credits)}");
+        }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"markers_updated handling failed: {ex.Message}");
+        }
+    }
+
+    private static TimeRange? ReadMarkerRange(JsonElement element)
+    {
+        if (element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        if (element.ValueKind != JsonValueKind.Object)
+            return null;
+        if (!element.TryGetProperty("start", out var startEl) || !startEl.TryGetDouble(out var start))
+            return null;
+        if (!element.TryGetProperty("end", out var endEl) || !endEl.TryGetDouble(out var end))
+            return null;
+        return end > start ? new TimeRange { Start = start, End = end } : null;
+    }
+
+    private static string FormatMarker(TimeRange? marker)
+        => marker == null ? "none" : $"{marker.Start:F1}-{marker.End:F1}";
 
     private Task<CommandResult> HandleWebSocketCommand(WebSocketCommand cmd)
     {

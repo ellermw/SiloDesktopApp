@@ -2700,6 +2700,14 @@ public sealed partial class AdminLibrariesPage : Page
         };
         form.Children.Add(chapterThumbToggle);
 
+        var introDetectionToggle = new ToggleSwitch
+        {
+            IsOn = editingLib?.IntroDetectionEnabled ?? false,
+            OnContent = "Detect intro markers",
+            OffContent = "Intro marker detection disabled",
+        };
+        form.Children.Add(introDetectionToggle);
+
         // Row 4: Metadata Providers
         var providerWrapper = new StackPanel { Spacing = 6 };
         providerWrapper.Children.Add(new Border
@@ -2750,6 +2758,7 @@ public sealed partial class AdminLibrariesPage : Page
                 ["paths"] = paths,
                 ["metadata_language"] = selectedLang,
                 ["chapter_thumbnails_enabled"] = chapterThumbToggle.IsOn,
+                ["intro_detection_enabled"] = introDetectionToggle.IsOn,
             };
         }
 

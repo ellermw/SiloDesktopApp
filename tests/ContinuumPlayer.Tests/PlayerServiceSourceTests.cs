@@ -39,6 +39,43 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("PlaybackEnded?.Invoke();", source);
     }
 
+    [Fact]
+    public void PlaybackWebSocketHandlesRealtimeMarkerUpdates()
+    {
+        var playerService = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "ContinuumPlayer",
+            "Services",
+            "PlayerService.cs"));
+        var websocket = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "ContinuumPlayer",
+            "Services",
+            "PlaybackWebSocket.cs"));
+
+        Assert.Contains("markers_updated", playerService);
+        Assert.Contains("EventReceived", websocket);
+        Assert.Contains("MarkersChanged", playerService);
+        Assert.Contains("ApplyRealtimeMarkersUpdated", playerService);
+    }
+
+    [Fact]
+    public void PlayerOverlayUsesActiveVersionMarkers()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "ContinuumPlayer",
+            "Controls",
+            "PlayerOverlay.xaml.cs"));
+
+        Assert.Contains("ActiveIntro", source);
+        Assert.Contains("ActiveCredits", source);
+        Assert.Contains("MarkersChanged", source);
+    }
+
     private static string FindRepositoryRoot()
     {
         var dir = AppContext.BaseDirectory;

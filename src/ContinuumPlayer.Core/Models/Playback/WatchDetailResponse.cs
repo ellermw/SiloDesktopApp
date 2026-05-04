@@ -43,6 +43,8 @@ public class FileVersion
     public List<AudioTrackInfo>? AudioTracks { get; set; }
     public List<VersionSubtitleTrack>? SubtitleTracks { get; set; }
     public List<VersionChapter>? Chapters { get; set; }
+    public TimeRange? Intro { get; set; }
+    public TimeRange? Credits { get; set; }
 }
 
 public class VersionVideoTrack

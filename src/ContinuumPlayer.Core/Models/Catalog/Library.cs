@@ -25,6 +25,8 @@ public class Library
     public bool? ChapterThumbnailsEnabled { get; set; }
     [JsonPropertyName("chapter_thumbnails_supported")]
     public bool? ChapterThumbnailsSupported { get; set; }
+    [JsonPropertyName("intro_detection_enabled")]
+    public bool? IntroDetectionEnabled { get; set; }
 }
 
 public class LibraryMountCheckRoot

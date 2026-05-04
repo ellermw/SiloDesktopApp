@@ -4,7 +4,7 @@ Native Windows 11 media player for Continuum media servers. Built for direct pla
 
 ## Download
 
-[**Download Installer (v1.1.2)**](https://transfers.taverncdn.com/mG1ZniCk3y/ContinuumDesktopPlayer-1.1.2-Setup.exe) — Single-file setup, includes all dependencies. Windows 10/11 x64.
+[**Download Installer (v1.1.3)**](https://transfers.taverncdn.com/5N9wE04pXr/ContinuumDesktopPlayer-1.1.3-Setup.exe) — Single-file setup, includes all dependencies. Windows 10/11 x64.
 
 ## Tech Stack
 

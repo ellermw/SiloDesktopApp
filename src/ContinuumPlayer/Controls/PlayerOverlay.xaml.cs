@@ -45,6 +45,7 @@ public sealed partial class PlayerOverlay : UserControl
         _playerService.PlaybackEnded += OnPlaybackEnded;
         _playerService.StateChanged += OnPlayerStateChanged;
         _playerService.BufferingChanged += OnBufferingChanged;
+        _playerService.MarkersChanged += OnMarkersChanged;
 
         // Sync the fullscreen icon eagerly so the first paint after re-activation
         // reflects the current state (otherwise it lingers on the "exit fullscreen"
@@ -114,6 +115,7 @@ public sealed partial class PlayerOverlay : UserControl
         _playerService.PlaybackEnded -= OnPlaybackEnded;
         _playerService.StateChanged -= OnPlayerStateChanged;
         _playerService.BufferingChanged -= OnBufferingChanged;
+        _playerService.MarkersChanged -= OnMarkersChanged;
 
         // Stop timers
         _uiTimer?.Stop();
@@ -212,14 +214,30 @@ public sealed partial class PlayerOverlay : UserControl
             UpdateEpisodeNav();
 
             // Seed the seek bar with markers + chapters for the newly loaded item.
-            var intro = _playerService.WatchDetail?.Intro;
-            SeekBar.IntroMarker = intro != null ? (intro.Start, intro.End) : null;
-            var credits = _playerService.WatchDetail?.Credits;
-            SeekBar.CreditsMarker = credits != null ? (credits.Start, credits.End) : null;
+            RefreshMarkerRegions();
             var version = _playerService.Versions.FirstOrDefault(v => v.FileId == (_playerService.Manager?.CurrentSession?.MediaFileId ?? 0));
             SeekBar.Chapters = version?.Chapters;
             SeekBar.Invalidate();
         });
+    }
+
+    private void OnMarkersChanged()
+    {
+        DispatcherQueue?.TryEnqueue(() =>
+        {
+            if (!_isActive) return;
+            RefreshMarkerRegions();
+            SeekBar.Invalidate();
+            UpdateSkipButtons(_playerService.Mpv?.Position ?? 0);
+        });
+    }
+
+    private void RefreshMarkerRegions()
+    {
+        var intro = _playerService.ActiveIntro;
+        SeekBar.IntroMarker = intro != null ? (intro.Start, intro.End) : null;
+        var credits = _playerService.ActiveCredits;
+        SeekBar.CreditsMarker = credits != null ? (credits.Start, credits.End) : null;
     }
 
     private void OnPlaybackEnded()
@@ -294,11 +312,11 @@ public sealed partial class PlayerOverlay : UserControl
 
     private void UpdateSkipButtons(double pos)
     {
-        var intro = _playerService.WatchDetail?.Intro;
+        var intro = _playerService.ActiveIntro;
         bool showIntro = intro != null && pos >= intro.Start && pos < intro.End;
         SkipIntroButton.Visibility = showIntro ? Visibility.Visible : Visibility.Collapsed;
 
-        var credits = _playerService.WatchDetail?.Credits;
+        var credits = _playerService.ActiveCredits;
         bool hasNextEpisode = !string.IsNullOrEmpty(_playerService.NextEpisodeContentId);
         var dur = _playerService.Mpv?.Duration ?? _playerService.Duration;
         bool showCredits = !hasNextEpisode
@@ -327,7 +345,7 @@ public sealed partial class PlayerOverlay : UserControl
         if (string.IsNullOrEmpty(_playerService.NextEpisodeContentId)) return false;
         if (pos <= 0 || duration <= 0) return false;
 
-        var credits = _playerService.WatchDetail?.Credits;
+        var credits = _playerService.ActiveCredits;
         var inPlausibleCredits = credits != null
             && IsPlausibleCreditsMarker(credits, duration)
             && pos >= credits.Start
@@ -579,12 +597,12 @@ public sealed partial class PlayerOverlay : UserControl
 
     private void SkipIntro_Click(object sender, RoutedEventArgs e)
     {
-        SeekAndResume(_playerService.WatchDetail?.Intro?.End ?? 0);
+        SeekAndResume(_playerService.ActiveIntro?.End ?? 0);
     }
 
     private void SkipCredits_Click(object sender, RoutedEventArgs e)
     {
-        var end = _playerService.WatchDetail?.Credits?.End ?? 0;
+        var end = _playerService.ActiveCredits?.End ?? 0;
         var dur = _playerService.Mpv?.Duration ?? _playerService.Duration;
         if (dur > 0) end = Math.Min(end, dur);
         SeekAndResume(end);

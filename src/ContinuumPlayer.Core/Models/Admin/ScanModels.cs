@@ -19,6 +19,7 @@ public class CreateLibraryRequest
     public string Type { get; set; } = "";
     public string Name { get; set; } = "";
     public bool? Enabled { get; set; }
+    public bool? IntroDetectionEnabled { get; set; }
 }
 
 public class UpdateLibraryRequest
@@ -27,6 +28,7 @@ public class UpdateLibraryRequest
     public string? Type { get; set; }
     public string? Name { get; set; }
     public bool? Enabled { get; set; }
+    public bool? IntroDetectionEnabled { get; set; }
 }
 
 /// <summary>
