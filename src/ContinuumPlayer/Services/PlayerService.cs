@@ -42,8 +42,11 @@ public class PlayerService : IDisposable
     private readonly PlaybackStallDetector _stallDetector = new(
         bufferingTimeout: TimeSpan.FromSeconds(20),
         silentPlaybackTimeout: TimeSpan.FromSeconds(45));
+    private readonly PlaybackNaturalEndDetector _naturalEndDetector = new(
+        completionDelay: TimeSpan.FromSeconds(4));
     private Timer? _stallWatchdogTimer;
     private long _stallRecoveryLastAttemptMs;
+    private volatile bool _naturalEndDispatched;
     private string _activeQualityTier = "original";
     private HlsProxy? _hlsProxy;
     private DirectStreamProxy? _directStreamProxy;
@@ -619,6 +622,7 @@ public class PlayerService : IDisposable
         _prematureEofRecoveryPosition = 0;
         _prematureEofLastAttemptMs = 0;
         _prematureEofStreak = 0;
+        ResetNaturalEndTracking();
         _playbackCts?.Cancel();
         _playbackCts?.Dispose();
         _playbackCts = new CancellationTokenSource();
@@ -772,7 +776,8 @@ public class PlayerService : IDisposable
     {
         StopPlaybackStallWatchdog();
         _stallDetector.Reset(_mpv?.Position ?? 0, DateTimeOffset.UtcNow);
-        _stallWatchdogTimer = new Timer(_ => CheckPlaybackStall(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+        _naturalEndDetector.Reset();
+        _stallWatchdogTimer = new Timer(_ => CheckPlaybackStall(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
     private void StopPlaybackStallWatchdog()
@@ -780,7 +785,14 @@ public class PlayerService : IDisposable
         _stallWatchdogTimer?.Dispose();
         _stallWatchdogTimer = null;
         _stallDetector.Reset();
+        _naturalEndDetector.Reset();
         _stallRecoveryLastAttemptMs = 0;
+    }
+
+    private void ResetNaturalEndTracking()
+    {
+        _naturalEndDetector.Reset();
+        _naturalEndDispatched = false;
     }
 
     private void CheckPlaybackStall()
@@ -799,13 +811,31 @@ public class PlayerService : IDisposable
             if (mpv == null)
                 return;
 
+            var now = DateTimeOffset.UtcNow;
+            if (!_naturalEndDispatched)
+            {
+                var naturalEndDecision = _naturalEndDetector.Observe(
+                    mpv.Position,
+                    mpv.Duration,
+                    recoveryInProgress,
+                    now);
+
+                if (naturalEndDecision.ShouldComplete)
+                {
+                    LogToFile("state_trace.txt",
+                        $"Logical natural end detected: reason={naturalEndDecision.Reason} pos={naturalEndDecision.Position:F1} dur={naturalEndDecision.Duration:F1}");
+                    HandleNaturalPlaybackEnded(naturalEndDecision.Reason);
+                    return;
+                }
+            }
+
             var decision = _stallDetector.Observe(
                 mpv.Position,
                 mpv.Duration,
                 mpv.IsPaused,
                 mpv.IsBufferingForCache,
                 recoveryInProgress,
-                DateTimeOffset.UtcNow);
+                now);
 
             if (!decision.ShouldRecover)
                 return;
@@ -1260,6 +1290,50 @@ public class PlayerService : IDisposable
         _mpv.ScriptMessageReceived -= OnScriptMessage;
     }
 
+    private void HandleNaturalPlaybackEnded(string trigger)
+    {
+        if (_naturalEndDispatched)
+        {
+            LogToFile("state_trace.txt", $"  -> Natural end already dispatched (trigger={trigger})");
+            return;
+        }
+
+        _naturalEndDispatched = true;
+        StopPlaybackStallWatchdog();
+
+        // Phase 3b: if the caller set a next-episode hint before playback,
+        // show the Playing Next overlay instead of closing the player.
+        // The overlay will call ContinuePlayingNextAsync or CancelPlayingNext.
+        // Playing Next is intentionally tied to the real/logical end of media.
+        // Credits markers are useful for UI markers/skip affordances, but
+        // auto-detected credits can be wrong by many minutes; they must not
+        // force the video into the mini bar or start the next-episode timer.
+        if (!string.IsNullOrEmpty(NextEpisodeContentId))
+        {
+            if (_playingNextShown)
+            {
+                LogToFile("state_trace.txt", $"  -> Next-episode prompt already shown (trigger={trigger})");
+                return;
+            }
+
+            LogToFile("state_trace.txt", $"  -> Next-episode prompt requested (trigger={trigger})");
+            _playingNextShown = true;
+            ShowPlayingNextRequested?.Invoke();
+            return;
+        }
+
+        // CRITICAL: end-of-media means the session is DONE. We MUST tear
+        // down the mpv/playback-manager state or the next PlayAsync call
+        // will race against stale state and crash.
+        LogToFile("state_trace.txt", $"  -> Natural end ({trigger}) - dispatching CloseAsync to UI thread");
+        PlaybackEnded?.Invoke();
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+        if (dispatcher != null)
+            dispatcher.TryEnqueue(() => _ = CloseAsync());
+        else
+            _ = CloseAsync();
+    }
+
     private void WireMpvEvents()
     {
         if (_mpv == null) return;
@@ -1309,6 +1383,7 @@ public class PlayerService : IDisposable
             _switchingContent = false; // Safe to receive PlaybackEnded now
             _qualitySwitchActive = false;
             _playingNextShown = false;
+            ResetNaturalEndTracking();
             _prematureEofRecoveryActive = false;
             if (!wasPrematureEofRecovery)
             {

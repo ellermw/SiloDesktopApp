@@ -21,6 +21,24 @@ public sealed class PlayerServiceSourceTests
             source);
     }
 
+    [Fact]
+    public void LogicalEndFallbackUsesNaturalEndPath()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "ContinuumPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        Assert.Contains("PlaybackNaturalEndDetector", source);
+        Assert.Contains("Logical natural end detected", source);
+        Assert.Contains("HandleNaturalPlaybackEnded", source);
+        Assert.Contains("HandleNaturalPlaybackEnded(naturalEndDecision.Reason);", source);
+        Assert.Contains("ShowPlayingNextRequested?.Invoke();", source);
+        Assert.Contains("PlaybackEnded?.Invoke();", source);
+    }
+
     private static string FindRepositoryRoot()
     {
         var dir = AppContext.BaseDirectory;
