@@ -775,6 +775,18 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddToggleField(metaCard, "Cache Images to S3", "metadata.cache_images",
             "When enabled, artwork fetched from metadata providers is resized and cached to your S3 storage bucket.");
         EndCard(metaCard);
+
+        AddSectionHeader("Markers");
+        var markerCard = BeginCard();
+        AddSelectField(markerCard, "Mode", "markers.mode",
+            [
+                ("off", "Off"),
+                ("local", "Local"),
+                ("both", "Local + Online"),
+                ("online", "Online Only"),
+            ]);
+        AddToggleField(markerCard, "Fetch Markers at Playback if Missing", "markers.lazy_playback");
+        EndCard(markerCard);
     }
 
     private void BuildRateLimitTab()

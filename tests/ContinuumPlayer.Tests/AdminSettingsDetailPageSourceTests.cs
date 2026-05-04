@@ -17,6 +17,23 @@ public sealed class AdminSettingsDetailPageSourceTests
         Assert.Contains("discardBtn.Click += DiscardButton_Click;", source);
     }
 
+    [Fact]
+    public void ScannerSettingsIncludeMarkersSection()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "ContinuumPlayer",
+            "Views",
+            "Admin",
+            "AdminSettingsDetailPage.xaml.cs"));
+
+        Assert.Contains("AddSectionHeader(\"Markers\")", source);
+        Assert.Contains("\"markers.mode\"", source);
+        Assert.Contains("\"markers.lazy_playback\"", source);
+        Assert.Contains("Fetch Markers at Playback if Missing", source);
+    }
+
     private static string FindRepositoryRoot()
     {
         var dir = AppContext.BaseDirectory;
