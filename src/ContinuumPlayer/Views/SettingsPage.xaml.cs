@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Navigation;
 using ContinuumPlayer.Core.Models.HistoryImport;
 using ContinuumPlayer.Core.Models.Home;
 using ContinuumPlayer.Core.Models.Plugins;
+using ContinuumPlayer.Core.Models.WatchProviders;
 using ContinuumPlayer.Services;
 using ContinuumPlayer.ViewModels;
 
@@ -93,6 +94,7 @@ public sealed partial class SettingsPage : Page
         ViewModel.HomeSections.CollectionChanged += HomeSections_CollectionChanged;
         ViewModel.ImportRuns.CollectionChanged += ImportRuns_CollectionChanged;
         ViewModel.PluginSettingsList.CollectionChanged += PluginSettings_CollectionChanged;
+        ViewModel.WatchProviderCards.CollectionChanged += WatchProviderCards_CollectionChanged;
 
         BuildSubtitleColorSwatches();
     }
@@ -168,7 +170,7 @@ public sealed partial class SettingsPage : Page
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
-        var tabs = new[] { AppearanceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, ImportTab, WebhookSyncTab, ProfilesTab, ThemeEditorTab, AccessibilityTab, PluginsTab, SessionsTab };
+        var tabs = new[] { AppearanceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, ImportTab, WebhookSyncTab, WatchProvidersTab, ProfilesTab, ThemeEditorTab, AccessibilityTab, PluginsTab, SessionsTab };
         foreach (var tab in tabs)
         {
             tab.Style = (Style)Resources["InactiveTabStyle"];
@@ -185,6 +187,7 @@ public sealed partial class SettingsPage : Page
         PluginsPanel.Visibility = tag == "Plugins" ? Visibility.Visible : Visibility.Collapsed;
         ProfilesPanel.Visibility = tag == "Profiles" ? Visibility.Visible : Visibility.Collapsed;
         WebhookSyncPanel.Visibility = tag == "WebhookSync" ? Visibility.Visible : Visibility.Collapsed;
+        WatchProvidersPanel.Visibility = tag == "WatchProviders" ? Visibility.Visible : Visibility.Collapsed;
         ThemeEditorPanel.Visibility = tag == "ThemeEditor" ? Visibility.Visible : Visibility.Collapsed;
         AccessibilityPanel.Visibility = tag == "Accessibility" ? Visibility.Visible : Visibility.Collapsed;
         SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
@@ -209,6 +212,10 @@ public sealed partial class SettingsPage : Page
         else if (tag == "Plugins")
         {
             _ = ViewModel.LoadPluginSettingsCommand.ExecuteAsync(null);
+        }
+        else if (tag == "WatchProviders")
+        {
+            _ = LoadWatchProvidersAsync();
         }
     }
 
@@ -2164,6 +2171,576 @@ public sealed partial class SettingsPage : Page
         }
 
         return Windows.UI.Color.FromArgb(a, r, g, b);
+    }
+
+    // ===== Watch Providers Tab =====
+
+    private async Task LoadWatchProvidersAsync()
+    {
+        await ViewModel.LoadWatchProvidersAsync();
+        RebuildWatchProviderCards();
+    }
+
+    private void WatchProviderCards_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        RebuildWatchProviderCards();
+    }
+
+    private void RebuildWatchProviderCards()
+    {
+        WatchProvidersCardsPanel.Children.Clear();
+
+        var hasProviders = ViewModel.WatchProviderCards.Count > 0;
+        NoWatchProvidersText.Visibility = hasProviders ? Visibility.Collapsed : Visibility.Visible;
+        if (!hasProviders) return;
+
+        foreach (var card in ViewModel.WatchProviderCards)
+            WatchProvidersCardsPanel.Children.Add(BuildWatchProviderCard(card));
+    }
+
+    private Border BuildWatchProviderCard(WatchProviderCardViewModel vm)
+    {
+        var connection = vm.Connection;
+        var latestRun = vm.LatestRun;
+        var displayName = vm.DisplayName;
+        var showAuth = vm.AuthSession != null && !vm.Connected;
+        var showApiKey = vm.ApiKeyPromptVisible && vm.UsesApiKey && !vm.Connected;
+        var hasError = !string.IsNullOrWhiteSpace(latestRun?.Error) || !string.IsNullOrWhiteSpace(connection?.LastError);
+        var statusText = showAuth ? "Activation pending" : showApiKey ? "API key required" : vm.Connected ? hasError ? "Sync error" : "Connected" : "Not connected";
+        var statusKind = showAuth || showApiKey ? "pending" : vm.Connected ? hasError ? "error" : "connected" : "muted";
+
+        var card = new Border
+        {
+            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
+            CornerRadius = new CornerRadius(16),
+            Padding = new Thickness(20, 18, 20, 18),
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+        };
+
+        var outer = new StackPanel { Spacing = 16 };
+
+        var header = new Grid { ColumnSpacing = 16 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var titleStack = new StackPanel { Spacing = 4 };
+        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        titleRow.Children.Add(new TextBlock
+        {
+            Text = displayName,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        titleRow.Children.Add(BuildWatchProviderStatusPill(statusText, statusKind));
+        titleStack.Children.Add(titleRow);
+        titleStack.Children.Add(new TextBlock
+        {
+            Text = GetWatchProviderSubtitle(vm),
+            FontSize = 13,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+        Grid.SetColumn(titleStack, 0);
+        header.Children.Add(titleStack);
+
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
+        if (showAuth || showApiKey)
+        {
+            var cancel = new Button
+            {
+                Content = "Cancel",
+                Style = (Style)Application.Current.Resources["SecondaryButtonStyle"],
+                Padding = new Thickness(12, 7, 12, 7),
+                FontSize = 13,
+                IsEnabled = !vm.IsBusy,
+            };
+            cancel.Click += (_, _) =>
+            {
+                vm.AuthSession = null;
+                vm.ApiKey = "";
+                vm.ApiKeyPromptVisible = false;
+                RebuildWatchProviderCards();
+            };
+            actions.Children.Add(cancel);
+        }
+        else if (vm.Connected)
+        {
+            var syncButton = new Button
+            {
+                Content = IsWatchProviderRunActive(latestRun) ? "Syncing..." : "Sync now",
+                Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
+                Padding = new Thickness(12, 7, 12, 7),
+                FontSize = 13,
+                IsEnabled = !vm.IsBusy && !IsWatchProviderRunActive(latestRun),
+            };
+            syncButton.Click += async (_, _) =>
+            {
+                await ViewModel.TriggerWatchProviderSyncAsync(vm);
+                RebuildWatchProviderCards();
+            };
+            actions.Children.Add(syncButton);
+
+            var disconnectButton = new Button
+            {
+                Content = "Disconnect",
+                Style = (Style)Application.Current.Resources["SecondaryButtonStyle"],
+                Padding = new Thickness(12, 7, 12, 7),
+                FontSize = 13,
+                IsEnabled = !vm.IsBusy,
+            };
+            disconnectButton.Click += async (_, _) =>
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = $"Disconnect {displayName}?",
+                    Content = "Continuum will stop importing history, syncing progress, and scrobbling playback for this provider.",
+                    PrimaryButtonText = "Disconnect",
+                    PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
+                    CloseButtonText = "Cancel",
+                    XamlRoot = XamlRoot,
+                    DefaultButton = ContentDialogButton.Close,
+                };
+                if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                {
+                    await ViewModel.DeleteWatchProviderConnectionAsync(vm);
+                    RebuildWatchProviderCards();
+                }
+            };
+            actions.Children.Add(disconnectButton);
+        }
+        else
+        {
+            var connect = new Button
+            {
+                Content = vm.CredentialsConfigured ? "Connect" : "Credentials required",
+                Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+                Padding = new Thickness(12, 7, 12, 7),
+                FontSize = 13,
+                IsEnabled = vm.CredentialsConfigured && !vm.IsBusy,
+            };
+            connect.Click += async (_, _) =>
+            {
+                if (vm.UsesApiKey)
+                {
+                    vm.ApiKeyPromptVisible = true;
+                }
+                else
+                {
+                    await ViewModel.StartWatchProviderAuthAsync(vm);
+                }
+                RebuildWatchProviderCards();
+            };
+            actions.Children.Add(connect);
+        }
+        Grid.SetColumn(actions, 1);
+        header.Children.Add(actions);
+        outer.Children.Add(header);
+
+        if (showAuth && vm.AuthSession != null)
+            outer.Children.Add(BuildWatchProviderAuthPanel(vm));
+
+        if (showApiKey)
+            outer.Children.Add(BuildWatchProviderApiKeyPanel(vm));
+
+        if (vm.Connected && connection != null)
+        {
+            outer.Children.Add(BuildWatchProviderStats(connection, latestRun));
+            var toggles = new StackPanel { Spacing = 8 };
+            toggles.Children.Add(BuildWatchProviderToggle(vm, "import_watched_enabled", "Import watched history", $"Bring completed {displayName} plays into this profile.", connection.ImportWatchedEnabled));
+            toggles.Children.Add(BuildWatchProviderToggle(vm, "import_progress_enabled", "Import paused progress", $"Use newer {displayName} resume points when local progress is older.", connection.ImportProgressEnabled));
+            toggles.Children.Add(BuildWatchProviderToggle(vm, "export_watched_enabled", "Send watched changes", "Send local watched marks and completed plays to this provider.", connection.ExportWatchedEnabled));
+            toggles.Children.Add(BuildWatchProviderToggle(vm, "export_unwatched_enabled", "Send unwatched changes", "When you mark something unwatched, remove matching history from this provider.", connection.ExportUnwatchedEnabled));
+
+            var favoritesSupported = connection.Capabilities.ImportFavorites || connection.Capabilities.ExportFavorites;
+            if (favoritesSupported)
+            {
+                var favoritesEnabled = connection.ImportFavoritesEnabled || connection.ExportFavoritesEnabled;
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "favorites_sync", "Sync favorites", $"Import {displayName} favorites and send local favorite adds.", favoritesEnabled, async isOn =>
+                {
+                    await ViewModel.UpdateWatchProviderConnectionAsync(vm, new Dictionary<string, object?>
+                    {
+                        ["import_favorites_enabled"] = isOn,
+                        ["export_favorites_enabled"] = isOn,
+                        ["sync_favorite_removals_enabled"] = isOn ? connection.SyncFavoriteRemovalsEnabled : false,
+                    });
+                }));
+            }
+
+            if (connection.Capabilities.RemoveFavorites)
+            {
+                var favoritesEnabled = connection.ImportFavoritesEnabled || connection.ExportFavoritesEnabled;
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_favorite_removals_enabled", "Sync favorite removals", "Remove provider-synced favorites on the other side when explicitly unfavorited.", connection.SyncFavoriteRemovalsEnabled, isEnabled: favoritesEnabled));
+            }
+
+            if (connection.Capabilities.ScrobblePlayback)
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "scrobble_enabled", "Scrobble playback", "Report starts, pauses, resumes, and stops live during playback.", connection.ScrobbleEnabled));
+
+            outer.Children.Add(toggles);
+        }
+
+        card.Child = outer;
+        return card;
+    }
+
+    private Border BuildWatchProviderAuthPanel(WatchProviderCardViewModel vm)
+    {
+        var session = vm.AuthSession!;
+        var panel = new Border
+        {
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(16),
+            BorderBrush = (Brush)Application.Current.Resources["AccentBrush"],
+            BorderThickness = new Thickness(1),
+            Opacity = 0.95,
+        };
+
+        var stack = new StackPanel { Spacing = 12 };
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Copy this code first",
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = $"{vm.DisplayName} will ask for it after the activation page opens.",
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        var codeRow = new Grid { ColumnSpacing = 8 };
+        codeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        codeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var codeBox = new Border
+        {
+            Background = (Brush)Application.Current.Resources["AppBackgroundBrush"],
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(14, 8, 14, 8),
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            Child = new TextBlock
+            {
+                Text = session.UserCode,
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 18,
+                FontWeight = FontWeights.SemiBold,
+                CharacterSpacing = 180,
+                Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+                HorizontalAlignment = HorizontalAlignment.Center,
+            },
+        };
+        codeRow.Children.Add(codeBox);
+
+        var copy = new Button
+        {
+            Content = "Copy code",
+            Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
+            Padding = new Thickness(12, 8, 12, 8),
+            FontSize = 13,
+        };
+        copy.Click += (_, _) =>
+        {
+            var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+            package.SetText(session.UserCode);
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+        };
+        Grid.SetColumn(copy, 1);
+        codeRow.Children.Add(copy);
+        stack.Children.Add(codeRow);
+
+        var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var open = new Button
+        {
+            Content = $"Open {vm.DisplayName} activation",
+            Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
+            Padding = new Thickness(12, 8, 12, 8),
+            FontSize = 13,
+            IsEnabled = !string.IsNullOrWhiteSpace(session.VerificationUrl),
+        };
+        open.Click += (_, _) =>
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(session.VerificationUrl) { UseShellExecute = true });
+            }
+            catch { }
+        };
+        actionRow.Children.Add(open);
+
+        var poll = new Button
+        {
+            Content = "I've entered it",
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+            Padding = new Thickness(12, 8, 12, 8),
+            FontSize = 13,
+            IsEnabled = !vm.IsBusy,
+        };
+        poll.Click += async (_, _) =>
+        {
+            await ViewModel.PollWatchProviderAuthAsync(vm);
+            RebuildWatchProviderCards();
+        };
+        actionRow.Children.Add(poll);
+        stack.Children.Add(actionRow);
+
+        panel.Child = stack;
+        return panel;
+    }
+
+    private Border BuildWatchProviderApiKeyPanel(WatchProviderCardViewModel vm)
+    {
+        var panel = new Border
+        {
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(16),
+            BorderBrush = (Brush)Application.Current.Resources["AccentBrush"],
+            BorderThickness = new Thickness(1),
+            Opacity = 0.95,
+        };
+
+        var stack = new StackPanel { Spacing = 12 };
+        stack.Children.Add(new TextBlock
+        {
+            Text = $"Paste your {vm.DisplayName} API key",
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = $"Find it under your account settings on the {vm.DisplayName} site.",
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        var row = new Grid { ColumnSpacing = 8 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var keyBox = new PasswordBox
+        {
+            PlaceholderText = "API key",
+            Password = vm.ApiKey,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 13,
+            CornerRadius = new CornerRadius(8),
+            MinWidth = 260,
+        };
+        keyBox.PasswordChanged += (_, _) => vm.ApiKey = keyBox.Password;
+        row.Children.Add(keyBox);
+
+        var connect = new Button
+        {
+            Content = vm.IsBusy ? "Connecting..." : "Connect",
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+            Padding = new Thickness(12, 8, 12, 8),
+            FontSize = 13,
+            IsEnabled = !vm.IsBusy,
+        };
+        connect.Click += async (_, _) =>
+        {
+            vm.ApiKey = keyBox.Password;
+            await ViewModel.ConnectWatchProviderApiKeyAsync(vm);
+            RebuildWatchProviderCards();
+        };
+        Grid.SetColumn(connect, 1);
+        row.Children.Add(connect);
+
+        stack.Children.Add(row);
+        panel.Child = stack;
+        return panel;
+    }
+
+    private Border BuildWatchProviderStats(WatchProviderConnection connection, WatchProviderSyncRun? latestRun)
+    {
+        var shell = new Border
+        {
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(12),
+        };
+        var grid = new Grid { ColumnSpacing = 16 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        AddWatchProviderStat(grid, 0, "Last sync", FormatWatchProviderLastSync(connection, latestRun));
+        AddWatchProviderStat(grid, 1, "Watched", $"{latestRun?.InboundWatchedImported ?? 0:N0} imported");
+        AddWatchProviderStat(grid, 2, "Progress", $"{latestRun?.InboundProgressImported ?? 0:N0} resumed");
+        AddWatchProviderStat(grid, 3, "Exported", $"{((latestRun?.OutboundSent ?? 0) + (latestRun?.OutboundFavoritesSent ?? 0)):N0} sent");
+        shell.Child = grid;
+        return shell;
+    }
+
+    private static void AddWatchProviderStat(Grid grid, int column, string label, string value)
+    {
+        var stack = new StackPanel { Spacing = 2 };
+        stack.Children.Add(new TextBlock
+        {
+            Text = label.ToUpperInvariant(),
+            FontSize = 10,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = value,
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        Grid.SetColumn(stack, column);
+        grid.Children.Add(stack);
+    }
+
+    private Grid BuildWatchProviderToggle(
+        WatchProviderCardViewModel vm,
+        string field,
+        string label,
+        string description,
+        bool isChecked,
+        Func<bool, Task>? customSave = null,
+        bool isEnabled = true)
+    {
+        var row = new Grid { ColumnSpacing = 16, Padding = new Thickness(0, 5, 0, 5) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var text = new StackPanel { Spacing = 2 };
+        text.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+        text.Children.Add(new TextBlock
+        {
+            Text = description,
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+        row.Children.Add(text);
+
+        var toggle = new ToggleSwitch
+        {
+            IsOn = isChecked,
+            OnContent = "",
+            OffContent = "",
+            MinWidth = 64,
+            IsEnabled = isEnabled && !vm.IsBusy,
+        };
+        toggle.Toggled += async (_, _) =>
+        {
+            if (customSave != null)
+                await customSave(toggle.IsOn);
+            else
+                await ViewModel.UpdateWatchProviderConnectionAsync(vm, field, toggle.IsOn);
+
+            RebuildWatchProviderCards();
+        };
+        Grid.SetColumn(toggle, 1);
+        row.Children.Add(toggle);
+        return row;
+    }
+
+    private Border BuildWatchProviderStatusPill(string text, string kind)
+    {
+        var color = kind switch
+        {
+            "connected" => Windows.UI.Color.FromArgb(0xFF, 52, 211, 153),
+            "pending" => Windows.UI.Color.FromArgb(0xFF, 251, 191, 36),
+            "error" => Windows.UI.Color.FromArgb(0xFF, 248, 113, 113),
+            _ => Windows.UI.Color.FromArgb(0xFF, 148, 163, 184),
+        };
+
+        return new Border
+        {
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(9, 3, 9, 3),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x26, color.R, color.G, color.B)),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x40, color.R, color.G, color.B)),
+            BorderThickness = new Thickness(1),
+            Child = new TextBlock
+            {
+                Text = text,
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(color),
+            },
+        };
+    }
+
+    private static bool IsWatchProviderRunActive(WatchProviderSyncRun? run)
+        => run?.Status == "queued" || run?.Status == "running";
+
+    private static string GetWatchProviderSubtitle(WatchProviderCardViewModel vm)
+    {
+        if (vm.AuthSession != null && !vm.Connected)
+            return "Waiting for you to enter the activation code.";
+
+        if (vm.ApiKeyPromptVisible && vm.UsesApiKey && !vm.Connected)
+            return $"Paste your {vm.DisplayName} API key to finish connecting.";
+
+        var connection = vm.Connection;
+        if (connection?.Connected == true)
+        {
+            var username = string.IsNullOrWhiteSpace(connection.ProviderUsername) ? vm.DisplayName : connection.ProviderUsername;
+            return $"{username} · {FormatWatchProviderLastSync(connection, vm.LatestRun)}";
+        }
+
+        if (connection?.CredentialsConfigured == false)
+            return "Server credentials required.";
+
+        if (vm.UsesApiKey)
+            return $"Connect with your {vm.DisplayName} API key to import watch history and scrobble playback.";
+
+        return "Connect to start importing watch history and scrobbling playback.";
+    }
+
+    private static string FormatWatchProviderLastSync(WatchProviderConnection connection, WatchProviderSyncRun? latestRun)
+    {
+        var candidates = new[]
+        {
+            latestRun?.CompletedAt,
+            connection.LastInboundSyncAt,
+            connection.LastProgressSyncAt,
+            connection.LastOutboundSyncAt,
+            connection.LastFavoritesSyncAt,
+        };
+
+        var newest = candidates
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => DateTimeOffset.TryParse(value, out var parsed) ? parsed : (DateTimeOffset?)null)
+            .Where(value => value.HasValue)
+            .Select(value => value!.Value)
+            .OrderByDescending(value => value)
+            .FirstOrDefault();
+
+        return newest == default ? "Never synced" : $"Synced {FormatWatchProviderRelativeTime(newest)}";
+    }
+
+    private static string FormatWatchProviderRelativeTime(DateTimeOffset timestamp)
+    {
+        var seconds = Math.Max(0, (int)(DateTimeOffset.Now - timestamp.ToLocalTime()).TotalSeconds);
+        if (seconds < 60) return "just now";
+        var minutes = seconds / 60;
+        if (minutes < 60) return $"{minutes}m ago";
+        var hours = minutes / 60;
+        if (hours < 24) return $"{hours}h ago";
+        return $"{hours / 24}d ago";
     }
 
     // ===== Webhook Sync Tab =====

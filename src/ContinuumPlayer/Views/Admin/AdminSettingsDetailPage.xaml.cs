@@ -1013,7 +1013,14 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void BuildIntegrationsTab()
     {
-        AddTabHeader("Integrations", "Subtitle providers");
+        AddTabHeader("Integrations", "Subtitle providers and list discovery");
+
+        AddSectionHeader("MDBList");
+        var mdblistCard = BeginCard();
+        AddTextBlock(mdblistCard,
+            "Enables list search and browse when users add MDBList collections. Importing a list by URL works without a key; discovery requires one.");
+        AddPasswordField(mdblistCard, "API Key", "mdblist.api_key", "Leave blank to keep the current value.");
+        EndCard(mdblistCard);
 
         AddSectionHeader("Subtitle Providers");
         var card = BeginCard();

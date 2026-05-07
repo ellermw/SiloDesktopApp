@@ -18,6 +18,7 @@ public sealed partial class MainWindow : Window
     private readonly CredentialStore _credentialStore;
     private readonly AuthService _authService;
     private readonly ContinuumApiClient _apiClient;
+    private readonly SettingsApi _settingsApi;
     private readonly PlayerService _playerService;
 
     public MainWindow()
@@ -46,6 +47,7 @@ public sealed partial class MainWindow : Window
         _credentialStore = App.Services.GetRequiredService<CredentialStore>();
         _authService = App.Services.GetRequiredService<AuthService>();
         _apiClient = App.Services.GetRequiredService<ContinuumApiClient>();
+        _settingsApi = App.Services.GetRequiredService<SettingsApi>();
 
         _navigationService.Frame = ContentFrame;
 
@@ -145,11 +147,13 @@ public sealed partial class MainWindow : Window
 
     private DispatcherTimer? _playingNextTimer;
     private int _playingNextRemaining;
+    private bool _playingNextAutoPlay = true;
     private const int PlayingNextCountdownSeconds = 10;
+    private const string AutoPlayNextSettingKey = "playback.auto_play_next";
 
     private void OnShowPlayingNextRequested()
     {
-        DispatcherQueue.TryEnqueue(() =>
+        DispatcherQueue.TryEnqueue(async () =>
         {
             var title = _playerService.NextEpisodeTitle ?? "Next episode";
             var series = _playerService.NextEpisodeSeriesTitle;
@@ -161,23 +165,26 @@ public sealed partial class MainWindow : Window
             PlayingNextOverviewText.Text = overview;
             PlayingNextOverviewText.Visibility = string.IsNullOrEmpty(overview) ? Visibility.Collapsed : Visibility.Visible;
             PlayingNextPoster.Source = null;
+            PlayingNextBackdrop.Source = null;
             _ = LoadPlayingNextPosterAsync();
 
+            _playingNextAutoPlay = await GetPlayingNextAutoPlayAsync();
             _playingNextRemaining = PlayingNextCountdownSeconds;
-            PlayingNextPlayNowText.Text = $"Play next in {_playingNextRemaining}";
+            PlayingNextCountdownText.Text = _playingNextRemaining.ToString();
+            PlayingNextPlayNowText.Text = "Play Now";
+            UpdatePlayingNextAutoPlayVisuals();
             PlayingNextOverlay.Visibility = Visibility.Visible;
 
-            // Postroll mini-player (webui parity): minimize the player so the
-            // mpv popup repositions to the mini bar and credits keep playing
-            // visibly while the Up Next card floats above. The overlay is now
-            // a bottom-centered card (not full-screen) so both surfaces are
-            // visible simultaneously.
+            // Post-roll starts only after mpv reports true media end. Move the
+            // finished player to the mini bar while the Up Next card owns the
+            // countdown, matching the user's "after playback ends" contract.
             if (_playerService.State == PlayerState.Expanded || _playerService.State == PlayerState.Fullscreen)
             {
                 _playerService.Minimize();
             }
 
-            StartPlayingNextCountdown();
+            if (_playingNextAutoPlay)
+                StartPlayingNextCountdown();
         });
     }
 
@@ -217,7 +224,52 @@ public sealed partial class MainWindow : Window
             }
             return;
         }
-        PlayingNextPlayNowText.Text = $"Play next in {_playingNextRemaining}";
+        PlayingNextCountdownText.Text = _playingNextRemaining.ToString();
+    }
+
+    private async Task<bool> GetPlayingNextAutoPlayAsync()
+    {
+        try
+        {
+            var response = await _settingsApi.GetEffectiveSettingsAsync([AutoPlayNextSettingKey]);
+            var entry = response.Settings.FirstOrDefault(setting => setting.Key == AutoPlayNextSettingKey);
+            return !string.Equals(entry?.EffectiveValue, "false", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine("state_trace.txt", $"GetPlayingNextAutoPlayAsync failed: {ex.Message}");
+            return true;
+        }
+    }
+
+    private async void PlayingNextAutoplayToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _playingNextAutoPlay = !_playingNextAutoPlay;
+        UpdatePlayingNextAutoPlayVisuals();
+
+        try
+        {
+            await _settingsApi.PutDeviceSettingAsync(AutoPlayNextSettingKey, _playingNextAutoPlay ? "true" : "false");
+        }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine("state_trace.txt", $"PutDeviceSettingAsync playback.auto_play_next failed: {ex.Message}");
+        }
+
+        StopPlayingNextCountdown();
+        _playingNextRemaining = PlayingNextCountdownSeconds;
+        PlayingNextCountdownText.Text = _playingNextRemaining.ToString();
+
+        if (_playingNextAutoPlay && PlayingNextOverlay.Visibility == Visibility.Visible)
+            StartPlayingNextCountdown();
+    }
+
+    private void UpdatePlayingNextAutoPlayVisuals()
+    {
+        PlayingNextCountdownPanel.Visibility = _playingNextAutoPlay ? Visibility.Visible : Visibility.Collapsed;
+        PlayingNextAutoplayToggleText.Text = _playingNextAutoPlay
+            ? "Auto-play is on"
+            : "Auto-play is off";
     }
 
     private async void PlayingNextPlayNow_Click(object sender, RoutedEventArgs e)
@@ -255,6 +307,7 @@ public sealed partial class MainWindow : Window
             using var stream = new MemoryStream(bytes);
             await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
             PlayingNextPoster.Source = bitmap;
+            PlayingNextBackdrop.Source = bitmap;
         }
         catch { /* Poster is cosmetic */ }
     }

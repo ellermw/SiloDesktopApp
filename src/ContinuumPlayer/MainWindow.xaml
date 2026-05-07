@@ -352,6 +352,7 @@
         <!-- Layer 3: Mini player bar (bottom-docked, initially hidden) -->
         <controls:MiniPlayerBar x:Name="MiniPlayerBarControl"
                                  Visibility="Collapsed"
+                                 Canvas.ZIndex="60"
                                  VerticalAlignment="Bottom" />
 
         <!-- Layer 4: Playing Next cinematic overlay — shown when an episode
@@ -360,22 +361,40 @@
              visible regardless of the player chrome state. MainWindow
              subscribes to PlayerService.ShowPlayingNextRequested and flips
              this Grid's visibility + kicks off the countdown timer. -->
-        <!-- Postroll Up Next card — webui parity. Transparent overlay positioned
-             above the mini player bar so the user sees credits/video continue
-             in the mini bar while the Up Next card floats above with countdown. -->
-        <Grid x:Name="PlayingNextOverlay" Visibility="Collapsed" Background="Transparent">
+        <!-- Postroll Up Next card. This is shown only after true media end,
+             then floats above the mini player bar with the countdown. -->
+        <Grid x:Name="PlayingNextOverlay" Visibility="Collapsed" Background="#D9000000" Canvas.ZIndex="50">
             <Grid.RowDefinitions>
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
+            <Image x:Name="PlayingNextBackdrop"
+                   Grid.RowSpan="3"
+                   Stretch="UniformToFill"
+                   Opacity="0.22" />
+            <Border Grid.RowSpan="3" Background="#A8000000" />
+            <Button x:Name="PlayingNextCloseButton"
+                    Grid.RowSpan="3"
+                    Style="{StaticResource GhostButtonStyle}"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    Width="44"
+                    Height="44"
+                    Padding="0"
+                    CornerRadius="22"
+                    Margin="0,22,22,0"
+                    Click="PlayingNextCancel_Click">
+                <FontIcon Glyph="&#xE711;" FontSize="16" />
+            </Button>
+
             <Border Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Bottom"
                     Background="#F0141418" BorderBrush="#33FFFFFF" BorderThickness="1"
                     CornerRadius="14" Padding="28,22,28,22"
                     MaxWidth="760" Margin="0,0,0,148">
             <StackPanel Spacing="18">
-                <TextBlock Text="UP NEXT" FontSize="12" FontWeight="SemiBold"
+                <TextBlock Text="PLAYING NEXT" FontSize="12" FontWeight="SemiBold"
                            CharacterSpacing="200" Foreground="#78AEFC"
                            HorizontalAlignment="Center" />
 
@@ -402,7 +421,32 @@
                     </StackPanel>
                 </Grid>
 
-                <StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <StackPanel x:Name="PlayingNextCountdownPanel" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <Grid Width="54" Height="54">
+                            <Border CornerRadius="27"
+                                    BorderBrush="#78AEFC"
+                                    BorderThickness="2"
+                                    Background="#1A78AEFC" />
+                            <TextBlock x:Name="PlayingNextCountdownText"
+                                       Text="10"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Foreground="White"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+                        <StackPanel VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Text="Auto-play countdown"
+                                       FontSize="12"
+                                       FontWeight="SemiBold"
+                                       Foreground="#E5E7EB" />
+                            <TextBlock Text="Starts the next episode automatically"
+                                       FontSize="11"
+                                       Foreground="#9CA3AF" />
+                        </StackPanel>
+                    </StackPanel>
+
                     <!-- Per-button theme resource overrides so WinUI's
                          PointerOver / Pressed visual states use OUR palette
                          instead of the system accent. F1 theme gap workaround. -->
@@ -433,6 +477,17 @@
                         <TextBlock Text="Cancel" FontSize="14" VerticalAlignment="Center" />
                     </Button>
                 </StackPanel>
+                <Button x:Name="PlayingNextAutoplayToggle"
+                        Click="PlayingNextAutoplayToggle_Click"
+                        Style="{StaticResource GhostButtonStyle}"
+                        HorizontalAlignment="Center"
+                        Padding="12,6"
+                        CornerRadius="14">
+                    <TextBlock x:Name="PlayingNextAutoplayToggleText"
+                               Text="Auto-play is on"
+                               FontSize="12"
+                               Foreground="#9CA3AF" />
+                </Button>
             </StackPanel>
             </Border>
         </Grid>

@@ -81,8 +81,11 @@ public sealed class MpvPlayer : IDisposable
     /// <summary>Fired when a Lua script sends a script-message (Lua -> Host).</summary>
     public event Action<string[]>? ScriptMessageReceived;
 
-    /// <summary>Fired when playback reaches end-of-file or the file ends.</summary>
+    /// <summary>Fired when mpv reports the file has ended.</summary>
     public event Action? PlaybackEnded;
+
+    /// <summary>Fired when mpv's eof-reached property flips true.</summary>
+    public event Action? EofReached;
 
     /// <summary>Fired when a file has been loaded and decoding starts.</summary>
     public event Action? FileLoaded;
@@ -890,10 +893,12 @@ public sealed class MpvPlayer : IDisposable
                 break;
 
             case UD_EOF_REACHED:
-                // MPV_EVENT_END_FILE is the authoritative end signal. With
-                // keep-open=yes, eof-reached is a noisy property transition and
-                // can arrive in addition to END_FILE, causing duplicate
-                // PlaybackEnded handling and repeated recovery attempts.
+                if (prop.Format == MPV_FORMAT_FLAG && prop.Data != IntPtr.Zero)
+                {
+                    int flag = Marshal.PtrToStructure<int>(prop.Data);
+                    if (flag != 0)
+                        EofReached?.Invoke();
+                }
                 break;
 
             case UD_PAUSED_FOR_CACHE:
@@ -991,6 +996,7 @@ public sealed class MpvPlayer : IDisposable
         DurationChanged = null;
         PauseChanged = null;
         PlaybackEnded = null;
+        EofReached = null;
         FileLoaded = null;
         FrameReady = null;
         ScriptMessageReceived = null;

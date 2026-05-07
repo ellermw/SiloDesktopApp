@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ContinuumPlayer.Core.Api;
@@ -28,6 +29,9 @@ public partial class CollectionEditorViewModel : ObservableObject
     private string _name = "";
 
     [ObservableProperty]
+    private string? _description;
+
+    [ObservableProperty]
     private string _collectionType = "manual";
 
     [ObservableProperty]
@@ -50,6 +54,21 @@ public partial class CollectionEditorViewModel : ObservableObject
 
     [ObservableProperty]
     private string? _searchQuery;
+
+    [ObservableProperty]
+    private string? _sourceUrl;
+
+    [ObservableProperty]
+    private string? _maxItemsText;
+
+    [ObservableProperty]
+    private string? _syncSchedule;
+
+    [ObservableProperty]
+    private bool _includeInServerCollections;
+
+    [ObservableProperty]
+    private string? _posterSourceUrl;
 
     // Smart collection rules
     public ObservableCollection<QueryRule> Rules { get; } = [];
@@ -88,8 +107,15 @@ public partial class CollectionEditorViewModel : ObservableObject
             IsEditing = true;
             CollectionId = collection.Id;
             Name = collection.Name;
+            Description = collection.Description;
             CollectionType = collection.CollectionType;
             IsShared = collection.IsShared;
+            SourceUrl = collection.SourceUrl;
+            MaxItemsText = ReadSourceConfigValue(collection.SourceConfig, "max_items")
+                ?? ReadSourceConfigValue(collection.SourceConfig, "limit");
+            SyncSchedule = FormatSyncSchedule(collection.SyncSchedule);
+            IncludeInServerCollections = collection.IncludeInServerCollections;
+            PosterSourceUrl = "";
 
             // Load rules from query definition
             if (collection.QueryDefinition?.Groups?.Count > 0)
@@ -140,12 +166,31 @@ public partial class CollectionEditorViewModel : ObservableObject
                 var request = new UpdateCollectionRequest
                 {
                     Name = Name.Trim(),
+                    Description = string.IsNullOrWhiteSpace(Description) ? null : Description.Trim(),
                     IsShared = IsShared
                 };
 
                 if (CollectionType == "smart" && Rules.Count > 0)
                 {
                     request.QueryDefinition = BuildQueryDefinition();
+                }
+
+                if (IsImportedCollection)
+                {
+                    if (!string.IsNullOrWhiteSpace(MaxItemsText) && !int.TryParse(MaxItemsText, out _))
+                    {
+                        ErrorMessage = "Max items must be a number.";
+                        return;
+                    }
+
+                    if (CollectionType == "mdblist")
+                        request.SourceUrl = string.IsNullOrWhiteSpace(SourceUrl) ? null : SourceUrl.Trim();
+
+                    request.MaxItems = int.TryParse(MaxItemsText, out var maxItems) && maxItems > 0
+                        ? maxItems
+                        : 0;
+                    request.IncludeInServerCollections = IncludeInServerCollections;
+                    request.PosterSourceUrl = string.IsNullOrWhiteSpace(PosterSourceUrl) ? null : PosterSourceUrl.Trim();
                 }
 
                 await _collectionsApi.UpdateCollectionAsync(CollectionId, request);
@@ -155,6 +200,7 @@ public partial class CollectionEditorViewModel : ObservableObject
                 var request = new CreateCollectionRequest
                 {
                     Name = Name.Trim(),
+                    Description = string.IsNullOrWhiteSpace(Description) ? null : Description.Trim(),
                     CollectionType = CollectionType,
                     IsShared = IsShared
                 };
@@ -323,6 +369,44 @@ public partial class CollectionEditorViewModel : ObservableObject
                     Rules = [.. Rules]
                 }
             ]
+        };
+    }
+
+    public bool IsImportedCollection
+        => CollectionType is "mdblist" or "tmdb" or "trakt";
+
+    private static string? ReadSourceConfigValue(Dictionary<string, object>? sourceConfig, string key)
+    {
+        if (sourceConfig == null || !sourceConfig.TryGetValue(key, out var value) || value == null)
+            return null;
+
+        if (value is JsonElement element)
+        {
+            return element.ValueKind switch
+            {
+                JsonValueKind.Number => element.TryGetInt32(out var intValue) ? intValue.ToString() : element.ToString(),
+                JsonValueKind.String => element.GetString(),
+                JsonValueKind.True => bool.TrueString,
+                JsonValueKind.False => bool.FalseString,
+                _ => element.ToString()
+            };
+        }
+
+        return value.ToString();
+    }
+
+    private static string FormatSyncSchedule(string? schedule)
+    {
+        if (string.IsNullOrWhiteSpace(schedule))
+            return "Manual only";
+
+        return schedule.Trim() switch
+        {
+            "daily" => "Daily",
+            "weekly" => "Weekly",
+            "monthly" => "Monthly",
+            "none" => "Manual only",
+            var raw => raw
         };
     }
 }

@@ -8,6 +8,7 @@ public class ServerEntry
 public class AppSettings
 {
     public List<ServerEntry> Servers { get; set; } = [];
+    public string? DeviceId { get; set; }
     public string? LastProfileId { get; set; }
     public string? LastTheme { get; set; }
     public List<int> HiddenLibraryIds { get; set; } = [];

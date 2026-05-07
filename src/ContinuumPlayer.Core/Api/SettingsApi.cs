@@ -16,6 +16,22 @@ public class SettingEntry
     public string Value { get; set; } = "";
 }
 
+public class EffectiveSettingsResponse
+{
+    public List<EffectiveSettingEntry> Settings { get; set; } = [];
+}
+
+public class EffectiveSettingEntry
+{
+    public string Key { get; set; } = "";
+    public string EffectiveValue { get; set; } = "";
+    public string Source { get; set; } = "";
+    public bool HasDeviceOverride { get; set; }
+    public string? DeviceId { get; set; }
+    public string? DeviceName { get; set; }
+    public string? DevicePlatform { get; set; }
+}
+
 public class OverlayConfigResponse
 {
     /// <summary>Server-wide kill switch. When false, no overlays render for any user.</summary>
@@ -36,6 +52,18 @@ public class SettingsApi(ContinuumApiClient client)
     public Task PutSettingAsync(string key, string value, CancellationToken ct = default)
         => client.PutNoContentAsync($"/api/v1/settings/{Uri.EscapeDataString(key)}",
             // Use dictionary body to survive .NET 8 Release trimming (feedback_build_release).
+            new Dictionary<string, object?> { ["value"] = value }, ct);
+
+    public Task<EffectiveSettingsResponse> GetEffectiveSettingsAsync(IEnumerable<string> keys, CancellationToken ct = default)
+    {
+        var joinedKeys = string.Join(",", keys.Where(key => !string.IsNullOrWhiteSpace(key)).Distinct());
+        return client.GetAsync<EffectiveSettingsResponse>(
+            $"/api/v1/settings/effective?keys={Uri.EscapeDataString(joinedKeys)}",
+            ct);
+    }
+
+    public Task PutDeviceSettingAsync(string key, string value, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/settings/device/{Uri.EscapeDataString(key)}",
             new Dictionary<string, object?> { ["value"] = value }, ct);
 
     /// <summary>

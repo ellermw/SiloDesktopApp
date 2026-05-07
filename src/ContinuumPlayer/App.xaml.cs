@@ -134,6 +134,16 @@ public partial class App : Application
             // Pre-set base URL from saved server if available
             var settingsService = sp.GetRequiredService<SettingsService>();
             var settings = settingsService.Load();
+            if (string.IsNullOrWhiteSpace(settings.DeviceId))
+            {
+                settings.DeviceId = $"continuum-desktop-{Guid.NewGuid():N}";
+                settingsService.Save(settings);
+            }
+            client.SetDeviceMetadata(
+                settings.DeviceId,
+                Environment.MachineName,
+                "windows");
+
             if (settings.Servers.Count > 0)
             {
                 var serverUrl = settings.Servers.OrderByDescending(s => s.LastUsed).First().Url;
@@ -157,6 +167,7 @@ public partial class App : Application
         services.AddSingleton<RecommendationsApi>(sp => new RecommendationsApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddSingleton<ApiKeysApi>(sp => new ApiKeysApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddSingleton<PluginsApi>(sp => new PluginsApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<WatchProvidersApi>(sp => new WatchProvidersApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddTransient<PlaybackManager>();
 
         // Auth service

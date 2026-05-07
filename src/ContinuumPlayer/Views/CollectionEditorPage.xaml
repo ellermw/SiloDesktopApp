@@ -141,6 +141,25 @@
                                 HorizontalAlignment="Left" />
                         </StackPanel>
 
+                        <!-- Description -->
+                        <StackPanel Spacing="6">
+                            <TextBlock
+                                Text="Description"
+                                FontSize="13"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBox
+                                x:Name="DescriptionTextBox"
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                PlaceholderText="Optional collection description"
+                                Text="{x:Bind ViewModel.Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                TextWrapping="Wrap"
+                                AcceptsReturn="True"
+                                Height="86"
+                                MaxWidth="500"
+                                HorizontalAlignment="Left" />
+                        </StackPanel>
+
                         <!-- Type selector -->
                         <StackPanel Spacing="6">
                             <TextBlock
@@ -184,6 +203,101 @@
                                 OnContent="Shared with all profiles"
                                 OffContent="Private to your profile" />
                         </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== Imported Source Section (visible for MDBList/TMDB/Trakt) ===== -->
+                <Border
+                    x:Name="ImportedSourceSection"
+                    Style="{StaticResource EditorGroupStyle}"
+                    Visibility="Collapsed">
+                    <StackPanel Spacing="16">
+                        <TextBlock
+                            Text="Imported Source"
+                            FontSize="18"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource PrimaryTextBrush}" />
+
+                        <TextBlock
+                            Text="Imported collections stay connected to their source. Edit the safe sync settings here, or use Sync now from the collection menu."
+                            FontSize="13"
+                            Foreground="{StaticResource TertiaryTextBrush}"
+                            TextWrapping="Wrap" />
+
+                        <StackPanel Spacing="6">
+                            <TextBlock
+                                Text="Source URL"
+                                FontSize="13"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBox
+                                x:Name="SourceUrlTextBox"
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                PlaceholderText="Source URL"
+                                Text="{x:Bind ViewModel.SourceUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                MaxWidth="560"
+                                HorizontalAlignment="Left" />
+                        </StackPanel>
+
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Spacing="6">
+                                <TextBlock
+                                    Text="Max Items"
+                                    FontSize="13"
+                                    FontWeight="SemiBold"
+                                    Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBox
+                                    x:Name="MaxItemsTextBox"
+                                    Style="{StaticResource DarkTextBoxStyle}"
+                                    PlaceholderText="No limit"
+                                    Text="{x:Bind ViewModel.MaxItemsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Spacing="6">
+                                <TextBlock
+                                    Text="Auto Refresh"
+                                    FontSize="13"
+                                    FontWeight="SemiBold"
+                                    Foreground="{StaticResource SecondaryTextBrush}" />
+                                <Border
+                                    Background="{StaticResource SurfaceBrush}"
+                                    CornerRadius="10"
+                                    Padding="12,10"
+                                    MinHeight="40">
+                                    <TextBlock
+                                        x:Name="SyncScheduleTextBlock"
+                                        Text="{x:Bind ViewModel.SyncSchedule, Mode=OneWay}"
+                                        FontSize="13"
+                                        Foreground="{StaticResource SecondaryTextBrush}" />
+                                </Border>
+                            </StackPanel>
+                        </Grid>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock
+                                Text="Poster Source URL"
+                                FontSize="13"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBox
+                                x:Name="PosterSourceUrlTextBox"
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                PlaceholderText="Optional poster image URL"
+                                Text="{x:Bind ViewModel.PosterSourceUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                MaxWidth="560"
+                                HorizontalAlignment="Left" />
+                        </StackPanel>
+
+                        <ToggleSwitch
+                            x:Name="IncludeInServerCollectionsToggle"
+                            IsOn="{x:Bind ViewModel.IncludeInServerCollections, Mode=TwoWay}"
+                            OnContent="Include on server collection surfaces"
+                            OffContent="Hide from server collection surfaces" />
                     </StackPanel>
                 </Border>
 

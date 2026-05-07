@@ -34,6 +34,21 @@ public sealed class AdminSettingsDetailPageSourceTests
         Assert.Contains("Fetch Markers at Playback if Missing", source);
     }
 
+    [Fact]
+    public void IntegrationsSettingsIncludesMdblistApiKey()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "ContinuumPlayer",
+            "Views",
+            "Admin",
+            "AdminSettingsDetailPage.xaml.cs"));
+
+        Assert.Contains("MDBList", source);
+        Assert.Contains("mdblist.api_key", source);
+    }
+
     private static string FindRepositoryRoot()
     {
         var dir = AppContext.BaseDirectory;

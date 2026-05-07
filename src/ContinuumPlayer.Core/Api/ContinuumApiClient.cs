@@ -24,6 +24,9 @@ public class ContinuumApiClient
     private string? _accessToken;
     private string? _profileId;
     private string? _profileToken;
+    private string? _deviceId;
+    private string? _deviceName;
+    private string? _devicePlatform;
     private string _baseUrl = "";
     private Func<CancellationToken, Task<bool>>? _tokenRefresher;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
@@ -44,6 +47,12 @@ public class ContinuumApiClient
     {
         _profileId = profileId;
         _profileToken = profileToken;
+    }
+    public void SetDeviceMetadata(string deviceId, string deviceName, string devicePlatform)
+    {
+        _deviceId = deviceId;
+        _deviceName = deviceName;
+        _devicePlatform = devicePlatform;
     }
     public void ClearAuth()
     {
@@ -212,6 +221,9 @@ public class ContinuumApiClient
         if (_accessToken != null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
         if (_profileId != null) request.Headers.Add("X-Profile-Id", _profileId);
         if (_profileToken != null) request.Headers.Add("X-Profile-Token", _profileToken);
+        if (!string.IsNullOrWhiteSpace(_deviceId)) request.Headers.Add("X-Continuum-Device-Id", _deviceId);
+        if (!string.IsNullOrWhiteSpace(_deviceName)) request.Headers.Add("X-Continuum-Device-Name", _deviceName);
+        if (!string.IsNullOrWhiteSpace(_devicePlatform)) request.Headers.Add("X-Continuum-Device-Platform", _devicePlatform);
     }
 
     // Buffer content before sending so we can replay on 401 retry

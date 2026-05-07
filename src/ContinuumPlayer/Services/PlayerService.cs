@@ -4,6 +4,7 @@ using System.Text.Json;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using ContinuumPlayer.Core.Api;
+using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Models.Playback;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Messaging;
@@ -43,11 +44,8 @@ public class PlayerService : IDisposable
     private readonly PlaybackStallDetector _stallDetector = new(
         bufferingTimeout: TimeSpan.FromSeconds(20),
         silentPlaybackTimeout: TimeSpan.FromSeconds(45));
-    private readonly PlaybackNaturalEndDetector _naturalEndDetector = new(
-        completionDelay: TimeSpan.FromSeconds(4));
     private Timer? _stallWatchdogTimer;
     private long _stallRecoveryLastAttemptMs;
-    private volatile bool _naturalEndDispatched;
     private string _activeQualityTier = "original";
     private HlsProxy? _hlsProxy;
     private DirectStreamProxy? _directStreamProxy;
@@ -60,6 +58,7 @@ public class PlayerService : IDisposable
     private Action<bool>? _mpvPauseHandler;
     private Action<bool>? _mpvBufferingHandler;
     private Action? _mpvFileLoadedHandler;
+    private Action? _mpvEofReachedHandler;
     private Action? _mpvPlaybackEndedHandler;
     private Action<string>? _mpvPlaybackErrorHandler;
     private Action<string>? _mpvErrorHandler;
@@ -627,7 +626,6 @@ public class PlayerService : IDisposable
         _prematureEofRecoveryPosition = 0;
         _prematureEofLastAttemptMs = 0;
         _prematureEofStreak = 0;
-        ResetNaturalEndTracking();
         _playbackCts?.Cancel();
         _playbackCts?.Dispose();
         _playbackCts = new CancellationTokenSource();
@@ -781,7 +779,6 @@ public class PlayerService : IDisposable
     {
         StopPlaybackStallWatchdog();
         _stallDetector.Reset(_mpv?.Position ?? 0, DateTimeOffset.UtcNow);
-        _naturalEndDetector.Reset();
         _stallWatchdogTimer = new Timer(_ => CheckPlaybackStall(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
@@ -790,14 +787,7 @@ public class PlayerService : IDisposable
         _stallWatchdogTimer?.Dispose();
         _stallWatchdogTimer = null;
         _stallDetector.Reset();
-        _naturalEndDetector.Reset();
         _stallRecoveryLastAttemptMs = 0;
-    }
-
-    private void ResetNaturalEndTracking()
-    {
-        _naturalEndDetector.Reset();
-        _naturalEndDispatched = false;
     }
 
     private void CheckPlaybackStall()
@@ -817,22 +807,6 @@ public class PlayerService : IDisposable
                 return;
 
             var now = DateTimeOffset.UtcNow;
-            if (!_naturalEndDispatched)
-            {
-                var naturalEndDecision = _naturalEndDetector.Observe(
-                    mpv.Position,
-                    mpv.Duration,
-                    recoveryInProgress,
-                    now);
-
-                if (naturalEndDecision.ShouldComplete)
-                {
-                    LogToFile("state_trace.txt",
-                        $"Logical natural end detected: reason={naturalEndDecision.Reason} pos={naturalEndDecision.Position:F1} dur={naturalEndDecision.Duration:F1}");
-                    HandleNaturalPlaybackEnded(naturalEndDecision.Reason);
-                    return;
-                }
-            }
 
             var decision = _stallDetector.Observe(
                 mpv.Position,
@@ -1038,10 +1012,10 @@ public class PlayerService : IDisposable
     /// <summary>
     /// Auto-compute the next-episode hint for a series episode that's just
     /// started playing. Runs in the background so it doesn't block
-    /// FileLoaded. If the current item is an episode with a known series +
-    /// season + episode number, fetch the season's episode list and pick
-    /// the next one by number. Set on <see cref="NextEpisodeContentId"/>
-    /// so the end-of-file handler can fire the Playing Next cinematic.
+    /// FileLoaded. Mirrors the WebUI player hook by fetching the current
+    /// season and, when present, the next season so cross-season autoplay
+    /// works. Set on <see cref="NextEpisodeContentId"/> so the end-of-file
+    /// handler can fire the Playing Next cinematic.
     ///
     /// Called from the FileLoaded handler when no caller pre-set a hint.
     /// This makes the Playing Next flow work for playback launched from
@@ -1058,12 +1032,37 @@ public class PlayerService : IDisposable
             if (string.IsNullOrEmpty(wd.SeriesId)) return;
             if (!wd.SeasonNumber.HasValue || !wd.EpisodeNumber.HasValue) return;
 
-            var episodes = await _catalogApi.GetEpisodesAsync(wd.SeriesId, wd.SeasonNumber.Value, ct);
+            var seasonNumbers = new SortedSet<int> { wd.SeasonNumber.Value };
+            try
+            {
+                var seasons = await _catalogApi.GetSeasonsAsync(wd.SeriesId, ct);
+                if (ct.IsCancellationRequested) return;
+                if (seasons.Seasons.Any(s => s.SeasonNumber == wd.SeasonNumber.Value + 1))
+                    seasonNumbers.Add(wd.SeasonNumber.Value + 1);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LogToFile("state_trace.txt", $"AutoDetectNextEpisode: seasons lookup failed: {ex.Message}");
+            }
+
+            var allEpisodes = new List<Episode>();
+            foreach (var seasonNumber in seasonNumbers)
+            {
+                var episodes = await _catalogApi.GetEpisodesAsync(wd.SeriesId, seasonNumber, ct);
+                if (ct.IsCancellationRequested) return;
+                if (episodes.Episodes != null)
+                    allEpisodes.AddRange(episodes.Episodes);
+            }
+
             if (ct.IsCancellationRequested) return;
-            if (episodes.Episodes == null || episodes.Episodes.Count == 0) return;
+            if (allEpisodes.Count == 0) return;
 
             int currentNumber = wd.EpisodeNumber.Value;
-            var next = episodes.Episodes.FirstOrDefault(ep => ep.EpisodeNumber == currentNumber + 1);
+            var next = NextEpisodeResolver.FindNextEpisode(
+                allEpisodes,
+                wd.SeasonNumber.Value,
+                currentNumber,
+                wd.ContentId);
             if (next == null)
             {
                 LogToFile("state_trace.txt", $"AutoDetectNextEpisode: no next episode after S{wd.SeasonNumber} E{currentNumber}");
@@ -1289,47 +1288,91 @@ public class PlayerService : IDisposable
         if (_mpvPauseHandler != null) _mpv.PauseChanged -= _mpvPauseHandler;
         if (_mpvBufferingHandler != null) _mpv.BufferingChanged -= _mpvBufferingHandler;
         if (_mpvFileLoadedHandler != null) _mpv.FileLoaded -= _mpvFileLoadedHandler;
+        if (_mpvEofReachedHandler != null) _mpv.EofReached -= _mpvEofReachedHandler;
         if (_mpvPlaybackEndedHandler != null) _mpv.PlaybackEnded -= _mpvPlaybackEndedHandler;
         if (_mpvPlaybackErrorHandler != null) _mpv.PlaybackError -= _mpvPlaybackErrorHandler;
         if (_mpvErrorHandler != null) _mpv.Error -= _mpvErrorHandler;
         _mpv.ScriptMessageReceived -= OnScriptMessage;
     }
 
-    private void HandleNaturalPlaybackEnded(string trigger)
+    private void HandleMpvEndSignal(string trigger)
     {
-        if (_naturalEndDispatched)
+        LogToFile("state_trace.txt", $"{trigger} fired: _switchingContent={_switchingContent} _qualitySwitchActive={_qualitySwitchActive} _prematureEofRecoveryActive={_prematureEofRecoveryActive} _closing={_closing} nextEpisode={NextEpisodeContentId ?? "none"} State={State} thread={Environment.CurrentManagedThreadId}");
+        if (_switchingContent || _qualitySwitchActive || _prematureEofRecoveryActive)
         {
-            LogToFile("state_trace.txt", $"  -> Natural end already dispatched (trigger={trigger})");
+            LogToFile("state_trace.txt", $"  -> Suppressed {trigger} (switching content)");
             return;
         }
 
-        _naturalEndDispatched = true;
+        if (_closing || State == PlayerState.Idle)
+        {
+            LogToFile("state_trace.txt", $"  -> Suppressed {trigger} (closing or idle)");
+            return;
+        }
+
+        var pos = _mpv?.Position ?? 0;
+        var dur = _mpv?.Duration ?? 0;
+        if (dur > 0 && pos > 10 && !IsAtMediaEnd(pos, dur))
+        {
+            var nowMs = Environment.TickCount64;
+            var sinceLastAttempt = nowMs - _prematureEofLastAttemptMs;
+
+            if (_prematureEofLastAttemptMs > 0 && sinceLastAttempt < 1500)
+            {
+                LogToFile("state_trace.txt", $"  -> Premature {trigger} at pos={pos:F1} - retry in progress ({sinceLastAttempt}ms since last), ignoring");
+                return;
+            }
+
+            _prematureEofStreak = (_prematureEofLastAttemptMs > 0 && sinceLastAttempt < 5000)
+                ? _prematureEofStreak + 1
+                : 1;
+
+            if (_prematureEofStreak >= 3)
+            {
+                LogToFile("state_trace.txt", $"  -> Premature {trigger} stuck at pos={pos:F1} (streak={_prematureEofStreak}). Giving up, closing player.");
+                _prematureEofStreak = 0;
+                _prematureEofLastAttemptMs = 0;
+                ErrorMessage = "Playback stalled and couldn't resume. The stream may be corrupted at this position.";
+                PlaybackEnded?.Invoke();
+                var recoveryDispatcher = App.MainWindowInstance?.DispatcherQueue;
+                if (recoveryDispatcher != null)
+                    recoveryDispatcher.TryEnqueue(() => _ = CloseAsync());
+                else
+                    _ = CloseAsync();
+                return;
+            }
+            else
+            {
+                _prematureEofLastAttemptMs = nowMs;
+                LogToFile("state_trace.txt", $"  -> Premature {trigger} detected (pos={pos:F1} dur={dur:F1}, {(1 - pos / dur) * 100:F0}% remaining, streak={_prematureEofStreak}). Restarting stream...");
+                try
+                {
+                    _ = RecoverInterruptedStreamAsync(pos, trigger);
+                }
+                catch (Exception ex)
+                {
+                    LogToFile("state_trace.txt", $"  -> Premature {trigger} recovery dispatch failed: {ex.Message}");
+                }
+                return;
+            }
+        }
+
         StopPlaybackStallWatchdog();
 
-        // Phase 3b: if the caller set a next-episode hint before playback,
-        // show the Playing Next overlay instead of closing the player.
-        // The overlay will call ContinuePlayingNextAsync or CancelPlayingNext.
-        // Playing Next is intentionally tied to the real/logical end of media.
-        // Credits markers are useful for UI markers/skip affordances, but
-        // auto-detected credits can be wrong by many minutes; they must not
-        // force the video into the mini bar or start the next-episode timer.
         if (!string.IsNullOrEmpty(NextEpisodeContentId))
         {
             if (_playingNextShown)
             {
-                LogToFile("state_trace.txt", $"  -> Next-episode prompt already shown (trigger={trigger})");
+                LogToFile("state_trace.txt", "  -> Next-episode prompt already shown");
                 return;
             }
 
-            LogToFile("state_trace.txt", $"  -> Next-episode prompt requested (trigger={trigger})");
+            LogToFile("state_trace.txt", $"  -> Next-episode prompt requested ({trigger})");
             _playingNextShown = true;
             ShowPlayingNextRequested?.Invoke();
             return;
         }
 
-        // CRITICAL: end-of-media means the session is DONE. We MUST tear
-        // down the mpv/playback-manager state or the next PlayAsync call
-        // will race against stale state and crash.
         LogToFile("state_trace.txt", $"  -> Natural end ({trigger}) - dispatching CloseAsync to UI thread");
         PlaybackEnded?.Invoke();
         var dispatcher = App.MainWindowInstance?.DispatcherQueue;
@@ -1337,6 +1380,15 @@ public class PlayerService : IDisposable
             dispatcher.TryEnqueue(() => _ = CloseAsync());
         else
             _ = CloseAsync();
+    }
+
+    private static bool IsAtMediaEnd(double position, double duration)
+    {
+        if (duration <= 0 || position < 0)
+            return false;
+
+        var tolerance = Math.Clamp(duration * 0.0005, 0.75, 3.0);
+        return position >= duration - tolerance;
     }
 
     private void WireMpvEvents()
@@ -1388,7 +1440,6 @@ public class PlayerService : IDisposable
             _switchingContent = false; // Safe to receive PlaybackEnded now
             _qualitySwitchActive = false;
             _playingNextShown = false;
-            ResetNaturalEndTracking();
             _prematureEofRecoveryActive = false;
             if (!wasPrematureEofRecovery)
             {
@@ -1443,110 +1494,11 @@ public class PlayerService : IDisposable
         };
         _mpv.FileLoaded += _mpvFileLoadedHandler;
 
-        _mpvPlaybackEndedHandler = () =>
-        {
-            LogToFile("state_trace.txt", $"PlaybackEnded fired: _switchingContent={_switchingContent} _qualitySwitchActive={_qualitySwitchActive} _prematureEofRecoveryActive={_prematureEofRecoveryActive} _closing={_closing} nextEpisode={NextEpisodeContentId ?? "none"} State={State} thread={Environment.CurrentManagedThreadId}");
-            if (_switchingContent || _qualitySwitchActive || _prematureEofRecoveryActive)
-            {
-                LogToFile("state_trace.txt", "  → Suppressed (switching content)");
-                return;
-            }
-
-            // Guard against end-file events that fire during CloseAsync
-            // (e.g. _mpv.Stop() inside CloseAsync triggers end-file, or
-            // the player is already torn down to Idle). Without this,
-            // each _mpv.Stop() re-queues CloseAsync which races against
-            // ContinuePlayingNextAsync → PlayAsync.
-            if (_closing || State == PlayerState.Idle)
-            {
-                LogToFile("state_trace.txt", "  → Suppressed (closing or idle)");
-                return;
-            }
-
-            // Premature EOF detection: if mpv says "end of file" but we're
-            // nowhere near the actual end (>5% remaining), the HTTP connection
-            // was dropped by the CDN/server. Instead of closing or seeking in
-            // place, restart the server playback session and reload mpv from
-            // a fresh stream URL at the same timestamp.
-            //
-            // The old Seek+Play recovery could land inside mpv's cached EOF
-            // range, leaving the play button visible but unable to resume.
-            // Keep a loop guard so genuinely stuck files still bail out.
-            var pos = _mpv?.Position ?? 0;
-            var dur = _mpv?.Duration ?? 0;
-            if (dur > 0 && pos > 10 && pos < dur * 0.95)
-            {
-                var nowMs = Environment.TickCount64;
-                var sinceLastAttempt = nowMs - _prematureEofLastAttemptMs;
-
-                if (_prematureEofLastAttemptMs > 0 && sinceLastAttempt < 1500)
-                {
-                    // Previous restart has not had time to settle. Ignore.
-                    LogToFile("state_trace.txt", $"  → Premature EOF at pos={pos:F1} — retry in progress ({sinceLastAttempt}ms since last), ignoring");
-                    return;
-                }
-
-                // New EOF event (or cooldown elapsed). Count against the streak.
-                _prematureEofStreak = (_prematureEofLastAttemptMs > 0 && sinceLastAttempt < 5000)
-                    ? _prematureEofStreak + 1
-                    : 1;
-
-                if (_prematureEofStreak >= 3)
-                {
-                    LogToFile("state_trace.txt", $"  → Premature EOF stuck at pos={pos:F1} (streak={_prematureEofStreak}). Giving up, closing player.");
-                    _prematureEofStreak = 0;
-                    _prematureEofLastAttemptMs = 0;
-                    ErrorMessage = "Playback stalled and couldn't resume. The stream may be corrupted at this position.";
-                    // Fall through to the normal close path below.
-                }
-                else
-                {
-                    _prematureEofLastAttemptMs = nowMs;
-                    LogToFile("state_trace.txt", $"  → Premature EOF detected (pos={pos:F1} dur={dur:F1}, {(1 - pos/dur)*100:F0}% remaining, streak={_prematureEofStreak}). Restarting stream...");
-                    try
-                    {
-                        _ = RecoverInterruptedStreamAsync(pos, "premature-eof");
-                    }
-                    catch (Exception ex)
-                    {
-                        LogToFile("state_trace.txt", $"  → Premature EOF recovery dispatch failed: {ex.Message}");
-                    }
-                    return;
-                }
-            }
-
-            // Phase 3b: if the caller set a next-episode hint before playback,
-            // show the Playing Next overlay instead of closing the player.
-            // The overlay will call ContinuePlayingNextAsync or CancelPlayingNext.
-            // Playing Next is intentionally tied to the real end-of-file.
-            // Credits markers are useful for UI markers/skip affordances, but
-            // auto-detected credits can be wrong by many minutes; they must not
-            // force the video into the mini bar or start the next-episode timer.
-            if (!string.IsNullOrEmpty(NextEpisodeContentId))
-            {
-                if (_playingNextShown)
-                {
-                    LogToFile("state_trace.txt", "  → Next-episode prompt already shown");
-                    return;
-                }
-                LogToFile("state_trace.txt", "  → Next-episode prompt requested (end-of-file)");
-                _playingNextShown = true;
-                ShowPlayingNextRequested?.Invoke();
-                return;
-            }
-
-            // CRITICAL: end-of-file means the session is DONE. We MUST tear
-            // down the mpv/playback-manager state or the next PlayAsync call
-            // will race against stale state and crash.
-            LogToFile("state_trace.txt", "  → Natural end — dispatching CloseAsync to UI thread");
-            PlaybackEnded?.Invoke();
-            var dispatcher = App.MainWindowInstance?.DispatcherQueue;
-            if (dispatcher != null)
-                dispatcher.TryEnqueue(() => _ = CloseAsync());
-            else
-                _ = CloseAsync();
-        };
+        _mpvPlaybackEndedHandler = () => HandleMpvEndSignal("end-file");
         _mpv.PlaybackEnded += _mpvPlaybackEndedHandler;
+
+        _mpvEofReachedHandler = () => HandleMpvEndSignal("eof-reached");
+        _mpv.EofReached += _mpvEofReachedHandler;
 
         _mpvPlaybackErrorHandler = (msg) =>
         {

@@ -192,6 +192,13 @@
                                     <TextBlock Text="Webhook Sync" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
+                            <Button x:Name="WatchProvidersTab" Click="Tab_Click" Tag="WatchProviders"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE823;" FontSize="16" />
+                                    <TextBlock Text="Watch Providers" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
                         </StackPanel>
                         <!-- Account group -->
                         <StackPanel Spacing="2">
@@ -1304,6 +1311,29 @@
                                    FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
+            </StackPanel>
+
+            <!-- ===== Watch Providers Panel ===== -->
+            <StackPanel x:Name="WatchProvidersPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Watch Providers" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Connect external trackers to import watch history, sync progress, and scrobble playback."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+
+                <ProgressRing
+                    IsActive="{x:Bind ViewModel.IsLoadingWatchProviders, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.IsLoadingWatchProviders, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                    HorizontalAlignment="Left"
+                    Width="24" Height="24" />
+
+                <StackPanel x:Name="WatchProvidersCardsPanel" Spacing="12" />
+                <TextBlock x:Name="NoWatchProvidersText"
+                           Text="No watch providers are registered on this server."
+                           FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                           HorizontalAlignment="Center" Padding="0,16"
+                           Visibility="Collapsed" />
             </StackPanel>
 
             <!-- ===== Theme Editor Panel ===== -->

@@ -45,7 +45,7 @@ public sealed class PlaybackStallDetector
     {
         if (duration <= 0 ||
             position <= MinimumRecoverablePositionSeconds ||
-            position >= duration * 0.95 ||
+            IsAtMediaEnd(position, duration) ||
             isRecoveryInProgress)
         {
             Reset(position, now);
@@ -89,5 +89,14 @@ public sealed class PlaybackStallDetector
             return new PlaybackStallDecision(true, "position-stalled", position);
 
         return PlaybackStallDecision.None(position);
+    }
+
+    private static bool IsAtMediaEnd(double position, double duration)
+    {
+        if (duration <= 0 || position < 0)
+            return false;
+
+        var tolerance = Math.Clamp(duration * 0.0005, 0.75, 3.0);
+        return position >= duration - tolerance;
     }
 }

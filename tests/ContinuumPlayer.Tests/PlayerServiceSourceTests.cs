@@ -22,7 +22,7 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
-    public void LogicalEndFallbackUsesNaturalEndPath()
+    public void LogicalNaturalEndDoesNotDrivePlayerExitOrPostroll()
     {
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
@@ -31,12 +31,51 @@ public sealed class PlayerServiceSourceTests
             "Services",
             "PlayerService.cs"));
 
-        Assert.Contains("PlaybackNaturalEndDetector", source);
-        Assert.Contains("Logical natural end detected", source);
-        Assert.Contains("HandleNaturalPlaybackEnded", source);
-        Assert.Contains("HandleNaturalPlaybackEnded(naturalEndDecision.Reason);", source);
+        Assert.DoesNotContain("PlaybackNaturalEndDetector", source);
+        Assert.DoesNotContain("HandleNaturalPlaybackEnded", source);
+        Assert.DoesNotContain("Logical natural end detected", source);
         Assert.Contains("ShowPlayingNextRequested?.Invoke();", source);
         Assert.Contains("PlaybackEnded?.Invoke();", source);
+    }
+
+    [Fact]
+    public void PlayingNextCountdownIsOnlyRequestedFromMpvEndSignal()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "ContinuumPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        var methodStart = source.IndexOf("private void HandleMpvEndSignal", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private void WireMpvEvents", StringComparison.Ordinal);
+        Assert.True(methodStart >= 0);
+        Assert.True(methodEnd > methodStart);
+
+        var method = source[methodStart..methodEnd];
+        Assert.Contains("ShowPlayingNextRequested?.Invoke();", method);
+        Assert.Contains("IsAtMediaEnd(pos, dur)", method);
+        Assert.DoesNotContain("dur * 0.95", method);
+    }
+
+    [Fact]
+    public void MpvEofReachedFeedsPrematureStreamRecoveryPath()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "ContinuumPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        Assert.Contains("private Action? _mpvEofReachedHandler;", source);
+        Assert.Contains("_mpv.EofReached += _mpvEofReachedHandler;", source);
+        Assert.Contains("_mpv.EofReached -= _mpvEofReachedHandler;", source);
+        Assert.Contains("HandleMpvEndSignal(\"eof-reached\")", source);
+        Assert.Contains("HandleMpvEndSignal(\"end-file\")", source);
+        Assert.Contains("RecoverInterruptedStreamAsync(pos, trigger)", source);
+        Assert.DoesNotContain("_mpvPlaybackEndedHandler?.Invoke();", source);
     }
 
     [Fact]

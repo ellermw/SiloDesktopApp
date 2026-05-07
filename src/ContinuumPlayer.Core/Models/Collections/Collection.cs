@@ -6,11 +6,23 @@ public class Collection
     public string ProfileId { get; set; } = "";
     public string CreatorProfileId { get; set; } = "";
     public string Name { get; set; } = "";
+    public string? Description { get; set; }
     public string CollectionType { get; set; } = "manual";
     public bool IsShared { get; set; }
     public List<string> AllowedProfileIds { get; set; } = [];
     public QueryDefinition? QueryDefinition { get; set; }
     public Dictionary<string, object>? SortConfig { get; set; }
+    public string? SourceUrl { get; set; }
+    public Dictionary<string, object>? SourceConfig { get; set; }
+    public string? SyncSchedule { get; set; }
+    public string? NextSyncAt { get; set; }
+    public string? LastSyncAt { get; set; }
+    public string? LastSyncStatus { get; set; }
+    public string? LastSyncMessage { get; set; }
+    public int ItemCount { get; set; }
+    public bool IncludeInServerCollections { get; set; }
+    public string? PosterUrl { get; set; }
+    public string? PosterThumbhash { get; set; }
     public string CreatedAt { get; set; } = "";
     public string UpdatedAt { get; set; } = "";
 }

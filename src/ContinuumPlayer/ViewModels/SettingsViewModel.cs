@@ -8,6 +8,7 @@ using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Models.HistoryImport;
 using ContinuumPlayer.Core.Models.Home;
 using ContinuumPlayer.Core.Models.Plugins;
+using ContinuumPlayer.Core.Models.WatchProviders;
 using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Services;
 
@@ -215,12 +216,68 @@ public partial class LibraryCardViewModel : ObservableObject
     }
 }
 
+public partial class WatchProviderCardViewModel : ObservableObject
+{
+    private readonly WatchProviderSummary _summary;
+
+    public WatchProviderCardViewModel(WatchProviderSummary summary)
+    {
+        _summary = summary;
+        ProviderKey = summary.Key;
+    }
+
+    public string ProviderKey { get; }
+
+    public string DisplayName =>
+        Connection?.DisplayName
+        ?? (!string.IsNullOrWhiteSpace(_summary.DisplayName) ? _summary.DisplayName : ProviderKey);
+
+    public WatchProviderCapabilities Capabilities => Connection?.Capabilities ?? _summary.Capabilities;
+    public bool Connected => Connection?.Connected == true;
+    public bool CredentialsConfigured => Connection?.CredentialsConfigured == true;
+    public string AuthMethod => Connection?.AuthMethod ?? WatchProviderAuthMethod.DeviceCode;
+    public bool UsesApiKey => string.Equals(AuthMethod, WatchProviderAuthMethod.ApiKey, StringComparison.OrdinalIgnoreCase);
+
+    [ObservableProperty]
+    private WatchProviderConnection? _connection;
+
+    [ObservableProperty]
+    private WatchProviderSyncRun? _latestRun;
+
+    [ObservableProperty]
+    private WatchProviderDeviceAuthSession? _authSession;
+
+    [ObservableProperty]
+    private bool _apiKeyPromptVisible;
+
+    [ObservableProperty]
+    private string _apiKey = "";
+
+    [ObservableProperty]
+    private bool _isBusy;
+
+    partial void OnConnectionChanged(WatchProviderConnection? value) => NotifyDerivedChanged();
+    partial void OnAuthSessionChanged(WatchProviderDeviceAuthSession? value) => NotifyDerivedChanged();
+    partial void OnApiKeyPromptVisibleChanged(bool value) => NotifyDerivedChanged();
+
+    private void NotifyDerivedChanged()
+    {
+        OnPropertyChanged(nameof(DisplayName));
+        OnPropertyChanged(nameof(Capabilities));
+        OnPropertyChanged(nameof(Connected));
+        OnPropertyChanged(nameof(CredentialsConfigured));
+        OnPropertyChanged(nameof(AuthMethod));
+        OnPropertyChanged(nameof(UsesApiKey));
+    }
+}
+
 public partial class SettingsViewModel : ObservableObject
 {
     private readonly SettingsApi _settingsApi;
     private readonly CatalogApi _catalogApi;
     private readonly AuthApi _authApi;
     private readonly HistoryImportApi _historyImportApi;
+    private readonly WatchProvidersApi _watchProvidersApi;
     private readonly AuthService _authService;
     private readonly ThemeService _themeService;
     private readonly SettingsService _settingsService;
@@ -228,13 +285,14 @@ public partial class SettingsViewModel : ObservableObject
     private bool _suppressSave;
 
     public SettingsViewModel(SettingsApi settingsApi, CatalogApi catalogApi, AuthApi authApi,
-        HistoryImportApi historyImportApi,
+        HistoryImportApi historyImportApi, WatchProvidersApi watchProvidersApi,
         AuthService authService, ThemeService themeService, SettingsService settingsService)
     {
         _settingsApi = settingsApi;
         _catalogApi = catalogApi;
         _authApi = authApi;
         _historyImportApi = historyImportApi;
+        _watchProvidersApi = watchProvidersApi;
         _authService = authService;
         _themeService = themeService;
         _settingsService = settingsService;
@@ -558,6 +616,237 @@ public partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             ErrorMessage = $"Failed to revoke session: {ex.Message}";
+        }
+    }
+
+    // ===== Watch Providers =====
+
+    public ObservableCollection<WatchProviderCardViewModel> WatchProviderCards { get; } = [];
+
+    [ObservableProperty]
+    private bool _isLoadingWatchProviders;
+
+    public async Task LoadWatchProvidersAsync()
+    {
+        if (IsLoadingWatchProviders) return;
+        IsLoadingWatchProviders = true;
+        ErrorMessage = null;
+
+        try
+        {
+            var providers = await _watchProvidersApi.GetProvidersAsync();
+            WatchProviderCards.Clear();
+
+            foreach (var provider in providers.Providers)
+            {
+                var card = new WatchProviderCardViewModel(provider);
+                WatchProviderCards.Add(card);
+                await LoadWatchProviderCardStateAsync(card);
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load watch providers: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingWatchProviders = false;
+        }
+    }
+
+    private async Task LoadWatchProviderCardStateAsync(WatchProviderCardViewModel card)
+    {
+        card.IsBusy = true;
+        try
+        {
+            card.Connection = await _watchProvidersApi.GetConnectionAsync(card.ProviderKey);
+            card.AuthSession = null;
+            card.LatestRun = null;
+
+            if (card.Connection.Connected)
+            {
+                try
+                {
+                    var runs = await _watchProvidersApi.GetSyncRunsAsync(card.ProviderKey);
+                    card.LatestRun = runs.Runs.FirstOrDefault();
+                }
+                catch
+                {
+                    // Sync history is nice-to-have; the card remains usable.
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load {card.DisplayName}: {ex.Message}";
+        }
+        finally
+        {
+            card.IsBusy = false;
+        }
+    }
+
+    public async Task StartWatchProviderAuthAsync(WatchProviderCardViewModel card)
+    {
+        if (card.IsBusy) return;
+        if (card.UsesApiKey)
+        {
+            card.ApiKeyPromptVisible = true;
+            return;
+        }
+
+        card.IsBusy = true;
+        ErrorMessage = null;
+
+        try
+        {
+            card.AuthSession = await _watchProvidersApi.StartDeviceAuthAsync(card.ProviderKey);
+            ShowStatus($"{card.DisplayName} activation started");
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to start {card.DisplayName} activation: {ex.Message}";
+        }
+        finally
+        {
+            card.IsBusy = false;
+        }
+    }
+
+    public async Task ConnectWatchProviderApiKeyAsync(WatchProviderCardViewModel card)
+    {
+        if (card.IsBusy) return;
+        var apiKey = card.ApiKey.Trim();
+        if (apiKey.Length == 0)
+        {
+            ErrorMessage = $"{card.DisplayName} API key is required.";
+            return;
+        }
+
+        card.IsBusy = true;
+        ErrorMessage = null;
+
+        try
+        {
+            card.Connection = await _watchProvidersApi.ConnectApiKeyAsync(card.ProviderKey, apiKey);
+            card.ApiKey = "";
+            card.ApiKeyPromptVisible = false;
+            await LoadWatchProviderRunsAsync(card);
+            ShowStatus($"{card.DisplayName} connected");
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to connect {card.DisplayName}: {ex.Message}";
+        }
+        finally
+        {
+            card.IsBusy = false;
+        }
+    }
+
+    public async Task PollWatchProviderAuthAsync(WatchProviderCardViewModel card)
+    {
+        if (card.IsBusy || card.AuthSession == null) return;
+        card.IsBusy = true;
+        ErrorMessage = null;
+
+        try
+        {
+            card.Connection = await _watchProvidersApi.PollDeviceAuthAsync(card.ProviderKey, card.AuthSession.Id);
+            card.AuthSession = null;
+            await LoadWatchProviderRunsAsync(card);
+            ShowStatus($"{card.DisplayName} connected");
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to finish {card.DisplayName} activation: {ex.Message}";
+        }
+        finally
+        {
+            card.IsBusy = false;
+        }
+    }
+
+    public Task UpdateWatchProviderConnectionAsync(WatchProviderCardViewModel card, string field, bool value)
+        => UpdateWatchProviderConnectionAsync(card, new Dictionary<string, object?> { [field] = value });
+
+    public async Task UpdateWatchProviderConnectionAsync(WatchProviderCardViewModel card, IDictionary<string, object?> updates)
+    {
+        if (card.IsBusy) return;
+        card.IsBusy = true;
+        ErrorMessage = null;
+
+        try
+        {
+            card.Connection = await _watchProvidersApi.UpdateConnectionAsync(card.ProviderKey, updates);
+            ShowStatus($"{card.DisplayName} saved");
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to save {card.DisplayName}: {ex.Message}";
+            await LoadWatchProviderCardStateAsync(card);
+        }
+        finally
+        {
+            card.IsBusy = false;
+        }
+    }
+
+    public async Task TriggerWatchProviderSyncAsync(WatchProviderCardViewModel card)
+    {
+        if (card.IsBusy) return;
+        card.IsBusy = true;
+        ErrorMessage = null;
+
+        try
+        {
+            var response = await _watchProvidersApi.TriggerSyncAsync(card.ProviderKey);
+            card.LatestRun = response.Run;
+            await LoadWatchProviderCardStateAsync(card);
+            ShowStatus($"{card.DisplayName} sync started");
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to sync {card.DisplayName}: {ex.Message}";
+        }
+        finally
+        {
+            card.IsBusy = false;
+        }
+    }
+
+    public async Task DeleteWatchProviderConnectionAsync(WatchProviderCardViewModel card)
+    {
+        if (card.IsBusy) return;
+        card.IsBusy = true;
+        ErrorMessage = null;
+
+        try
+        {
+            await _watchProvidersApi.DeleteConnectionAsync(card.ProviderKey);
+            await LoadWatchProviderCardStateAsync(card);
+            ShowStatus($"{card.DisplayName} disconnected");
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to disconnect {card.DisplayName}: {ex.Message}";
+        }
+        finally
+        {
+            card.IsBusy = false;
+        }
+    }
+
+    private async Task LoadWatchProviderRunsAsync(WatchProviderCardViewModel card)
+    {
+        try
+        {
+            var runs = await _watchProvidersApi.GetSyncRunsAsync(card.ProviderKey);
+            card.LatestRun = runs.Runs.FirstOrDefault();
+        }
+        catch
+        {
+            card.LatestRun = null;
         }
     }
 

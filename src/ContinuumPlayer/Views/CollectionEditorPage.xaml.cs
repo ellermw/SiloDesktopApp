@@ -80,25 +80,33 @@ public sealed partial class CollectionEditorPage : Page
     private void UpdateTypeToggleUI()
     {
         bool isManual = ViewModel.CollectionType == "manual";
+        bool isSmart = ViewModel.CollectionType == "smart";
 
         ManualTypeButton.Style = isManual
             ? (Style)Resources["TypeToggleActiveStyle"]
             : (Style)Resources["TypeToggleInactiveStyle"];
 
-        SmartTypeButton.Style = !isManual
+        SmartTypeButton.Style = isSmart
             ? (Style)Resources["TypeToggleActiveStyle"]
             : (Style)Resources["TypeToggleInactiveStyle"];
 
-        TypeDescription.Text = isManual
-            ? "Manually add items to this collection."
-            : "Automatically match items based on rules.";
+        TypeDescription.Text = ViewModel.CollectionType switch
+        {
+            "manual" => "Manually add items to this collection.",
+            "smart" => "Automatically match items based on rules.",
+            "mdblist" => "Synced from MDBList.",
+            "tmdb" => "Synced from TMDB.",
+            "trakt" => "Synced from Trakt.",
+            _ => "Synced collection."
+        };
     }
 
     private void UpdateSectionVisibility()
     {
-        bool isManual = ViewModel.CollectionType == "manual";
-        ManualItemsSection.Visibility = isManual ? Visibility.Visible : Visibility.Collapsed;
-        SmartRulesSection.Visibility = !isManual ? Visibility.Visible : Visibility.Collapsed;
+        ManualItemsSection.Visibility = ViewModel.CollectionType == "manual" ? Visibility.Visible : Visibility.Collapsed;
+        SmartRulesSection.Visibility = ViewModel.CollectionType == "smart" ? Visibility.Visible : Visibility.Collapsed;
+        ImportedSourceSection.Visibility = ViewModel.IsImportedCollection ? Visibility.Visible : Visibility.Collapsed;
+        SourceUrlTextBox.IsEnabled = ViewModel.CollectionType == "mdblist";
     }
 
     // ===== Navigation =====
