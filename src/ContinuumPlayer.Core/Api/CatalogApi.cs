@@ -141,8 +141,8 @@ public class CatalogApi(ContinuumApiClient client)
 
     // ===== Library Collections =====
 
-    public Task<AdminCollectionsResponse> GetLibraryCollectionsAsync(int libraryId, CancellationToken ct = default)
-        => client.GetAsync<AdminCollectionsResponse>($"/api/v1/library/{libraryId}/collections", ct);
+    public Task<LibraryTabResponse> GetLibraryCollectionsAsync(int libraryId, CancellationToken ct = default)
+        => client.GetAsync<LibraryTabResponse>($"/api/v1/library/{libraryId}/collections", ct);
 
     public Task<CatalogResponse> GetLibraryCollectionItemsAsync(int libraryId, string collectionId, CancellationToken ct = default)
         => client.GetAsync<CatalogResponse>($"/api/v1/library/{libraryId}/collections/{Uri.EscapeDataString(collectionId)}/items", ct);

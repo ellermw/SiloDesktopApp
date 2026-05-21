@@ -2,7 +2,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using ContinuumPlayer.Core.Api;
 using ContinuumPlayer.Core.Models.Playback;
+using ContinuumPlayer.Core.Services;
 using ContinuumPlayer.Services;
 
 namespace ContinuumPlayer.Controls;
@@ -10,10 +12,17 @@ namespace ContinuumPlayer.Controls;
 public sealed partial class PlayerOverlay : UserControl
 {
     private readonly PlayerService _playerService;
+    private readonly SettingsApi _settingsApi;
+    private readonly AuthService _authService;
 
     private bool _statsVisible;
     private bool _isMuted;
     private bool _isActive;
+    private bool _autoSkipIntro;
+    private bool _autoSkipCredits;
+    private bool _introAutoSkipped;
+    private bool _creditsAutoSkipped;
+    private int _autoSkipSettingsLoadVersion;
 
     private DispatcherTimer? _uiTimer;
     private DispatcherTimer? _hideTimer;
@@ -21,10 +30,14 @@ public sealed partial class PlayerOverlay : UserControl
     private Microsoft.UI.Xaml.Media.Animation.Storyboard? _breatheStoryboard;
     private Microsoft.UI.Xaml.Media.ScaleTransform? _breatheTransform;
     private const int BufferingSpinnerDelayMs = 500;
+    private const string AutoSkipIntroSettingKey = "playback.auto_skip_intro";
+    private const string AutoSkipCreditsSettingKey = "playback.auto_skip_credits";
 
     public PlayerOverlay()
     {
         _playerService = App.Services.GetRequiredService<PlayerService>();
+        _settingsApi = App.Services.GetRequiredService<SettingsApi>();
+        _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
         SeekBar.SeekRequested += (seconds) =>
         {
@@ -85,6 +98,9 @@ public sealed partial class PlayerOverlay : UserControl
         PopulateAudioFlyout();
         PopulateChaptersFlyout();
 
+        ResetAutoSkipMarkerState();
+        _ = RefreshAutoSkipSettingsAsync();
+
         // Update playback info display
         UpdatePlaybackInfo();
 
@@ -125,6 +141,7 @@ public sealed partial class PlayerOverlay : UserControl
         _bufferingDebounceTimer?.Stop();
         _bufferingDebounceTimer = null;
         BufferingSpinner.Visibility = Visibility.Collapsed;
+        System.Threading.Interlocked.Increment(ref _autoSkipSettingsLoadVersion);
 
         // Stop the breathing animation cleanly on deactivate so it doesn't
         // accumulate Storyboards across Activate/Deactivate cycles.
@@ -200,6 +217,8 @@ public sealed partial class PlayerOverlay : UserControl
         DispatcherQueue?.TryEnqueue(() =>
         {
             if (!_isActive) return;
+            ResetAutoSkipMarkerState();
+            _ = RefreshAutoSkipSettingsAsync();
 
             LoadingOverlay.Visibility = Visibility.Collapsed;
             ErrorOverlay.Visibility = Visibility.Collapsed;
@@ -219,6 +238,72 @@ public sealed partial class PlayerOverlay : UserControl
             SeekBar.Chapters = version?.Chapters;
             SeekBar.Invalidate();
         });
+    }
+
+    private void ResetAutoSkipMarkerState()
+    {
+        _introAutoSkipped = false;
+        _creditsAutoSkipped = false;
+    }
+
+    private async Task RefreshAutoSkipSettingsAsync()
+    {
+        var loadVersion = System.Threading.Interlocked.Increment(ref _autoSkipSettingsLoadVersion);
+        var profileId = _authService.SelectedProfileId;
+        if (string.IsNullOrWhiteSpace(profileId))
+        {
+            ApplyAutoSkipSettings(loadVersion, intro: false, credits: false);
+            return;
+        }
+
+        try
+        {
+            var profiles = await _settingsApi.GetProfilesAsync();
+            var profile = profiles.Profiles.FirstOrDefault(p => p.Id == profileId);
+            var intro = profile?.AutoSkipIntro == true;
+            var credits = profile?.AutoSkipCredits == true;
+
+            try
+            {
+                var effective = await _settingsApi.GetEffectiveSettingsAsync(
+                    [AutoSkipIntroSettingKey, AutoSkipCreditsSettingKey]);
+                intro = ResolveEffectiveBool(effective, AutoSkipIntroSettingKey, intro);
+                credits = ResolveEffectiveBool(effective, AutoSkipCreditsSettingKey, credits);
+            }
+            catch
+            {
+                // Older servers may not expose effective device settings yet.
+                // Profile-level settings still enable the feature.
+            }
+
+            ApplyAutoSkipSettings(loadVersion, intro, credits);
+        }
+        catch
+        {
+            ApplyAutoSkipSettings(loadVersion, intro: false, credits: false);
+        }
+    }
+
+    private void ApplyAutoSkipSettings(int loadVersion, bool intro, bool credits)
+    {
+        DispatcherQueue?.TryEnqueue(() =>
+        {
+            if (!_isActive || loadVersion != _autoSkipSettingsLoadVersion) return;
+            _autoSkipIntro = intro;
+            _autoSkipCredits = credits;
+        });
+    }
+
+    private static bool ResolveEffectiveBool(EffectiveSettingsResponse effective, string key, bool fallback)
+    {
+        var setting = effective.Settings.FirstOrDefault(s => s.Key == key);
+        if (setting?.HasDeviceOverride != true) return fallback;
+
+        var raw = setting.EffectiveValue?.Trim();
+        if (string.IsNullOrEmpty(raw)) return fallback;
+        if (bool.TryParse(raw, out var parsed)) return parsed;
+        if (int.TryParse(raw, out var numeric)) return numeric != 0;
+        return fallback;
     }
 
     private void OnMarkersChanged()
@@ -303,12 +388,49 @@ public sealed partial class PlayerOverlay : UserControl
         _playerService.TickSubtitleWindows(pos);
 
         // Check skip markers
+        ApplyAutoSkipMarkers(pos, dur);
         UpdateSkipButtons(pos);
         UpdateEpisodeNav(pos, dur);
 
         // Update stats if visible
         if (_statsVisible) UpdateStats();
     }
+
+    private void ApplyAutoSkipMarkers(double pos, double dur)
+    {
+        var intro = _playerService.ActiveIntro;
+        if (_autoSkipIntro
+            && !_introAutoSkipped
+            && IsWithinMarker(intro, pos)
+            && intro!.End > 0)
+        {
+            _introAutoSkipped = true;
+            SeekAndResume(intro.End);
+            return;
+        }
+
+        var credits = _playerService.ActiveCredits;
+        if (!_autoSkipCredits
+            || _creditsAutoSkipped
+            || credits == null
+            || !IsPlausibleCreditsMarker(credits, dur)
+            || !IsWithinMarker(credits, pos))
+        {
+            return;
+        }
+
+        _creditsAutoSkipped = true;
+        if (dur > 0)
+            SeekAndResume(Math.Min(credits.End, dur));
+        else
+            SeekAndResume(credits.End);
+    }
+
+    private static bool IsWithinMarker(TimeRange? marker, double position)
+        => marker != null
+            && marker.End > marker.Start
+            && position >= marker.Start
+            && position < marker.End;
 
     private void UpdateSkipButtons(double pos)
     {

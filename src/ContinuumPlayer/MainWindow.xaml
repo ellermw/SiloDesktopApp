@@ -7,7 +7,7 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:controls="using:ContinuumPlayer.Controls"
     mc:Ignorable="d"
-    Title="Continuum">
+    Title="Silo">
 
     <Grid Background="{StaticResource AppBackgroundBrush}">
         <Grid.KeyboardAccelerators>
@@ -47,7 +47,7 @@
                         <!-- Branding text -->
                         <StackPanel VerticalAlignment="Center" Spacing="0">
                             <TextBlock
-                                Text="Continuum"
+                                Text="Silo"
                                 FontSize="{StaticResource FontSizeBrandingTitle}"
                                 FontWeight="ExtraBold"
                                 Foreground="{StaticResource PrimaryTextBrush}"

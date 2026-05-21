@@ -1,7 +1,80 @@
+using System.Text.Json;
+using ContinuumPlayer.Core.Models.Admin;
+
 namespace ContinuumPlayer.Tests;
 
 public sealed class CollectionsParitySourceTests
 {
+    [Fact]
+    public void LibraryTabResponseDeserializesGroupedAndUserCollections()
+    {
+        var json = """
+        {
+          "library_id": 12,
+          "groups": [
+            {
+              "id": "group-user",
+              "name": "User Collections",
+              "kind": "user_collections",
+              "sort_mode": "manual",
+              "sort_order": 1,
+              "collections": [
+                {
+                  "id": "user-1",
+                  "title": "Mike's Picks",
+                  "poster_url": "https://example.test/user.jpg",
+                  "poster_thumbhash": "abc",
+                  "item_count": 7,
+                  "creator_profile_id": "profile-1"
+                }
+              ]
+            }
+          ],
+          "ungrouped": {
+            "sort_order": 99,
+            "collections": [
+              {
+                "id": "admin-1",
+                "title": "Top Movies",
+                "poster_url": "https://example.test/admin.jpg",
+                "item_count": 42,
+                "featured": true
+              }
+            ]
+          }
+        }
+        """;
+
+        var response = JsonSerializer.Deserialize<LibraryTabResponse>(
+            json,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+
+        Assert.NotNull(response);
+        Assert.Equal(12, response.LibraryId);
+        Assert.Single(response.Groups);
+        Assert.Equal("user_collections", response.Groups[0].Kind);
+        Assert.Single(response.Groups[0].Collections);
+        Assert.Equal("Mike's Picks", response.Groups[0].Collections[0].Title);
+        Assert.NotNull(response.Ungrouped);
+        Assert.Single(response.Ungrouped.Collections);
+        Assert.True(response.Ungrouped.Collections[0].Featured);
+    }
+
+    [Fact]
+    public void LibraryCollectionsTabUsesGroupedServerResponse()
+    {
+        var root = FindRepositoryRoot();
+        var catalogApi = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Api", "CatalogApi.cs"));
+        var viewModel = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "ViewModels", "LibraryViewModel.cs"));
+        var page = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "LibraryPage.xaml.cs"));
+
+        Assert.Contains("Task<LibraryTabResponse> GetLibraryCollectionsAsync", catalogApi);
+        Assert.Contains("CollectionSections", viewModel);
+        Assert.Contains("LibraryTabSection", viewModel);
+        Assert.Contains("IsUserCollection", page);
+        Assert.Contains("BuildCollectionSection", page);
+    }
+
     [Fact]
     public void CollectionModelsExposeImportedCollectionFields()
     {
@@ -78,6 +151,50 @@ public sealed class CollectionsParitySourceTests
         Assert.Contains("SearchMDBListAsync", vm);
         Assert.Contains("LoadTopMDBListAsync", vm);
         Assert.Contains("ImportTemplateAsync", vm);
+    }
+
+    [Fact]
+    public void SmartCollectionWizardIsAvailableForUserAndAdminCollections()
+    {
+        var root = FindRepositoryRoot();
+        var app = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "App.xaml.cs"));
+        var documentTitle = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Helpers", "DocumentTitle.cs"));
+        var collectionsXaml = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "CollectionsPage.xaml"));
+        var collectionsPage = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "CollectionsPage.xaml.cs"));
+        var adminCollectionsPage = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminCollectionsPage.xaml.cs"));
+        var wizardPage = Path.Combine(root, "src", "ContinuumPlayer", "Views", "SmartCollectionWizardPage.xaml.cs");
+        var wizardViewModel = Path.Combine(root, "src", "ContinuumPlayer", "ViewModels", "SmartCollectionWizardViewModel.cs");
+
+        Assert.True(File.Exists(wizardPage));
+        Assert.True(File.Exists(wizardViewModel));
+        Assert.Contains("SmartCollectionWizardViewModel", app);
+        Assert.Contains("SmartCollectionWizardPage", documentTitle);
+        Assert.Contains("Smart Wizard", collectionsXaml);
+        Assert.Contains("Navigate<SmartCollectionWizardPage>", collectionsPage);
+        Assert.Contains("Navigate<SmartCollectionWizardPage>", adminCollectionsPage);
+        Assert.Contains("MediaScope", File.ReadAllText(wizardViewModel));
+        Assert.Contains("\"episode\"", File.ReadAllText(wizardViewModel));
+    }
+
+    [Fact]
+    public void AdminCollectionGroupsCanBeManagedAndReordered()
+    {
+        var root = FindRepositoryRoot();
+        var adminApi = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Api", "AdminApi.cs"));
+        var viewModel = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "ViewModels", "Admin", "AdminCollectionsViewModel.cs"));
+        var page = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminCollectionsPage.xaml.cs"));
+
+        Assert.Contains("GetCollectionGroupsAsync", adminApi);
+        Assert.Contains("CreateCollectionGroupAsync", adminApi);
+        Assert.Contains("UpdateCollectionGroupAsync", adminApi);
+        Assert.Contains("DeleteCollectionGroupAsync", adminApi);
+        Assert.Contains("ReorderCollectionGroupsAsync", adminApi);
+        Assert.Contains("ReorderCollectionsInGroupAsync", adminApi);
+        Assert.Contains("CollectionGroups", viewModel);
+        Assert.Contains("MoveCollectionInGroupAsync", viewModel);
+        Assert.Contains("BuildCollectionGroupBoard", page);
+        Assert.Contains("OpenCreateGroupDialogAsync", page);
+        Assert.Contains("MoveGroupAsync", page);
     }
 
     [Fact]

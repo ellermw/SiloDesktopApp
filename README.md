@@ -1,10 +1,10 @@
-# Continuum Desktop Player
+# Silo Desktop Player
 
-Native Windows 11 media player for Continuum media servers. Built for direct playback of HEVC/HDR content without server-side transcoding.
+Native Windows 11 media player for Silo media servers. Built for direct playback of HEVC/HDR content without server-side transcoding.
 
 ## Download
 
-[**Download Installer (v1.1.5)**](https://transfers.taverncdn.com/Rug27or9qo/ContinuumDesktopPlayer-1.1.5-Setup.exe) — Single-file setup, includes all dependencies. Windows 10/11 x64.
+[**Download Installer (v1.1.6)**](https://transfers.taverncdn.com/j1YMwHuBvq/SiloDesktopPlayer-1.1.6-Setup.exe) — Single-file setup, includes all dependencies. Windows 10/11 x64.
 
 ## Tech Stack
 
@@ -28,9 +28,9 @@ Native Windows 11 media player for Continuum media servers. Built for direct pla
 - Multi-profile support with PIN protection
 - Home screen with continue watching, recommendations, and curated sections
 - Library browsing with genre/studio/rating filters and sort options
-- Full-text search matching Continuum server search
+- Full-text search matching Silo server search
 - Custom on-screen controls (Lua OSC) with play/pause, seek, volume, fullscreen, minimize
-- Video stats overlay (4-section layout matching Continuum web player)
+- Video stats overlay (4-section layout matching Silo web player)
 - Subtitle selection menu with language names, source badges, and online search
 - Mini-bar with live video thumbnail and transport controls
 - Resume playback from last position

@@ -30,7 +30,7 @@
                     <StackPanel Spacing="8">
                         <TextBlock
                             x:Name="ServerNameTitle"
-                            Text="Continuum"
+                            Text="Silo"
                             FontSize="30"
                             FontWeight="ExtraBold"
                             Foreground="{StaticResource PrimaryTextBrush}"
@@ -143,7 +143,7 @@
                                         Style="{StaticResource OutlineButtonStyle}"
                                         HorizontalAlignment="Stretch"
                                         Padding="16,10"
-                                        Tag="{Binding Id}"
+                                        Tag="{Binding}"
                                         Click="AuthProviderButton_Click" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>

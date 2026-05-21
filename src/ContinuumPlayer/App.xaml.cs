@@ -219,10 +219,12 @@ public partial class App : Application
         services.AddTransient<WatchlistViewModel>();
         services.AddTransient<HistoryViewModel>();
         services.AddTransient<RecommendationsViewModel>();
+        services.AddTransient<RecommendationSectionViewModel>();
         services.AddTransient<CalendarViewModel>();
         services.AddTransient<PersonDetailViewModel>();
         services.AddTransient<CollectionsViewModel>();
         services.AddTransient<CollectionEditorViewModel>();
+        services.AddTransient<SmartCollectionWizardViewModel>();
         services.AddTransient<DownloadsViewModel>();
         services.AddTransient<SettingsViewModel>();
         services.AddTransient<WatchTogetherJoinViewModel>();

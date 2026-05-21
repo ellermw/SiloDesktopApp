@@ -471,16 +471,9 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock Text="Skip intros automatically" FontSize="14" FontWeight="Medium"
-                                               Foreground="{StaticResource PrimaryTextBrush}" />
-                                    <Border Background="{StaticResource SurfaceBrush}" CornerRadius="10"
-                                            Padding="8,2">
-                                        <TextBlock Text="Coming soon" FontSize="11" FontWeight="Medium"
-                                                   Foreground="{StaticResource SecondaryTextBrush}" />
-                                    </Border>
-                                </StackPanel>
-                                <TextBlock Text="Jump past opening credits when the app can detect them."
+                                <TextBlock Text="Skip intros automatically" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Jump past opening credits when intro markers are available."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
@@ -488,7 +481,6 @@
                                 x:Name="AutoSkipIntroToggle"
                                 Grid.Column="1"
                                 IsOn="{x:Bind ViewModel.AutoSkipIntro, Mode=TwoWay}"
-                                IsEnabled="False"
                                 VerticalAlignment="Center"
                                 OnContent="" OffContent="" />
                         </Grid>
@@ -502,16 +494,9 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock Text="Skip end credits automatically" FontSize="14" FontWeight="Medium"
-                                               Foreground="{StaticResource PrimaryTextBrush}" />
-                                    <Border Background="{StaticResource SurfaceBrush}" CornerRadius="10"
-                                            Padding="8,2">
-                                        <TextBlock Text="Coming soon" FontSize="11" FontWeight="Medium"
-                                                   Foreground="{StaticResource SecondaryTextBrush}" />
-                                    </Border>
-                                </StackPanel>
-                                <TextBlock Text="Move on after the episode ends when credits can be skipped."
+                                <TextBlock Text="Skip end credits automatically" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Jump past credits when credit markers are available."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
@@ -519,7 +504,6 @@
                                 x:Name="AutoSkipCreditsToggle"
                                 Grid.Column="1"
                                 IsOn="{x:Bind ViewModel.AutoSkipCredits, Mode=TwoWay}"
-                                IsEnabled="False"
                                 VerticalAlignment="Center"
                                 OnContent="" OffContent="" />
                         </Grid>
@@ -875,7 +859,7 @@
                 <StackPanel Spacing="12">
                     <TextBlock Text="History import" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="Import watch history from an external media server into a Continuum profile."
+                    <TextBlock Text="Import watch history from an external media server into a Silo profile."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
                                TextWrapping="Wrap" MaxWidth="640" HorizontalAlignment="Left" />
                 </StackPanel>
@@ -1031,7 +1015,7 @@
                                                   SelectionChanged="EmbyConnectServer_SelectionChanged"
                                                   HorizontalAlignment="Stretch" MaxWidth="420" />
                                     </StackPanel>
-                                    <TextBlock Text="Continuum will exchange the server's temporary access key for a local Emby token and use it only for this import."
+                                    <TextBlock Text="Silo will exchange the server's temporary access key for a local Emby token and use it only for this import."
                                                FontSize="12" Foreground="{StaticResource TertiaryTextBrush}"
                                                TextWrapping="Wrap" />
                                 </StackPanel>
@@ -1307,7 +1291,7 @@
                     <StackPanel Spacing="4">
                         <TextBlock Text="Webhook URL" FontSize="13" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Configure your media server to send webhooks to your Continuum server's webhook endpoint. The URL is available in Admin Settings."
+                        <TextBlock Text="Configure your media server to send webhooks to your Silo server's webhook endpoint. The URL is available in Admin Settings."
                                    FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
@@ -1412,6 +1396,7 @@
                         </StackPanel>
                     </Button>
                 </Grid>
+                <StackPanel x:Name="HouseholdStreamsPanel" Spacing="8" />
                 <StackPanel x:Name="ProfileCardsPanel" Spacing="8" />
                 <TextBlock x:Name="NoProfilesText" Text="No profiles found."
                            FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"

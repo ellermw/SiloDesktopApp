@@ -175,15 +175,16 @@
 
             <!-- Left: filters -->
             <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
-                <!-- Media Type filter (web CatalogFilterBar: All Media / Movies / Series) -->
+                <!-- Media Type filter (web CatalogFilterBar: All Media / Movies / Series / Episodes) -->
                 <ComboBox
                     x:Name="MediaTypeComboBox"
                     Style="{StaticResource PillComboBoxStyle}"
-                    Width="130"
+                    Width="140"
                     SelectionChanged="MediaTypeComboBox_SelectionChanged">
                     <ComboBoxItem Content="All Media" Tag="" IsSelected="True" />
                     <ComboBoxItem Content="Movies" Tag="movie" />
                     <ComboBoxItem Content="Series" Tag="series" />
+                    <ComboBoxItem Content="Episodes" Tag="episode" />
                 </ComboBox>
 
                 <!-- Genre filter (web: pill select) -->

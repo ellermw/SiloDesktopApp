@@ -693,3 +693,33 @@ Especially relevant files:
 - `user_profile.md`
 
 Use those as read-only context unless the user asks to update Claude Code memory too.
+
+### Codex Production Infra Handoff
+
+Codex is taking over Claude Code responsibilities over time. Do not delete Claude
+Code memories, transcripts, worktrees, or artifacts; keep using them as read-only
+reference if context seems missing.
+
+Codex-side production memory is also recorded at:
+
+```text
+C:\Users\Mike\.codex\memories\production-infra-handoff.md
+```
+
+Important items captured there:
+
+- Production rule: announce intent before actions; no code/config/DB/service/log/data
+  changes without explicit approval.
+- Stable remote pattern: local tunnel through FW to management, then fan out from
+  management to PVE/appboxes/LXCs.
+- PVE access: key is stored in LibraryManager `proxmox_servers`; fetch via base64,
+  materialize only to a temporary 0600 key file, remove immediately, never print it.
+- Management cleanup completed 2026-05-09: Docker build cache, expired transfer-sh
+  data, and oversized Docker JSON logs. Root filesystem ended around 64% used.
+- LibraryManager overview: production media-service management platform for
+  Plex/Emby/Jellyfin users, appboxes, CDN/OpenResty, autoscan, enforcement, and
+  WHMCS/provisioning.
+- Kometa incident for service `1665-2334` / display `390`: central Kometa VMID 102,
+  config at `/opt/kometa/390/config.yml`, bad line
+  `custom_repo: overlay_artwork_filetype: webp_lossy`, causing YAML parse failure.
+  No fix was applied.

@@ -11,6 +11,7 @@ public class LibraryCollection
     public string CollectionType { get; set; } = "manual";
     public string Visibility { get; set; } = "visible";
     public int SortOrder { get; set; }
+    public string? GroupId { get; set; }
     public bool Featured { get; set; }
     public string? PosterUrl { get; set; }
     public string? PosterThumbhash { get; set; }
@@ -40,6 +41,7 @@ public class CreateLibraryCollectionRequest
     public string? CollectionType { get; set; }
     public string? Visibility { get; set; }
     public int? SortOrder { get; set; }
+    public string? GroupId { get; set; }
     public bool? Featured { get; set; }
     public string? PosterUrl { get; set; }
     public string? BackdropUrl { get; set; }
@@ -62,6 +64,7 @@ public class UpdateLibraryCollectionRequest
     public string? CollectionType { get; set; }
     public string? Visibility { get; set; }
     public int? SortOrder { get; set; }
+    public string? GroupId { get; set; }
     public bool? Featured { get; set; }
     public string? PosterUrl { get; set; }
     public string? BackdropUrl { get; set; }
@@ -130,4 +133,94 @@ public class LibraryCollectionSyncRun
 public class AdminCollectionsResponse
 {
     public List<LibraryCollection> Collections { get; set; } = [];
+    public List<LibraryCollectionGroup> Groups { get; set; } = [];
+}
+
+public class LibraryCollectionGroup
+{
+    public string Id { get; set; } = "";
+    public int LibraryId { get; set; }
+    public string Name { get; set; } = "";
+    public string Slug { get; set; } = "";
+    public string Kind { get; set; } = "regular";
+    public string DefaultSortMode { get; set; } = "manual";
+    public int SortOrder { get; set; }
+}
+
+public class LibraryCollectionGroupListResponse
+{
+    public List<LibraryCollectionGroup> Groups { get; set; } = [];
+    public int UngroupedSortOrder { get; set; } = 9999;
+}
+
+public class CreateLibraryCollectionGroupRequest
+{
+    public string Name { get; set; } = "";
+    public string? Slug { get; set; }
+    public string? DefaultSortMode { get; set; }
+}
+
+public class UpdateLibraryCollectionGroupRequest
+{
+    public string? Name { get; set; }
+    public string? Slug { get; set; }
+    public string? DefaultSortMode { get; set; }
+}
+
+public class ReorderLibraryCollectionGroupsRequest
+{
+    public List<string> Ids { get; set; } = [];
+}
+
+public class ReorderLibraryCollectionsInGroupRequest
+{
+    public List<string> Ids { get; set; } = [];
+}
+
+public class ReorderAdminCollectionsRequest
+{
+    public int LibraryId { get; set; }
+    public List<string> OrderedIds { get; set; } = [];
+    public string? GroupId { get; set; }
+}
+
+public class LibraryTabCollection
+{
+    public string Id { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string? PosterUrl { get; set; }
+    public string? PosterThumbhash { get; set; }
+    public int ItemCount { get; set; }
+    public bool Featured { get; set; }
+    public string? CreatorProfileId { get; set; }
+}
+
+public class LibraryTabGroup
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Kind { get; set; } = "regular";
+    public string SortMode { get; set; } = "manual";
+    public int SortOrder { get; set; }
+    public List<LibraryTabCollection> Collections { get; set; } = [];
+}
+
+public class LibraryTabUngrouped
+{
+    public int SortOrder { get; set; } = 9999;
+    public List<LibraryTabCollection> Collections { get; set; } = [];
+}
+
+public class LibraryTabResponse
+{
+    public int LibraryId { get; set; }
+
+    /// <summary>
+    /// Legacy flat admin collection list. Present for older desktop clients and
+    /// used as a fallback when grouped tab data is unavailable.
+    /// </summary>
+    public List<LibraryCollection> Collections { get; set; } = [];
+
+    public List<LibraryTabGroup> Groups { get; set; } = [];
+    public LibraryTabUngrouped? Ungrouped { get; set; }
 }

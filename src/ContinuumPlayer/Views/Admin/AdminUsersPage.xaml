@@ -37,7 +37,7 @@
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
-                            Text="Manage access, defaults, and invite flow for the people using Continuum."
+                            Text="Manage access, defaults, and invite flow for the people using Silo."
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>

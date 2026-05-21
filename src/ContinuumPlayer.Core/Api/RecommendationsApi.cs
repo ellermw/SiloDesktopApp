@@ -22,6 +22,17 @@ public class RecommendationsApi(ContinuumApiClient client)
     public Task<TasteProfileResponse> GetTasteProfileAsync(CancellationToken ct = default)
         => client.GetAsync<TasteProfileResponse>("/api/v1/recommendations/taste-profile", ct);
 
+    public Task<DiscoverResponse> GetDiscoverAsync(CancellationToken ct = default)
+        => client.GetAsync<DiscoverResponse>("/api/v1/recommendations/discover", ct);
+
+    public Task<RecommendationSectionResponse> GetSectionAsync(string kind, string? key = null, CancellationToken ct = default)
+    {
+        var path = $"/api/v1/recommendations/section/{Uri.EscapeDataString(kind)}";
+        if (!string.IsNullOrWhiteSpace(key))
+            path += $"/{Uri.EscapeDataString(key)}";
+        return client.GetAsync<RecommendationSectionResponse>(path, ct);
+    }
+
     public Task<SimilarResponse> GetPopularAsync(int? days = null, CancellationToken ct = default)
     {
         var path = "/api/v1/recommendations/popular";

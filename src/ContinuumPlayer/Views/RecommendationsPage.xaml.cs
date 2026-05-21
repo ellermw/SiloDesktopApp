@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ContinuumPlayer.Controls;
 using ContinuumPlayer.Core.Models.Catalog;
 using ContinuumPlayer.Core.Models.Home;
+using ContinuumPlayer.Helpers;
 using ContinuumPlayer.ViewModels;
 
 namespace ContinuumPlayer.Views;
@@ -153,10 +154,23 @@ public sealed partial class RecommendationsPage : Page
             var section = new HomeSectionWithItems
             {
                 Title = row.Label,
+                SectionType = row.Type,
                 Items = new ObservableCollection<MediaItem>(row.Items)
             };
 
-            RowsPanel.Children.Add(new SectionRow { Section = section });
+            var sectionRow = new SectionRow();
+            if (!string.IsNullOrWhiteSpace(row.SectionKind))
+            {
+                sectionRow.OnViewAll = () =>
+                {
+                    var nav = App.Services.GetRequiredService<NavigationService>();
+                    nav.Navigate<RecommendationSectionPage>(
+                        new RecommendationSectionNavigationArgs(row.SectionKind, row.SectionKey, row.Label));
+                };
+            }
+
+            sectionRow.Section = section;
+            RowsPanel.Children.Add(sectionRow);
         }
 
         UpdateEmptyState();

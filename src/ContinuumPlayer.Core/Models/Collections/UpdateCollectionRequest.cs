@@ -12,4 +12,5 @@ public class UpdateCollectionRequest
     public int? MaxItems { get; set; }
     public bool? IncludeInServerCollections { get; set; }
     public string? PosterSourceUrl { get; set; }
+    public string? GroupId { get; set; }
 }

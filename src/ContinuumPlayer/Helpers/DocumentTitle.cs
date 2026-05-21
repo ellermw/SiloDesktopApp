@@ -7,14 +7,14 @@ namespace ContinuumPlayer.Helpers;
 /// <summary>
 /// F7: Window title management. Maps the currently-navigated page type to a
 /// human-readable label and composes a window title string in the webui
-/// convention "<Label> · Continuum" (U+00B7 middle dot separator).
+/// convention "<Label> · Silo" (U+00B7 middle dot separator).
 ///
 /// Wired in MainWindow via NavigationService.Navigated so every navigation
 /// updates AppWindow.Title.
 /// </summary>
 public static class DocumentTitle
 {
-    public const string AppName = "Continuum";
+    public const string AppName = "Silo";
     private const string Separator = " \u00B7 "; // " · "
 
     /// <summary>
@@ -28,12 +28,14 @@ public static class DocumentTitle
         [typeof(SearchPage)] = "Search",
         [typeof(CalendarPage)] = "Calendar",
         [typeof(RecommendationsPage)] = "Recommendations",
+        [typeof(RecommendationSectionPage)] = "Recommendations",
         [typeof(FavoritesPage)] = "Favorites",
         [typeof(WatchlistPage)] = "Watchlist",
         [typeof(HistoryPage)] = "History",
         [typeof(CollectionsPage)] = "Collections",
         [typeof(CollectionBrowsePage)] = "Collection",
         [typeof(CollectionEditorPage)] = "Edit Collection",
+        [typeof(SmartCollectionWizardPage)] = "Smart Collection",
         [typeof(DownloadsPage)] = "Downloads",
         [typeof(LibraryPage)] = "Library",
         [typeof(ItemDetailPage)] = "Details",
@@ -75,7 +77,7 @@ public static class DocumentTitle
 
     /// <summary>
     /// Compose the full window title for the given page type.
-    /// Pages not in the label map fall back to just "Continuum".
+    /// Pages not in the label map fall back to just "Silo".
     /// </summary>
     public static string FromPageType(Type pageType)
     {
@@ -86,7 +88,7 @@ public static class DocumentTitle
 
     /// <summary>
     /// Compose a window title from an explicit label (for dynamic pages that
-    /// want to override with e.g. "Breaking Bad · Continuum").
+    /// want to override with e.g. "Breaking Bad · Silo").
     /// </summary>
     public static string FromLabel(string label)
     {

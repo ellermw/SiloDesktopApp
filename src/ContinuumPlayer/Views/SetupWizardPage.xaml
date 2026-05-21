@@ -27,7 +27,7 @@
                 <!-- Header: Branding -->
                 <StackPanel Spacing="8" HorizontalAlignment="Center">
                     <TextBlock
-                        Text="Continuum"
+                        Text="Silo"
                         FontSize="30"
                         FontWeight="ExtraBold"
                         Foreground="{StaticResource PrimaryTextBrush}"
@@ -145,7 +145,7 @@
                                 FontWeight="SemiBold"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
                             <TextBlock
-                                Text="Point Continuum at your media folders. You can add more later."
+                                Text="Point Silo at your media folders. You can add more later."
                                 Style="{StaticResource SecondaryTextStyle}"
                                 FontSize="13" />
                         </StackPanel>
@@ -312,7 +312,7 @@
                                 <TextBox
                                     Text="{x:Bind ViewModel.JellyfinName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                     Style="{StaticResource DarkTextBoxStyle}"
-                                    PlaceholderText="My Continuum (optional)" />
+                                    PlaceholderText="My Silo (optional)" />
                             </StackPanel>
 
                             <!-- Optional: S3 Storage. Collapsed by default so the

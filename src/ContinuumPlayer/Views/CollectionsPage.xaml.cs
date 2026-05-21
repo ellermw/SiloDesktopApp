@@ -49,6 +49,12 @@ public sealed partial class CollectionsPage : Page
         nav.Navigate<CollectionEditorPage>();
     }
 
+    private void SmartWizard_Click(object sender, RoutedEventArgs e)
+    {
+        var nav = App.Services.GetRequiredService<NavigationService>();
+        nav.Navigate<SmartCollectionWizardPage>(new SmartCollectionWizardNavigationArgs());
+    }
+
     private async void BrowseTemplates_Click(object sender, RoutedEventArgs e)
     {
         await ShowCollectionTemplateGalleryAsync();
@@ -91,7 +97,7 @@ public sealed partial class CollectionsPage : Page
         var filterPanel = new StackPanel { Spacing = 14 };
         filterPanel.Children.Add(new TextBlock
         {
-            Text = "Pick a curated source, choose libraries, then let Continuum seed and sync the collection.",
+            Text = "Pick a curated source, choose libraries, then let Silo seed and sync the collection.",
             FontSize = 13,
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]

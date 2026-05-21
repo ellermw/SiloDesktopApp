@@ -231,7 +231,7 @@ public sealed partial class AdminSectionsPage : Page
 
         // ---- Type column (column 2) — multiple badges ----
         // Badge 1: section type label (secondary/filled style)
-        // Badge 2+: media scope (Movies/Series) as outline
+        // Badge 2+: media scope (Movies/Series/Episodes) as outline
         // Badge 3+: library filter names as outline
         // Badge 4: collection name as outline (for collection type)
         var typePanel = new StackPanel
@@ -250,6 +250,8 @@ public sealed partial class AdminSectionsPage : Page
             typePanel.Children.Add(MakeOutlineBadge("Movies"));
         else if (mediaScope == "series")
             typePanel.Children.Add(MakeOutlineBadge("Series"));
+        else if (mediaScope == "episode")
+            typePanel.Children.Add(MakeOutlineBadge("Episodes"));
 
         // Extract library_ids from Config (library filter badges)
         var libraryIds = GetConfigLibraryIds(section);
@@ -656,6 +658,7 @@ public sealed partial class AdminSectionsPage : Page
         mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "All Types", Tag = "" });
         mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "Movies", Tag = "movie" });
         mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "Series", Tag = "series" });
+        mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "Episodes", Tag = "episode" });
         mediaScopeCombo.SelectedIndex = 0;
         var mediaScopeField = new StackPanel { Spacing = 6, Visibility = Visibility.Collapsed };
         mediaScopeField.Children.Add(new TextBlock

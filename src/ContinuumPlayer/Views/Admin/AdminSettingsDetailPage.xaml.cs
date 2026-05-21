@@ -346,7 +346,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddSectionHeader("Branding");
         var brandCard = BeginCard();
         AddTextBlock(brandCard, "Customize the server name and login page text. Leave blank for defaults.");
-        AddTextField(brandCard, "Server Name", "branding.server_name", "Continuum");
+        AddTextField(brandCard, "Server Name", "branding.server_name", "Silo");
         AddTextField(brandCard, "Login Subtitle", "branding.login_subtitle", "Sign in with an existing account.");
         EndCard(brandCard);
 
@@ -2122,20 +2122,42 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     // ─── Card Overlays ────────────────────────────────────────────────────
 
-    // Registry mirrors web/src/lib/cardOverlays.ts OVERLAY_REGISTRY.
-    // Each entry: (id, label, description, sample badge text).
-    private static readonly (string Id, string Label, string Description, string Sample)[] OverlayRegistry =
+    private sealed record OverlayEditorDef(
+        string Id,
+        string Label,
+        string Description,
+        string Sample,
+        bool DefaultEnabled,
+        string DefaultPosition);
+
+    // Registry mirrors web/src/lib/overlays OVERLAY_REGISTRY and v2 prefs.
+    private static readonly OverlayEditorDef[] OverlayRegistry =
     [
-        ("resolution",       "Resolution",       "Show video resolution (e.g. 2160P, 1080P).",                 "2160P"),
-        ("hdr",              "HDR",              "Show HDR / Dolby Vision badge.",                              "DV HDR10"),
-        ("audio",            "Audio",            "Show Atmos / DTS:X / TrueHD when present.",                  "Atmos"),
-        ("release_type",     "Release Type",     "Show REMUX / WEB-DL / Blu-ray-style release tag.",           "REMUX"),
-        ("rating_imdb",      "IMDb Rating",      "Show IMDb audience rating.",                                  "8.7"),
-        ("rating_tmdb",      "TMDb Rating",      "Show TMDb audience rating.",                                  "8.5"),
-        ("rating_rt",        "Rotten Tomatoes",  "Show Rotten Tomatoes critic score.",                          "96%"),
-        ("rating_rt_audience","RT Audience",     "Show Rotten Tomatoes audience score.",                        "92%"),
-        ("original_language","Language",         "Show the original language code (e.g. EN, FR).",              "EN"),
-        ("edition",          "Edition",          "Show the edition tag (e.g. Standard, Theatrical, Extended).", "Standard"),
+        new("resolution",         "Resolution",       "Show video resolution, such as 4K or 1080p.",                  "4K",       true,  "top-left"),
+        new("hdr",                "HDR",              "Show HDR or Dolby Vision badges.",                            "DV",       true,  "top-left"),
+        new("resolution_hdr",     "Resolution + HDR", "Show one combined resolution/HDR badge.",                     "4K DV",    false, "top-left"),
+        new("audio",              "Audio",            "Show Atmos, DTS:X, or lossless audio badges.",                "Atmos",    true,  "top-left"),
+        new("audio_channels",     "Audio Channels",   "Show the channel layout when available.",                     "7.1",      false, "top-left"),
+        new("video_codec",        "Video Codec",      "Show the video codec, such as HEVC or AV1.",                  "HEVC",     false, "top-left"),
+        new("container",          "Container",        "Show the media container.",                                   "MKV",      false, "bottom-left"),
+        new("aspect_ratio",       "Aspect Ratio",     "Show the aspect ratio when available.",                       "2.39:1",   false, "bottom-right"),
+        new("release_type",       "Release Type",     "Show REMUX, WEB-DL, Blu-ray-style release tags.",             "REMUX",    true,  "bottom-left"),
+        new("edition",            "Edition",          "Show edition tags, such as Theatrical or Extended.",          "Extended", false, "bottom-left"),
+        new("multi_audio",        "Multi-Audio",      "Show when multiple audio tracks are available.",              "Multi",    false, "bottom-right"),
+        new("multi_sub",          "Subtitles",        "Show when multiple subtitle tracks are available.",           "CC",       false, "bottom-right"),
+        new("rating_imdb",        "IMDb Rating",      "Show IMDb audience rating.",                                  "8.7",      false, "top-right"),
+        new("rating_tmdb",        "TMDb Rating",      "Show TMDb audience rating.",                                  "8.5",      false, "top-right"),
+        new("rating_rt",          "Rotten Tomatoes",  "Show Rotten Tomatoes critic score.",                          "96%",      false, "top-right"),
+        new("rating_rt_audience", "RT Audience",      "Show Rotten Tomatoes audience score.",                        "92%",      false, "top-right"),
+        new("content_rating",     "Content Rating",   "Show the content rating.",                                    "TV-MA",    false, "bottom-right"),
+        new("year",               "Year",             "Show release year.",                                          "2026",     false, "bottom-left"),
+        new("runtime",            "Runtime",          "Show runtime.",                                               "1h 42m",   false, "bottom-left"),
+        new("original_language",  "Language",         "Show the original language code.",                            "EN",       false, "bottom-left"),
+        new("studio",             "Studio",           "Show the primary studio.",                                    "Studio",   false, "bottom-right"),
+        new("network",            "Network",          "Show the TV network.",                                        "HBO",      false, "bottom-right"),
+        new("show_status",        "Show Status",      "Show TV series status, such as Returning or Ended.",          "Ended",    false, "top-right"),
+        new("imdb_top_250",       "IMDb Top 250",     "Show IMDb Top 250 status when available.",                    "Top 250",  false, "top-right"),
+        new("rt_certified_fresh", "Certified Fresh",  "Show Rotten Tomatoes Certified Fresh status when available.", "Fresh",    false, "top-right"),
     ];
 
     private static readonly (string Value, string Label)[] OverlayPositions =
@@ -2206,7 +2228,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         EndCard(defCard);
     }
 
-    private FrameworkElement BuildOverlayDefRow((string Id, string Label, string Description, string Sample) def, Action onChange)
+    private FrameworkElement BuildOverlayDefRow(OverlayEditorDef def, Action onChange)
     {
         var row = new Grid { ColumnSpacing = 12, Margin = new Thickness(0, 4, 0, 4) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -2231,7 +2253,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         Grid.SetColumn(info, 0);
         row.Children.Add(info);
 
-        var current = _overlayPrefs.TryGetValue(def.Id, out var p) ? p : (Enabled: true, Position: "top-left");
+        var current = _overlayPrefs.TryGetValue(def.Id, out var p) ? p : DefaultOverlayState(def);
 
         var posCombo = new ComboBox
         {
@@ -2268,14 +2290,14 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             if (posCombo.SelectedItem is ComboBoxItem sel)
             {
-                var existing = _overlayPrefs.TryGetValue(def.Id, out var cur) ? cur : (Enabled: true, Position: "top-left");
+                var existing = _overlayPrefs.TryGetValue(def.Id, out var cur) ? cur : DefaultOverlayState(def);
                 _overlayPrefs[def.Id] = (existing.Enabled, (string)sel.Tag);
                 onChange();
             }
         };
         toggle.Toggled += (_, _) =>
         {
-            var existing = _overlayPrefs.TryGetValue(def.Id, out var cur) ? cur : (Enabled: true, Position: "top-left");
+            var existing = _overlayPrefs.TryGetValue(def.Id, out var cur) ? cur : DefaultOverlayState(def);
             _overlayPrefs[def.Id] = (toggle.IsOn, existing.Position);
             posCombo.IsEnabled = toggle.IsOn;
             onChange();
@@ -2353,8 +2375,9 @@ public sealed partial class AdminSettingsDetailPage : Page
 
         foreach (var def in OverlayRegistry)
         {
-            var cur = _overlayPrefs.TryGetValue(def.Id, out var p) ? p : (Enabled: true, Position: "top-left");
+            var cur = _overlayPrefs.TryGetValue(def.Id, out var p) ? p : DefaultOverlayState(def);
             if (!cur.Enabled) continue;
+            if (ShouldSuppressStandaloneOverlay(def.Id)) continue;
             if (!corners.TryGetValue(cur.Position, out var host)) continue;
 
             host.Children.Add(new Border
@@ -2385,22 +2408,30 @@ public sealed partial class AdminSettingsDetailPage : Page
         var result = new Dictionary<string, (bool, string)>();
         if (string.IsNullOrWhiteSpace(json))
         {
-            // Default: everything enabled at top-left
-            foreach (var def in OverlayRegistry) result[def.Id] = (true, "top-left");
+            foreach (var def in OverlayRegistry) result[def.Id] = DefaultOverlayState(def);
             return result;
         }
         try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(json);
-            foreach (var prop in doc.RootElement.EnumerateObject())
+            var source = doc.RootElement;
+            if (doc.RootElement.TryGetProperty("items", out var items) && items.ValueKind == System.Text.Json.JsonValueKind.Object)
+                source = items;
+
+            foreach (var prop in source.EnumerateObject())
             {
-                bool enabled = true;
-                string position = "top-left";
+                var def = OverlayRegistry.FirstOrDefault(d => d.Id == prop.Name);
+                bool enabled = def?.DefaultEnabled ?? true;
+                string position = def?.DefaultPosition ?? "top-left";
                 if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
                 {
-                    if (prop.Value.TryGetProperty("enabled", out var e) && e.ValueKind == System.Text.Json.JsonValueKind.False) enabled = false;
+                    if (prop.Value.TryGetProperty("enabled", out var e))
+                    {
+                        if (e.ValueKind == System.Text.Json.JsonValueKind.True) enabled = true;
+                        else if (e.ValueKind == System.Text.Json.JsonValueKind.False) enabled = false;
+                    }
                     if (prop.Value.TryGetProperty("position", out var pos) && pos.ValueKind == System.Text.Json.JsonValueKind.String)
-                        position = pos.GetString() ?? "top-left";
+                        position = pos.GetString() ?? position;
                 }
                 result[prop.Name] = (enabled, position);
             }
@@ -2410,24 +2441,33 @@ public sealed partial class AdminSettingsDetailPage : Page
             // Fall through — any id without an entry defaults to enabled/top-left below
         }
         foreach (var def in OverlayRegistry)
-            if (!result.ContainsKey(def.Id)) result[def.Id] = (true, "top-left");
+            if (!result.ContainsKey(def.Id)) result[def.Id] = DefaultOverlayState(def);
         return result;
     }
 
     private static string SerializeOverlayPrefs(Dictionary<string, (bool Enabled, string Position)> prefs)
     {
-        var sb = new System.Text.StringBuilder("{");
+        var sb = new System.Text.StringBuilder("""{"version":2,"preset":"classic","order":[],"items":{""");
         bool first = true;
         foreach (var (id, (enabled, position)) in prefs)
         {
             if (!first) sb.Append(',');
             first = false;
-            sb.Append('"').Append(id).Append("\":{\"enabled\":");
+            sb.Append('"').Append(EscapeJsonString(id)).Append("\":{\"enabled\":");
             sb.Append(enabled ? "true" : "false");
-            sb.Append(",\"position\":\"").Append(position).Append("\"}");
+            sb.Append(",\"position\":\"").Append(EscapeJsonString(position)).Append("\"}");
         }
-        sb.Append('}');
+        sb.Append("}}");
         return sb.ToString();
+    }
+
+    private static (bool Enabled, string Position) DefaultOverlayState(OverlayEditorDef def)
+        => (def.DefaultEnabled, def.DefaultPosition);
+
+    private bool ShouldSuppressStandaloneOverlay(string id)
+    {
+        if (id != "resolution" && id != "hdr") return false;
+        return _overlayPrefs.TryGetValue("resolution_hdr", out var combined) && combined.Enabled;
     }
 
     // ===== Connection Check Helper =====

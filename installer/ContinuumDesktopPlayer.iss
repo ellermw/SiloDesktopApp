@@ -1,9 +1,9 @@
 ; installer/ContinuumDesktopPlayer.iss
-; Inno Setup script for Continuum Desktop Player
+; Inno Setup script for Silo Desktop Player
 
-#define MyAppName "Continuum Desktop Player"
-#define MyAppVersion "1.1.5"
-#define MyAppPublisher "Continuum"
+#define MyAppName "Silo Desktop Player"
+#define MyAppVersion "1.1.6"
+#define MyAppPublisher "Silo"
 #define MyAppExeName "ContinuumPlayer.exe"
 #ifndef PublishSourceDir
 #define PublishSourceDir "publish"
@@ -18,7 +18,7 @@ DefaultDirName={commonpf64}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=output
-OutputBaseFilename=ContinuumDesktopPlayer-{#MyAppVersion}-Setup
+OutputBaseFilename=SiloDesktopPlayer-{#MyAppVersion}-Setup
 SetupIconFile=..\src\ContinuumPlayer\Assets\app.ico
 UninstallDisplayIcon={app}\Assets\app.ico
 Compression=lzma2/ultra64

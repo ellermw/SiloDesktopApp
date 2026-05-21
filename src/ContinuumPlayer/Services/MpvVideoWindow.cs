@@ -207,7 +207,7 @@ public sealed class MpvVideoWindow : IDisposable
         _hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW,
             ClassName,
-            "Continuum Player",
+            "Silo Player",
             WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
             parentRect.Left, parentRect.Top,
             parentRect.Right - parentRect.Left,

@@ -484,14 +484,21 @@ public sealed partial class AdminUserDetailPage : Page
                      : $"File #{item.MediaFileId}";
 
         var mediaStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-        mediaStack.Children.Add(new TextBlock
-        {
-            Text         = title,
-            FontSize     = 14,
-            FontWeight   = FontWeights.Medium,
-            Foreground   = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis
-        });
+        mediaStack.Children.Add(!string.IsNullOrWhiteSpace(item.MediaItemId)
+            ? BuildLinkButton(
+                title,
+                14,
+                FontWeights.Medium,
+                (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+                () => NavigateToItem(item.MediaItemId))
+            : new TextBlock
+            {
+                Text         = title,
+                FontSize     = 14,
+                FontWeight   = FontWeights.Medium,
+                Foreground   = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
         mediaStack.Children.Add(new TextBlock
         {
             Text       = !string.IsNullOrEmpty(item.MediaType) ? item.MediaType : "unknown",
@@ -500,14 +507,12 @@ public sealed partial class AdminUserDetailPage : Page
         });
 
         // Profile column
-        var profileBlock = new TextBlock
-        {
-            Text = !string.IsNullOrEmpty(item.ProfileName) ? item.ProfileName : item.ProfileId,
-            FontSize = 14,
-            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
+        var profileBlock = BuildLinkButton(
+            !string.IsNullOrEmpty(item.ProfileName) ? item.ProfileName : item.ProfileId,
+            14,
+            FontWeights.Normal,
+            (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            () => NavigateToProfileHistory(item.ProfileId));
 
         // Method badge: secondary variant (SurfaceBrush bg / SecondaryTextBrush fg)
         var methodBadge = new Border
@@ -618,6 +623,42 @@ public sealed partial class AdminUserDetailPage : Page
         row.Children.Add(endedStack);
 
         return row;
+    }
+
+    private static Button BuildLinkButton(string text, double fontSize, Windows.UI.Text.FontWeight fontWeight, Brush foreground, Action onClick)
+    {
+        var button = new Button
+        {
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            Content = new TextBlock
+            {
+                Text = text,
+                FontSize = fontSize,
+                FontWeight = fontWeight,
+                Foreground = foreground,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            },
+        };
+        button.Click += (_, _) => onClick();
+        return button;
+    }
+
+    private void NavigateToItem(string mediaItemId)
+    {
+        if (string.IsNullOrWhiteSpace(mediaItemId)) return;
+        App.MainWindowInstance?.RestoreMainPane();
+        App.Services.GetRequiredService<ContinuumPlayer.Helpers.NavigationService>()
+            .Navigate<ContinuumPlayer.Views.ItemDetailPage>(mediaItemId);
+    }
+
+    private void NavigateToProfileHistory(string profileId)
+    {
+        if (_userId <= 0 || string.IsNullOrWhiteSpace(profileId)) return;
+        Frame.Navigate(typeof(AdminPlaybackHistoryPage), new AdminPlaybackHistoryFilter(_userId, profileId));
     }
 
     // ===== IP History tab =====

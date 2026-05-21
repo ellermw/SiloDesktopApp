@@ -18,6 +18,29 @@ public class WatchTonightResponse
     public bool IsCold { get; set; }
 }
 
+public class DiscoverResponse
+{
+    public List<DiscoverRow> Rows { get; set; } = [];
+}
+
+public class DiscoverRow
+{
+    public string Type { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string? SectionKind { get; set; }
+    public string? SectionKey { get; set; }
+    public List<MediaItem> Items { get; set; } = [];
+}
+
+public class RecommendationSectionResponse
+{
+    public string Kind { get; set; } = "";
+    public string? Key { get; set; }
+    public string Type { get; set; } = "";
+    public string Label { get; set; } = "";
+    public List<MediaItem> Items { get; set; } = [];
+}
+
 public class WatchTonightItem : MediaItem
 {
     /// <summary>
@@ -34,7 +57,7 @@ public class WatchTonightItem : MediaItem
 /// </summary>
 public class SwipeCard : WatchTonightItem
 {
-    public int? Runtime { get; set; }
+    public new int? Runtime { get; set; }
     public List<SwipeCardCastMember> Cast { get; set; } = [];
 }
 

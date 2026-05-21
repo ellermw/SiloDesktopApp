@@ -11,6 +11,7 @@ public class AdminSession
     public string MediaTitle { get; set; } = "";
     public string MediaType { get; set; } = "";
     public string? SeriesName { get; set; }
+    public string? EpisodeName { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
     public string? PosterUrl { get; set; }
@@ -21,6 +22,7 @@ public class AdminSession
     public string StartedAt { get; set; } = "";
     public string UpdatedAt { get; set; } = "";
     public bool IsPaused { get; set; }
+    public bool HasPlaybackControl { get; set; }
     public string? ClientIp { get; set; }
     public int AudioTrackIndex { get; set; }
     public bool TranscodeAudio { get; set; }

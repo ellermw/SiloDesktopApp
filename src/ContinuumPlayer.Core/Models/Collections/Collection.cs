@@ -12,6 +12,8 @@ public class Collection
     public List<string> AllowedProfileIds { get; set; } = [];
     public QueryDefinition? QueryDefinition { get; set; }
     public Dictionary<string, object>? SortConfig { get; set; }
+    public int SortOrder { get; set; }
+    public string? GroupId { get; set; }
     public string? SourceUrl { get; set; }
     public Dictionary<string, object>? SourceConfig { get; set; }
     public string? SyncSchedule { get; set; }
@@ -30,6 +32,16 @@ public class Collection
 public class CollectionsResponse
 {
     public List<Collection> Collections { get; set; } = [];
+    public List<CollectionGroup> Groups { get; set; } = [];
+}
+
+public class CollectionGroup
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Slug { get; set; } = "";
+    public string DefaultSortMode { get; set; } = "manual";
+    public int SortOrder { get; set; }
 }
 
 public class QueryDefinition

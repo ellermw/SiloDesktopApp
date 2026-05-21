@@ -109,6 +109,7 @@ public partial class LibraryViewModel : ObservableObject
 
     // Collections
     public ObservableCollection<LibraryCollection> Collections { get; } = [];
+    public ObservableCollection<LibraryTabSection> CollectionSections { get; } = [];
 
     [ObservableProperty]
     private bool _isCollectionsLoading;
@@ -122,23 +123,117 @@ public partial class LibraryViewModel : ObservableObject
         if (Library == null || IsCollectionsLoading) return;
 
         IsCollectionsLoading = true;
+        Collections.Clear();
+        CollectionSections.Clear();
         try
         {
             var response = await _catalogApi.GetLibraryCollectionsAsync(Library.Id);
-            Collections.Clear();
             foreach (var c in response.Collections)
                 Collections.Add(c);
+
+            foreach (var section in BuildCollectionSections(response))
+                CollectionSections.Add(section);
+
             CollectionsLoaded = true;
         }
         catch
         {
             // Collections load failure is non-fatal
+            CollectionsLoaded = false;
         }
         finally
         {
             IsCollectionsLoading = false;
         }
     }
+
+    private static IEnumerable<LibraryTabSection> BuildCollectionSections(LibraryTabResponse response)
+    {
+        var sections = new List<LibraryTabSection>();
+
+        foreach (var group in response.Groups.Where(g => g.Collections.Count > 0))
+        {
+            var section = new LibraryTabSection
+            {
+                Title = group.Name,
+                Kind = group.Kind,
+                SortOrder = group.SortOrder,
+                IsUngrouped = false,
+            };
+
+            foreach (var collection in group.Collections)
+                section.Collections.Add(ToDisplayCollection(collection, group.Kind));
+
+            sections.Add(section);
+        }
+
+        if (response.Ungrouped?.Collections.Count > 0)
+        {
+            var section = new LibraryTabSection
+            {
+                Kind = "regular",
+                SortOrder = response.Ungrouped.SortOrder,
+                IsUngrouped = true,
+            };
+
+            foreach (var collection in response.Ungrouped.Collections)
+                section.Collections.Add(ToDisplayCollection(collection, "regular"));
+
+            sections.Add(section);
+        }
+
+        // Older server builds returned only the flat admin collection list.
+        // Keep that path working while the grouped tab contract rolls out.
+        if (sections.Count == 0 && response.Collections.Count > 0)
+        {
+            var section = new LibraryTabSection
+            {
+                Kind = "regular",
+                SortOrder = 9999,
+                IsUngrouped = true,
+            };
+
+            foreach (var collection in response.Collections.OrderBy(c => c.SortOrder).ThenBy(c => c.Title))
+                section.Collections.Add(ToDisplayCollection(collection));
+
+            sections.Add(section);
+        }
+
+        return sections
+            .OrderBy(s => s.SortOrder)
+            .ThenBy(s => s.Title, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static LibraryTabCollectionDisplay ToDisplayCollection(LibraryTabCollection collection, string groupKind)
+    {
+        var isUserCollection = string.Equals(groupKind, "user_collections", StringComparison.OrdinalIgnoreCase);
+        return new LibraryTabCollectionDisplay
+        {
+            Id = collection.Id,
+            Title = collection.Title,
+            PosterUrl = collection.PosterUrl,
+            PosterThumbhash = collection.PosterThumbhash,
+            ItemCount = collection.ItemCount,
+            Featured = collection.Featured,
+            IsUserCollection = isUserCollection,
+            TypeLabel = isUserCollection ? "USER" : collection.Featured ? "FEATURED" : "COLLECTION",
+        };
+    }
+
+    private static LibraryTabCollectionDisplay ToDisplayCollection(LibraryCollection collection)
+        => new()
+        {
+            Id = collection.Id,
+            Title = collection.Title,
+            PosterUrl = collection.PosterUrl,
+            PosterThumbhash = collection.PosterThumbhash,
+            ItemCount = collection.ItemCount,
+            Featured = collection.Featured,
+            IsUserCollection = false,
+            TypeLabel = string.IsNullOrWhiteSpace(collection.CollectionType)
+                ? "COLLECTION"
+                : collection.CollectionType.ToUpperInvariant(),
+        };
 
     [RelayCommand]
     private async Task LoadAsync()
@@ -727,4 +822,27 @@ public partial class LibraryViewModel : ObservableObject
             // Filters are optional, don't block UI
         }
     }
+}
+
+public sealed class LibraryTabSection
+{
+    public string Title { get; init; } = "";
+    public string Kind { get; init; } = "regular";
+    public int SortOrder { get; init; }
+    public bool IsUngrouped { get; init; }
+    public ObservableCollection<LibraryTabCollectionDisplay> Collections { get; } = [];
+
+    public bool HasTitle => !IsUngrouped && !string.IsNullOrWhiteSpace(Title);
+}
+
+public sealed class LibraryTabCollectionDisplay
+{
+    public string Id { get; init; } = "";
+    public string Title { get; init; } = "";
+    public string? PosterUrl { get; init; }
+    public string? PosterThumbhash { get; init; }
+    public int ItemCount { get; init; }
+    public bool Featured { get; init; }
+    public bool IsUserCollection { get; init; }
+    public string TypeLabel { get; init; } = "COLLECTION";
 }

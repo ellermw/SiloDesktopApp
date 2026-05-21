@@ -10,6 +10,8 @@ using System.Collections.Specialized;
 
 namespace ContinuumPlayer.Views.Admin;
 
+public sealed record AdminPlaybackHistoryFilter(int? UserId = null, string? ProfileId = null);
+
 public sealed partial class AdminPlaybackHistoryPage : Page
 {
     public AdminPlaybackHistoryViewModel ViewModel { get; }
@@ -41,8 +43,13 @@ public sealed partial class AdminPlaybackHistoryPage : Page
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-        // Accept user_id or media_item_id as navigation parameter
-        if (e.Parameter is int userId)
+        // Accept user_id/profile_id filter, or a bare user_id for legacy callers.
+        if (e.Parameter is AdminPlaybackHistoryFilter filter)
+        {
+            ViewModel.SelectedUserId = filter.UserId;
+            ViewModel.SelectedProfileId = filter.ProfileId;
+        }
+        else if (e.Parameter is int userId)
             ViewModel.SelectedUserId = userId;
         else if (e.Parameter is string paramStr && int.TryParse(paramStr, out var uid))
             ViewModel.SelectedUserId = uid;
@@ -397,14 +404,21 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         string sessionShort = item.SessionId.Length >= 8 ? item.SessionId[..8] : item.SessionId;
 
         var mediaStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
-        mediaStack.Children.Add(new TextBlock
-        {
-            Text = title,
-            FontSize = 13,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis
-        });
+        mediaStack.Children.Add(!string.IsNullOrWhiteSpace(item.MediaItemId)
+            ? BuildLinkButton(
+                title,
+                13,
+                FontWeights.SemiBold,
+                (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+                () => page.NavigateToItem(item.MediaItemId))
+            : new TextBlock
+            {
+                Text = title,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
         mediaStack.Children.Add(new TextBlock
         {
             Text = $"{(string.IsNullOrEmpty(item.MediaType) ? "unknown" : item.MediaType)} · session {sessionShort}",
@@ -415,25 +429,22 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         Grid.SetColumn(mediaStack, 0);
 
         // Col 1: Username
-        var userBlock = new TextBlock
-        {
-            Text = !string.IsNullOrEmpty(item.Username) ? item.Username : $"User #{item.UserId}",
-            FontSize = 13,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
+        var userBlock = BuildLinkButton(
+            !string.IsNullOrEmpty(item.Username) ? item.Username : $"User #{item.UserId}",
+            13,
+            FontWeights.Medium,
+            (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            () => page.NavigateToUser(item.UserId));
         Grid.SetColumn(userBlock, 1);
 
         // Col 2: Profile (name + full profile_id as subtitle)
         var profileStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
-        profileStack.Children.Add(new TextBlock
-        {
-            Text = !string.IsNullOrEmpty(item.ProfileName) ? item.ProfileName : item.ProfileId,
-            FontSize = 13,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis
-        });
+        profileStack.Children.Add(BuildLinkButton(
+            !string.IsNullOrEmpty(item.ProfileName) ? item.ProfileName : item.ProfileId,
+            13,
+            FontWeights.Normal,
+            (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            () => page.NavigateToProfileHistory(item.UserId, item.ProfileId)));
         // Always show profile_id as subline (webui always renders it)
         if (!string.IsNullOrEmpty(item.ProfileId))
         {
@@ -547,6 +558,48 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         row.PointerEntered += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF)); };
         row.PointerExited += (s, _) => { if (s is Grid g) g.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); };
         return row;
+    }
+
+    private static Button BuildLinkButton(string text, double fontSize, Windows.UI.Text.FontWeight fontWeight, Brush foreground, Action onClick)
+    {
+        var button = new Button
+        {
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            Content = new TextBlock
+            {
+                Text = text,
+                FontSize = fontSize,
+                FontWeight = fontWeight,
+                Foreground = foreground,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            },
+        };
+        button.Click += (_, _) => onClick();
+        return button;
+    }
+
+    private void NavigateToItem(string mediaItemId)
+    {
+        if (string.IsNullOrWhiteSpace(mediaItemId)) return;
+        App.MainWindowInstance?.RestoreMainPane();
+        App.Services.GetRequiredService<ContinuumPlayer.Helpers.NavigationService>()
+            .Navigate<ContinuumPlayer.Views.ItemDetailPage>(mediaItemId);
+    }
+
+    private void NavigateToUser(int userId)
+    {
+        if (userId <= 0) return;
+        Frame.Navigate(typeof(AdminUserDetailPage), userId);
+    }
+
+    private void NavigateToProfileHistory(int userId, string profileId)
+    {
+        if (userId <= 0 || string.IsNullOrWhiteSpace(profileId)) return;
+        Frame.Navigate(typeof(AdminPlaybackHistoryPage), new AdminPlaybackHistoryFilter(userId, profileId));
     }
 
     // Navigate to AdminLogsPage with the given playback session ID

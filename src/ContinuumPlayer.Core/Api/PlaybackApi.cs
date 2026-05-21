@@ -97,15 +97,18 @@ public class PlaybackApi(ContinuumApiClient client)
                 ["languages"] = languages,
             }, ct);
 
-    public Task<SubtitleDownloadResponse> DownloadSubtitleAsync(int mediaFileId, string provider, string subtitleId, string language, string format, CancellationToken ct = default)
+    public Task<SubtitleDownloadResponse> DownloadSubtitleAsync(int mediaFileId, SubtitleSearchResult result, CancellationToken ct = default)
         => client.PostAsync<SubtitleDownloadResponse>("/api/v1/subtitles/download",
             new Dictionary<string, object?>
             {
                 ["media_file_id"] = mediaFileId,
-                ["provider"] = provider,
-                ["subtitle_id"] = subtitleId,
-                ["language"] = language,
-                ["format"] = format,
+                ["provider"] = result.Provider,
+                ["subtitle_id"] = result.SubtitleId,
+                ["language"] = result.Language,
+                ["release_name"] = result.ReleaseName,
+                ["format"] = result.Format,
+                ["score"] = result.Score,
+                ["hearing_impaired"] = result.HearingImpaired,
             }, ct);
 
     // ===== Watch Together (Watch Party) =====
@@ -250,17 +253,21 @@ public class SubtitleEntry
 public class SubtitleSearchResponse
 {
     public List<SubtitleSearchResult> Results { get; set; } = [];
+    public List<string> Warnings { get; set; } = [];
 }
 
 public class SubtitleSearchResult
 {
     public string Provider { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("id")]
     public string SubtitleId { get; set; } = "";
     public string Language { get; set; } = "";
-    public string? ReleaseName { get; set; }
+    public string ReleaseName { get; set; } = "";
     public string Format { get; set; } = "srt";
     public double Score { get; set; }
+    public int Downloads { get; set; }
     public bool HearingImpaired { get; set; }
+    public string? UploadDate { get; set; }
 }
 
 public class SubtitleDownloadResponse

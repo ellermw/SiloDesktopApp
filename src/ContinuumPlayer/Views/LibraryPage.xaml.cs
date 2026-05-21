@@ -226,6 +226,7 @@ public sealed partial class LibraryPage : Page
     {
         "movie" => 1,
         "series" => 2,
+        "episode" => 3,
         _ => 0,
     };
 
@@ -1115,6 +1116,7 @@ public sealed partial class LibraryPage : Page
         CollectionsLoading.Visibility = Visibility.Visible;
 
         await ViewModel.LoadCollectionsCommand.ExecuteAsync(null);
+        _collectionsLoaded = ViewModel.CollectionsLoaded;
 
         CollectionsLoading.IsActive = false;
         CollectionsLoading.Visibility = Visibility.Collapsed;
@@ -1124,38 +1126,58 @@ public sealed partial class LibraryPage : Page
 
     private void BuildCollectionCards()
     {
-        var collections = ViewModel.Collections;
+        var sections = ViewModel.CollectionSections;
 
-        if (collections.Count == 0)
+        if (sections.Count == 0)
         {
             CollectionsEmptyCard.Visibility = Visibility.Visible;
             CollectionsRepeater.Visibility = Visibility.Collapsed;
+            RemoveDynamicCollectionPanels();
             return;
         }
 
         CollectionsEmptyCard.Visibility = Visibility.Collapsed;
         CollectionsRepeater.Visibility = Visibility.Visible;
-
-        // Build a wrapped grid of collection cards
         CollectionsRepeater.ItemsSource = null;
 
-        var cardElements = new List<FrameworkElement>();
-        foreach (var c in collections)
+        var sectionsPanel = new StackPanel { Spacing = 28 };
+        foreach (var section in sections)
+            sectionsPanel.Children.Add(BuildCollectionSection(section));
+
+        // Replace the empty card with our content
+        var parent = (StackPanel)CollectionsRepeater.Parent!;
+        int idx = parent.Children.IndexOf(CollectionsRepeater);
+        if (idx >= 0)
         {
-            cardElements.Add(CreateCollectionCard(c));
+            RemoveDynamicCollectionPanels();
+            sectionsPanel.Tag = "CollectionGrid";
+            parent.Children.Insert(idx + 1, sectionsPanel);
+        }
+    }
+
+    private FrameworkElement BuildCollectionSection(LibraryTabSection section)
+    {
+        var sectionPanel = new StackPanel { Spacing = 12 };
+
+        if (section.HasTitle)
+        {
+            sectionPanel.Children.Add(new TextBlock
+            {
+                Text = section.Title,
+                FontSize = 18,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"]
+            });
         }
 
-        // Replace the repeater content with a simple panel
         var wrapPanel = new StackPanel();
         var currentRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
-        int cardsPerRow = 5;
-        int count = 0;
+        const int CardsPerRow = 5;
 
-        foreach (var card in cardElements)
+        for (int i = 0; i < section.Collections.Count; i++)
         {
-            currentRow.Children.Add(card);
-            count++;
-            if (count % cardsPerRow == 0)
+            currentRow.Children.Add(CreateCollectionCard(section.Collections[i]));
+            if ((i + 1) % CardsPerRow == 0)
             {
                 wrapPanel.Children.Add(currentRow);
                 currentRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16, Margin = new Thickness(0, 16, 0, 0) };
@@ -1165,24 +1187,22 @@ public sealed partial class LibraryPage : Page
         if (currentRow.Children.Count > 0)
             wrapPanel.Children.Add(currentRow);
 
-        // Replace the empty card with our content
-        var parent = (StackPanel)CollectionsRepeater.Parent!;
-        int idx = parent.Children.IndexOf(CollectionsRepeater);
-        if (idx >= 0)
-        {
-            // Remove old dynamic panels if any
-            for (int i = parent.Children.Count - 1; i >= 0; i--)
-            {
-                if (parent.Children[i] is StackPanel sp && sp.Name == null && sp != parent && sp.Tag is "CollectionGrid")
-                    parent.Children.RemoveAt(i);
-            }
+        sectionPanel.Children.Add(wrapPanel);
+        return sectionPanel;
+    }
 
-            wrapPanel.Tag = "CollectionGrid";
-            parent.Children.Insert(idx + 1, wrapPanel);
+    private void RemoveDynamicCollectionPanels()
+    {
+        if (CollectionsRepeater.Parent is not StackPanel parent) return;
+
+        for (int i = parent.Children.Count - 1; i >= 0; i--)
+        {
+            if (parent.Children[i] is StackPanel sp && sp.Name == null && sp != parent && sp.Tag is "CollectionGrid")
+                parent.Children.RemoveAt(i);
         }
     }
 
-    private Border CreateCollectionCard(LibraryCollection collection)
+    private Border CreateCollectionCard(LibraryTabCollectionDisplay collection)
     {
         // Poster area
         var posterBorder = new Border
@@ -1219,7 +1239,7 @@ public sealed partial class LibraryPage : Page
             Margin = new Thickness(6, 6, 0, 0),
             Child = new TextBlock
             {
-                Text = collection.CollectionType.ToUpperInvariant(),
+                Text = collection.TypeLabel,
                 FontSize = 10,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"]
@@ -1257,6 +1277,17 @@ public sealed partial class LibraryPage : Page
             Children = { posterGrid, titleText, countText }
         };
 
+        if (collection.IsUserCollection)
+        {
+            content.Children.Add(new TextBlock
+            {
+                Text = "User collection",
+                FontSize = 11,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
+                Margin = new Thickness(2, 0, 2, 0)
+            });
+        }
+
         var card = new Border
         {
             CornerRadius = new CornerRadius(8),
@@ -1287,14 +1318,14 @@ public sealed partial class LibraryPage : Page
                 CollectionId = collection.Id,
                 Title = collection.Title,
                 Subtitle = ViewModel.Library?.Name,
-                IsUserCollection = false,
+                IsUserCollection = collection.IsUserCollection,
             });
         };
 
         return card;
     }
 
-    private async Task LoadCollectionPosterAsync(Border posterBorder, LibraryCollection collection)
+    private async Task LoadCollectionPosterAsync(Border posterBorder, LibraryTabCollectionDisplay collection)
     {
         try
         {
@@ -1302,7 +1333,11 @@ public sealed partial class LibraryPage : Page
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
             var bytes = await imageService.GetImageAsync(
-                collection.Id, "collection_poster", collection.PosterUrl!, httpClient, CancellationToken.None);
+                $"{(collection.IsUserCollection ? "user" : "library")}_{collection.Id}",
+                "collection_poster",
+                collection.PosterUrl!,
+                httpClient,
+                CancellationToken.None);
 
             if (bytes == null) return;
 
@@ -1397,7 +1432,13 @@ public sealed partial class LibraryPage : Page
 
         if (!string.IsNullOrEmpty(ViewModel.SelectedType))
         {
-            var label = ViewModel.SelectedType == "movie" ? "Movies" : "Series";
+            var label = ViewModel.SelectedType switch
+            {
+                "movie" => "Movies",
+                "series" => "Series",
+                "episode" => "Episodes",
+                _ => ViewModel.SelectedType
+            };
             filters.Add(("Type", label, () => { ViewModel.SelectedType = null; MediaTypeComboBox.SelectedIndex = 0; }));
         }
         if (!string.IsNullOrEmpty(ViewModel.SelectedGenre))

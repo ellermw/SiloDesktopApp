@@ -30,7 +30,7 @@
                     <StackPanel Spacing="8">
                         <TextBlock
                             x:Name="ServerNameTitle"
-                            Text="Continuum"
+                            Text="Silo"
                             FontSize="30"
                             FontWeight="ExtraBold"
                             Foreground="{StaticResource PrimaryTextBrush}"

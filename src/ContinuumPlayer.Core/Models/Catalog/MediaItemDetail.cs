@@ -38,6 +38,7 @@ public class MediaItemDetail
     public string? ReleaseDate { get; set; }
     public string? FirstAirDate { get; set; }
     public string? LastAirDate { get; set; }
+    public string? ShowStatus { get; set; }
     public int? SeasonCount { get; set; }
     public int? EpisodeCount { get; set; }
     public string? SeriesId { get; set; }

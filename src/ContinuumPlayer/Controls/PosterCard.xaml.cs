@@ -264,6 +264,7 @@ public sealed partial class PosterCard : UserControl
         foreach (var def in Services.OverlayRegistry.All)
         {
             if (!prefs.TryGetValue(def.Id, out var config) || !config.Enabled) continue;
+            if (Services.OverlayRegistry.SuppressesStandaloneOverlays(def.Id, prefs)) continue;
             var value = def.GetValue(data);
             if (string.IsNullOrEmpty(value)) continue;
 

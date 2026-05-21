@@ -5,8 +5,8 @@ using ContinuumPlayer.Core.Models.Home;
 namespace ContinuumPlayer.Services;
 
 /// <summary>
-/// 4 corners a card overlay badge can live in. Mirrors the webui
-/// <c>OverlayPosition</c> type in <c>web/src/lib/cardOverlays.ts</c>.
+/// Four corners a card overlay badge can live in. Mirrors the WebUI
+/// OverlayPosition type in web/src/lib/overlays.
 /// </summary>
 public enum OverlayPosition
 {
@@ -17,96 +17,177 @@ public enum OverlayPosition
 }
 
 /// <summary>
-/// Per-overlay config: whether it shows + which corner it lives in.
+/// Per-overlay config: whether it shows and which corner it lives in.
 /// </summary>
 public record OverlayItemConfig(bool Enabled, OverlayPosition Position);
 
 /// <summary>
-/// Flat "data bag" passed to the renderer — extracted from a MediaItem once
-/// and shared across all 9 value extractors in <see cref="OverlayRegistry"/>.
+/// Flat data bag passed to the renderer, extracted from a MediaItem once and
+/// shared across all value extractors in OverlayRegistry.
 /// </summary>
 public sealed class OverlayData
 {
     public string? Resolution { get; set; }
     public string? Hdr { get; set; }
     public string? Audio { get; set; }
+    public string? AudioChannels { get; set; }
+    public string? VideoCodec { get; set; }
+    public string? Container { get; set; }
+    public string? AspectRatio { get; set; }
     public string? ReleaseType { get; set; }
+    public string? Edition { get; set; }
+    public bool MultiAudio { get; set; }
+    public bool MultiSub { get; set; }
     public double? RatingImdb { get; set; }
     public double? RatingTmdb { get; set; }
     public int? RatingRtCritic { get; set; }
     public int? RatingRtAudience { get; set; }
+    public string? ContentRating { get; set; }
+    public int? Year { get; set; }
+    public int? Runtime { get; set; }
     public string? OriginalLanguage { get; set; }
+    public string? Studio { get; set; }
+    public string? Network { get; set; }
+    public string? ShowStatus { get; set; }
 
     public static OverlayData FromMediaItem(MediaItem item) => new()
     {
         Resolution = item.OverlaySummary?.Resolution,
         Hdr = item.OverlaySummary?.Hdr,
         Audio = item.OverlaySummary?.Audio,
+        AudioChannels = item.OverlaySummary?.AudioChannels,
+        VideoCodec = item.OverlaySummary?.VideoCodec,
+        Container = item.OverlaySummary?.Container,
+        AspectRatio = item.OverlaySummary?.AspectRatio,
         ReleaseType = item.OverlaySummary?.ReleaseType,
+        Edition = item.OverlaySummary?.Edition,
+        MultiAudio = item.OverlaySummary?.MultiAudio == true,
+        MultiSub = item.OverlaySummary?.MultiSub == true,
         RatingImdb = item.RatingImdb,
         RatingTmdb = item.RatingTmdb,
         RatingRtCritic = item.RatingRtCritic,
         RatingRtAudience = item.RatingRtAudience,
+        ContentRating = item.ContentRating,
+        Year = item.Year > 0 ? item.Year : null,
+        Runtime = item.Runtime > 0 ? item.Runtime : null,
         OriginalLanguage = item.OriginalLanguage,
+        Studio = item.Studios.FirstOrDefault(),
+        Network = item.Networks.FirstOrDefault(),
+        ShowStatus = item.ShowStatus,
     };
 }
 
 /// <summary>
-/// A single overlay definition — a stable ID, display metadata, default
-/// corner, and a function that pulls the badge's display text out of the
-/// shared <see cref="OverlayData"/>. Mirrors the webui <c>OVERLAY_REGISTRY</c>.
+/// A single overlay definition: stable ID, display metadata, default corner,
+/// default enabled state, and a value extractor.
 /// </summary>
 public sealed record OverlayDef(
     string Id,
     string Label,
     OverlayPosition DefaultPosition,
+    bool DefaultEnabled,
     Func<OverlayData, string?> GetValue);
 
 /// <summary>
-/// Static list of all supported card overlays, in the same order and with
-/// the same defaults as the webui. PosterCard iterates this list to decide
-/// which badges to render per item.
+/// Version 2 server/WebUI overlay document. Desktop currently consumes preset
+/// and order for compatibility, while rendering still uses the native badge
+/// style and registry order.
+/// </summary>
+public sealed record CardOverlayPrefs(
+    int Version,
+    string Preset,
+    IReadOnlyList<string> Order,
+    Dictionary<string, OverlayItemConfig> Items);
+
+/// <summary>
+/// Static list of supported card overlays, in WebUI order and defaults.
 /// </summary>
 public static class OverlayRegistry
 {
     public static readonly IReadOnlyList<OverlayDef> All =
     [
-        new OverlayDef("resolution",        "Resolution",    OverlayPosition.TopLeft,     d => string.IsNullOrEmpty(d.Resolution) ? null : d.Resolution.ToUpperInvariant()),
-        new OverlayDef("hdr",               "HDR",           OverlayPosition.TopLeft,     d => string.IsNullOrEmpty(d.Hdr) ? null : d.Hdr),
-        new OverlayDef("audio",             "Audio",         OverlayPosition.TopLeft,     d => string.IsNullOrEmpty(d.Audio) ? null : d.Audio),
-        new OverlayDef("release_type",      "Release Type",  OverlayPosition.BottomLeft,  d => string.IsNullOrEmpty(d.ReleaseType) ? null : d.ReleaseType),
-        new OverlayDef("rating_imdb",       "IMDb",          OverlayPosition.TopRight,    d => d.RatingImdb.HasValue ? d.RatingImdb.Value.ToString("0.0") : null),
-        new OverlayDef("rating_tmdb",       "TMDB",          OverlayPosition.TopRight,    d => d.RatingTmdb.HasValue ? d.RatingTmdb.Value.ToString("0.0") : null),
-        new OverlayDef("rating_rt",         "RT",            OverlayPosition.TopRight,    d => d.RatingRtCritic.HasValue ? $"{d.RatingRtCritic.Value}%" : null),
-        new OverlayDef("rating_rt_audience","RT Audience",   OverlayPosition.TopRight,    d => d.RatingRtAudience.HasValue ? $"{d.RatingRtAudience.Value}%" : null),
-        new OverlayDef("original_language", "Language",      OverlayPosition.BottomLeft,  d => string.IsNullOrEmpty(d.OriginalLanguage) ? null : d.OriginalLanguage.ToUpperInvariant()),
+        new("resolution",         "Resolution",       OverlayPosition.TopLeft,     true,  d => FormatResolution(d.Resolution)),
+        new("hdr",                "HDR",              OverlayPosition.TopLeft,     true,  d => string.IsNullOrEmpty(d.Hdr) ? null : d.Hdr),
+        new("resolution_hdr",     "Resolution + HDR", OverlayPosition.TopLeft,     false, d => FormatResolutionHdr(d.Resolution, d.Hdr)),
+        new("audio",              "Audio",            OverlayPosition.TopLeft,     true,  d => string.IsNullOrEmpty(d.Audio) ? null : d.Audio),
+        new("audio_channels",     "Audio Channels",   OverlayPosition.TopLeft,     false, d => string.IsNullOrEmpty(d.AudioChannels) ? null : d.AudioChannels),
+        new("video_codec",        "Video Codec",      OverlayPosition.TopLeft,     false, d => string.IsNullOrEmpty(d.VideoCodec) ? null : d.VideoCodec),
+        new("container",          "Container",        OverlayPosition.BottomLeft,  false, d => string.IsNullOrEmpty(d.Container) ? null : d.Container),
+        new("aspect_ratio",       "Aspect Ratio",     OverlayPosition.BottomRight, false, d => string.IsNullOrEmpty(d.AspectRatio) ? null : d.AspectRatio),
+        new("release_type",       "Release Type",     OverlayPosition.BottomLeft,  true,  d => string.IsNullOrEmpty(d.ReleaseType) ? null : d.ReleaseType),
+        new("edition",            "Edition",          OverlayPosition.BottomLeft,  false, d => string.IsNullOrEmpty(d.Edition) ? null : d.Edition),
+        new("multi_audio",        "Multi-Audio",      OverlayPosition.BottomRight, false, d => d.MultiAudio ? "Multi-Audio" : null),
+        new("multi_sub",          "Subtitles",        OverlayPosition.BottomRight, false, d => d.MultiSub ? "CC" : null),
+        new("rating_imdb",        "IMDb",             OverlayPosition.TopRight,    false, d => d.RatingImdb.HasValue ? d.RatingImdb.Value.ToString("0.0") : null),
+        new("rating_tmdb",        "TMDB",             OverlayPosition.TopRight,    false, d => d.RatingTmdb.HasValue ? d.RatingTmdb.Value.ToString("0.0") : null),
+        new("rating_rt",          "RT",               OverlayPosition.TopRight,    false, d => d.RatingRtCritic.HasValue ? $"{d.RatingRtCritic.Value}%" : null),
+        new("rating_rt_audience", "RT Audience",      OverlayPosition.TopRight,    false, d => d.RatingRtAudience.HasValue ? $"{d.RatingRtAudience.Value}%" : null),
+        new("content_rating",     "Age Rating",       OverlayPosition.BottomRight, false, d => string.IsNullOrEmpty(d.ContentRating) ? null : d.ContentRating),
+        new("year",               "Year",             OverlayPosition.BottomLeft,  false, d => d.Year is > 0 ? d.Year.Value.ToString() : null),
+        new("runtime",            "Runtime",          OverlayPosition.BottomLeft,  false, d => FormatRuntime(d.Runtime)),
+        new("original_language",  "Language",         OverlayPosition.BottomLeft,  false, d => string.IsNullOrEmpty(d.OriginalLanguage) ? null : d.OriginalLanguage.ToUpperInvariant()),
+        new("studio",             "Studio",           OverlayPosition.BottomRight, false, d => string.IsNullOrEmpty(d.Studio) ? null : d.Studio),
+        new("network",            "Network",          OverlayPosition.BottomRight, false, d => string.IsNullOrEmpty(d.Network) ? null : d.Network),
+        new("show_status",        "Show Status",      OverlayPosition.TopRight,    false, d => FormatShowStatus(d.ShowStatus)),
+        new("imdb_top_250",       "IMDb Top 250",     OverlayPosition.TopRight,    false, _ => null),
+        new("rt_certified_fresh", "Certified Fresh",  OverlayPosition.TopRight,    false, _ => null),
     ];
 
-    /// <summary>
-    /// Kometa-inspired default prefs (matches webui <c>DEFAULT_PREFS</c>) —
-    /// tech trio on, ratings + language opt-in.
-    /// </summary>
-    public static Dictionary<string, OverlayItemConfig> DefaultPrefs => new()
+    public static Dictionary<string, OverlayItemConfig> DefaultPrefs =>
+        All.ToDictionary(def => def.Id, def => new OverlayItemConfig(def.DefaultEnabled, def.DefaultPosition));
+
+    public static bool SuppressesStandaloneOverlays(string overlayId, IReadOnlyDictionary<string, OverlayItemConfig> prefs)
     {
-        ["resolution"]        = new(true,  OverlayPosition.TopLeft),
-        ["hdr"]               = new(true,  OverlayPosition.TopLeft),
-        ["audio"]             = new(true,  OverlayPosition.TopLeft),
-        ["release_type"]      = new(true,  OverlayPosition.BottomLeft),
-        ["rating_imdb"]       = new(false, OverlayPosition.TopRight),
-        ["rating_tmdb"]       = new(false, OverlayPosition.TopRight),
-        ["rating_rt"]         = new(false, OverlayPosition.TopRight),
-        ["rating_rt_audience"]= new(false, OverlayPosition.TopRight),
-        ["original_language"] = new(false, OverlayPosition.BottomLeft),
-    };
+        return (overlayId == "resolution" || overlayId == "hdr") &&
+            prefs.TryGetValue("resolution_hdr", out var combined) &&
+            combined.Enabled;
+    }
+
+    private static string? FormatResolution(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim();
+        if (trimmed.Equals("2160p", StringComparison.OrdinalIgnoreCase)) return "4K";
+        if (trimmed.Equals("4320p", StringComparison.OrdinalIgnoreCase)) return "8K";
+        if (trimmed.EndsWith('p')) return trimmed.ToLowerInvariant();
+        return trimmed.ToUpperInvariant();
+    }
+
+    private static string? FormatResolutionHdr(string? resolution, string? hdr)
+    {
+        var res = FormatResolution(resolution);
+        if (res == null) return null;
+        if (string.IsNullOrWhiteSpace(hdr)) return res;
+        var suffix = hdr.Contains("DV", StringComparison.OrdinalIgnoreCase) ? "DV" : "HDR";
+        return $"{res} {suffix}";
+    }
+
+    private static string? FormatRuntime(int? minutes)
+    {
+        if (minutes is null or <= 0) return null;
+        var hours = minutes.Value / 60;
+        var mins = minutes.Value % 60;
+        return hours > 0 ? $"{hours}h {mins}m" : $"{mins}m";
+    }
+
+    private static string? FormatShowStatus(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "returning" or "returning series" or "in_production" or "in production" => "Returning",
+            "ended" => "Ended",
+            "cancelled" or "canceled" => "Cancelled",
+            _ => value,
+        };
+    }
 }
 
 /// <summary>
-/// Loads and caches the card overlay preferences (server-wide kill switch,
-/// admin defaults, and per-user override). Priority:
-///   1. User setting <c>card_overlays</c>
-///   2. Admin defaults from <c>/settings/overlay-config</c>
-///   3. <see cref="OverlayRegistry.DefaultPrefs"/>
-/// Admin kill switch collapses to <c>null</c> — PosterCard hides all badges.
+/// Loads and caches card overlay preferences. Priority:
+/// 1. User setting card_overlays
+/// 2. Admin defaults from /settings/overlay-config
+/// 3. built-in defaults
 /// </summary>
 public class CardOverlayService
 {
@@ -121,19 +202,8 @@ public class CardOverlayService
         _settingsApi = settingsApi;
     }
 
-    /// <summary>
-    /// Current resolved prefs. Returns null when the admin kill switch is
-    /// off (overlays disabled server-wide). Safe to call before
-    /// <see cref="EnsureLoadedAsync"/> — returns hard-coded defaults until
-    /// the server call lands.
-    /// </summary>
     public Dictionary<string, OverlayItemConfig>? GetPrefs() => _enabled ? _prefs : null;
 
-    /// <summary>
-    /// One-shot server fetch. Subsequent calls are no-ops. Called
-    /// opportunistically by the first PosterCard that binds; failures are
-    /// swallowed and built-in defaults remain in effect.
-    /// </summary>
     public async Task EnsureLoadedAsync()
     {
         if (_initialized) return;
@@ -142,27 +212,25 @@ public class CardOverlayService
         {
             if (_initialized) return;
 
-            // Admin config — kill switch + default prefs.
             try
             {
                 var config = await _settingsApi.GetOverlayConfigAsync();
                 _enabled = config.Enabled;
                 if (!string.IsNullOrWhiteSpace(config.Defaults))
-                    _prefs = ParsePrefs(config.Defaults!) ?? _prefs;
+                    _prefs = ParsePrefs(config.Defaults!)?.Items ?? _prefs;
             }
-            catch { /* admin config optional */ }
+            catch { }
 
-            // Per-user override — takes priority if present.
             try
             {
                 var userSetting = await _settingsApi.GetSettingAsync("card_overlays");
                 if (!string.IsNullOrWhiteSpace(userSetting?.Value))
                 {
                     var parsed = ParsePrefs(userSetting!.Value);
-                    if (parsed != null) _prefs = parsed;
+                    if (parsed != null) _prefs = parsed.Items;
                 }
             }
-            catch { /* user override optional */ }
+            catch { }
 
             _initialized = true;
         }
@@ -172,31 +240,61 @@ public class CardOverlayService
         }
     }
 
-    /// <summary>
-    /// Force a re-fetch on the next <see cref="EnsureLoadedAsync"/> call.
-    /// Call this from SettingsPage after the user saves new overlay prefs.
-    /// </summary>
     public void Invalidate()
     {
         _initialized = false;
     }
 
-    private static Dictionary<string, OverlayItemConfig>? ParsePrefs(string json)
+    private static CardOverlayPrefs? ParsePrefs(string json)
     {
         try
         {
             using var doc = JsonDocument.Parse(json);
-            var result = new Dictionary<string, OverlayItemConfig>(OverlayRegistry.DefaultPrefs);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return null;
+
+            var root = doc.RootElement;
+            var source = root;
+            if (root.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Object)
+                source = items;
+            var version = root.TryGetProperty("version", out var versionElement) && versionElement.TryGetInt32(out var parsedVersion)
+                ? parsedVersion
+                : 1;
+
+            var result = OverlayRegistry.DefaultPrefs;
             foreach (var def in OverlayRegistry.All)
             {
-                if (!doc.RootElement.TryGetProperty(def.Id, out var entry)) continue;
-                bool enabled = entry.TryGetProperty("enabled", out var en) && en.ValueKind == JsonValueKind.True;
-                OverlayPosition position = def.DefaultPosition;
+                if (!source.TryGetProperty(def.Id, out var entry) || entry.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                var enabled = def.DefaultEnabled;
+                if (entry.TryGetProperty("enabled", out var en))
+                {
+                    if (en.ValueKind == JsonValueKind.True) enabled = true;
+                    else if (en.ValueKind == JsonValueKind.False) enabled = false;
+                }
+
+                var position = def.DefaultPosition;
                 if (entry.TryGetProperty("position", out var pos) && pos.ValueKind == JsonValueKind.String)
                     position = ParsePosition(pos.GetString() ?? "") ?? def.DefaultPosition;
+
                 result[def.Id] = new OverlayItemConfig(enabled, position);
             }
-            return result;
+
+            var preset = root.TryGetProperty("preset", out var presetElement) && presetElement.ValueKind == JsonValueKind.String
+                ? presetElement.GetString() ?? "classic"
+                : "classic";
+            var order = new List<string>();
+            if (root.TryGetProperty("order", out var orderElement) && orderElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in orderElement.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.String && item.GetString() is { Length: > 0 } id)
+                        order.Add(id);
+                }
+            }
+
+            return new CardOverlayPrefs(version, preset, order, result);
         }
         catch
         {

@@ -19,7 +19,7 @@
         <StackPanel Spacing="24">
             <!-- Branding -->
             <TextBlock
-                Text="Continuum"
+                Text="Silo"
                 FontSize="{StaticResource FontSizeDisplay}"
                 FontWeight="Bold"
                 Foreground="{StaticResource AccentBrush}"
@@ -95,7 +95,7 @@
                     <TextBlock Text="Add Server" Style="{StaticResource TitleTextStyle}" />
                     <TextBox
                         x:Name="ServerUrlBox"
-                        PlaceholderText="Server URL (e.g., https://continuum.example.com)"
+                        PlaceholderText="Server URL (e.g., https://silo.example.com)"
                         Text="{x:Bind ViewModel.NewServerUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                         Style="{StaticResource DarkTextBoxStyle}" />
                     <TextBox

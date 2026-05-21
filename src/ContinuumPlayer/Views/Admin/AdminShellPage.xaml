@@ -55,7 +55,7 @@
                     <!-- Branding text -->
                     <StackPanel VerticalAlignment="Center" Spacing="0">
                         <TextBlock
-                            Text="Continuum"
+                            Text="Silo"
                             FontSize="{StaticResource FontSizeBrandingTitle}"
                             FontWeight="ExtraBold"
                             Foreground="{StaticResource PrimaryTextBrush}"
@@ -790,7 +790,7 @@
                                 VerticalAlignment="Center" />
                             <StackPanel VerticalAlignment="Center" Spacing="1">
                                 <TextBlock
-                                    Text="Continuum"
+                                    Text="Silo"
                                     FontSize="12"
                                     FontWeight="SemiBold"
                                     Foreground="{StaticResource PrimaryTextBrush}" />

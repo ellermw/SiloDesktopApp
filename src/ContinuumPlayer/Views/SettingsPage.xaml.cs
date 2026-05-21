@@ -4,6 +4,8 @@ using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
+using ContinuumPlayer.Core.Api;
+using ContinuumPlayer.Core.Models.Admin;
 using ContinuumPlayer.Core.Models.HistoryImport;
 using ContinuumPlayer.Core.Models.Home;
 using ContinuumPlayer.Core.Models.Plugins;
@@ -2296,7 +2298,7 @@ public sealed partial class SettingsPage : Page
                 var dialog = new ContentDialog
                 {
                     Title = $"Disconnect {displayName}?",
-                    Content = "Continuum will stop importing history, syncing progress, and scrobbling playback for this provider.",
+                    Content = "Silo will stop importing history, syncing progress, and scrobbling playback for this provider.",
                     PrimaryButtonText = "Disconnect",
                     PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
                     CloseButtonText = "Cancel",
@@ -2787,9 +2789,10 @@ public sealed partial class SettingsPage : Page
     private async Task LoadProfilesAsync()
     {
         ProfileCardsPanel.Children.Clear();
+        _ = LoadHouseholdSessionsAsync();
         try
         {
-            var authApi = App.Services.GetRequiredService<ContinuumPlayer.Core.Api.AuthApi>();
+            var authApi = App.Services.GetRequiredService<AuthApi>();
             var response = await authApi.GetProfilesAsync();
             var profiles = response.Profiles;
 
@@ -2948,6 +2951,208 @@ public sealed partial class SettingsPage : Page
             NoProfilesText.Text = $"Failed to load profiles: {ex.Message}";
             NoProfilesText.Visibility = Visibility.Visible;
         }
+    }
+
+    private async Task LoadHouseholdSessionsAsync()
+    {
+        HouseholdStreamsPanel.Children.Clear();
+
+        try
+        {
+            var authApi = App.Services.GetRequiredService<AuthApi>();
+            var sessions = await authApi.GetHouseholdSessionsAsync();
+            HouseholdStreamsPanel.Visibility = Visibility.Visible;
+            HouseholdStreamsPanel.Children.Add(BuildHouseholdStreamsCard(sessions));
+        }
+        catch (ApiException ex) when (ex.StatusCode is 403 or 404)
+        {
+            HouseholdStreamsPanel.Visibility = Visibility.Collapsed;
+        }
+        catch
+        {
+            HouseholdStreamsPanel.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private Border BuildHouseholdStreamsCard(IReadOnlyList<AdminSession> sessions)
+    {
+        var card = new Border
+        {
+            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(16),
+        };
+
+        var stack = new StackPanel { Spacing = 12 };
+
+        var header = new Grid();
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var titleStack = new StackPanel { Spacing = 2 };
+        titleStack.Children.Add(new TextBlock
+        {
+            Text = "Active streams",
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+        titleStack.Children.Add(new TextBlock
+        {
+            Text = "Playback currently running across this Silo household.",
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        Grid.SetColumn(titleStack, 0);
+        header.Children.Add(titleStack);
+
+        var countBadge = new Border
+        {
+            Background = (Brush)Application.Current.Resources[sessions.Count > 0 ? "AccentBackgroundBrush" : "SurfaceBrush"],
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 4, 10, 4),
+            VerticalAlignment = VerticalAlignment.Top,
+            Child = new TextBlock
+            {
+                Text = sessions.Count.ToString(),
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (Brush)Application.Current.Resources[sessions.Count > 0 ? "AccentBrush" : "SecondaryTextBrush"],
+            },
+        };
+        Grid.SetColumn(countBadge, 1);
+        header.Children.Add(countBadge);
+        stack.Children.Add(header);
+
+        if (sessions.Count == 0)
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = "No active household streams.",
+                FontSize = 13,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+        }
+        else
+        {
+            foreach (var session in sessions)
+                stack.Children.Add(BuildHouseholdStreamRow(session));
+        }
+
+        card.Child = stack;
+        return card;
+    }
+
+    private FrameworkElement BuildHouseholdStreamRow(AdminSession session)
+    {
+        var row = new Grid
+        {
+            ColumnSpacing = 12,
+            Margin = new Thickness(0, 6, 0, 0),
+        };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        row.Children.Add(new FontIcon
+        {
+            Glyph = session.IsPaused ? "\uE769" : "\uE768",
+            FontSize = 16,
+            Foreground = (Brush)Application.Current.Resources["AccentBrush"],
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 3, 0, 0),
+        });
+
+        var textStack = new StackPanel { Spacing = 3 };
+        var title = string.IsNullOrWhiteSpace(session.SeriesName) ? session.MediaTitle : session.SeriesName!;
+        textStack.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(title) ? "Unknown media" : title,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+
+        var subtitleParts = new List<string>();
+        var episodeLabel = FormatEpisodeLabel(session);
+        if (!string.IsNullOrWhiteSpace(episodeLabel)) subtitleParts.Add(episodeLabel);
+        var profileLabel = string.IsNullOrWhiteSpace(session.ProfileName) ? session.Username : session.ProfileName!;
+        if (!string.IsNullOrWhiteSpace(profileLabel)) subtitleParts.Add(profileLabel);
+        if (!string.IsNullOrWhiteSpace(session.ClientIp)) subtitleParts.Add(session.ClientIp!);
+
+        textStack.Children.Add(new TextBlock
+        {
+            Text = subtitleParts.Count == 0 ? "Playback session" : string.Join("  |  ", subtitleParts),
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+
+        var metaParts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(session.PlayMethod)) metaParts.Add(Labelize(session.PlayMethod));
+        if (!string.IsNullOrWhiteSpace(session.SourceVideoResolution)) metaParts.Add(session.SourceVideoResolution!);
+        if (!string.IsNullOrWhiteSpace(session.SourceVideoCodec)) metaParts.Add(session.SourceVideoCodec!);
+        if (session.FileDuration is > 0) metaParts.Add(FormatStreamDuration(session.FileDuration.Value));
+        metaParts.Add(session.HasPlaybackControl ? "Controllable" : "Viewing only");
+
+        textStack.Children.Add(new TextBlock
+        {
+            Text = string.Join("  |  ", metaParts),
+            FontSize = 11,
+            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        Grid.SetColumn(textStack, 1);
+        row.Children.Add(textStack);
+
+        var statusBadge = new Border
+        {
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(9, 3, 9, 3),
+            VerticalAlignment = VerticalAlignment.Top,
+            Child = new TextBlock
+            {
+                Text = session.IsPaused ? "Paused" : "Playing",
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            },
+        };
+        Grid.SetColumn(statusBadge, 2);
+        row.Children.Add(statusBadge);
+
+        return row;
+    }
+
+    private static string FormatEpisodeLabel(AdminSession session)
+    {
+        var number = session.SeasonNumber.HasValue && session.EpisodeNumber.HasValue
+            ? $"S{session.SeasonNumber.Value:00}E{session.EpisodeNumber.Value:00}"
+            : "";
+        var episodeName = string.IsNullOrWhiteSpace(session.EpisodeName) ? session.MediaTitle : session.EpisodeName!;
+        if (string.IsNullOrWhiteSpace(episodeName)) return number;
+        return string.IsNullOrWhiteSpace(number) ? episodeName : $"{number} - {episodeName}";
+    }
+
+    private static string FormatStreamDuration(double seconds)
+    {
+        var duration = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return duration.TotalHours >= 1
+            ? $"{(int)duration.TotalHours}h {duration.Minutes}m"
+            : $"{duration.Minutes}m";
+    }
+
+    private static string Labelize(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "";
+        var normalized = value.Replace('_', ' ').Trim().ToLowerInvariant();
+        return normalized.Length == 1
+            ? normalized.ToUpperInvariant()
+            : char.ToUpperInvariant(normalized[0]) + normalized[1..];
     }
 
     private async void AddProfileButton_Click(object sender, RoutedEventArgs e)

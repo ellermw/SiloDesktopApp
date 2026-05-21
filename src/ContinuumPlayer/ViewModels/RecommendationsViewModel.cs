@@ -45,7 +45,7 @@ public partial class RecommendationsViewModel : ObservableObject
         {
             // Load taste profile and recommendation rows in parallel (web parity).
             var profileTask = LoadTasteProfileAsync();
-            var rowsTask = LoadForYouRowsAsync();
+            var rowsTask = LoadDiscoverRowsAsync();
             await Task.WhenAll(profileTask, rowsTask);
         }
         catch (Exception ex)
@@ -70,12 +70,39 @@ public partial class RecommendationsViewModel : ObservableObject
         }
     }
 
-    private async Task LoadForYouRowsAsync()
+    private async Task LoadDiscoverRowsAsync()
     {
         try
         {
-            // Web uses /recommendations/discover; desktop currently exposes
-            // /recommendations/for-you/rows which returns the same row shape.
+            var response = await _recommendationsApi.GetDiscoverAsync();
+
+            foreach (var row in response.Rows)
+            {
+                var displayRow = new RecommendationRowDisplay
+                {
+                    Label = row.Label,
+                    Type = row.Type,
+                    SectionKind = row.SectionKind,
+                    SectionKey = row.SectionKey
+                };
+
+                foreach (var item in row.Items)
+                    displayRow.Items.Add(item);
+
+                if (displayRow.Items.Count > 0)
+                    Rows.Add(displayRow);
+            }
+        }
+        catch
+        {
+            await LoadLegacyForYouRowsAsync();
+        }
+    }
+
+    private async Task LoadLegacyForYouRowsAsync()
+    {
+        try
+        {
             var response = await _catalogApi.GetRecommendationsAsync();
 
             foreach (var row in response.Rows)
@@ -86,7 +113,6 @@ public partial class RecommendationsViewModel : ObservableObject
                     Type = row.Type
                 };
 
-                // Fetch item details for each recommendation in parallel
                 var tasks = row.Items.Select(async recItem =>
                 {
                     try
@@ -127,7 +153,7 @@ public partial class RecommendationsViewModel : ObservableObject
         }
         catch
         {
-            // For You rows load failure is non-fatal
+            // Recommendation rows are optional; the empty state will render.
         }
     }
 }
@@ -136,5 +162,7 @@ public class RecommendationRowDisplay
 {
     public string Label { get; set; } = "";
     public string Type { get; set; } = "";
+    public string? SectionKind { get; set; }
+    public string? SectionKey { get; set; }
     public ObservableCollection<MediaItem> Items { get; } = [];
 }

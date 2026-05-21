@@ -741,12 +741,16 @@ public class PlayerService : IDisposable
             }
             if (api.StatusCode == 403)
                 return ("Playback unavailable", "You do not have permission to play this item.");
+            if (api.StatusCode == 429 && api.ErrorCode == "too_many_streams")
+                return ("Stream limit reached", "This account has reached its active stream limit. Stop another stream and try again.");
+            if (api.StatusCode == 429 && api.ErrorCode == "too_many_transcodes")
+                return ("Transcode limit reached", "This account has reached its active transcode limit. Try direct play or stop another transcode.");
             if (api.StatusCode >= 500)
-                return ("Playback unavailable", "Continuum could not start playback right now. Please try again.");
+                return ("Playback unavailable", "Silo could not start playback right now. Please try again.");
             return ("Playback unavailable", string.IsNullOrWhiteSpace(api.Message) ? "Playback could not start." : api.Message);
         }
         if (ex.Message == "No compatible file version found")
-            return ("No compatible version found", "Continuum could not find a playable version for this device.");
+            return ("No compatible version found", "Silo could not find a playable version for this device.");
         if (!string.IsNullOrWhiteSpace(ex.Message))
             return ("Playback unavailable", ex.Message);
         return ("Playback unavailable", "Playback could not start.");
@@ -2306,7 +2310,7 @@ public class PlayerService : IDisposable
                 .ThenByDescending(r => string.Equals(r.Language, languages[0], StringComparison.OrdinalIgnoreCase))
                 .ThenBy(r => r.HearingImpaired)
                 .First();
-            await _playbackApi.DownloadSubtitleAsync(fileId, best.Provider, best.SubtitleId, best.Language, best.Format);
+            await _playbackApi.DownloadSubtitleAsync(fileId, best);
             var label = string.IsNullOrEmpty(best.ReleaseName)
                 ? $"{best.Language.ToUpperInvariant()} ({best.Provider})"
                 : $"{best.Language.ToUpperInvariant()} · {best.ReleaseName}";

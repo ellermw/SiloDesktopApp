@@ -46,7 +46,7 @@ public class PluginsApi(ContinuumApiClient client)
     // ===== Config =====
 
     public Task SaveGlobalConfigAsync(int installationId, SavePluginConfigRequest request, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/admin/plugins/installations/{installationId}/config/{Uri.EscapeDataString(request.Key)}", request, ct);
+        => client.PutNoContentAsync($"/api/v1/admin/plugins/installations/{installationId}/config", request, ct);
 
     // ===== Auth Bindings =====
 

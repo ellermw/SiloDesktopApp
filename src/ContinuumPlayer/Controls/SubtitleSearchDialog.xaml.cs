@@ -69,7 +69,9 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
 
             foreach (var r in result.Results.OrderByDescending(x => x.Score))
                 ResultsList.Items.Add(BuildResultRow(r));
-            StatusText.Text = $"{result.Results.Count} result(s).";
+            StatusText.Text = result.Warnings.Count > 0
+                ? $"{result.Results.Count} result(s). {string.Join(" ", result.Warnings)}"
+                : $"{result.Results.Count} result(s).";
         }
         catch (Exception ex)
         {
@@ -84,6 +86,12 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
 
     private FrameworkElement BuildResultRow(SubtitleSearchResult r)
     {
+        var releaseNames = SplitReleaseNames(r.ReleaseName);
+        var primaryReleaseName = releaseNames.FirstOrDefault();
+        var displayName = string.IsNullOrEmpty(primaryReleaseName)
+            ? $"{r.Provider} · {r.Language.ToUpperInvariant()}"
+            : primaryReleaseName;
+        var downloadsText = r.Downloads > 0 ? $" · {r.Downloads:N0} downloads" : "";
         var releaseText = new TextBlock
         {
             Text = string.IsNullOrEmpty(r.ReleaseName) ? $"{r.Provider} · {r.Language.ToUpperInvariant()}" : r.ReleaseName,
@@ -92,6 +100,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
+        releaseText.Text = displayName;
         var metaPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         metaPanel.Children.Add(new TextBlock
         {
@@ -99,6 +108,15 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             FontSize = 11,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
         });
+        if (!string.IsNullOrEmpty(downloadsText))
+        {
+            metaPanel.Children.Add(new TextBlock
+            {
+                Text = downloadsText.TrimStart(' ', '·'),
+                FontSize = 11,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+        }
         if (r.HearingImpaired)
         {
             metaPanel.Children.Add(new Border
@@ -117,6 +135,16 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         }
 
         var textStack = new StackPanel { Spacing = 2, Children = { releaseText, metaPanel } };
+        if (releaseNames.Count > 1)
+        {
+            textStack.Children.Add(new TextBlock
+            {
+                Text = $"{releaseNames.Count - 1} more variant(s)",
+                FontSize = 11,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+        }
         Grid.SetColumn(textStack, 0);
 
         var downloadBtn = new Button
@@ -143,7 +171,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         StatusText.Text = $"Downloading {r.Language.ToUpperInvariant()} from {r.Provider}…";
         try
         {
-            await _playbackApi.DownloadSubtitleAsync(_mediaFileId, r.Provider, r.SubtitleId, r.Language, r.Format);
+            await _playbackApi.DownloadSubtitleAsync(_mediaFileId, r);
             btn.Content = "Downloaded";
             StatusText.Text = $"Downloaded {r.Language.ToUpperInvariant()} · {r.Provider}.";
             try { SubtitleDownloaded?.Invoke(); } catch { }
@@ -155,4 +183,10 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             StatusText.Text = $"Download failed: {ex.Message}";
         }
     }
+
+    private static List<string> SplitReleaseNames(string? raw)
+        => (raw ?? "")
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .ToList();
 }

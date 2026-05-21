@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
 using ContinuumPlayer.Core.Models;
+using ContinuumPlayer.Core.Models.Auth;
 using ContinuumPlayer.Helpers;
 using ContinuumPlayer.ViewModels;
 
@@ -75,21 +76,90 @@ public sealed partial class LoginPage : Page
 
     private async void AuthProviderButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button btn || btn.Tag is not string providerId || string.IsNullOrEmpty(providerId))
+        if (sender is not Button btn || btn.Tag is not AuthProvider provider || provider.InstallationId <= 0)
             return;
 
-        // Open the provider authorize URL in the default browser. The server handles the
-        // OAuth round-trip and redirects back; the user will need to copy the resulting
-        // refresh token back into the app manually for now. (Proper deep-link callback
-        // handling is a future task — tracked under OAuth flow completion.)
-        var url = $"{ViewModel.ServerUrl.TrimEnd('/')}/api/v1/auth/providers/{Uri.EscapeDataString(providerId)}/authorize";
+        // Intercept the server's one-time completion code before the WebUI consumes it.
         try
         {
-            await Windows.System.Launcher.LaunchUriAsync(new Uri(url));
+            btn.IsEnabled = false;
+            var authorizeUri = await ViewModel.BeginOAuthAsync(provider);
+            await ShowOAuthDialogAsync(provider, authorizeUri);
         }
         catch (Exception ex)
         {
-            ViewModel.ErrorMessage = $"Couldn't open browser: {ex.Message}";
+            ViewModel.ErrorMessage = $"Couldn't start OAuth sign-in: {ex.Message}";
         }
+        finally
+        {
+            btn.IsEnabled = true;
+        }
+    }
+
+    private async Task ShowOAuthDialogAsync(AuthProvider provider, Uri authorizeUri)
+    {
+        var webView = new WebView2
+        {
+            Width = 840,
+            Height = 680,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+
+        var dialog = new ContentDialog
+        {
+            Title = $"Sign in with {provider.DisplayName}",
+            Content = webView,
+            CloseButtonText = "Cancel",
+            XamlRoot = XamlRoot,
+            DefaultButton = ContentDialogButton.Close,
+        };
+
+        webView.NavigationStarting += async (_, args) =>
+        {
+            if (!TryGetOAuthCompletionCode(args.Uri, out var completionCode))
+                return;
+
+            args.Cancel = true;
+            try
+            {
+                await ViewModel.CompleteOAuthAsync(completionCode);
+                dialog.Hide();
+            }
+            catch
+            {
+                dialog.Hide();
+            }
+        };
+        webView.NavigationCompleted += (_, args) =>
+        {
+            if (!args.IsSuccess)
+                ViewModel.ErrorMessage = $"OAuth page failed to load: {args.WebErrorStatus}";
+        };
+
+        webView.Source = authorizeUri;
+        await dialog.ShowAsync();
+    }
+
+    private static bool TryGetOAuthCompletionCode(string uriText, out string code)
+    {
+        code = "";
+        if (!Uri.TryCreate(uriText, UriKind.Absolute, out var uri))
+            return false;
+        if (!uri.AbsolutePath.TrimEnd('/').EndsWith("/login/oauth-complete", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var query = uri.Query.TrimStart('?');
+        foreach (var part in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var pieces = part.Split('=', 2);
+            if (pieces.Length != 2 || !string.Equals(Uri.UnescapeDataString(pieces[0]), "code", StringComparison.Ordinal))
+                continue;
+
+            code = Uri.UnescapeDataString(pieces[1].Replace('+', ' '));
+            return !string.IsNullOrWhiteSpace(code);
+        }
+
+        return false;
     }
 }

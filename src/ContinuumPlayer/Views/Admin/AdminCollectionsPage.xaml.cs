@@ -5,6 +5,9 @@ using Microsoft.UI.Xaml.Media;
 using Windows.UI;
 using ContinuumPlayer.Core.Models.Admin;
 using ContinuumPlayer.Core.Models.Catalog;
+using ContinuumPlayer.Helpers;
+using ContinuumPlayer.Views;
+using ContinuumPlayer.ViewModels;
 using ContinuumPlayer.ViewModels.Admin;
 
 namespace ContinuumPlayer.Views.Admin;
@@ -28,6 +31,7 @@ public sealed partial class AdminCollectionsPage : Page
         try
         {
             ViewModel.Collections.CollectionChanged += (_, _) => ScheduleRebuild();
+            ViewModel.CollectionGroups.CollectionChanged += (_, _) => ScheduleRebuild();
             await ViewModel.LoadCommand.ExecuteAsync(null);
             PopulateLibraryPicker();
         }
@@ -78,6 +82,7 @@ public sealed partial class AdminCollectionsPage : Page
 
     private void BuildCollectionRows()
     {
+        CreateGroupButton.Visibility = ViewModel.SelectedLibraryId.HasValue ? Visibility.Visible : Visibility.Collapsed;
         CollectionsPanel.Children.Clear();
 
         if (ViewModel.Collections.Count == 0)
@@ -87,6 +92,12 @@ public sealed partial class AdminCollectionsPage : Page
         }
 
         EmptyState.Visibility = Visibility.Collapsed;
+
+        if (ViewModel.SelectedLibraryId.HasValue)
+        {
+            BuildCollectionGroupBoard();
+            return;
+        }
 
         bool isFirst = true;
         foreach (var col in ViewModel.Collections)
@@ -102,6 +113,109 @@ public sealed partial class AdminCollectionsPage : Page
             isFirst = false;
             CollectionsPanel.Children.Add(BuildCollectionRow(col));
         }
+    }
+
+    private void BuildCollectionGroupBoard()
+    {
+        var groupedCollections = ViewModel.CollectionGroups
+            .OrderBy(g => g.SortOrder)
+            .Select(group => (Group: group, Items: ViewModel.Collections
+                .Where(c => c.GroupId == group.Id)
+                .OrderBy(c => c.SortOrder)
+                .ThenBy(c => c.Title)
+                .ToList()))
+            .ToList();
+
+        foreach (var (group, items) in groupedCollections)
+        {
+            CollectionsPanel.Children.Add(BuildGroupHeader(group.Name, group));
+            if (items.Count == 0)
+            {
+                CollectionsPanel.Children.Add(BuildEmptyGroupRow("No collections in this group."));
+            }
+            else
+            {
+                foreach (var collection in items)
+                    CollectionsPanel.Children.Add(BuildCollectionRow(collection));
+            }
+        }
+
+        var ungrouped = ViewModel.Collections
+            .Where(c => string.IsNullOrEmpty(c.GroupId))
+            .OrderBy(c => c.SortOrder)
+            .ThenBy(c => c.Title)
+            .ToList();
+
+        CollectionsPanel.Children.Add(BuildGroupHeader("Ungrouped", null));
+        if (ungrouped.Count == 0)
+        {
+            CollectionsPanel.Children.Add(BuildEmptyGroupRow("No ungrouped collections."));
+        }
+        else
+        {
+            foreach (var collection in ungrouped)
+                CollectionsPanel.Children.Add(BuildCollectionRow(collection));
+        }
+    }
+
+    private FrameworkElement BuildGroupHeader(string title, LibraryCollectionGroup? group)
+    {
+        var header = new Grid
+        {
+            Padding = new Thickness(20, 16, 20, 12),
+            Background = new SolidColorBrush(Color.FromArgb(18, 255, 255, 255))
+        };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var titlePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        titlePanel.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 15,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        if (group != null)
+            titlePanel.Children.Add(MakeBadgeSecondary(group.DefaultSortMode));
+
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        if (group != null)
+        {
+            var up = MakeIconButton("\uE70E", "Move group up");
+            var down = MakeIconButton("\uE70D", "Move group down");
+            var edit = MakeIconButton("\uE70F", "Rename group");
+            var delete = MakeIconButton("\uE74D", "Delete group");
+
+            up.Click += async (_, _) => await MoveGroupAsync(group, -1);
+            down.Click += async (_, _) => await MoveGroupAsync(group, 1);
+            edit.Click += async (_, _) => await OpenEditGroupDialogAsync(group);
+            delete.Click += async (_, _) => await OpenDeleteGroupDialogAsync(group);
+
+            actions.Children.Add(up);
+            actions.Children.Add(down);
+            actions.Children.Add(edit);
+            actions.Children.Add(delete);
+        }
+
+        Grid.SetColumn(titlePanel, 0);
+        Grid.SetColumn(actions, 1);
+        header.Children.Add(titlePanel);
+        header.Children.Add(actions);
+        return header;
+    }
+
+    private static FrameworkElement BuildEmptyGroupRow(string text)
+    {
+        return new TextBlock
+        {
+            Text = text,
+            Padding = new Thickness(20, 14, 20, 14),
+            FontSize = 12,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
+        };
     }
 
     private FrameworkElement BuildCollectionRow(LibraryCollection col)
@@ -279,6 +393,15 @@ public sealed partial class AdminCollectionsPage : Page
         editBtn.Click += async (_, _) => await OpenEditDialogAsync(capturedCol);
         deleteBtn.Click += async (_, _) => await OpenDeleteDialogAsync(capturedCol);
 
+        if (ViewModel.SelectedLibraryId.HasValue)
+        {
+            var upBtn = MakeIconButton("\uE70E", "Move collection up");
+            var downBtn = MakeIconButton("\uE70D", "Move collection down");
+            upBtn.Click += async (_, _) => await MoveCollectionInGroupAsync(capturedCol, -1);
+            downBtn.Click += async (_, _) => await MoveCollectionInGroupAsync(capturedCol, 1);
+            actionsPanel.Children.Add(upBtn);
+            actionsPanel.Children.Add(downBtn);
+        }
         actionsPanel.Children.Add(syncBtn);
         actionsPanel.Children.Add(editBtn);
         actionsPanel.Children.Add(deleteBtn);
@@ -309,6 +432,109 @@ public sealed partial class AdminCollectionsPage : Page
     private async void AddCollectionButton_Click(object sender, RoutedEventArgs e)
     {
         await OpenCreateDialogAsync();
+    }
+
+    private void SmartCollectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        var nav = App.Services.GetRequiredService<NavigationService>();
+        nav.Navigate<SmartCollectionWizardPage>(
+            new SmartCollectionWizardNavigationArgs(IsAdmin: true, LibraryId: ViewModel.SelectedLibraryId));
+    }
+
+    private async void CreateGroupButton_Click(object sender, RoutedEventArgs e)
+    {
+        await OpenCreateGroupDialogAsync();
+    }
+
+    private async Task OpenCreateGroupDialogAsync()
+    {
+        if (!ViewModel.SelectedLibraryId.HasValue)
+        {
+            ViewModel.ErrorMessage = "Select a library before creating a collection group.";
+            return;
+        }
+
+        var nameBox = new TextBox
+        {
+            PlaceholderText = "Group name",
+            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
+            Width = 360
+        };
+
+        var dialog = new ContentDialog
+        {
+            Title = "New Collection Group",
+            PrimaryButtonText = "Create",
+            CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot,
+            Content = nameBox,
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
+        {
+            try { await ViewModel.CreateGroupAsync(nameBox.Text); }
+            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+        }
+    }
+
+    private async Task OpenEditGroupDialogAsync(LibraryCollectionGroup group)
+    {
+        var nameBox = new TextBox
+        {
+            Text = group.Name,
+            PlaceholderText = "Group name",
+            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
+            Width = 360
+        };
+
+        var dialog = new ContentDialog
+        {
+            Title = "Rename Collection Group",
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot,
+            Content = nameBox,
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
+        {
+            try { await ViewModel.UpdateGroupAsync(group, nameBox.Text); }
+            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+        }
+    }
+
+    private async Task OpenDeleteGroupDialogAsync(LibraryCollectionGroup group)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Delete Collection Group",
+            Content = $"Delete group \"{group.Name}\"? Collections in the group will move back to Ungrouped.",
+            PrimaryButtonText = "Delete",
+            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
+            CloseButtonText = "Cancel",
+            XamlRoot = this.XamlRoot,
+            DefaultButton = ContentDialogButton.Close
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            try { await ViewModel.DeleteGroupAsync(group); }
+            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+        }
+    }
+
+    private async Task MoveGroupAsync(LibraryCollectionGroup group, int delta)
+    {
+        try { await ViewModel.MoveGroupAsync(group, delta); }
+        catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+    }
+
+    private async Task MoveCollectionInGroupAsync(LibraryCollection collection, int delta)
+    {
+        try { await ViewModel.MoveCollectionInGroupAsync(collection, delta); }
+        catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
     }
 
     // ===== Create Dialog =====
@@ -518,6 +744,34 @@ public sealed partial class AdminCollectionsPage : Page
             if (match.Check != null) match.Check.IsChecked = true;
         }
         AddField("Libraries", libCheckPanel);
+
+        ComboBox? groupCombo = null;
+        if (ViewModel.SelectedLibraryId.HasValue && ViewModel.CollectionGroups.Count > 0)
+        {
+            groupCombo = new ComboBox
+            {
+                CornerRadius = new CornerRadius(6),
+                FontSize = 13,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            groupCombo.Items.Add(new ComboBoxItem { Content = "Ungrouped", Tag = null });
+            foreach (var group in ViewModel.CollectionGroups.OrderBy(g => g.SortOrder))
+                groupCombo.Items.Add(new ComboBoxItem { Content = group.Name, Tag = group.Id });
+            groupCombo.SelectedIndex = 0;
+            if (!string.IsNullOrEmpty(existing?.GroupId))
+            {
+                foreach (ComboBoxItem item in groupCombo.Items)
+                {
+                    if (item.Tag is string tag && tag == existing.GroupId)
+                    {
+                        groupCombo.SelectedItem = item;
+                        break;
+                    }
+                }
+            }
+            AddField("Group", groupCombo);
+        }
+
         AddField("Type", typeCombo);
         AddField("Visibility", visibilityCombo);
         AddField("Source URL", sourceUrlBox);
@@ -821,6 +1075,10 @@ public sealed partial class AdminCollectionsPage : Page
             if (syncCombo.SelectedItem is ComboBoxItem syncItem && syncItem.Tag is string sched && !string.IsNullOrEmpty(sched))
                 syncSchedule = sched;
 
+            string? groupId = null;
+            if (groupCombo?.SelectedItem is ComboBoxItem groupItem && groupItem.Tag is string selectedGroupId)
+                groupId = selectedGroupId;
+
             // Build source config based on type
             Dictionary<string, object>? sourceConfig = null;
             if (type == "mdblist" && !double.IsNaN(mdbLimitBox.Value))
@@ -844,6 +1102,7 @@ public sealed partial class AdminCollectionsPage : Page
                 LibraryIds = selectedLibIds.Count > 0 ? selectedLibIds : null,
                 CollectionType = type,
                 Visibility = visibility,
+                GroupId = groupId,
                 SourceUrl = string.IsNullOrEmpty(sourceUrlBox.Text) ? null : sourceUrlBox.Text.Trim(),
                 Featured = featuredSwitch.IsOn,
                 SyncSchedule = syncSchedule,

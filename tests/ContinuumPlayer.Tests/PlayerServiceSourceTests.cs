@@ -115,6 +115,49 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("MarkersChanged", source);
     }
 
+    [Fact]
+    public void PlayerOverlayHonorsAutoSkipProfilePreferences()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "ContinuumPlayer",
+            "Controls",
+            "PlayerOverlay.xaml.cs"));
+
+        Assert.Contains("playback.auto_skip_intro", source);
+        Assert.Contains("playback.auto_skip_credits", source);
+        Assert.Contains("RefreshAutoSkipSettingsAsync", source);
+        Assert.Contains("HasDeviceOverride", source);
+        Assert.Contains("ApplyAutoSkipMarkers(pos, dur)", source);
+        Assert.Contains("SeekAndResume(intro.End)", source);
+        Assert.Contains("SeekAndResume(Math.Min(credits.End, dur))", source);
+        Assert.Contains("NextEpisodeContentId", source);
+    }
+
+    [Fact]
+    public void PlaybackSettingsAutoSkipTogglesAreEnabled()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "ContinuumPlayer",
+            "Views",
+            "SettingsPage.xaml"));
+
+        var introStart = source.IndexOf("x:Name=\"AutoSkipIntroToggle\"", StringComparison.Ordinal);
+        var creditsStart = source.IndexOf("x:Name=\"AutoSkipCreditsToggle\"", StringComparison.Ordinal);
+        Assert.True(introStart >= 0);
+        Assert.True(creditsStart >= 0);
+
+        var introBlock = source[introStart..Math.Min(source.Length, introStart + 300)];
+        var creditsBlock = source[creditsStart..Math.Min(source.Length, creditsStart + 300)];
+
+        Assert.DoesNotContain("IsEnabled=\"False\"", introBlock);
+        Assert.DoesNotContain("IsEnabled=\"False\"", creditsBlock);
+        Assert.DoesNotContain("Coming soon", source);
+    }
+
     private static string FindRepositoryRoot()
     {
         var dir = AppContext.BaseDirectory;

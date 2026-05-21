@@ -1949,6 +1949,62 @@ end
 -- Skip Intro/Credits Button
 --------------------------------------------------------------------------------
 
+local function update_skip_button_rect()
+    if not state.skip_visible then
+        state.skip_rect = nil
+        return nil
+    end
+
+    update_osd_dimensions()
+    local W = state.osd_width
+    local H = state.osd_height
+    local sc = ui_scale()
+    local btn_w = math.floor(180 * sc)
+    local btn_h = math.floor(44 * sc)
+    local btn_x = W - btn_w - 40
+    local btn_y = H - config.bar_height - btn_h - 20
+
+    state.skip_rect = { x = btn_x, y = btn_y, w = btn_w, h = btn_h }
+    return state.skip_rect
+end
+
+local function update_next_episode_button_rect()
+    if not state.next_ep_visible then
+        state.next_ep_rect = nil
+        return nil
+    end
+
+    update_osd_dimensions()
+    local W = state.osd_width
+    local H = state.osd_height
+    local sc = ui_scale()
+    local btn_w = math.floor(180 * sc)
+    local btn_h = math.floor(44 * sc)
+    local btn_x = W - btn_w - 40
+    local btn_y = H - config.bar_height - btn_h - 20
+
+    if state.skip_visible then
+        btn_y = btn_y - (btn_h + 12)
+    end
+
+    state.next_ep_rect = { x = btn_x, y = btn_y, w = btn_w, h = btn_h }
+    return state.next_ep_rect
+end
+
+local function point_on_skip_button(mx, my)
+    local r = update_skip_button_rect()
+    return r ~= nil and point_in_rect(mx, my, r)
+end
+
+local function point_on_next_episode_button(mx, my)
+    local r = update_next_episode_button_rect()
+    return r ~= nil and point_in_rect(mx, my, r)
+end
+
+local function point_on_floating_action_button(mx, my)
+    return point_on_skip_button(mx, my) or point_on_next_episode_button(mx, my)
+end
+
 render_skip_button = function()
     if not state.skip_visible then
         if state.skip_overlay then
@@ -1959,34 +2015,27 @@ render_skip_button = function()
         return
     end
 
-    update_osd_dimensions()
+    local r = update_skip_button_rect()
+    if not r then return end
+
     local ass = assdraw.ass_new()
     local W = state.osd_width
     local H = state.osd_height
 
     local sc = ui_scale()
     local fs = math.floor((config.stats_font_size + 2) * sc)
-    local pad_x = math.floor(24 * sc)
-    local pad_y = math.floor(12 * sc)
-    local btn_w = math.floor(180 * sc)
-    local btn_h = math.floor(44 * sc)
-    local btn_x = W - btn_w - 40
-    local btn_y = H - config.bar_height - btn_h - 20
 
     -- Background
-    draw_rounded_rect(ass, btn_x, btn_y, btn_x + btn_w, btn_y + btn_h,
+    draw_rounded_rect(ass, r.x, r.y, r.x + r.w, r.y + r.h,
         8, "FFFFFF", "30", 1.0)
 
     -- Border
-    draw_rounded_rect(ass, btn_x, btn_y, btn_x + btn_w, btn_y + 1,
+    draw_rounded_rect(ass, r.x, r.y, r.x + r.w, r.y + 1,
         0, "FFFFFF", "60", 1.0)
 
     -- Text
-    draw_text(ass, btn_x + btn_w / 2, btn_y + btn_h / 2, state.skip_label,
+    draw_text(ass, r.x + r.w / 2, r.y + r.h / 2, state.skip_label,
         fs, config.text_color, "00", 1.0, 5, nil, true)
-
-    -- Store hit rect
-    state.skip_rect = { x = btn_x, y = btn_y, w = btn_w, h = btn_h }
 
     if not state.skip_overlay then
         state.skip_overlay = mp.create_osd_overlay("ass-events")
@@ -2087,37 +2136,27 @@ render_next_episode_button = function()
         return
     end
 
-    update_osd_dimensions()
+    local r = update_next_episode_button_rect()
+    if not r then return end
+
     local ass = assdraw.ass_new()
     local W = state.osd_width
     local H = state.osd_height
 
     local sc = ui_scale()
     local fs = math.floor((config.stats_font_size + 2) * sc)
-    local btn_w = math.floor(180 * sc)
-    local btn_h = math.floor(44 * sc)
-
-    -- Position: bottom-right, above the progress bar. If the Skip button
-    -- is also visible, stack this one 56px higher so they don't overlap.
-    local btn_x = W - btn_w - 40
-    local btn_y = H - config.bar_height - btn_h - 20
-    if state.skip_visible then
-        btn_y = btn_y - (btn_h + 12)
-    end
 
     -- Background (accent-tinted so it's distinct from the Skip button)
-    draw_rounded_rect(ass, btn_x, btn_y, btn_x + btn_w, btn_y + btn_h,
+    draw_rounded_rect(ass, r.x, r.y, r.x + r.w, r.y + r.h,
         8, "FFFFFF", "30", 1.0)
 
     -- Top border highlight
-    draw_rounded_rect(ass, btn_x, btn_y, btn_x + btn_w, btn_y + 1,
+    draw_rounded_rect(ass, r.x, r.y, r.x + r.w, r.y + 1,
         0, "FFFFFF", "60", 1.0)
 
     -- Label: "Next Episode ▶"
-    draw_text(ass, btn_x + btn_w / 2, btn_y + btn_h / 2, "Next Episode \xe2\x96\xb6",
+    draw_text(ass, r.x + r.w / 2, r.y + r.h / 2, "Next Episode \xe2\x96\xb6",
         fs, config.text_color, "00", 1.0, 5, nil, true)
-
-    state.next_ep_rect = { x = btn_x, y = btn_y, w = btn_w, h = btn_h }
 
     if not state.next_ep_overlay then
         state.next_ep_overlay = mp.create_osd_overlay("ass-events")
@@ -2191,30 +2230,24 @@ local function handle_mouse_down()
     local my = state.mouse_y
 
     -- Skip intro/credits button
-    if state.skip_visible and state.skip_rect then
-        local r = state.skip_rect
-        if mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h then
-            consume_video_click()
-            seek_and_resume(state.skip_target, "absolute+keyframes")
-            state.skip_visible = false
-            render_skip_button()
-            return
-        end
+    if point_on_skip_button(mx, my) then
+        consume_video_click()
+        seek_and_resume(state.skip_target, "absolute+keyframes")
+        state.skip_visible = false
+        render_skip_button()
+        return
     end
 
     -- Next Episode button — tell the host to advance immediately. The
     -- host owns ContinuePlayingNextAsync which tears down the current
     -- session and starts the next episode.
-    if state.next_ep_visible and state.next_ep_rect then
-        local r = state.next_ep_rect
-        if mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h then
-            consume_video_click()
-            state.next_ep_visible = false
-            state.next_ep_available = false
-            render_next_episode_button()
-            mp.commandv("script-message", "continuum-next-episode")
-            return
-        end
+    if point_on_next_episode_button(mx, my) then
+        consume_video_click()
+        state.next_ep_visible = false
+        state.next_ep_available = false
+        render_next_episode_button()
+        mp.commandv("script-message", "continuum-next-episode")
+        return
     end
 
     -- Stats overlay close button (always check, even if OSC is hidden)
@@ -2807,8 +2840,8 @@ local function setup_script_messages()
         local my = tonumber(y) or 0
         compute_layout()
         local L = state.layout
-        local hit = false
-        if state.current_alpha > 0.1 and L.bar_hit then
+        local hit = point_on_floating_action_button(mx, my)
+        if not hit and state.current_alpha > 0.1 and L.bar_hit then
             hit = point_in_rect(mx, my, L.bar_hit)
         end
         mp.commandv("script-message", "osc-hit-test-result", tostring(hit))
@@ -2826,6 +2859,12 @@ local function setup_script_messages()
         local my = tonumber(y) or 0
         compute_layout()
         local L = state.layout
+
+        -- Floating action buttons are OSC chrome even when the bottom bar is
+        -- hidden. A click here must never fall through into pause toggling.
+        if point_on_floating_action_button(mx, my) then
+            return
+        end
 
         -- Any menu overlay open? Let that handle its own clicks.
         if state.subtitle_menu_visible or state.quality_menu_visible then

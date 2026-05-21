@@ -263,6 +263,55 @@ public class AdminApi(ContinuumApiClient client)
     public Task<LibraryCollectionSyncRun> SyncCollectionAsync(string id, CancellationToken ct = default)
         => client.PostAsync<LibraryCollectionSyncRun>($"/api/v1/admin/collections/{Uri.EscapeDataString(id)}/sync", new { }, ct);
 
+    public Task<LibraryCollectionGroupListResponse> GetCollectionGroupsAsync(int libraryId, CancellationToken ct = default)
+        => client.GetAsync<LibraryCollectionGroupListResponse>($"/api/v1/admin/libraries/{libraryId}/collection-groups", ct);
+
+    public Task<LibraryCollectionGroup> CreateCollectionGroupAsync(
+        int libraryId,
+        CreateLibraryCollectionGroupRequest request,
+        CancellationToken ct = default)
+        => client.PostAsync<LibraryCollectionGroup>($"/api/v1/admin/libraries/{libraryId}/collection-groups", request, ct);
+
+    public Task<LibraryCollectionGroup> UpdateCollectionGroupAsync(
+        string id,
+        UpdateLibraryCollectionGroupRequest request,
+        CancellationToken ct = default)
+        => client.PutAsync<LibraryCollectionGroup>($"/api/v1/admin/collection-groups/{Uri.EscapeDataString(id)}", request, ct);
+
+    public Task DeleteCollectionGroupAsync(string id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/collection-groups/{Uri.EscapeDataString(id)}", ct);
+
+    public Task ReorderCollectionGroupsAsync(int libraryId, IReadOnlyList<string> groupIds, CancellationToken ct = default)
+        => client.PutNoContentAsync(
+            $"/api/v1/admin/libraries/{libraryId}/collection-groups/reorder",
+            new ReorderLibraryCollectionGroupsRequest { Ids = [.. groupIds] },
+            ct);
+
+    public Task ReorderCollectionsInGroupAsync(
+        string groupId,
+        IReadOnlyList<string> collectionIds,
+        int? libraryId = null,
+        bool moveOmittedToUngrouped = false,
+        CancellationToken ct = default)
+    {
+        var path = $"/api/v1/admin/collection-groups/{Uri.EscapeDataString(groupId)}/collections/reorder";
+        var query = new List<string>();
+        if (groupId == "ungrouped" && libraryId.HasValue)
+            query.Add($"library_id={libraryId.Value}");
+        if (moveOmittedToUngrouped)
+            query.Add("move_omitted=ungrouped");
+        if (query.Count > 0)
+            path += "?" + string.Join("&", query);
+
+        return client.PutNoContentAsync(
+            path,
+            new ReorderLibraryCollectionsInGroupRequest { Ids = [.. collectionIds] },
+            ct);
+    }
+
+    public Task ReorderAdminCollectionsAsync(ReorderAdminCollectionsRequest request, CancellationToken ct = default)
+        => client.PutNoContentAsync("/api/v1/admin/collections/order", request, ct);
+
     // ===== Sections =====
 
     // B10: WebUI uses ?scope=home or ?scope=library&library_id={N}. The desktop

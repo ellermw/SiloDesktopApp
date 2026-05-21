@@ -26,8 +26,13 @@ public class MediaItem
     public string Type { get; set; } = "";
     public string Title { get; set; } = "";
     public int Year { get; set; }
+    public int Runtime { get; set; }
     public List<string> Genres { get; set; } = [];
+    public List<string> Studios { get; set; } = [];
+    public List<string> Networks { get; set; } = [];
+    public string? ContentRating { get; set; }
     public string Status { get; set; } = "";
+    public string? ShowStatus { get; set; }
     public string Overview { get; set; } = "";
     public string? PosterUrl { get; set; }
     public string? PosterThumbhash { get; set; }
@@ -64,7 +69,14 @@ public class OverlaySummary
     /// <summary>HDR / Dolby Vision format string (e.g. "HDR10", "DV HDR10").</summary>
     public string Hdr { get; set; } = "";
     public string Audio { get; set; } = "";
+    public string AudioChannels { get; set; } = "";
+    public string VideoCodec { get; set; } = "";
+    public string Container { get; set; } = "";
+    public string AspectRatio { get; set; } = "";
     public string ReleaseType { get; set; } = "";
+    public string Edition { get; set; } = "";
+    public bool MultiAudio { get; set; }
+    public bool MultiSub { get; set; }
 }
 public class UserState
 {

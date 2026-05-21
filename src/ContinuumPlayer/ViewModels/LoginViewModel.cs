@@ -66,9 +66,11 @@ public partial class LoginViewModel : ObservableObject
     {
         try
         {
-            var response = await _authApi.GetAuthProvidersAsync();
+            var providers = await _authApi.GetAuthProvidersAsync();
             AuthProviders.Clear();
-            foreach (var provider in response.Providers)
+            foreach (var provider in providers.Where(p =>
+                         p.InstallationId > 0 &&
+                         string.Equals(p.Mode, "oauth", StringComparison.OrdinalIgnoreCase)))
             {
                 AuthProviders.Add(provider);
             }
@@ -77,6 +79,35 @@ public partial class LoginViewModel : ObservableObject
         catch
         {
             HasAuthProviders = false;
+        }
+    }
+
+    public Task<Uri> BeginOAuthAsync(AuthProvider provider, CancellationToken ct = default)
+        => _authApi.StartOAuthAsync(provider.InstallationId, ct);
+
+    public async Task CompleteOAuthAsync(string code, CancellationToken ct = default)
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+
+        try
+        {
+            var tokens = await _authApi.CompleteOAuthAsync(code, ct);
+            _authService.SetTokens(tokens.AccessToken, tokens.RefreshToken, tokens.ExpiresIn);
+            var user = await _authApi.GetMeAsync(ct);
+            _authService.SetCurrentUser(user);
+
+            _credentialStore.SaveCredential(ServerUrl, "refresh_token", tokens.RefreshToken);
+            LoginSucceeded?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"OAuth sign-in failed: {ex.Message}";
+            throw;
+        }
+        finally
+        {
+            IsLoading = false;
         }
     }
 

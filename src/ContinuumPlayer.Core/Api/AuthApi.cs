@@ -1,4 +1,5 @@
 using ContinuumPlayer.Core.Models.Auth;
+using ContinuumPlayer.Core.Models.Admin;
 
 namespace ContinuumPlayer.Core.Api;
 
@@ -12,6 +13,9 @@ public class AuthApi(ContinuumApiClient client)
 
     public Task<ProfilesResponse> GetProfilesAsync(CancellationToken ct = default)
         => client.GetAsync<ProfilesResponse>("/api/v1/profiles", ct);
+
+    public Task<List<AdminSession>> GetHouseholdSessionsAsync(CancellationToken ct = default)
+        => client.GetAsync<List<AdminSession>>("/api/v1/profiles/household/sessions", ct);
 
     public Task<VerifyPinResponse> VerifyPinAsync(string profileId, string pin, CancellationToken ct = default)
         => client.PostAsync<VerifyPinResponse>($"/api/v1/profiles/{profileId}/verify-pin", new VerifyPinRequest { Pin = pin }, ct);
@@ -57,8 +61,38 @@ public class AuthApi(ContinuumApiClient client)
 
     // ===== Auth Providers =====
 
-    public Task<AuthProvidersResponse> GetAuthProvidersAsync(CancellationToken ct = default)
-        => client.GetAsync<AuthProvidersResponse>("/api/v1/auth/providers", ct);
+    public Task<List<AuthProvider>> GetAuthProvidersAsync(CancellationToken ct = default)
+        => client.GetAsync<List<AuthProvider>>("/api/v1/auth/providers", ct);
+
+    public async Task<Uri> StartOAuthAsync(int installationId, CancellationToken ct = default)
+    {
+        if (installationId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(installationId));
+        if (string.IsNullOrWhiteSpace(client.BaseUrl))
+            throw new InvalidOperationException("Server URL is not configured.");
+
+        using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{client.BaseUrl}/api/v1/auth/oauth/{installationId}/init");
+        using var response = await http.SendAsync(request, ct);
+
+        if ((int)response.StatusCode is >= 300 and < 400 && response.Headers.Location != null)
+        {
+            var location = response.Headers.Location;
+            return location.IsAbsoluteUri ? location : new Uri(new Uri(client.BaseUrl), location);
+        }
+
+        var message = await response.Content.ReadAsStringAsync(ct);
+        throw new ApiException(
+            "oauth_init_failed",
+            string.IsNullOrWhiteSpace(message) ? "Failed to start OAuth sign-in." : message.Trim(),
+            (int)response.StatusCode);
+    }
+
+    public Task<OAuthCompleteResponse> CompleteOAuthAsync(string code, CancellationToken ct = default)
+        => client.PostAsync<OAuthCompleteResponse>("/api/v1/auth/oauth/complete",
+            new Dictionary<string, object?> { ["code"] = code }, ct);
 
     // ===== Device Login (approver-side flow) =====
     //

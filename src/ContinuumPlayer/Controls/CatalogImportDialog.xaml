@@ -52,7 +52,7 @@
                           HorizontalAlignment="Stretch"
                           PlaceholderText="Choose a completed export job" />
                 <TextBlock
-                    Text="Continuum will load the selected seed directly from the configured operational S3 bucket."
+                    Text="Silo will load the selected seed directly from the configured operational S3 bucket."
                     FontSize="11"
                     Foreground="{StaticResource SecondaryTextBrush}"
                     TextWrapping="Wrap" />
@@ -79,7 +79,7 @@
                 <TextBox x:Name="RemoteUrlBox"
                          PlaceholderText="https://example.com/catalog-seeds/export.json.gz" />
                 <TextBlock
-                    Text="Paste a public .json.gz catalog seed URL. Continuum will download it server-side before importing."
+                    Text="Paste a public .json.gz catalog seed URL. Silo will download it server-side before importing."
                     FontSize="11"
                     Foreground="{StaticResource SecondaryTextBrush}"
                     TextWrapping="Wrap" />

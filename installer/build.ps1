@@ -1,5 +1,5 @@
 # installer/build.ps1
-# Builds the Continuum Desktop Player installer.
+# Builds the Silo Desktop Player installer.
 # Prerequisites: dotnet SDK, Inno Setup 6
 # Usage: pwsh -File installer/build.ps1
 
@@ -99,9 +99,9 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Inno Setup writes a versioned filename (ContinuumDesktopPlayer-{version}-Setup.exe).
+# Inno Setup writes a versioned filename (SiloDesktopPlayer-{version}-Setup.exe).
 # Pick the most recent one from the output directory.
-$SetupExe = Get-ChildItem "$OutputDir\ContinuumDesktopPlayer-*-Setup.exe" -ErrorAction SilentlyContinue |
+$SetupExe = Get-ChildItem "$OutputDir\SiloDesktopPlayer-*-Setup.exe" -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
 if ($SetupExe) {

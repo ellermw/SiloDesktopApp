@@ -89,6 +89,16 @@
                         </Button>
 
                         <Button
+                            x:Name="SmartWizardButton"
+                            Style="{StaticResource GhostButtonStyle}"
+                            Click="SmartWizard_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE9D9;" FontSize="14" />
+                                <TextBlock Text="Smart Wizard" />
+                            </StackPanel>
+                        </Button>
+
+                        <Button
                             x:Name="CreateButton"
                             Style="{StaticResource AccentButtonStyle}"
                             Click="CreateCollection_Click">
@@ -135,6 +145,14 @@
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon Glyph="&#xE8B7;" FontSize="14" />
                                     <TextBlock Text="Start from a template" />
+                                </StackPanel>
+                            </Button>
+                            <Button
+                                Style="{StaticResource GhostButtonStyle}"
+                                Click="SmartWizard_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE9D9;" FontSize="14" />
+                                    <TextBlock Text="Smart Wizard" />
                                 </StackPanel>
                             </Button>
                             <Button
