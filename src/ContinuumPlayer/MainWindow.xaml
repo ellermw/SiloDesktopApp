@@ -27,38 +27,14 @@
 
             <NavigationView.PaneHeader>
                 <StackPanel Margin="16,20,16,16">
-                    <!-- Logo row: play triangle icon + text -->
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <!-- Play triangle icon in rounded box -->
-                        <Border
-                            Width="40" Height="40"
-                            CornerRadius="12"
-                            Background="{StaticResource SidebarAccentBrush}"
-                            BorderBrush="{StaticResource SidebarBorderBrush}"
-                            BorderThickness="1">
-                            <TextBlock
-                                Text="&#x25B6;"
-                                FontSize="14"
-                                FontWeight="Bold"
-                                Foreground="{StaticResource AccentBrush}"
-                                HorizontalAlignment="Center"
-                                VerticalAlignment="Center" />
-                        </Border>
-                        <!-- Branding text -->
-                        <StackPanel VerticalAlignment="Center" Spacing="0">
-                            <TextBlock
-                                Text="Silo"
-                                FontSize="{StaticResource FontSizeBrandingTitle}"
-                                FontWeight="ExtraBold"
-                                Foreground="{StaticResource PrimaryTextBrush}"
-                                CharacterSpacing="10" />
-                            <TextBlock
-                                Text="Media server"
-                                FontSize="{StaticResource FontSizeBrandingSubtitle}"
-                                FontWeight="Medium"
-                                Foreground="{StaticResource SecondaryTextBrush}" />
-                        </StackPanel>
-                    </StackPanel>
+                    <Image
+                        x:Name="SiloBrandImage"
+                        Source="ms-appx:///Assets/silo-wordmark-sidebar.png"
+                        Width="112"
+                        Height="48"
+                        Stretch="Uniform"
+                        HorizontalAlignment="Left"
+                        AutomationProperties.Name="Silo" />
                 </StackPanel>
             </NavigationView.PaneHeader>
 

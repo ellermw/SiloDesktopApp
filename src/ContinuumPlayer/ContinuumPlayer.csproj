@@ -27,9 +27,9 @@
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
         <!-- Version -->
-        <Version>1.1.6</Version>
-        <FileVersion>1.1.6.0</FileVersion>
-        <AssemblyVersion>1.1.6.0</AssemblyVersion>
+        <Version>1.1.7</Version>
+        <FileVersion>1.1.7.0</FileVersion>
+        <AssemblyVersion>1.1.7.0</AssemblyVersion>
 
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>
@@ -47,6 +47,15 @@
         <Content Include="Assets\Square150x150Logo.scale-200.png" />
         <Content Include="Assets\Square44x44Logo.scale-200.png" />
         <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
+        <Content Include="Assets\silo-icon-1024.png">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="Assets\silo-wordmark-sidebar.png">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="Assets\silo-mark-transparent.png">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
         <Content Include="Assets\app.ico">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>

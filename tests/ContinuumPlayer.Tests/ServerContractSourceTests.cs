@@ -155,6 +155,28 @@ public sealed class ServerContractSourceTests
     }
 
     [Fact]
+    public void DesktopBrandingUsesSiloLogoAssets()
+    {
+        var root = FindRepositoryRoot();
+        var assets = Path.Combine(root, "src", "ContinuumPlayer", "Assets");
+        var mainWindow = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "MainWindow.xaml"));
+        var adminShell = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminShellPage.xaml"));
+        var project = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "ContinuumPlayer.csproj"));
+
+        Assert.True(File.Exists(Path.Combine(assets, "silo-icon-1024.png")));
+        Assert.True(File.Exists(Path.Combine(assets, "silo-wordmark-sidebar.png")));
+        Assert.True(File.Exists(Path.Combine(assets, "silo-mark-transparent.png")));
+        Assert.True(new FileInfo(Path.Combine(assets, "app.ico")).Length > 10000);
+        Assert.Contains("silo-wordmark-sidebar.png", mainWindow);
+        Assert.Contains("silo-wordmark-sidebar.png", adminShell);
+        Assert.DoesNotContain("&#x25B6;", mainWindow);
+        Assert.DoesNotContain("&#x25B6;", adminShell);
+        Assert.Contains(@"Assets\silo-icon-1024.png", project);
+        Assert.Contains(@"Assets\silo-wordmark-sidebar.png", project);
+        Assert.Contains(@"Assets\silo-mark-transparent.png", project);
+    }
+
+    [Fact]
     public void CatalogModelsExposeExpandedOverlayAndShowMetadata()
     {
         var root = FindRepositoryRoot();
