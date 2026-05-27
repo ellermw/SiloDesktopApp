@@ -340,23 +340,24 @@
 
                         <Border Style="{StaticResource SettingsSeparator}" />
 
-                        <!-- Spoken language -->
+                        <!-- Preferred audio language -->
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Spoken language" FontSize="14" FontWeight="Medium"
+                                <TextBlock Text="Preferred audio language" FontSize="14" FontWeight="Medium"
                                            Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Choose the audio language you want first when more than one is available."
+                                <TextBlock Text="Choose which audio track language to prefer when a file offers more than one."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
                             <ComboBox x:Name="SpokenLanguageComboBox" Grid.Column="1" Width="220"
                                       VerticalAlignment="Center"
                                       SelectionChanged="SpokenLanguageComboBox_SelectionChanged">
-                                <ComboBoxItem Content="Original Language" Tag="original" />
+                                <ComboBoxItem Content="No preference" Tag="" />
+                                <ComboBoxItem Content="Original" Tag="original" />
                                 <ComboBoxItem Content="English" Tag="en" />
                                 <ComboBoxItem Content="Spanish" Tag="es" />
                                 <ComboBoxItem Content="French" Tag="fr" />

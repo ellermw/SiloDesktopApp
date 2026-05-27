@@ -110,7 +110,7 @@ public partial class LibraryCardViewModel : ObservableObject
     private static readonly Dictionary<string, string> LanguageNames = new()
     {
         [""] = "Profile default",
-        ["original"] = "Original Language",
+        ["original"] = "Original",
         ["en"] = "English",
         ["es"] = "Spanish",
         ["fr"] = "French",
@@ -273,6 +273,8 @@ public partial class WatchProviderCardViewModel : ObservableObject
 
 public partial class SettingsViewModel : ObservableObject
 {
+    private const string PlaybackAudioLanguageSettingKey = "playback.audio_language";
+
     private readonly SettingsApi _settingsApi;
     private readonly CatalogApi _catalogApi;
     private readonly AuthApi _authApi;
@@ -327,6 +329,9 @@ public partial class SettingsViewModel : ObservableObject
 
     [ObservableProperty]
     private string _maxPlaybackQuality = "";
+
+    [ObservableProperty]
+    private string _audioLanguage = "";
 
     // ===== Libraries =====
     [ObservableProperty]
@@ -402,6 +407,13 @@ public partial class SettingsViewModel : ObservableObject
                     _themeService.ApplyTheme(UiTheme);
             }
             catch { UiTheme = ""; }
+
+            try
+            {
+                var audio = await _settingsApi.GetEffectiveSettingsAsync([PlaybackAudioLanguageSettingKey]);
+                AudioLanguage = audio.Settings.FirstOrDefault(s => s.Key == PlaybackAudioLanguageSettingKey)?.EffectiveValue ?? "";
+            }
+            catch { AudioLanguage = ""; }
 
             try
             {
@@ -505,6 +517,13 @@ public partial class SettingsViewModel : ObservableObject
     {
         if (_suppressSave) return;
         await SaveProfileFieldAsync("max_playback_quality", MaxPlaybackQuality);
+    }
+
+    [RelayCommand]
+    private async Task SaveAudioLanguageAsync()
+    {
+        if (_suppressSave) return;
+        await _settingsApi.PutDeviceSettingAsync(PlaybackAudioLanguageSettingKey, AudioLanguage);
     }
 
     [RelayCommand]

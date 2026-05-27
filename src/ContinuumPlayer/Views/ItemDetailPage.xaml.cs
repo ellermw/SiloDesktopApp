@@ -1848,10 +1848,8 @@ public sealed partial class ItemDetailPage : Page
     private void BuildSubtitlesPopoverFlyout(FileVersion? version)
     {
         SubtitlesPopoverFlyout.Items.Clear();
-        var subs = version?.SubtitleTracks;
-        // Show the button as long as there's at least one embedded sub — the
-        // "Off" option is still useful even with a single track.
-        if (subs == null || subs.Count == 0)
+        var subs = version?.SubtitleTracks ?? [];
+        if (version == null)
         {
             SubtitlesPopoverButton.Visibility = Visibility.Collapsed;
             _selectedSubtitleIndex = null;
@@ -1861,49 +1859,54 @@ public sealed partial class ItemDetailPage : Page
         SubtitlesPopoverButton.Visibility = Visibility.Visible;
         _selectedSubtitleIndex = null; // Reset on version change
 
-        // Off
-        var offItem = new MenuFlyoutItem { Text = "Off" };
-        offItem.Click += (_, _) =>
+        if (subs.Count > 0)
         {
-            _selectedSubtitleIndex = -1;
-            UpdateSubtitlesPopoverSummary(subs);
-        };
-        SubtitlesPopoverFlyout.Items.Add(offItem);
-
-        // Auto
-        var autoItem = new MenuFlyoutItem { Text = "Auto" };
-        autoItem.Click += (_, _) =>
-        {
-            _selectedSubtitleIndex = null;
-            UpdateSubtitlesPopoverSummary(subs);
-        };
-        SubtitlesPopoverFlyout.Items.Add(autoItem);
-
-        SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutSeparator());
-
-        // Explicit embedded tracks
-        for (int i = 0; i < subs.Count; i++)
-        {
-            var idx = i;
-            var sub = subs[i];
-            var item = new MenuFlyoutItem { Text = FormatSubtitleTrackSummary(sub) };
-            item.Click += (_, _) =>
+            // Off
+            var offItem = new MenuFlyoutItem { Text = "Off" };
+            offItem.Click += (_, _) =>
             {
-                _selectedSubtitleIndex = idx;
+                _selectedSubtitleIndex = -1;
                 UpdateSubtitlesPopoverSummary(subs);
             };
-            SubtitlesPopoverFlyout.Items.Add(item);
+            SubtitlesPopoverFlyout.Items.Add(offItem);
+
+            // Auto
+            var autoItem = new MenuFlyoutItem { Text = "Auto" };
+            autoItem.Click += (_, _) =>
+            {
+                _selectedSubtitleIndex = null;
+                UpdateSubtitlesPopoverSummary(subs);
+            };
+            SubtitlesPopoverFlyout.Items.Add(autoItem);
+
+            SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutSeparator());
+
+            // Explicit embedded tracks
+            for (int i = 0; i < subs.Count; i++)
+            {
+                var idx = i;
+                var sub = subs[i];
+                var item = new MenuFlyoutItem { Text = FormatSubtitleTrackSummary(sub) };
+                item.Click += (_, _) =>
+                {
+                    _selectedSubtitleIndex = idx;
+                    UpdateSubtitlesPopoverSummary(subs);
+                };
+                SubtitlesPopoverFlyout.Items.Add(item);
+            }
+
+            SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutSeparator());
         }
 
-        // Search online… opens the full SubtitleSearchDialog so the user can
-        // pick provider/language/release manually (complements the on-the-fly
-        // auto-search triggered from the player OSC).
-        SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutSeparator());
-        var searchItem = new MenuFlyoutItem { Text = "Search online\u2026" };
+        // Opens the full SubtitleSearchDialog for provider search or upload.
+        var searchItem = new MenuFlyoutItem { Text = "Add subtitles..." };
         searchItem.Click += async (_, _) => await OpenSubtitleSearchDialogAsync();
         SubtitlesPopoverFlyout.Items.Add(searchItem);
 
-        UpdateSubtitlesPopoverSummary(subs);
+        if (subs.Count > 0)
+            UpdateSubtitlesPopoverSummary(subs);
+        else
+            SubtitlesSummary.Text = "";
     }
 
     private async Task OpenSubtitleSearchDialogAsync()

@@ -4,7 +4,7 @@ Native Windows 11 media player for Silo media servers. Built for direct playback
 
 ## Download
 
-[**Download Installer (v1.1.7)**](https://transfers.taverncdn.com/fEpNNeloMZ/SiloDesktopPlayer-1.1.7-Setup.exe) — Single-file setup, includes all dependencies. Windows 10/11 x64.
+[**Download Installer (v1.1.9)**](https://transfers.taverncdn.com/5WLnd4jMDZ/SiloDesktopPlayer-1.1.9-Setup.exe) — Single-file setup, includes all dependencies. Windows 10/11 x64.
 
 ## Tech Stack
 
@@ -31,7 +31,7 @@ Native Windows 11 media player for Silo media servers. Built for direct playback
 - Full-text search matching Silo server search
 - Custom on-screen controls (Lua OSC) with play/pause, seek, volume, fullscreen, minimize
 - Video stats overlay (4-section layout matching Silo web player)
-- Subtitle selection menu with language names, source badges, and online search
+- Subtitle selection menu with language names, source badges, online search, and upload
 - Mini-bar with live video thumbnail and transport controls
 - Resume playback from last position
 - Full admin panel (dashboard, users, libraries, tasks, logs, settings, collections, sections — admin role only)

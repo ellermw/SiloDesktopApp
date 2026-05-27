@@ -248,6 +248,7 @@ public partial class App : Application
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminInviteCodesViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminMaintenanceViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminSubtitleProvidersViewModel>();
+        services.AddTransient<ContinuumPlayer.Views.Admin.AdminSubtitlesPage>();
 
         var provider = services.BuildServiceProvider();
 

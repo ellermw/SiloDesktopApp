@@ -63,6 +63,7 @@ public static class DocumentTitle
         [typeof(AdminPluginsPage)] = "Admin · Plugins",
         [typeof(AdminRecommendationsPage)] = "Admin · Recommendations",
         [typeof(AdminSectionsPage)] = "Admin · Home Sections",
+        [typeof(AdminSubtitlesPage)] = "Admin · Subtitles",
         [typeof(AdminLibrariesPage)] = "Admin · Libraries",
         [typeof(AdminCollectionsPage)] = "Admin · Collections",
         [typeof(AdminMaintenancePage)] = "Admin · Catalog Maintenance",

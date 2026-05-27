@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
 using ContinuumPlayer.Core.Api;
+using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace ContinuumPlayer.Controls;
 
@@ -16,8 +17,13 @@ namespace ContinuumPlayer.Controls;
 /// </summary>
 public sealed partial class SubtitleSearchDialog : ContentDialog
 {
+    private const long MaxSubtitleUploadBytes = 5L * 1024L * 1024L;
+
     private readonly PlaybackApi _playbackApi;
     private readonly int _mediaFileId;
+    private byte[]? _uploadFileBytes;
+    private string? _uploadFileName;
+    private string _uploadContentType = "application/octet-stream";
 
     /// <summary>Fired after a subtitle is successfully downloaded. Caller
     /// should reload/refresh the active subtitle list.</summary>
@@ -30,16 +36,19 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         this.InitializeComponent();
 
         if (!string.IsNullOrEmpty(defaultLanguage))
-            SelectLanguageByTag(defaultLanguage);
+        {
+            SelectLanguageByTag(LanguageComboBox, defaultLanguage);
+            SelectLanguageByTag(UploadLanguageComboBox, defaultLanguage);
+        }
     }
 
-    private void SelectLanguageByTag(string tag)
+    private static void SelectLanguageByTag(ComboBox comboBox, string tag)
     {
-        foreach (var item in LanguageComboBox.Items.OfType<ComboBoxItem>())
+        foreach (var item in comboBox.Items.OfType<ComboBoxItem>())
         {
             if (string.Equals(item.Tag as string, tag, StringComparison.OrdinalIgnoreCase))
             {
-                LanguageComboBox.SelectedItem = item;
+                comboBox.SelectedItem = item;
                 return;
             }
         }
@@ -47,6 +56,117 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
 
     private string SelectedLanguage =>
         (LanguageComboBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "en";
+
+    private string SelectedUploadLanguage =>
+        (UploadLanguageComboBox.SelectedItem as ComboBoxItem)?.Tag as string ?? SelectedLanguage;
+
+    private async void BrowseUploadButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var picker = new Windows.Storage.Pickers.FileOpenPicker();
+            foreach (var ext in new[] { ".srt", ".vtt", ".ass", ".ssa", ".sub" })
+                picker.FileTypeFilter.Add(ext);
+
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance!);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+
+            var file = await picker.PickSingleFileAsync();
+            if (file == null) return;
+
+            var properties = await file.GetBasicPropertiesAsync();
+            if ((long)properties.Size > MaxSubtitleUploadBytes)
+            {
+                UploadStatusText.Text = "Subtitle file is larger than 5 MB.";
+                UploadButton.IsEnabled = false;
+                return;
+            }
+
+            var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
+            _uploadFileBytes = buffer.ToArray();
+            _uploadFileName = file.Name;
+            _uploadContentType = GuessSubtitleContentType(file.Name, file.ContentType);
+            UploadFileText.Text = file.Name;
+            UploadButton.IsEnabled = true;
+
+            await DetectUploadLanguageAsync();
+        }
+        catch (Exception ex)
+        {
+            UploadStatusText.Text = $"Could not read subtitle file: {ex.Message}";
+            UploadButton.IsEnabled = false;
+        }
+    }
+
+    private async Task DetectUploadLanguageAsync()
+    {
+        if (_uploadFileBytes == null || string.IsNullOrWhiteSpace(_uploadFileName)) return;
+
+        BrowseUploadButton.IsEnabled = false;
+        UploadButton.IsEnabled = false;
+        UploadStatusText.Text = "Detecting language...";
+        try
+        {
+            var detection = await _playbackApi.DetectSubtitleLanguageAsync(
+                _uploadFileName,
+                _uploadFileBytes,
+                _uploadContentType,
+                SelectedUploadLanguage);
+
+            if (!string.IsNullOrWhiteSpace(detection.Language))
+            {
+                SelectLanguageByTag(UploadLanguageComboBox, detection.Language);
+                UploadStatusText.Text = $"Detected {Services.PlayerService.LanguageCodeToName(detection.Language)} from {DetectionSourceLabel(detection.Source)}.";
+            }
+            else
+            {
+                UploadStatusText.Text = "Language detection did not return a language. Pick one before uploading.";
+            }
+        }
+        catch (Exception ex)
+        {
+            UploadStatusText.Text = $"Language detection failed: {ex.Message}";
+        }
+        finally
+        {
+            BrowseUploadButton.IsEnabled = true;
+            UploadButton.IsEnabled = _uploadFileBytes != null;
+        }
+    }
+
+    private async void UploadButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_uploadFileBytes == null || string.IsNullOrWhiteSpace(_uploadFileName)) return;
+
+        UploadButton.IsEnabled = false;
+        BrowseUploadButton.IsEnabled = false;
+        UploadStatusText.Text = "Uploading subtitle...";
+        try
+        {
+            await _playbackApi.UploadSubtitleAsync(
+                _mediaFileId,
+                _uploadFileName,
+                _uploadFileBytes,
+                _uploadContentType,
+                SelectedUploadLanguage,
+                languageOverride: true,
+                releaseName: Path.GetFileNameWithoutExtension(_uploadFileName),
+                hearingImpaired: UploadHearingImpairedToggle.IsOn);
+
+            UploadStatusText.Text = "Subtitle uploaded.";
+            StatusText.Text = "Subtitle uploaded.";
+            try { SubtitleDownloaded?.Invoke(); } catch { }
+        }
+        catch (Exception ex)
+        {
+            UploadStatusText.Text = $"Upload failed: {ex.Message}";
+            UploadButton.IsEnabled = true;
+        }
+        finally
+        {
+            BrowseUploadButton.IsEnabled = true;
+        }
+    }
 
     private async void SearchButton_Click(object sender, RoutedEventArgs e)
     {
@@ -189,4 +309,31 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .ToList();
+
+    private static string DetectionSourceLabel(string? source) => source switch
+    {
+        "filename" => "filename",
+        "metadata" => "metadata",
+        "content" => "content",
+        "manual" => "manual selection",
+        _ => "detection",
+    };
+
+    private static string GuessSubtitleContentType(string fileName, string? pickerContentType)
+    {
+        if (!string.IsNullOrWhiteSpace(pickerContentType) &&
+            !string.Equals(pickerContentType, "application/octet-stream", StringComparison.OrdinalIgnoreCase))
+        {
+            return pickerContentType;
+        }
+
+        return Path.GetExtension(fileName).ToLowerInvariant() switch
+        {
+            ".vtt" => "text/vtt",
+            ".srt" => "application/x-subrip",
+            ".ass" or ".ssa" => "text/x-ssa",
+            ".sub" => "application/octet-stream",
+            _ => "application/octet-stream",
+        };
+    }
 }

@@ -111,6 +111,56 @@ public class PlaybackApi(ContinuumApiClient client)
                 ["hearing_impaired"] = result.HearingImpaired,
             }, ct);
 
+    public Task<SubtitleDownloadResponse> UploadSubtitleAsync(
+        int mediaFileId,
+        string fileName,
+        byte[] fileBytes,
+        string contentType,
+        string? language = null,
+        bool languageOverride = false,
+        string? releaseName = null,
+        bool hearingImpaired = false,
+        CancellationToken ct = default)
+    {
+        var fields = new Dictionary<string, string?>
+        {
+            ["media_file_id"] = mediaFileId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["language"] = language,
+            ["language_override"] = languageOverride ? "true" : null,
+            ["release_name"] = releaseName,
+            ["hearing_impaired"] = hearingImpaired ? "true" : null,
+        };
+        return client.PostMultipartAsync<SubtitleDownloadResponse>(
+            "/api/v1/subtitles/upload",
+            fields,
+            "file",
+            fileName,
+            fileBytes,
+            contentType,
+            ct);
+    }
+
+    public Task<SubtitleLanguageDetection> DetectSubtitleLanguageAsync(
+        string fileName,
+        byte[] fileBytes,
+        string contentType,
+        string? fallbackLanguage = null,
+        CancellationToken ct = default)
+    {
+        var fields = new Dictionary<string, string?>
+        {
+            ["language"] = fallbackLanguage,
+        };
+        return client.PostMultipartAsync<SubtitleLanguageDetection>(
+            "/api/v1/subtitles/detect-language",
+            fields,
+            "file",
+            fileName,
+            fileBytes,
+            contentType,
+            ct);
+    }
+
     // ===== Watch Together (Watch Party) =====
     // Thin wrappers around /api/v1/watch-together/*. Mirrors webui's lib/watchTogether.ts.
     // The room_token is an opaque JWT returned by create/join; for suggestion endpoints it
@@ -243,7 +293,13 @@ public class SubtitleEntry
 {
     public int Id { get; set; }
     public int MediaFileId { get; set; }
+    public string Provider { get; set; } = "";
     public string Language { get; set; } = "";
+    public string Format { get; set; } = "";
+    public string ReleaseName { get; set; } = "";
+    public double Score { get; set; }
+    public bool HearingImpaired { get; set; }
+    public string CreatedAt { get; set; } = "";
     public string? Codec { get; set; }
     public string? Title { get; set; }
     public string Source { get; set; } = "";
@@ -272,9 +328,16 @@ public class SubtitleSearchResult
 
 public class SubtitleDownloadResponse
 {
+    public SubtitleEntry? Subtitle { get; set; }
     public int Id { get; set; }
     public string Language { get; set; } = "";
     public string Format { get; set; } = "";
+}
+
+public class SubtitleLanguageDetection
+{
+    public string Language { get; set; } = "";
+    public string Source { get; set; } = "";
 }
 
 public class ChangeAudioResponse

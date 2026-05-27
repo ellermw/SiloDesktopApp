@@ -48,6 +48,7 @@ public sealed partial class AdminShellPage : Page
         _navItems.Add((NavLibraries,       NavLibrariesBar,       NavLibrariesIcon,       NavLibrariesText));
         _navItems.Add((NavCollections,     NavCollectionsBar,     NavCollectionsIcon,     NavCollectionsText));
         _navItems.Add((NavSections,        NavSectionsBar,        NavSectionsIcon,        NavSectionsText));
+        _navItems.Add((NavSubtitles,       NavSubtitlesBar,       NavSubtitlesIcon,       NavSubtitlesText));
         // USERS
         _navItems.Add((NavUsers,           NavUsersBar,           NavUsersIcon,           NavUsersText));
         _navItems.Add((NavPlaybackHistory, NavPlaybackHistoryBar, NavPlaybackHistoryIcon, NavPlaybackHistoryText));
@@ -137,6 +138,7 @@ public sealed partial class AdminShellPage : Page
         if (pageType == typeof(AdminLibrariesPage)) return NavLibraries;
         if (pageType == typeof(AdminCollectionsPage)) return NavCollections;
         if (pageType == typeof(AdminSectionsPage)) return NavSections;
+        if (pageType == typeof(AdminSubtitlesPage)) return NavSubtitles;
         if (pageType == typeof(AdminUsersPage)) return NavUsers;
         if (pageType == typeof(AdminPlaybackHistoryPage)) return NavPlaybackHistory;
         if (pageType == typeof(AdminHistoryImportPage)) return NavHistoryImport;
@@ -204,6 +206,12 @@ public sealed partial class AdminShellPage : Page
     {
         SetActiveNavItem(NavSections);
         AdminContentFrame.Navigate(typeof(AdminSectionsPage));
+    }
+
+    private void NavSubtitles_Click(object sender, RoutedEventArgs e)
+    {
+        SetActiveNavItem(NavSubtitles);
+        AdminContentFrame.Navigate(typeof(AdminSubtitlesPage));
     }
 
     private void NavUsers_Click(object sender, RoutedEventArgs e)

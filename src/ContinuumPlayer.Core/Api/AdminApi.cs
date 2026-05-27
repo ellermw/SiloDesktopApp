@@ -516,6 +516,44 @@ public class AdminApi(ContinuumApiClient client)
     public Task<SubtitleProviderTestResponse> TestSubtitleProviderAsync(string provider, CancellationToken ct = default)
         => client.PostAsync<SubtitleProviderTestResponse>($"/api/v1/admin/subtitle-providers/{Uri.EscapeDataString(provider)}/test", new { }, ct);
 
+    public Task<AdminDownloadedSubtitlesResponse> GetDownloadedSubtitlesAsync(AdminDownloadedSubtitlesFilters filters, CancellationToken ct = default)
+    {
+        var query = new List<string>
+        {
+            $"limit={filters.Limit}",
+            $"offset={filters.Offset}",
+        };
+        if (!string.IsNullOrWhiteSpace(filters.Provider))
+            query.Add($"provider={Uri.EscapeDataString(filters.Provider)}");
+        if (!string.IsNullOrWhiteSpace(filters.Language))
+            query.Add($"language={Uri.EscapeDataString(filters.Language)}");
+        if (filters.UserId.HasValue)
+            query.Add($"user_id={filters.UserId.Value}");
+        if (filters.MediaFileId.HasValue)
+            query.Add($"media_file_id={filters.MediaFileId.Value}");
+        if (!string.IsNullOrWhiteSpace(filters.Query))
+            query.Add($"q={Uri.EscapeDataString(filters.Query)}");
+
+        return client.GetAsync<AdminDownloadedSubtitlesResponse>($"/api/v1/admin/subtitles?{string.Join("&", query)}", ct);
+    }
+
+    public Task<AdminDownloadedSubtitleUpdateResponse> UpdateDownloadedSubtitleAsync(int id, AdminUpdateDownloadedSubtitleRequest request, CancellationToken ct = default)
+        => client.PatchAsync<AdminDownloadedSubtitleUpdateResponse>(
+            $"/api/v1/admin/subtitles/{id}",
+            new Dictionary<string, object?>
+            {
+                ["language"] = request.Language,
+                ["release_name"] = request.ReleaseName,
+                ["hearing_impaired"] = request.HearingImpaired,
+            },
+            ct);
+
+    public Task<byte[]> DownloadDownloadedSubtitleAsync(int id, CancellationToken ct = default)
+        => client.GetBytesAsync($"/api/v1/admin/subtitles/{id}/download", ct);
+
+    public Task DeleteDownloadedSubtitleAsync(int id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/subtitles/{id}", ct);
+
     // ===== Collections Admin =====
 
     public Task<ImportMDBListCollectionResponse> ImportMDBListCollectionAsync(ImportMDBListCollectionRequest request, CancellationToken ct = default)

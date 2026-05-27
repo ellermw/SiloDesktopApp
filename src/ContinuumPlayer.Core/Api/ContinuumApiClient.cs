@@ -82,6 +82,33 @@ public class ContinuumApiClient
         return await SendAsync<T>(request, ct);
     }
 
+    public async Task<T> PostMultipartAsync<T>(
+        string path,
+        IReadOnlyDictionary<string, string?> fields,
+        string fileFieldName,
+        string fileName,
+        byte[] fileBytes,
+        string contentType,
+        CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, BuildUrl(path));
+        AddHeaders(request);
+
+        var form = new MultipartFormDataContent();
+        foreach (var (key, value) in fields)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                form.Add(new StringContent(value), key);
+        }
+
+        var fileContent = new ByteArrayContent(fileBytes);
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+        form.Add(fileContent, fileFieldName, fileName);
+        request.Content = form;
+
+        return await SendAsync<T>(request, ct);
+    }
+
     public async Task PostNoContentAsync(string path, object body, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, BuildUrl(path));
@@ -111,6 +138,15 @@ public class ContinuumApiClient
         using var request = new HttpRequestMessage(HttpMethod.Delete, BuildUrl(path));
         AddHeaders(request);
         await SendNoContentAsync(request, ct);
+    }
+
+    public async Task<byte[]> GetBytesAsync(string path, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, BuildUrl(path));
+        AddHeaders(request);
+        using var response = await SendWithRetryAsync(request, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode) await ThrowApiException(response, ct).ConfigureAwait(false);
+        return await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
     }
 
     public async Task DeleteWithBodyAsync(string path, object body, CancellationToken ct = default)

@@ -24,11 +24,11 @@ public sealed partial class SettingsPage : Page
     // Set back to false after the page finishes loading.
     private bool _suppressEvents = true;
 
-    // Language options for audio (spoken language)
+    // Language options for preferred audio language.
     private static readonly (string Tag, string Label)[] AudioLanguageOptions =
     [
         ("", "Profile default"),
-        ("original", "Original Language"),
+        ("original", "Original"),
         ("en", "English"),
         ("es", "Spanish"),
         ("fr", "French"),
@@ -128,8 +128,7 @@ public sealed partial class SettingsPage : Page
         SelectComboBoxByTag(SubtitleModeComboBox, ViewModel.SubtitleMode);
         SelectComboBoxByTag(NextUpModeComboBox, ViewModel.NextUpMode);
 
-        // Spoken language
-        SelectComboBoxByTag(SpokenLanguageComboBox, "en");
+        SelectComboBoxByTag(SpokenLanguageComboBox, ViewModel.AudioLanguage);
 
         _suppressEvents = false;
     }
@@ -606,9 +605,9 @@ public sealed partial class SettingsPage : Page
 
         outerStack.Children.Add(editButton);
 
-        // --- Spoken language dropdown ---
+        // --- Preferred audio language dropdown ---
         expandPanel.Children.Add(BuildDropdownRow(
-            "Spoken language", AudioLanguageOptions, vm.AudioLanguage,
+            "Preferred audio language", AudioLanguageOptions, vm.AudioLanguage,
             (tag) => vm.AudioLanguage = tag));
 
         // --- Subtitle language dropdown ---
@@ -730,6 +729,11 @@ public sealed partial class SettingsPage : Page
     private void SpokenLanguageComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressEvents) return;
+        if (SpokenLanguageComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
+        {
+            ViewModel.AudioLanguage = val;
+            _ = ViewModel.SaveAudioLanguageCommand.ExecuteAsync(null);
+        }
     }
 
     private void SubtitleLanguageComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)

@@ -6,19 +6,111 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="Search subtitles"
+    Title="Add Subtitles"
     CloseButtonText="Close"
     DefaultButton="Primary">
 
-    <Grid MinWidth="520" MinHeight="420" RowSpacing="12">
+    <Grid MinWidth="680" MinHeight="560" RowSpacing="12">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
+        <!-- Upload subtitle -->
+        <Border
+            Grid.Row="0"
+            Padding="14"
+            CornerRadius="12"
+            BorderBrush="{StaticResource BorderBrush}"
+            BorderThickness="1"
+            Background="{StaticResource CardBackgroundBrush}">
+            <StackPanel Spacing="10">
+                <StackPanel Spacing="2">
+                    <TextBlock
+                        Text="Upload subtitle"
+                        FontSize="14"
+                        FontWeight="SemiBold"
+                        Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock
+                        Text="Browse for SRT, VTT, ASS, SSA, or SUB files up to 5 MB. Language is detected automatically when possible."
+                        FontSize="12"
+                        TextWrapping="Wrap"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="170" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <Button
+                        x:Name="BrowseUploadButton"
+                        Grid.Column="0"
+                        Content="Browse..."
+                        Click="BrowseUploadButton_Click" />
+
+                    <ComboBox
+                        x:Name="UploadLanguageComboBox"
+                        Grid.Column="1"
+                        HorizontalAlignment="Stretch"
+                        PlaceholderText="Language">
+                        <ComboBoxItem Content="English" Tag="en" IsSelected="True" />
+                        <ComboBoxItem Content="Spanish" Tag="es" />
+                        <ComboBoxItem Content="French" Tag="fr" />
+                        <ComboBoxItem Content="German" Tag="de" />
+                        <ComboBoxItem Content="Italian" Tag="it" />
+                        <ComboBoxItem Content="Portuguese" Tag="pt" />
+                        <ComboBoxItem Content="Dutch" Tag="nl" />
+                        <ComboBoxItem Content="Polish" Tag="pl" />
+                        <ComboBoxItem Content="Swedish" Tag="sv" />
+                        <ComboBoxItem Content="Russian" Tag="ru" />
+                        <ComboBoxItem Content="Japanese" Tag="ja" />
+                        <ComboBoxItem Content="Korean" Tag="ko" />
+                        <ComboBoxItem Content="Chinese (Simplified)" Tag="zh" />
+                        <ComboBoxItem Content="Arabic" Tag="ar" />
+                        <ComboBoxItem Content="Turkish" Tag="tr" />
+                    </ComboBox>
+
+                    <ToggleSwitch
+                        x:Name="UploadHearingImpairedToggle"
+                        Grid.Column="2"
+                        Header="HI"
+                        OffContent=""
+                        OnContent="" />
+
+                    <TextBlock
+                        x:Name="UploadFileText"
+                        Grid.Column="3"
+                        Text="No file selected"
+                        FontSize="12"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        VerticalAlignment="Center"
+                        TextTrimming="CharacterEllipsis" />
+
+                    <Button
+                        x:Name="UploadButton"
+                        Grid.Column="4"
+                        Content="Upload"
+                        IsEnabled="False"
+                        Click="UploadButton_Click" />
+                </Grid>
+
+                <TextBlock
+                    x:Name="UploadStatusText"
+                    FontSize="11"
+                    Foreground="{StaticResource SecondaryTextBrush}"
+                    TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
         <!-- Language picker + Search -->
-        <Grid Grid.Row="0" ColumnSpacing="8">
+        <Grid Grid.Row="1" ColumnSpacing="8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
@@ -58,7 +150,7 @@
         </Grid>
 
         <!-- Results list -->
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="2">
             <TextBlock
                 x:Name="EmptyStateText"
                 Text="Pick a language and tap Search."
@@ -75,7 +167,7 @@
         <!-- Status line -->
         <TextBlock
             x:Name="StatusText"
-            Grid.Row="2"
+            Grid.Row="3"
             FontSize="11"
             Opacity="0.75" />
     </Grid>

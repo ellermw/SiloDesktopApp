@@ -133,6 +133,40 @@ public sealed class ServerContractSourceTests
     }
 
     [Fact]
+    public void SubtitleUploadAndAdminManagementMatchCurrentSiloSurface()
+    {
+        var root = FindRepositoryRoot();
+        var playbackApi = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Api", "PlaybackApi.cs"));
+        var adminApi = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Api", "AdminApi.cs"));
+        var dialogXaml = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Controls", "SubtitleSearchDialog.xaml"));
+        var dialogCode = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Controls", "SubtitleSearchDialog.xaml.cs"));
+        var adminShellXaml = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminShellPage.xaml"));
+        var adminShellCode = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminShellPage.xaml.cs"));
+        var itemDetail = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "ItemDetailPage.xaml.cs"));
+        var documentTitle = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Helpers", "DocumentTitle.cs"));
+
+        Assert.Contains("/api/v1/subtitles/upload", playbackApi);
+        Assert.Contains("/api/v1/subtitles/detect-language", playbackApi);
+        Assert.Contains("UploadSubtitleAsync", playbackApi);
+        Assert.Contains("DetectSubtitleLanguageAsync", playbackApi);
+        Assert.Contains("Upload subtitle", dialogXaml);
+        Assert.Contains("BrowseUploadButton_Click", dialogCode);
+        Assert.Contains("UploadButton_Click", dialogCode);
+        Assert.Contains("Add subtitles...", itemDetail);
+
+        Assert.True(File.Exists(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminSubtitlesPage.xaml")));
+        Assert.True(File.Exists(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminSubtitlesPage.xaml.cs")));
+        Assert.Contains("/api/v1/admin/subtitles", adminApi);
+        Assert.Contains("GetDownloadedSubtitlesAsync", adminApi);
+        Assert.Contains("UpdateDownloadedSubtitleAsync", adminApi);
+        Assert.Contains("DownloadDownloadedSubtitleAsync", adminApi);
+        Assert.Contains("DeleteDownloadedSubtitleAsync", adminApi);
+        Assert.Contains("NavSubtitles", adminShellXaml);
+        Assert.Contains("AdminSubtitlesPage", adminShellCode);
+        Assert.Contains("Admin · Subtitles", documentTitle);
+    }
+
+    [Fact]
     public void SiloRebrandIsAppliedToUserVisibleShell()
     {
         var root = FindRepositoryRoot();
@@ -237,6 +271,26 @@ public sealed class ServerContractSourceTests
         Assert.Contains("HouseholdStreamsPanel", settingsXaml);
         Assert.Contains("EpisodeName", adminSession);
         Assert.Contains("HasPlaybackControl", adminSession);
+    }
+
+    [Fact]
+    public void PreferredAudioLanguageMatchesCurrentSiloSettingsSurface()
+    {
+        var root = FindRepositoryRoot();
+        var settingsXaml = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "SettingsPage.xaml"));
+        var settingsCode = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "SettingsPage.xaml.cs"));
+        var settingsViewModel = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "ViewModels", "SettingsViewModel.cs"));
+
+        Assert.Contains("Preferred audio language", settingsXaml);
+        Assert.Contains("Choose which audio track language to prefer when a file offers more than one.", settingsXaml);
+        Assert.Contains("Content=\"No preference\" Tag=\"\"", settingsXaml);
+        Assert.Contains("Content=\"Original\" Tag=\"original\"", settingsXaml);
+        Assert.Contains("(\"original\", \"Original\")", settingsCode);
+        Assert.Contains("SaveAudioLanguageCommand", settingsCode);
+        Assert.Contains("playback.audio_language", settingsViewModel);
+        Assert.Contains("PutDeviceSettingAsync(PlaybackAudioLanguageSettingKey", settingsViewModel);
+        Assert.DoesNotContain("Spoken language", settingsXaml + settingsCode);
+        Assert.DoesNotContain("Original Language", settingsXaml + settingsCode + settingsViewModel);
     }
 
     [Fact]
