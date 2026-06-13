@@ -14,6 +14,8 @@ public sealed partial class AdminNodesPage : Page
     private bool _rebuildProxyPending;
     private bool _rebuildTranscodePending;
 
+    private sealed record NodeFormResult(string Name, string Url, string Group, int? MaxJobs, int? MaxBandwidthKbps);
+
     public AdminNodesPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminNodesViewModel>();
@@ -361,7 +363,7 @@ public sealed partial class AdminNodesPage : Page
 
     private async Task OpenCreateDialogAsync(string nodeType)
     {
-        var (formContent, getName, getUrl) = BuildNodeForm(null, nodeType);
+        var (formContent, getResult) = BuildNodeForm(null, nodeType);
 
         var dialog = new ContentDialog
         {
@@ -376,17 +378,19 @@ public sealed partial class AdminNodesPage : Page
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
         {
-            string name = getName();
-            string url = getUrl();
-            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(url)) return;
+            var form = getResult();
+            if (string.IsNullOrWhiteSpace(form.Name) || string.IsNullOrWhiteSpace(form.Url)) return;
 
             try
             {
                 await ViewModel.CreateNodeCommand.ExecuteAsync(new CreateNodeRequest
                 {
-                    Name = name,
-                    Url = url,
-                    Type = nodeType
+                    Name = form.Name,
+                    Url = form.Url,
+                    Type = nodeType,
+                    Group = form.Group,
+                    MaxJobs = form.MaxJobs,
+                    MaxBandwidthKbps = form.MaxBandwidthKbps
                 });
                 if (ViewModel.StatusMessage != null) ShowStatus(ViewModel.StatusMessage);
             }
@@ -398,7 +402,7 @@ public sealed partial class AdminNodesPage : Page
 
     private async Task OpenEditDialogAsync(StreamNode node)
     {
-        var (formContent, getName, getUrl) = BuildNodeForm(node, node.Type);
+        var (formContent, getResult) = BuildNodeForm(node, node.Type);
 
         var dialog = new ContentDialog
         {
@@ -413,13 +417,18 @@ public sealed partial class AdminNodesPage : Page
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
         {
-            string name = getName();
-            string url = getUrl();
-            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(url)) return;
+            var form = getResult();
+            if (string.IsNullOrWhiteSpace(form.Name) || string.IsNullOrWhiteSpace(form.Url)) return;
 
             try
             {
-                await ViewModel.UpdateNodeCommand.ExecuteAsync((node.Id, name, url));
+                await ViewModel.UpdateNodeCommand.ExecuteAsync(new AdminNodesViewModel.NodeUpdateArgs(
+                    node.Id,
+                    form.Name,
+                    form.Url,
+                    form.Group,
+                    form.MaxJobs,
+                    form.MaxBandwidthKbps));
                 if (ViewModel.StatusMessage != null) ShowStatus(ViewModel.StatusMessage);
             }
             catch { }
@@ -455,7 +464,7 @@ public sealed partial class AdminNodesPage : Page
 
     // ===== Form Builder =====
 
-    private (FrameworkElement Content, Func<string> GetName, Func<string> GetUrl) BuildNodeForm(
+    private (FrameworkElement Content, Func<NodeFormResult> GetResult) BuildNodeForm(
         StreamNode? existingNode, string nodeType)
     {
         var nameBox = new TextBox
@@ -474,6 +483,34 @@ public sealed partial class AdminNodesPage : Page
         {
             PlaceholderText = urlPlaceholder,
             Text = existingNode?.Url ?? "",
+            CornerRadius = new CornerRadius(6),
+            FontSize = 14
+        };
+
+        var groupBox = new TextBox
+        {
+            PlaceholderText = nodeType == "proxy" ? "edge" : "default",
+            Text = existingNode?.Group ?? "",
+            CornerRadius = new CornerRadius(6),
+            FontSize = 14
+        };
+
+        var maxJobsBox = new NumberBox
+        {
+            Value = existingNode?.MaxJobs is int maxJobs ? maxJobs : double.NaN,
+            PlaceholderText = "Unlimited",
+            Minimum = 0,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+            CornerRadius = new CornerRadius(6),
+            FontSize = 14
+        };
+
+        var maxBandwidthBox = new NumberBox
+        {
+            Value = existingNode?.MaxBandwidthKbps is int maxBandwidth ? maxBandwidth : double.NaN,
+            PlaceholderText = "Unlimited",
+            Minimum = 0,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
             CornerRadius = new CornerRadius(6),
             FontSize = 14
         };
@@ -528,8 +565,23 @@ public sealed partial class AdminNodesPage : Page
         AddField("Name", nameBox);
         AddField("Type", typeBadge);
         AddField("URL", urlBox, urlHintBlock);
+        AddField("Group", groupBox);
+        AddField("Max jobs", maxJobsBox);
+        AddField("Max bandwidth (Kbps)", maxBandwidthBox);
 
-        return (form, () => nameBox.Text.Trim(), () => urlBox.Text.Trim());
+        static int? ReadLimit(NumberBox box)
+        {
+            if (double.IsNaN(box.Value) || box.Value <= 0)
+                return null;
+            return (int)Math.Round(box.Value);
+        }
+
+        return (form, () => new NodeFormResult(
+            nameBox.Text.Trim(),
+            urlBox.Text.Trim(),
+            groupBox.Text.Trim(),
+            ReadLimit(maxJobsBox),
+            ReadLimit(maxBandwidthBox)));
     }
 
     // ===== Helpers =====

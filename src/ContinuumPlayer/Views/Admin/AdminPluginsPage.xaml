@@ -41,7 +41,7 @@
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
-                            Text="Extend Continuum with community and first-party plugins."
+                            Text="Extend Silo with community and first-party plugins."
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>

@@ -136,7 +136,7 @@ public partial class App : Application
             var settings = settingsService.Load();
             if (string.IsNullOrWhiteSpace(settings.DeviceId))
             {
-                settings.DeviceId = $"continuum-desktop-{Guid.NewGuid():N}";
+                settings.DeviceId = $"silo-desktop-{Guid.NewGuid():N}";
                 settingsService.Save(settings);
             }
             client.SetDeviceMetadata(
@@ -163,6 +163,8 @@ public partial class App : Application
         services.AddSingleton<PeopleApi>(sp => new PeopleApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddSingleton<CollectionsApi>(sp => new CollectionsApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddSingleton<DownloadsApi>(sp => new DownloadsApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<RequestsApi>(sp => new RequestsApi(sp.GetRequiredService<ContinuumApiClient>()));
+        services.AddSingleton<NotificationsApi>(sp => new NotificationsApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddSingleton<HistoryImportApi>(sp => new HistoryImportApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddSingleton<RecommendationsApi>(sp => new RecommendationsApi(sp.GetRequiredService<ContinuumApiClient>()));
         services.AddSingleton<ApiKeysApi>(sp => new ApiKeysApi(sp.GetRequiredService<ContinuumApiClient>()));
@@ -226,6 +228,8 @@ public partial class App : Application
         services.AddTransient<CollectionEditorViewModel>();
         services.AddTransient<SmartCollectionWizardViewModel>();
         services.AddTransient<DownloadsViewModel>();
+        services.AddTransient<RequestsViewModel>();
+        services.AddTransient<NotificationsViewModel>();
         services.AddTransient<SettingsViewModel>();
         services.AddTransient<WatchTogetherJoinViewModel>();
         services.AddTransient<WatchTogetherRoomViewModel>();
@@ -244,6 +248,7 @@ public partial class App : Application
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminApiKeysViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminRecommendationsViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminPlaybackHistoryViewModel>();
+        services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminRequestsViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminPluginsViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminInviteCodesViewModel>();
         services.AddTransient<ContinuumPlayer.ViewModels.Admin.AdminMaintenanceViewModel>();

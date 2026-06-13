@@ -2367,6 +2367,9 @@ public sealed partial class AdminLibrariesPage : Page
         };
         typeCombo.Items.Add(new ComboBoxItem { Content = "Movies", Tag = "movies" });
         typeCombo.Items.Add(new ComboBoxItem { Content = "Series", Tag = "series" });
+        typeCombo.Items.Add(new ComboBoxItem { Content = "Audiobooks", Tag = "audiobooks" });
+        typeCombo.Items.Add(new ComboBoxItem { Content = "Ebooks", Tag = "ebooks" });
+        typeCombo.Items.Add(new ComboBoxItem { Content = "Podcasts", Tag = "podcasts" });
         typeCombo.Items.Add(new ComboBoxItem { Content = "Mixed", Tag = "mixed" });
 
         string currentType = editingLib?.Type ?? "movies";
@@ -2993,6 +2996,9 @@ public sealed partial class AdminLibrariesPage : Page
     {
         "series" => ["series", "season", "episode"],
         "movies" => ["movie"],
+        "audiobooks" => ["audiobook"],
+        "ebooks" => ["ebook"],
+        "podcasts" => ["podcast"],
         "mixed" => ["movie", "series", "season", "episode"],
         _ => [],
     };

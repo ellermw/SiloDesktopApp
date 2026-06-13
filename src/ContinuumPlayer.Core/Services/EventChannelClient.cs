@@ -7,7 +7,7 @@ using ContinuumPlayer.Core.Helpers;
 namespace ContinuumPlayer.Core.Services;
 
 /// <summary>
-/// WebSocket client for the Continuum server's realtime event channel at
+/// WebSocket client for the Silo server's realtime event channel at
 /// <c>/api/v1/events/ws</c>. Handles the handshake (hello → subscribe → subscribed →
 /// snapshot → event stream), dispatches frames to per-channel subscribers, and
 /// reconnects with exponential backoff.
@@ -267,6 +267,9 @@ public sealed class EventChannelClient : IDisposable
                            .TrimEnd('/');
         wsUrl += "/api/v1/events/ws";
         wsUrl = UrlHelper.AppendToken(wsUrl, _apiClient.AccessToken);
+        var ticket = await MintEventsTicketIfNeededAsync(channelsSnapshot, ct).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(ticket))
+            wsUrl += (wsUrl.Contains('?') ? "&" : "?") + $"ticket={Uri.EscapeDataString(ticket)}";
 
         var ws = new ClientWebSocket();
         _ws = ws;
@@ -372,14 +375,26 @@ public sealed class EventChannelClient : IDisposable
                     break;
                 }
                 case "subscribed":
+                    var notificationProfileRejected = false;
                     if (root.TryGetProperty("rejected", out var rejEl) && rejEl.ValueKind == JsonValueKind.Array && rejEl.GetArrayLength() > 0)
                     {
                         foreach (var r in rejEl.EnumerateArray())
                         {
                             var ch = r.TryGetProperty("channel", out var c) ? c.GetString() : "?";
+                            var rejectCode = r.TryGetProperty("code", out var codeEl) ? codeEl.GetString() : "";
                             var msg = r.TryGetProperty("message", out var m) ? m.GetString() : "?";
                             Log($"Subscription rejected: {ch}: {msg}");
+                            if (string.Equals(ch, "notifications", StringComparison.OrdinalIgnoreCase)
+                                && string.Equals(rejectCode, "profile_required", StringComparison.OrdinalIgnoreCase))
+                            {
+                                notificationProfileRejected = true;
+                            }
                         }
+                    }
+                    if (notificationProfileRejected)
+                    {
+                        Log("Notifications subscription rejected; reconnecting to re-mint profile ticket");
+                        try { ws.Abort(); } catch { }
                     }
                     Log("Subscribed successfully");
                     break;
@@ -401,10 +416,10 @@ public sealed class EventChannelClient : IDisposable
                     }
                     break;
                 case "error":
-                    var code = root.TryGetProperty("code", out var cEl) ? (cEl.GetString() ?? "") : "";
+                    var errorCode = root.TryGetProperty("code", out var cEl) ? (cEl.GetString() ?? "") : "";
                     var errMsg = root.TryGetProperty("message", out var mEl) ? (mEl.GetString() ?? "") : "";
-                    Log($"Server error: {code}: {errMsg}");
-                    ErrorReceived?.Invoke(code, errMsg);
+                    Log($"Server error: {errorCode}: {errMsg}");
+                    ErrorReceived?.Invoke(errorCode, errMsg);
                     break;
             }
         }
@@ -424,6 +439,31 @@ public sealed class EventChannelClient : IDisposable
         var json = JsonSerializer.Serialize(obj);
         var bytes = Encoding.UTF8.GetBytes(json);
         await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+    }
+
+    private async Task<string?> MintEventsTicketIfNeededAsync(string[] channels, CancellationToken ct)
+    {
+        if (!channels.Any(ch => string.Equals(ch, "notifications", StringComparison.OrdinalIgnoreCase)))
+            return null;
+
+        try
+        {
+            var response = await _apiClient.PostAsync<EventsWsTicketResponse>(
+                "/api/v1/events/ws-ticket",
+                new Dictionary<string, object?>(),
+                ct).ConfigureAwait(false);
+            return response.Ticket;
+        }
+        catch (Exception ex)
+        {
+            Log($"Failed to mint notifications websocket ticket: {ex.Message}");
+            return null;
+        }
+    }
+
+    private sealed class EventsWsTicketResponse
+    {
+        public string Ticket { get; set; } = "";
     }
 
     private static void Log(string msg)

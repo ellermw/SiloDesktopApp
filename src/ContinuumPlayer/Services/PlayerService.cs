@@ -360,6 +360,8 @@ public class PlayerService : IDisposable
     public FileVersion? ActiveVersion => Versions.FirstOrDefault(v => v.FileId == (_playbackManager?.CurrentSession?.MediaFileId ?? 0));
     public TimeRange? ActiveIntro => ActiveVersion?.Intro ?? WatchDetail?.Intro;
     public TimeRange? ActiveCredits => ActiveVersion?.Credits ?? WatchDetail?.Credits;
+    public TimeRange? ActiveRecap => ActiveVersion?.Recap ?? WatchDetail?.Recap;
+    public TimeRange? ActivePreview => ActiveVersion?.Preview ?? WatchDetail?.Preview;
 
     // ── Events ───────────────────────────────────────────────────────────
 
@@ -1761,10 +1763,10 @@ public class PlayerService : IDisposable
         // when the user selects one, matching the WebUI's active-track model.
     }
 
-    private static bool IsBitmapSubtitle(SubtitleTrackInfo track)
+    private static bool IsUnsupportedBitmapSubtitle(SubtitleTrackInfo track)
     {
         var codec = track.Codec?.ToLowerInvariant() ?? "";
-        return codec is "pgs" or "pgssub" or "dvdsub" or "vobsub";
+        return codec is "dvdsub" or "dvd_subtitle" or "vobsub" or "dvbsub" or "dvb_subtitle";
     }
 
     private void SelectSubtitleByServerIndex(int serverTrackIndex)
@@ -1790,7 +1792,7 @@ public class PlayerService : IDisposable
 
     private void SelectSubtitleTrack(SubtitleTrackInfo track)
     {
-        if (_mpv == null || IsBitmapSubtitle(track)) return;
+        if (_mpv == null || IsUnsupportedBitmapSubtitle(track)) return;
 
         if (string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase))
         {
@@ -1969,8 +1971,12 @@ public class PlayerService : IDisposable
         {
             ["intro_start"] = wd.Intro?.Start ?? 0,
             ["intro_end"] = wd.Intro?.End ?? 0,
+            ["recap_start"] = wd.Recap?.Start ?? 0,
+            ["recap_end"] = wd.Recap?.End ?? 0,
             ["credits_start"] = wd.Credits?.Start ?? 0,
-            ["credits_end"] = wd.Credits?.End ?? 0
+            ["credits_end"] = wd.Credits?.End ?? 0,
+            ["preview_start"] = wd.Preview?.Start ?? 0,
+            ["preview_end"] = wd.Preview?.End ?? 0
         };
 
         var json = System.Text.Json.JsonSerializer.Serialize(markers);
@@ -2606,16 +2612,22 @@ public class PlayerService : IDisposable
                 version.Intro = ReadMarkerRange(introEl);
             if (payload.TryGetProperty("credits", out var creditsEl))
                 version.Credits = ReadMarkerRange(creditsEl);
+            if (payload.TryGetProperty("recap", out var recapEl))
+                version.Recap = ReadMarkerRange(recapEl);
+            if (payload.TryGetProperty("preview", out var previewEl))
+                version.Preview = ReadMarkerRange(previewEl);
 
             var activeFileId = _playbackManager?.CurrentSession?.MediaFileId ?? 0;
             if (activeFileId == fileId && _playbackManager?.WatchDetail != null)
             {
                 _playbackManager.WatchDetail.Intro = version.Intro;
                 _playbackManager.WatchDetail.Credits = version.Credits;
+                _playbackManager.WatchDetail.Recap = version.Recap;
+                _playbackManager.WatchDetail.Preview = version.Preview;
                 MarkersChanged?.Invoke();
             }
 
-            LogToFile("state_trace.txt", $"Realtime markers_updated applied: fileId={fileId} intro={FormatMarker(version.Intro)} credits={FormatMarker(version.Credits)}");
+            LogToFile("state_trace.txt", $"Realtime markers_updated applied: fileId={fileId} intro={FormatMarker(version.Intro)} recap={FormatMarker(version.Recap)} credits={FormatMarker(version.Credits)} preview={FormatMarker(version.Preview)}");
         }
         catch (Exception ex)
         {

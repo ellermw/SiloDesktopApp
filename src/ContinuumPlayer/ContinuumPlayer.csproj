@@ -16,6 +16,7 @@
         <LangVersion>latest</LangVersion>
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>ContinuumPlayer</RootNamespace>
+        <AssemblyName>SiloPlayer</AssemblyName>
 
         <!-- Publishing — force reflection-based JSON serialization in Release/publish builds.
              Without this, .NET 8 self-contained publish disables reflection for System.Text.Json
@@ -27,9 +28,9 @@
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
         <!-- Version -->
-        <Version>1.1.9</Version>
-        <FileVersion>1.1.9.0</FileVersion>
-        <AssemblyVersion>1.1.9.0</AssemblyVersion>
+        <Version>1.1.10</Version>
+        <FileVersion>1.1.10.0</FileVersion>
+        <AssemblyVersion>1.1.10.0</AssemblyVersion>
 
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>

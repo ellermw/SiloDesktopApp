@@ -47,6 +47,7 @@ public sealed partial class AdminShellPage : Page
         // CONTENT
         _navItems.Add((NavLibraries,       NavLibrariesBar,       NavLibrariesIcon,       NavLibrariesText));
         _navItems.Add((NavCollections,     NavCollectionsBar,     NavCollectionsIcon,     NavCollectionsText));
+        _navItems.Add((NavRequests,        NavRequestsBar,        NavRequestsIcon,        NavRequestsText));
         _navItems.Add((NavSections,        NavSectionsBar,        NavSectionsIcon,        NavSectionsText));
         _navItems.Add((NavSubtitles,       NavSubtitlesBar,       NavSubtitlesIcon,       NavSubtitlesText));
         // USERS
@@ -137,6 +138,7 @@ public sealed partial class AdminShellPage : Page
         if (pageType == typeof(AdminLogsPage)) return NavLogs;
         if (pageType == typeof(AdminLibrariesPage)) return NavLibraries;
         if (pageType == typeof(AdminCollectionsPage)) return NavCollections;
+        if (pageType == typeof(AdminRequestsPage)) return NavRequests;
         if (pageType == typeof(AdminSectionsPage)) return NavSections;
         if (pageType == typeof(AdminSubtitlesPage)) return NavSubtitles;
         if (pageType == typeof(AdminUsersPage)) return NavUsers;
@@ -200,6 +202,12 @@ public sealed partial class AdminShellPage : Page
     {
         SetActiveNavItem(NavCollections);
         AdminContentFrame.Navigate(typeof(AdminCollectionsPage));
+    }
+
+    private void NavRequests_Click(object sender, RoutedEventArgs e)
+    {
+        SetActiveNavItem(NavRequests);
+        AdminContentFrame.Navigate(typeof(AdminRequestsPage));
     }
 
     private void NavSections_Click(object sender, RoutedEventArgs e)

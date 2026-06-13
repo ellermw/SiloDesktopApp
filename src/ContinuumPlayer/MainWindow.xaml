@@ -91,6 +91,16 @@
                         <FontIcon Glyph="&#xE787;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem Content="Requests" Tag="Requests">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE8F4;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Notifications" Tag="Notifications">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE7F4;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
 
                 <!-- YOUR STUFF section header -->
                 <NavigationViewItemHeader Content="YOUR STUFF" />

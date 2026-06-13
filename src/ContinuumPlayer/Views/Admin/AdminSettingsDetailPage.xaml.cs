@@ -15,6 +15,7 @@ public sealed partial class AdminSettingsDetailPage : Page
     // Static so the active tab persists across page navigations
     private static string _persistedTab = "General";
     private string _activeTab = _persistedTab;
+    private string _settingsSearchQuery = "";
     private Button? _activeTabButton;
     private readonly List<(Button Button, string TabName)> _tabButtons = [];
 
@@ -25,19 +26,47 @@ public sealed partial class AdminSettingsDetailPage : Page
     // order and labeling. Each item is (label, Segoe Fluent icon glyph).
     private static readonly (string Label, string Glyph)[] SettingsTabs =
     [
-        ("General",          "\uE713"), // Settings
-        ("Theming",          "\uE790"), // Brush
-        ("Playback",         "\uE768"), // Play
-        ("Scanner & Matcher","\uE721"), // Zoom/Find
-        ("Rate Limiting",    "\uE9D9"), // Gauge/Speed
-        ("Downloads",        "\uE896"), // Download
-        ("Integrations",     "\uEA86"), // Puzzle
-        ("Jellyfin Compat",  "\uE7F4"), // TVMonitor
-        ("Database",         "\uEBD2"), // Database/Drive
-        ("Storage",          "\uEDA2"), // HardDrive
-        ("Log Retention",    "\uE81C"), // Document
-        ("Card Overlays",    "\uE81E"), // Layers/stack
+        ("General",               "\uE713"),
+        ("Theming",               "\uE790"),
+        ("Card Overlays",         "\uE81E"),
+        ("Scanner & Matcher",     "\uE721"),
+        ("Intro Markers",         "\uED1E"),
+        ("Subtitles",             "\uED1E"),
+        ("AI Services",           "\uE945"),
+        ("Playback",              "\uE768"),
+        ("Downloads",             "\uE896"),
+        ("Watch Providers",       "\uE753"),
+        ("Integrations",          "\uEA86"),
+        ("Email",                 "\uE715"),
+        ("Notifications",         "\uE7F4"),
+        ("Compatibility Proxies", "\uE7F4"),
+        ("Rate Limiting",         "\uE9D9"),
+        ("Database",              "\uEBD2"),
+        ("Storage",               "\uEDA2"),
+        ("Log Retention",         "\uE81C"),
     ];
+
+    private static readonly Dictionary<string, string[]> SettingsSearchKeywords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["General"] = ["auth", "token", "logging", "server"],
+        ["Theming"] = ["theme", "branding", "css", "catalog"],
+        ["Card Overlays"] = ["poster", "badges", "overlay"],
+        ["Scanner & Matcher"] = ["scan", "matcher", "metadata", "workers", "image cache"],
+        ["Intro Markers"] = ["intro", "recap", "credits", "chapters", "markers"],
+        ["Subtitles"] = ["opensubtitles", "subdl", "subsource", "caption", "providers"],
+        ["AI Services"] = ["openai", "ollama", "translation", "transcription", "quota"],
+        ["Playback"] = ["ffmpeg", "transcode", "hardware", "chapter thumbnails", "resume"],
+        ["Downloads"] = ["bandwidth", "limits", "concurrency"],
+        ["Watch Providers"] = ["trakt", "scrobble", "history", "favorites"],
+        ["Integrations"] = ["mdblist", "plugins"],
+        ["Email"] = ["smtp", "mail", "digest", "external url"],
+        ["Notifications"] = ["discord", "webhooks", "server channels", "push", "request"],
+        ["Compatibility Proxies"] = ["jellyfin", "emby", "compat"],
+        ["Rate Limiting"] = ["api keys", "ip", "auth endpoints", "tiers"],
+        ["Database"] = ["postgres", "redis", "userdb"],
+        ["Storage"] = ["s3", "bucket", "cloudflare", "cdn"],
+        ["Log Retention"] = ["audit", "operational", "retention"],
+    };
 
     public AdminSettingsDetailPage()
     {
@@ -68,7 +97,8 @@ public sealed partial class AdminSettingsDetailPage : Page
         TabBar.Children.Clear();
         _tabButtons.Clear();
 
-        foreach (var (label, glyph) in SettingsTabs)
+        var tabs = FilterSettingsTabs().ToArray();
+        foreach (var (label, glyph) in tabs)
         {
             var btn = BuildSidebarNavButton(label, glyph);
             btn.Click += TabButton_Click;
@@ -76,11 +106,55 @@ public sealed partial class AdminSettingsDetailPage : Page
             TabBar.Children.Add(btn);
         }
 
-        // Activate first tab
-        if (_tabButtons.Count > 0)
+        if (_tabButtons.Count == 0)
         {
-            SetActiveTab(_tabButtons[0].Button, _tabButtons[0].TabName);
+            TabBar.Children.Add(new TextBlock
+            {
+                Text = "No matching settings",
+                FontSize = 13,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                Margin = new Thickness(12, 8, 12, 8),
+                TextWrapping = TextWrapping.Wrap,
+            });
         }
+        else
+        {
+            var activeEntry = _tabButtons.FirstOrDefault(t => t.TabName == _activeTab);
+            if (activeEntry.Button == null)
+                activeEntry = _tabButtons[0];
+            SetActiveTab(activeEntry.Button, activeEntry.TabName);
+        }
+
+        UpdateSettingsSearchStatus(tabs.Length);
+    }
+
+    private IEnumerable<(string Label, string Glyph)> FilterSettingsTabs()
+    {
+        var query = _settingsSearchQuery.Trim();
+        if (query.Length == 0) return SettingsTabs;
+
+        return SettingsTabs.Where(tab =>
+            tab.Label.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || SettingsSearchKeywords.TryGetValue(tab.Label, out var keywords)
+            && keywords.Any(keyword => keyword.Contains(query, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private void SettingsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        var previousActiveTab = _activeTab;
+        _settingsSearchQuery = SettingsSearchBox.Text ?? "";
+        BuildTabBar();
+        if (_tabButtons.Count > 0 && _activeTab != previousActiveTab)
+            ShowTab(_activeTab);
+    }
+
+    private void UpdateSettingsSearchStatus(int resultCount)
+    {
+        if (SettingsSearchStatusText == null) return;
+        var hasQuery = !string.IsNullOrWhiteSpace(_settingsSearchQuery);
+        SettingsSearchStatusText.Text = hasQuery
+            ? resultCount == 0 ? "No matching settings" : $"{resultCount} match{(resultCount == 1 ? "" : "es")}"
+            : $"{SettingsTabs.Length} settings sections";
     }
 
     /// <summary>
@@ -208,16 +282,22 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             case "General": BuildGeneralTab(); break;
             case "Theming": BuildThemingTab(); break;
+            case "Card Overlays": BuildOverlaysTab(); break;
             case "Playback": BuildPlaybackTab(); break;
             case "Scanner & Matcher": BuildScannerTab(); break;
+            case "Intro Markers": BuildIntroMarkersTab(); break;
+            case "Subtitles": BuildSubtitlesTab(); break;
+            case "AI Services": BuildAIServicesTab(); break;
             case "Rate Limiting": BuildRateLimitTab(); break;
             case "Downloads": BuildDownloadsTab(); break;
+            case "Watch Providers": BuildWatchProvidersTab(); break;
             case "Integrations": BuildIntegrationsTab(); break;
-            case "Jellyfin Compat": BuildJellyfinTab(); break;
+            case "Email": BuildEmailTab(); break;
+            case "Notifications": BuildNotificationsAdminTab(); break;
+            case "Compatibility Proxies": BuildJellyfinTab(); break;
             case "Database": BuildDatabaseTab(); break;
             case "Storage": BuildStorageTab(); break;
             case "Log Retention": BuildLogRetentionTab(); break;
-            case "Card Overlays": BuildOverlaysTab(); break;
         }
 
         // Webui renders save/discard inline at the bottom of each tab's content
@@ -789,6 +869,92 @@ public sealed partial class AdminSettingsDetailPage : Page
         EndCard(markerCard);
     }
 
+    private void BuildIntroMarkersTab()
+    {
+        AddTabHeader("Intro Markers",
+            "Configure intro, recap, credits, and preview marker discovery for playback skip controls.");
+
+        AddSectionHeader("Detection");
+        var markerCard = BeginCard();
+        AddSelectField(markerCard, "Mode", "markers.mode",
+            [
+                ("off", "Off"),
+                ("local", "Local"),
+                ("both", "Local + Online"),
+                ("online", "Online Only"),
+            ],
+            "Controls whether Silo uses local chapter analysis, online provider markers, or both.");
+        AddToggleField(markerCard, "Fetch Markers at Playback if Missing", "markers.lazy_playback",
+            "When enabled, playback can ask the server for markers if a file has not been scanned yet.");
+        EndCard(markerCard);
+
+        AddSectionHeader("Tasks");
+        var taskCard = BeginCard();
+        AddTextBlock(taskCard,
+            "Run marker detection and contribution jobs from Admin > Scheduled Tasks. Installed marker provider plugins are managed from the server plugin surface.");
+        EndCard(taskCard);
+    }
+
+    private void BuildSubtitlesTab()
+    {
+        AddTabHeader("Subtitles",
+            "Search providers for downloading subtitles. AI translation and transcription live under AI Services.");
+
+        BuildSubtitleProvidersSection();
+    }
+
+    private void BuildAIServicesTab()
+    {
+        AddTabHeader("AI Services",
+            "Configure OpenAI-compatible endpoints for metadata translation, subtitle translation, and transcription.");
+
+        AddSectionHeader("Endpoint");
+        var endpointCard = BeginCard();
+        AddTextField(endpointCard, "Base URL", "ai.base_url",
+            "https://api.openai.com, a Groq/OpenAI-compatible endpoint, or a local server.");
+        AddTextField(endpointCard, "Chat Model", "ai.chat_model",
+            "Used for subtitle and description translation.");
+        AddPasswordField(endpointCard, "API Key", "ai.api_key",
+            "Leave blank to keep the current value. Empty is fine for keyless local servers.");
+        AddTextField(endpointCard, "Transcription Model", "ai.asr_model",
+            "Whisper-capable model for subtitle generation.");
+        AddTextField(endpointCard, "Transcription Base URL", "ai.asr_base_url",
+            "Optional separate Whisper-compatible endpoint. Blank uses the base URL.");
+        AddPasswordField(endpointCard, "Transcription API Key", "ai.asr_api_key",
+            "Optional. Blank uses the main API key.");
+        AddNumberField(endpointCard, "Max Concurrent Jobs", "ai.max_concurrent_jobs",
+            "One shared cap across subtitle translation, transcription, and description translation.");
+        EndCard(endpointCard);
+
+        AddSectionHeader("Features");
+        var featuresCard = BeginCard();
+        AddToggleField(featuresCard, "Subtitle Translation", "subtitle_ai.enabled");
+        AddToggleField(featuresCard, "Subtitle Transcription", "subtitle_ai.transcribe_enabled");
+        AddToggleField(featuresCard, "Metadata Translation", "metadata_ai.enabled");
+        AddSelectField(featuresCard, "Translate Metadata On View", "metadata_ai.on_view",
+            [
+                ("off", "Off"),
+                ("missing", "When Missing"),
+                ("always", "Always"),
+            ]);
+        EndCard(featuresCard);
+
+        AddSectionHeader("Subtitle AI");
+        var subtitleCard = BeginCard();
+        AddNumberField(subtitleCard, "Batch Size", "subtitle_ai.batch_size");
+        AddNumberField(subtitleCard, "Context Neighbors", "subtitle_ai.context_neighbors");
+        AddNumberField(subtitleCard, "Transcription Chunk Seconds", "subtitle_ai.asr_chunk_seconds");
+        AddNumberField(subtitleCard, "Transcription Quota Jobs", "subtitle_ai.transcribe_quota_jobs",
+            "Use 0 for no quota.");
+        AddSelectField(subtitleCard, "Transcription Quota Period", "subtitle_ai.transcribe_quota_period",
+            [
+                ("day", "Day"),
+                ("week", "Week"),
+                ("month", "Month"),
+            ]);
+        EndCard(subtitleCard);
+    }
+
     private void BuildRateLimitTab()
     {
         AddTabHeader("Rate Limiting", "Configure request budgets for API keys, IPs, and authentication endpoints.");
@@ -1013,7 +1179,7 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void BuildIntegrationsTab()
     {
-        AddTabHeader("Integrations", "Subtitle providers and list discovery");
+        AddTabHeader("Integrations", "Configure list discovery and external integration credentials.");
 
         AddSectionHeader("MDBList");
         var mdblistCard = BeginCard();
@@ -1021,7 +1187,10 @@ public sealed partial class AdminSettingsDetailPage : Page
             "Enables list search and browse when users add MDBList collections. Importing a list by URL works without a key; discovery requires one.");
         AddPasswordField(mdblistCard, "API Key", "mdblist.api_key", "Leave blank to keep the current value.");
         EndCard(mdblistCard);
+    }
 
+    private void BuildSubtitleProvidersSection()
+    {
         AddSectionHeader("Subtitle Providers");
         var card = BeginCard();
         AddTextBlock(card,
@@ -1310,6 +1479,124 @@ public sealed partial class AdminSettingsDetailPage : Page
         };
     }
 
+    private void BuildWatchProvidersTab()
+    {
+        AddTabHeader("Watch Providers",
+            "OAuth credentials for watch history and scrobbling services. Users connect their own accounts from profile settings once a provider is configured here.");
+
+        AddSectionHeader("Trakt");
+        var traktCard = BeginCard();
+        AddPasswordField(traktCard, "Client ID", "watchsync.trakt.client_id", "Leave blank to keep the current value.");
+        AddPasswordField(traktCard, "Client Secret", "watchsync.trakt.client_secret", "Leave blank to keep the current value.");
+        EndCard(traktCard);
+
+        AddSectionHeader("Simkl");
+        var simklCard = BeginCard();
+        AddPasswordField(simklCard, "Client ID", "watchsync.simkl.client_id", "Leave blank to keep the current value.");
+        AddPasswordField(simklCard, "Client Secret", "watchsync.simkl.client_secret", "Leave blank to keep the current value.");
+        EndCard(simklCard);
+    }
+
+    private void BuildEmailTab()
+    {
+        AddTabHeader("Email",
+            "Configure outbound email through your SMTP server for notifications and account flows.");
+
+        AddSectionHeader("General");
+        var generalCard = BeginCard();
+        AddToggleField(generalCard, "Email Enabled", "email.enabled", "Master switch for all outbound email.");
+        AddTextField(generalCard, "From Address", "email.from_address", "silo@example.com");
+        AddTextField(generalCard, "From Name", "email.from_name", "Silo");
+        EndCard(generalCard);
+
+        AddSectionHeader("SMTP Server");
+        var smtpCard = BeginCard();
+        AddTextField(smtpCard, "Host", "email.smtp_host", "smtp.example.com");
+        AddNumberField(smtpCard, "Port", "email.smtp_port", "587 for STARTTLS, 465 for implicit TLS.");
+        AddSelectField(smtpCard, "Security", "email.smtp_security",
+            [
+                ("starttls", "STARTTLS"),
+                ("tls", "TLS (implicit)"),
+                ("none", "None"),
+            ]);
+        AddTextField(smtpCard, "Username", "email.smtp_username",
+            "Leave empty when the server requires no authentication.");
+        AddPasswordField(smtpCard, "Password", "email.smtp_password", "Leave blank to keep the current value.");
+        EndCard(smtpCard);
+    }
+
+    private void BuildNotificationsAdminTab()
+    {
+        AddTabHeader("Notifications",
+            "Operational controls for in-app, webhook, email, Discord, web push, and server-channel notifications.");
+
+        AddSectionHeader("Pipeline");
+        var pipelineCard = BeginCard();
+        AddToggleField(pipelineCard, "Release Events", "notifications.release_events_enabled",
+            "Create notification events for new content and request activity.");
+        AddToggleField(pipelineCard, "Fanout Enabled", "notifications.fanout_enabled",
+            "Deliver notification events to eligible users and profiles.");
+        AddToggleField(pipelineCard, "In-App Inbox", "notifications.ui_enabled");
+        AddToggleField(pipelineCard, "Webhooks", "notifications.webhooks_enabled");
+        AddToggleField(pipelineCard, "Web Push", "notifications.web_push_enabled");
+        EndCard(pipelineCard);
+
+        AddSectionHeader("Fanout");
+        var fanoutCard = BeginCard();
+        AddNumberField(fanoutCard, "Settle Seconds", "notifications.fanout.settle_seconds");
+        AddNumberField(fanoutCard, "Max Series Burst", "notifications.fanout.max_series_burst");
+        AddNumberField(fanoutCard, "Max Event Age Hours", "notifications.fanout.max_event_age_hours");
+        EndCard(fanoutCard);
+
+        AddSectionHeader("Webhooks");
+        var webhooksCard = BeginCard();
+        AddNumberField(webhooksCard, "Max Per Profile", "notifications.webhooks.max_per_profile");
+        AddToggleField(webhooksCard, "Allow Private Destinations", "notifications.webhooks.allow_private_destinations");
+        AddNumberField(webhooksCard, "Deliveries Per Minute Per Profile", "notifications.webhooks.deliveries_per_minute_per_profile");
+        EndCard(webhooksCard);
+
+        AddSectionHeader("Email Delivery");
+        var emailCard = BeginCard();
+        AddToggleField(emailCard, "Email Notifications", "notifications.email_enabled");
+        AddToggleField(emailCard, "Allow Per-Episode Email", "notifications.email.allow_per_episode");
+        AddNumberField(emailCard, "Digest Hour", "notifications.email.digest_hour", "0-23, server local time.");
+        AddTextField(emailCard, "External URL", "notifications.email.external_url",
+            "Public URL used in notification links.");
+        EndCard(emailCard);
+
+        AddSectionHeader("Discord");
+        var discordCard = BeginCard();
+        AddToggleField(discordCard, "Discord Notifications", "notifications.discord_enabled");
+        AddToggleField(discordCard, "Allow Per-Episode Discord", "notifications.discord.allow_per_episode");
+        AddNumberField(discordCard, "Digest Hour", "notifications.discord.digest_hour", "0-23, server local time.");
+        AddSelectField(discordCard, "Poster Mode", "notifications.discord.poster_mode",
+            [
+                ("auto", "Auto"),
+                ("embed", "Embed"),
+                ("link", "Link"),
+                ("none", "None"),
+            ]);
+        AddPasswordField(discordCard, "Discord Client ID", "discord.client_id", "Leave blank to keep the current value.");
+        AddPasswordField(discordCard, "Discord Client Secret", "discord.client_secret", "Leave blank to keep the current value.");
+        AddPasswordField(discordCard, "Discord Bot Token", "discord.bot_token", "Leave blank to keep the current value.");
+        EndCard(discordCard);
+
+        AddSectionHeader("Server Channels");
+        var channelCard = BeginCard();
+        AddToggleField(channelCard, "Server Channels Enabled", "notifications.server_channels_enabled");
+        AddNumberField(channelCard, "Batch Seconds", "notifications.server_channels.batch_seconds");
+        AddToggleField(channelCard, "Mention Requesters", "notifications.server_channels.mention_requesters",
+            "Mention linked requesters in request-related server channel posts.");
+        EndCard(channelCard);
+
+        AddSectionHeader("Retention");
+        var retentionCard = BeginCard();
+        AddNumberField(retentionCard, "Read Days", "notifications.retention.read_days");
+        AddNumberField(retentionCard, "Unread Days", "notifications.retention.unread_days");
+        AddNumberField(retentionCard, "Event Days", "notifications.retention.event_days");
+        EndCard(retentionCard);
+    }
+
     private void BuildJellyfinTab()
     {
         AddTabHeader("Jellyfin Compat", "Tune the compatibility layer exposed to Jellyfin-compatible clients.");
@@ -1583,7 +1870,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         var privateContainer = new StackPanel { Spacing = 12, Visibility = Visibility.Collapsed };
 
         var privCard = new StackPanel { Spacing = 0 };
-        AddTextBlock(privCard, "Stores non-public Continuum objects: imports, exports, and internal artifacts.");
+        AddTextBlock(privCard, "Stores non-public Silo objects: imports, exports, and internal artifacts.");
         AddTextField(privCard, "Endpoint", "s3.private_endpoint");
         AddTextField(privCard, "Region", "s3.private_region");
         AddToggleField(privCard, "Path Style", "s3.private_path_style");
@@ -3266,18 +3553,8 @@ public sealed partial class AdminSettingsDetailPage : Page
             : "";
     }
 
-    // Keys whose change requires a server restart to take effect.
-    private static readonly HashSet<string> RestartRequiredKeys = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "redis.url", "redis.sentinel_master", "redis.sentinel_addrs",
-        "database.url", "database.max_connections",
-        "server.mode", "server.bind_address", "server.port",
-    };
-
     private async void SaveButton_Click(object sender, RoutedEventArgs e)
     {
-        // Check if any dirty keys require restart BEFORE saving (dirty set clears after save).
-        bool needsRestart = ViewModel.GetDirtyKeys().Any(k => RestartRequiredKeys.Contains(k));
         var clickedButton = sender as Button ?? SaveButton;
         var originalContent = clickedButton.Content;
 
@@ -3312,7 +3589,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             UpdateDirtyCountText();
         }
 
-        if (needsRestart)
+        if (ViewModel.LastSaveRequiresRestart)
         {
             RestartServerButton.Visibility = Visibility.Visible;
             RestartHintText.Visibility = Visibility.Visible;

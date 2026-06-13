@@ -3066,6 +3066,7 @@ public sealed partial class ItemDetailPage : Page
     // Target per-card min width. Used to derive column count from container width
     // so cards reflow responsively (mirrors upstream's grid-cols-1 → grid-cols-5).
     private const double EpisodeCardMinWidth = 260;
+    private const int EpisodeStillDecodeWidth = 640;
 
     private void BuildEpisodeRows()
     {
@@ -3313,7 +3314,7 @@ public sealed partial class ItemDetailPage : Page
 
             var bitmapImage = new BitmapImage
             {
-                DecodePixelWidth = 200,
+                DecodePixelWidth = EpisodeStillDecodeWidth,
                 DecodePixelType = DecodePixelType.Logical
             };
             using var stream = new MemoryStream(bytes);
@@ -3323,10 +3324,8 @@ public sealed partial class ItemDetailPage : Page
             {
                 Source = bitmapImage,
                 Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
-                Width = 160,
-                Height = 90,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch
             };
 
             // Replace the placeholder. The stillBorder may be nested inside a

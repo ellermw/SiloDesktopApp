@@ -4,7 +4,7 @@ Native Windows 11 media player for Silo media servers. Built for direct playback
 
 ## Download
 
-[**Download Installer (v1.1.9)**](https://transfers.taverncdn.com/5WLnd4jMDZ/SiloDesktopPlayer-1.1.9-Setup.exe) — Single-file setup, includes all dependencies. Windows 10/11 x64.
+[**Download Installer (v1.1.10)**](https://transfers.taverncdn.com/5HetxuLlmc/SiloInstaller-1.1.10-Setup.exe) — Single-file setup, includes all dependencies. Windows 10/11 x64.
 
 ## Tech Stack
 

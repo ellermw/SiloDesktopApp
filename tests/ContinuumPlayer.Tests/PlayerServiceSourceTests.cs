@@ -136,6 +136,31 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
+    public void PlayerOverlayAllowsPgsAndHonorsRecapMarkers()
+    {
+        var overlay = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "ContinuumPlayer",
+            "Controls",
+            "PlayerOverlay.xaml.cs"));
+        var playerService = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "ContinuumPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        Assert.Contains("playback.auto_skip_recap", overlay);
+        Assert.Contains("ActiveRecap", overlay);
+        Assert.Contains("SeekAndResume(recap.End)", overlay);
+        Assert.Contains("IsUnsupportedBitmapSubtitle", overlay);
+        Assert.Contains("IsUnsupportedBitmapSubtitle", playerService);
+        Assert.DoesNotContain("return codec is \"pgs\" or \"pgssub\" or \"dvdsub\" or \"vobsub\";", playerService);
+        Assert.DoesNotContain("c is \"pgs\" or \"pgssub\" or \"dvdsub\" or \"vobsub\"", overlay);
+    }
+
+    [Fact]
     public void PlaybackSettingsAutoSkipTogglesAreEnabled()
     {
         var source = File.ReadAllText(Path.Combine(

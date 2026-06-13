@@ -52,6 +52,9 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
     [ObservableProperty]
     private bool _isSaving;
 
+    [ObservableProperty]
+    private bool _lastSaveRequiresRestart;
+
     [RelayCommand]
     private async Task LoadAsync()
     {
@@ -146,17 +149,20 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
         IsSaving = true;
         StatusMessage = null;
         ErrorMessage = null;
+        LastSaveRequiresRestart = false;
 
         try
         {
             foreach (var (key, value) in _dirtySettings)
             {
-                await _adminApi.UpdateAdminSettingAsync(key, value);
+                var response = await _adminApi.UpdateAdminSettingAsync(key, value);
+                LastSaveRequiresRestart |= response.RestartRequired;
             }
 
             if (DirtyRateLimitConfig != null)
             {
-                await _adminApi.UpdateRateLimitConfigAsync(DirtyRateLimitConfig);
+                var response = await _adminApi.UpdateRateLimitConfigAsync(DirtyRateLimitConfig);
+                LastSaveRequiresRestart |= response.RestartRequired;
                 RateLimitConfig = DirtyRateLimitConfig;
                 DirtyRateLimitConfig = null;
             }
@@ -181,7 +187,8 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
     public async Task SaveRateLimitConfigAsync()
     {
         if (DirtyRateLimitConfig == null) return;
-        await _adminApi.UpdateRateLimitConfigAsync(DirtyRateLimitConfig);
+        var response = await _adminApi.UpdateRateLimitConfigAsync(DirtyRateLimitConfig);
+        LastSaveRequiresRestart = response.RestartRequired;
         RateLimitConfig = DirtyRateLimitConfig;
         DirtyRateLimitConfig = null;
     }

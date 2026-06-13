@@ -11,6 +11,8 @@ public class WatchDetailResponse
     public WatchUserData? UserData { get; set; }
     public TimeRange? Intro { get; set; }
     public TimeRange? Credits { get; set; }
+    public TimeRange? Recap { get; set; }
+    public TimeRange? Preview { get; set; }
     public string? SeriesId { get; set; }
     public string? SeriesTitle { get; set; }
     public int? SeasonNumber { get; set; }
@@ -45,6 +47,8 @@ public class FileVersion
     public List<VersionChapter>? Chapters { get; set; }
     public TimeRange? Intro { get; set; }
     public TimeRange? Credits { get; set; }
+    public TimeRange? Recap { get; set; }
+    public TimeRange? Preview { get; set; }
 }
 
 public class VersionVideoTrack

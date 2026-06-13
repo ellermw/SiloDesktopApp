@@ -6,7 +6,15 @@ namespace ContinuumPlayer.Core.Api;
 public class AuthApi(ContinuumApiClient client)
 {
     public Task<LoginResponse> LoginAsync(string username, string password, CancellationToken ct = default)
-        => client.PostAsync<LoginResponse>("/api/v1/auth/login", new LoginRequest { Username = username, Password = password }, ct);
+        => LoginAsync(username, password, provider: null, ct);
+
+    public Task<LoginResponse> LoginAsync(string username, string password, string? provider, CancellationToken ct = default)
+        => client.PostAsync<LoginResponse>("/api/v1/auth/login", new LoginRequest
+        {
+            Username = username,
+            Password = password,
+            Provider = string.IsNullOrWhiteSpace(provider) ? null : provider
+        }, ct);
 
     public Task<RefreshResponse> RefreshAsync(string refreshToken, CancellationToken ct = default)
         => client.PostAsync<RefreshResponse>("/api/v1/auth/refresh", new RefreshRequest { RefreshToken = refreshToken }, ct);

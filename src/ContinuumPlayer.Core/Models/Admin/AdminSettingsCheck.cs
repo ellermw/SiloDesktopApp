@@ -26,3 +26,24 @@ public class ConnectionCheckResponse
     [JsonPropertyName("message")]
     public string Message { get; set; } = "";
 }
+
+public class AdminSettingUpdateResponse
+{
+    [JsonPropertyName("key")]
+    public string Key { get; set; } = "";
+
+    [JsonPropertyName("value")]
+    public string Value { get; set; } = "";
+
+    [JsonPropertyName("restart_required")]
+    public bool RestartRequired { get; set; }
+}
+
+public class AdminRestartResponse
+{
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "";
+
+    [JsonPropertyName("restart_required")]
+    public bool RestartRequired { get; set; }
+}

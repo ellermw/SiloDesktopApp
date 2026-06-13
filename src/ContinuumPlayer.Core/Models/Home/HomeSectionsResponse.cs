@@ -59,10 +59,69 @@ public class MediaItem
     public double? DurationSeconds { get; set; }
     public string? ProgressUpdatedAt { get; set; }
     public string? ItemSource { get; set; }
+    public AudiobookDetailExtension? Audiobook { get; set; }
+    public EbookDetailExtension? Ebook { get; set; }
     /// <summary>Server-attached badges (e.g. "season_premiere") shown as pills on
     /// section item cards. Source: HomeSectionItem.badges[] on the server.</summary>
     public List<string>? Badges { get; set; }
 }
+
+public class AudiobookPerson
+{
+    public string? PersonId { get; set; }
+    public string Name { get; set; } = "";
+    public string? PhotoUrl { get; set; }
+    public string? PhotoThumbhash { get; set; }
+}
+
+public class AudiobookRelatedItem
+{
+    public string ContentId { get; set; } = "";
+    public string Title { get; set; } = "";
+    public int? Year { get; set; }
+    public string? PosterUrl { get; set; }
+    public double? SeriesIndex { get; set; }
+}
+
+public class AudiobookSeriesGroup
+{
+    public string? Name { get; set; }
+    public List<AudiobookRelatedItem> Entries { get; set; } = [];
+}
+
+public class AudiobookNarration
+{
+    public string ContentId { get; set; } = "";
+    public string Title { get; set; } = "";
+    public int? Year { get; set; }
+    public List<string> Narrators { get; set; } = [];
+}
+
+public class AudiobookRelatedItems
+{
+    public List<AudiobookRelatedItem> AlsoByAuthor { get; set; } = [];
+    public List<AudiobookRelatedItem> Similar { get; set; } = [];
+}
+
+public class AudiobookDetailExtension
+{
+    public List<AudiobookPerson> Authors { get; set; } = [];
+    public List<AudiobookPerson> Narrators { get; set; } = [];
+    public string? Publisher { get; set; }
+    public int TotalDurationSeconds { get; set; }
+    public AudiobookSeriesGroup? Series { get; set; }
+    public List<AudiobookNarration> OtherNarrations { get; set; } = [];
+    public AudiobookRelatedItems Related { get; set; } = new();
+}
+
+public class EbookDetailExtension
+{
+    public List<AudiobookPerson> Authors { get; set; } = [];
+    public string? Publisher { get; set; }
+    public AudiobookSeriesGroup? Series { get; set; }
+    public AudiobookRelatedItems Related { get; set; } = new();
+}
+
 public class OverlaySummary
 {
     public string Resolution { get; set; } = "";

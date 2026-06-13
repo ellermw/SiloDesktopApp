@@ -22,6 +22,7 @@ public class SubtitleTrackInfo
     public string Label { get; set; } = "";
     public string? Source { get; set; }
     public string Url { get; set; } = "";
+    public string? FontBundleUrl { get; set; }
     public bool Forced { get; set; }
     public bool HearingImpaired { get; set; }
 }

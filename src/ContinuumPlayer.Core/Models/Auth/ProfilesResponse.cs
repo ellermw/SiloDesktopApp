@@ -20,6 +20,8 @@ public class Profile
     public string SubtitleMode { get; set; } = "";
     public bool AutoSkipIntro { get; set; }
     public bool AutoSkipCredits { get; set; }
+    public bool AutoSkipRecap { get; set; }
+    public bool AutoPlayNextPreview { get; set; }
     public bool ShowForcedSubtitles { get; set; }
     public bool LibraryRestrictionsEnabled { get; set; }
     public List<int>? AllowedLibraryIds { get; set; }

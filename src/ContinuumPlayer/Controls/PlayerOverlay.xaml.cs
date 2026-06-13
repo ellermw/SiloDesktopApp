@@ -20,8 +20,10 @@ public sealed partial class PlayerOverlay : UserControl
     private bool _isActive;
     private bool _autoSkipIntro;
     private bool _autoSkipCredits;
+    private bool _autoSkipRecap;
     private bool _introAutoSkipped;
     private bool _creditsAutoSkipped;
+    private bool _recapAutoSkipped;
     private int _autoSkipSettingsLoadVersion;
 
     private DispatcherTimer? _uiTimer;
@@ -32,6 +34,7 @@ public sealed partial class PlayerOverlay : UserControl
     private const int BufferingSpinnerDelayMs = 500;
     private const string AutoSkipIntroSettingKey = "playback.auto_skip_intro";
     private const string AutoSkipCreditsSettingKey = "playback.auto_skip_credits";
+    private const string AutoSkipRecapSettingKey = "playback.auto_skip_recap";
 
     public PlayerOverlay()
     {
@@ -244,6 +247,7 @@ public sealed partial class PlayerOverlay : UserControl
     {
         _introAutoSkipped = false;
         _creditsAutoSkipped = false;
+        _recapAutoSkipped = false;
     }
 
     private async Task RefreshAutoSkipSettingsAsync()
@@ -252,7 +256,7 @@ public sealed partial class PlayerOverlay : UserControl
         var profileId = _authService.SelectedProfileId;
         if (string.IsNullOrWhiteSpace(profileId))
         {
-            ApplyAutoSkipSettings(loadVersion, intro: false, credits: false);
+            ApplyAutoSkipSettings(loadVersion, intro: false, credits: false, recap: false);
             return;
         }
 
@@ -262,13 +266,15 @@ public sealed partial class PlayerOverlay : UserControl
             var profile = profiles.Profiles.FirstOrDefault(p => p.Id == profileId);
             var intro = profile?.AutoSkipIntro == true;
             var credits = profile?.AutoSkipCredits == true;
+            var recap = profile?.AutoSkipRecap == true;
 
             try
             {
                 var effective = await _settingsApi.GetEffectiveSettingsAsync(
-                    [AutoSkipIntroSettingKey, AutoSkipCreditsSettingKey]);
+                    [AutoSkipIntroSettingKey, AutoSkipCreditsSettingKey, AutoSkipRecapSettingKey]);
                 intro = ResolveEffectiveBool(effective, AutoSkipIntroSettingKey, intro);
                 credits = ResolveEffectiveBool(effective, AutoSkipCreditsSettingKey, credits);
+                recap = ResolveEffectiveBool(effective, AutoSkipRecapSettingKey, recap);
             }
             catch
             {
@@ -276,21 +282,22 @@ public sealed partial class PlayerOverlay : UserControl
                 // Profile-level settings still enable the feature.
             }
 
-            ApplyAutoSkipSettings(loadVersion, intro, credits);
+            ApplyAutoSkipSettings(loadVersion, intro, credits, recap);
         }
         catch
         {
-            ApplyAutoSkipSettings(loadVersion, intro: false, credits: false);
+            ApplyAutoSkipSettings(loadVersion, intro: false, credits: false, recap: false);
         }
     }
 
-    private void ApplyAutoSkipSettings(int loadVersion, bool intro, bool credits)
+    private void ApplyAutoSkipSettings(int loadVersion, bool intro, bool credits, bool recap)
     {
         DispatcherQueue?.TryEnqueue(() =>
         {
             if (!_isActive || loadVersion != _autoSkipSettingsLoadVersion) return;
             _autoSkipIntro = intro;
             _autoSkipCredits = credits;
+            _autoSkipRecap = recap;
         });
     }
 
@@ -406,6 +413,17 @@ public sealed partial class PlayerOverlay : UserControl
         {
             _introAutoSkipped = true;
             SeekAndResume(intro.End);
+            return;
+        }
+
+        var recap = _playerService.ActiveRecap;
+        if (_autoSkipRecap
+            && !_recapAutoSkipped
+            && IsWithinMarker(recap, pos)
+            && recap!.End > 0)
+        {
+            _recapAutoSkipped = true;
+            SeekAndResume(recap.End);
             return;
         }
 
@@ -935,11 +953,7 @@ public sealed partial class PlayerOverlay : UserControl
         var subtitleUrls = _playerService.Manager?.GetSubtitleUrls() ?? [];
         var sortedSubs = subtitleUrls
             .Select((pair, idx) => (pair.Track, pair.FullUrl, OrigIndex: idx))
-            .Where(s =>
-            {
-                var c = s.Track.Codec?.ToLowerInvariant() ?? "";
-                return c is not ("pgs" or "pgssub" or "dvdsub" or "vobsub");
-            })
+            .Where(s => !IsUnsupportedBitmapSubtitle(s.Track.Codec))
             .OrderBy(s => SourceSortKey(s.Track.Source))
             .ToList();
 
@@ -950,8 +964,7 @@ public sealed partial class PlayerOverlay : UserControl
         var mpvIndexMap = new Dictionary<int, int>();
         for (int i = 0; i < subtitleUrls.Count; i++)
         {
-            var c = subtitleUrls[i].Track.Codec?.ToLowerInvariant() ?? "";
-            if (c is "pgs" or "pgssub" or "dvdsub" or "vobsub") continue;
+            if (IsUnsupportedBitmapSubtitle(subtitleUrls[i].Track.Codec)) continue;
             mpvIndexMap[i] = mpvTrackIndex++;
         }
 
@@ -1017,6 +1030,12 @@ public sealed partial class PlayerOverlay : UserControl
     };
 
     // ── Audio track switching ────────────────────────────────────────────
+
+    private static bool IsUnsupportedBitmapSubtitle(string? codec)
+    {
+        var normalized = codec?.ToLowerInvariant() ?? "";
+        return normalized is "dvdsub" or "dvd_subtitle" or "vobsub" or "dvbsub" or "dvb_subtitle";
+    }
 
     private void PopulateAudioFlyout()
     {

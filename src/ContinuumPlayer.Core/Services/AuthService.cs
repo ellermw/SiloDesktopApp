@@ -35,7 +35,13 @@ public class AuthService
 
     public async Task<LoginResponse> LoginAsync(string username, string password, CancellationToken ct = default)
     {
-        var response = await _authApi.LoginAsync(username, password, ct);
+        var response = await LoginAsync(username, password, provider: null, ct);
+        return response;
+    }
+
+    public async Task<LoginResponse> LoginAsync(string username, string password, string? provider, CancellationToken ct = default)
+    {
+        var response = await _authApi.LoginAsync(username, password, provider, ct);
         _apiClient.SetAccessToken(response.AccessToken);
         RefreshToken = response.RefreshToken;
         CurrentUser = response.User;

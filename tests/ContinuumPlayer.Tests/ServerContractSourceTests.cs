@@ -102,6 +102,258 @@ public sealed class ServerContractSourceTests
     }
 
     [Fact]
+    public void LoginSupportsCurrentSiloCredentialAndOAuthProviderSurface()
+    {
+        var root = FindRepositoryRoot();
+        var loginRequest = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Models", "Auth", "LoginRequest.cs"));
+        var authApi = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Api", "AuthApi.cs"));
+        var authService = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Services", "AuthService.cs"));
+        var loginViewModel = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "ViewModels", "LoginViewModel.cs"));
+        var loginXaml = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "LoginPage.xaml"));
+
+        Assert.Contains("public string? Provider", loginRequest);
+        Assert.Contains("LoginAsync(string username, string password, string? provider", authApi);
+        Assert.Contains("LoginAsync(string username, string password, string? provider", authService);
+        Assert.Contains("CredentialProviders", loginViewModel);
+        Assert.Contains("SelectedCredentialProvider", loginViewModel);
+        Assert.Contains("SelectedCredentialProvider?.Id", loginViewModel);
+        Assert.Contains("OAuthProviders", loginViewModel);
+        Assert.Contains("HasOAuthProviders", loginViewModel);
+        Assert.Contains("CredentialProviderComboBox", loginXaml);
+        Assert.Contains("IconUrl", loginXaml);
+    }
+
+    [Fact]
+    public void DesktopExposesCurrentSiloMediaRequestsSurface()
+    {
+        var root = FindRepositoryRoot();
+        var app = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "App.xaml.cs"));
+        var mainWindow = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "MainWindow.xaml"));
+        var mainWindowCode = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "MainWindow.xaml.cs"));
+        var adminShell = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminShellPage.xaml"));
+        var adminShellCode = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminShellPage.xaml.cs"));
+        var documentTitle = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Helpers", "DocumentTitle.cs"));
+        var requestsApi = Path.Combine(root, "src", "ContinuumPlayer.Core", "Api", "RequestsApi.cs");
+        var requestModels = Path.Combine(root, "src", "ContinuumPlayer.Core", "Models", "Requests", "MediaRequests.cs");
+
+        Assert.True(File.Exists(requestsApi));
+        Assert.True(File.Exists(requestModels));
+        Assert.True(File.Exists(Path.Combine(root, "src", "ContinuumPlayer", "ViewModels", "RequestsViewModel.cs")));
+        Assert.True(File.Exists(Path.Combine(root, "src", "ContinuumPlayer", "Views", "RequestsPage.xaml")));
+        Assert.True(File.Exists(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminRequestsPage.xaml")));
+
+        var api = File.ReadAllText(requestsApi);
+        var models = File.ReadAllText(requestModels);
+        Assert.Contains("/api/v1/requests/status", api);
+        Assert.Contains("/api/v1/requests/discover", api);
+        Assert.Contains("/api/v1/requests/search", api);
+        Assert.Contains("/api/v1/requests/mine", api);
+        Assert.Contains("/api/v1/admin/requests", api);
+        Assert.Contains("RequestFeatureStatus", models);
+        Assert.Contains("RequestMediaResult", models);
+        Assert.Contains("CreateMediaRequestInput", models);
+        Assert.Contains("MediaRequest", models);
+
+        Assert.Contains("RequestsApi", app);
+        Assert.Contains("RequestsViewModel", app);
+        Assert.Contains("AdminRequestsViewModel", app);
+        Assert.Contains("Content=\"Requests\"", mainWindow);
+        Assert.Contains("Tag=\"Requests\"", mainWindow);
+        Assert.Contains("Navigate<RequestsPage>", mainWindowCode);
+        Assert.Contains("NavRequests", adminShell);
+        Assert.Contains("AdminRequestsPage", adminShellCode);
+        Assert.Contains("AdminRequestsPage", documentTitle);
+        Assert.Contains("RequestsPage", documentTitle);
+    }
+
+    [Fact]
+    public void DesktopTracksCurrentSiloPlaybackAndSettingsContracts()
+    {
+        var root = FindRepositoryRoot();
+        var playbackWebSocket = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Services", "PlaybackWebSocket.cs"));
+        var playbackRequest = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Models", "Playback", "PlaybackStartRequest.cs"));
+        var playbackResponse = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Models", "Playback", "PlaybackStartResponse.cs"));
+        var playbackManager = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Services", "PlaybackManager.cs"));
+        var adminApi = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Api", "AdminApi.cs"));
+        var adminSettingsVm = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "ViewModels", "Admin", "AdminSettingsDetailViewModel.cs"));
+        var adminSettingsPage = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminSettingsDetailPage.xaml.cs"));
+
+        Assert.Contains("/api/v1/playback/sessions/", playbackWebSocket);
+        Assert.Contains("/control/ws", playbackWebSocket);
+        Assert.DoesNotContain("/api/v1/playback/ws/", playbackWebSocket);
+
+        Assert.Contains("PreserveDirectAudioSelection", playbackRequest);
+        Assert.Contains("AudioPassthroughCapabilities", playbackRequest);
+        Assert.Contains("HdrCapabilityDetails", playbackRequest);
+        Assert.Contains("PreserveDirectAudioSelection = true", playbackManager);
+        Assert.Contains("FontBundleUrl", playbackResponse);
+
+        Assert.Contains("Task<AdminSettingUpdateResponse> UpdateAdminSettingAsync", adminApi);
+        Assert.Contains("RestartRequired", adminApi);
+        Assert.Contains("LastSaveRequiresRestart", adminSettingsVm);
+        Assert.DoesNotContain("RestartRequiredKeys", adminSettingsPage);
+    }
+
+    [Fact]
+    public void DesktopModelsExposeCurrentSiloMediaTypesAndProfileFlags()
+    {
+        var root = FindRepositoryRoot();
+        var profileModel = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Models", "Auth", "ProfilesResponse.cs"));
+        var watchDetail = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Models", "Playback", "WatchDetailResponse.cs"));
+        var homeModels = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Models", "Home", "HomeSectionsResponse.cs"));
+        var detailModel = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Models", "Catalog", "MediaItemDetail.cs"));
+        var adminLibraries = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminLibrariesPage.xaml.cs"));
+        var settingsXaml = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "SettingsPage.xaml"));
+        var settingsVm = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "ViewModels", "SettingsViewModel.cs"));
+
+        Assert.Contains("AutoSkipRecap", profileModel);
+        Assert.Contains("AutoPlayNextPreview", profileModel);
+        Assert.Contains("Recap", watchDetail);
+        Assert.Contains("Preview", watchDetail);
+        Assert.Contains("Audiobook", detailModel);
+        Assert.Contains("Ebook", detailModel);
+        Assert.Contains("Audiobook", homeModels);
+        Assert.Contains("Ebook", homeModels);
+        Assert.Contains("Tag = \"audiobooks\"", adminLibraries);
+        Assert.Contains("Tag = \"ebooks\"", adminLibraries);
+        Assert.Contains("Tag = \"podcasts\"", adminLibraries);
+        Assert.Contains("AutoSkipRecapToggle", settingsXaml);
+        Assert.Contains("AutoPlayNextPreviewToggle", settingsXaml);
+        Assert.Contains("auto_skip_recap", settingsVm);
+        Assert.Contains("auto_play_next_preview", settingsVm);
+    }
+
+    [Fact]
+    public void DesktopRequestsAndNodesExposeCurrentSiloFields()
+    {
+        var root = FindRepositoryRoot();
+        var requestModels = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Models", "Requests", "MediaRequests.cs"));
+        var requestsApi = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Api", "RequestsApi.cs"));
+        var nodeModels = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Models", "Admin", "AdminNode.cs"));
+        var nodesPage = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminNodesPage.xaml.cs"));
+
+        Assert.Contains("DiscoverBrandCard", requestModels);
+        Assert.Contains("RequestTarget", requestModels);
+        Assert.Contains("RequestIntegration", requestModels);
+        Assert.Contains("GetDiscoverStudiosAsync", requestsApi);
+        Assert.Contains("GetAdminRequestSettingsAsync", requestsApi);
+        Assert.Contains("Group", nodeModels);
+        Assert.Contains("MaxJobs", nodeModels);
+        Assert.Contains("MaxBandwidthKbps", nodeModels);
+        Assert.Contains("EgressKbps", nodeModels);
+        Assert.Contains("NodeFormResult", nodesPage);
+    }
+
+    [Fact]
+    public void DesktopTracksCurrentSiloNotificationsSurface()
+    {
+        var root = FindRepositoryRoot();
+        var app = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "App.xaml.cs"));
+        var mainWindow = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "MainWindow.xaml"));
+        var mainWindowCode = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "MainWindow.xaml.cs"));
+        var documentTitle = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Helpers", "DocumentTitle.cs"));
+        var eventChannel = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Services", "EventChannelClient.cs"));
+        var notificationApi = Path.Combine(root, "src", "ContinuumPlayer.Core", "Api", "NotificationsApi.cs");
+        var notificationModels = Path.Combine(root, "src", "ContinuumPlayer.Core", "Models", "Notifications", "NotificationsModels.cs");
+
+        Assert.True(File.Exists(notificationApi));
+        Assert.True(File.Exists(notificationModels));
+        Assert.True(File.Exists(Path.Combine(root, "src", "ContinuumPlayer", "ViewModels", "NotificationsViewModel.cs")));
+        Assert.True(File.Exists(Path.Combine(root, "src", "ContinuumPlayer", "Views", "NotificationsPage.xaml")));
+        Assert.True(File.Exists(Path.Combine(root, "src", "ContinuumPlayer", "Views", "NotificationsPage.xaml.cs")));
+
+        var api = File.ReadAllText(notificationApi);
+        var models = File.ReadAllText(notificationModels);
+
+        Assert.Contains("/api/v1/notifications?", api);
+        Assert.Contains("/api/v1/notifications/unread-count", api);
+        Assert.Contains("/api/v1/notifications/preferences", api);
+        Assert.Contains("/api/v1/notifications/email-preferences", api);
+        Assert.Contains("/api/v1/notifications/discord-preferences", api);
+        Assert.Contains("/api/v1/notifications/webhooks", api);
+        Assert.Contains("/api/v1/admin/notifications/server-channels", api);
+        Assert.Contains("AppNotification", models);
+        Assert.Contains("NotificationPreferences", models);
+        Assert.Contains("NotificationCapability", models);
+        Assert.Contains("NotificationWebhook", models);
+        Assert.Contains("ServerNotificationChannel", models);
+
+        Assert.Contains("NotificationsApi", app);
+        Assert.Contains("NotificationsViewModel", app);
+        Assert.Contains("Content=\"Notifications\"", mainWindow);
+        Assert.Contains("Tag=\"Notifications\"", mainWindow);
+        Assert.Contains("Navigate<NotificationsPage>", mainWindowCode);
+        Assert.Contains("NotificationsPage", documentTitle);
+        Assert.Contains("/api/v1/events/ws-ticket", eventChannel);
+        Assert.Contains("ticket=", eventChannel);
+    }
+
+    [Fact]
+    public void AdminSettingsTracksCurrentSiloWebUiSections()
+    {
+        var root = FindRepositoryRoot();
+        var adminSettingsXaml = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminSettingsDetailPage.xaml"));
+        var adminSettings = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminSettingsDetailPage.xaml.cs"));
+
+        Assert.Contains("SettingsSearchBox", adminSettingsXaml);
+        Assert.Contains("SettingsSearchBox_TextChanged", adminSettings);
+        Assert.Contains("\"Intro Markers\"", adminSettings);
+        Assert.Contains("\"Subtitles\"", adminSettings);
+        Assert.Contains("\"AI Services\"", adminSettings);
+        Assert.Contains("\"Watch Providers\"", adminSettings);
+        Assert.Contains("\"Email\"", adminSettings);
+        Assert.Contains("\"Notifications\"", adminSettings);
+
+        Assert.Contains("BuildIntroMarkersTab", adminSettings);
+        Assert.Contains("BuildSubtitlesTab", adminSettings);
+        Assert.Contains("BuildAIServicesTab", adminSettings);
+        Assert.Contains("BuildWatchProvidersTab", adminSettings);
+        Assert.Contains("BuildEmailTab", adminSettings);
+        Assert.Contains("BuildNotificationsAdminTab", adminSettings);
+
+        Assert.Contains("markers.mode", adminSettings);
+        Assert.Contains("email.smtp_host", adminSettings);
+        Assert.Contains("ai.base_url", adminSettings);
+        Assert.Contains("subtitle_ai.transcribe_enabled", adminSettings);
+        Assert.Contains("watchsync.trakt.client_id", adminSettings);
+        Assert.Contains("notifications.release_events_enabled", adminSettings);
+        Assert.Contains("notifications.server_channels_enabled", adminSettings);
+    }
+
+    [Fact]
+    public void EpisodeCardsUseFullWidthStillArtwork()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "ContinuumPlayer",
+            "Views",
+            "ItemDetailPage.xaml.cs"));
+
+        Assert.Contains("EpisodeStillDecodeWidth", source);
+        Assert.Contains("HorizontalAlignment = HorizontalAlignment.Stretch", source);
+        Assert.Contains("VerticalAlignment = VerticalAlignment.Stretch", source);
+        Assert.DoesNotContain("Width = 160", source);
+        Assert.DoesNotContain("Height = 90", source);
+    }
+
+    [Fact]
+    public void ReleaseArtifactsUseSiloPlayerNames()
+    {
+        var root = FindRepositoryRoot();
+        var project = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "ContinuumPlayer.csproj"));
+        var installer = File.ReadAllText(Path.Combine(root, "installer", "SiloInstaller.iss"));
+        var build = File.ReadAllText(Path.Combine(root, "installer", "build.ps1"));
+
+        Assert.Contains("<AssemblyName>SiloPlayer</AssemblyName>", project);
+        Assert.Contains("#define MyAppExeName \"SiloPlayer.exe\"", installer);
+        Assert.Contains("OutputBaseFilename=SiloInstaller-", installer);
+        Assert.DoesNotContain("ContinuumDesktopPlayer", installer);
+        Assert.DoesNotContain("ContinuumDesktopPlayer.iss", build);
+        Assert.Contains("SiloInstaller.iss", build);
+    }
+
+    [Fact]
     public void PluginGlobalConfigUsesCurrentServerEndpoint()
     {
         var api = File.ReadAllText(Path.Combine(
@@ -174,14 +426,31 @@ public sealed class ServerContractSourceTests
         var login = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "LoginPage.xaml"));
         var serverSelect = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "ServerSelectPage.xaml"));
         var setup = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "SetupWizardPage.xaml"));
+        var app = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "App.xaml.cs"));
+        var adminHistoryImport = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminHistoryImportPage.xaml"));
+        var adminHistoryImportCode = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminHistoryImportPage.xaml.cs"));
+        var adminPlugins = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminPluginsPage.xaml"));
+        var adminSettings = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Views", "Admin", "AdminSettingsDetailPage.xaml.cs"));
+        var playbackWebSocket = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Services", "PlaybackWebSocket.cs"));
         var manifest = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer", "Package.appxmanifest"));
-        var installer = File.ReadAllText(Path.Combine(root, "installer", "ContinuumDesktopPlayer.iss"));
+        var installer = File.ReadAllText(Path.Combine(root, "installer", "SiloInstaller.iss"));
         var readme = File.ReadAllText(Path.Combine(root, "README.md"));
 
         Assert.Contains("AppName = \"Silo\"", documentTitle);
         Assert.Contains("Text=\"Silo\"", login);
         Assert.Contains("Text=\"Silo\"", serverSelect);
         Assert.Contains("Text=\"Silo\"", setup);
+        Assert.Contains("silo-desktop-", app);
+        Assert.DoesNotContain("continuum-desktop-", app);
+        Assert.Contains("PlaceholderText=\"silo/prod\"", setup);
+        Assert.Contains("PlaceholderText=\"silo/internal\"", setup);
+        Assert.Contains("Silo user profiles", adminHistoryImport);
+        Assert.Contains("Silo User", adminHistoryImport);
+        Assert.Contains("Silo User", adminHistoryImportCode);
+        Assert.Contains("Extend Silo with", adminPlugins);
+        Assert.Contains("Stores non-public Silo objects", adminSettings);
+        Assert.Contains("[\"name\"] = \"silo-desktop\"", playbackWebSocket);
+        Assert.DoesNotContain("[\"name\"] = \"continuum-desktop\"", playbackWebSocket);
         Assert.Contains("<DisplayName>Silo</DisplayName>", manifest);
         Assert.Contains("DisplayName=\"Silo\"", manifest);
         Assert.Contains("#define MyAppName \"Silo Desktop Player\"", installer);

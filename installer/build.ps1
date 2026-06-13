@@ -92,16 +92,16 @@ if (-not (Test-Path $IconDest)) {
 Write-Host "=== Compiling installer ==="
 if (-not (Test-Path $OutputDir)) { $null = New-Item -ItemType Directory -Path $OutputDir }
 
-& $IsccPath "$InstallerDir\ContinuumDesktopPlayer.iss"
+& $IsccPath "$InstallerDir\SiloInstaller.iss"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Inno Setup compilation failed"
     exit 1
 }
 
-# Inno Setup writes a versioned filename (SiloDesktopPlayer-{version}-Setup.exe).
+# Inno Setup writes a versioned filename (SiloInstaller-{version}-Setup.exe).
 # Pick the most recent one from the output directory.
-$SetupExe = Get-ChildItem "$OutputDir\SiloDesktopPlayer-*-Setup.exe" -ErrorAction SilentlyContinue |
+$SetupExe = Get-ChildItem "$OutputDir\SiloInstaller-*-Setup.exe" -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
 if ($SetupExe) {

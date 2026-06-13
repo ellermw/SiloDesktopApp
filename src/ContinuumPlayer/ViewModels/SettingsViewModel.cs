@@ -328,6 +328,12 @@ public partial class SettingsViewModel : ObservableObject
     private bool _autoSkipCredits;
 
     [ObservableProperty]
+    private bool _autoSkipRecap;
+
+    [ObservableProperty]
+    private bool _autoPlayNextPreview;
+
+    [ObservableProperty]
     private string _maxPlaybackQuality = "";
 
     [ObservableProperty]
@@ -383,6 +389,8 @@ public partial class SettingsViewModel : ObservableObject
                     QualityPreference = _profile.QualityPreference;
                     AutoSkipIntro = _profile.AutoSkipIntro;
                     AutoSkipCredits = _profile.AutoSkipCredits;
+                    AutoSkipRecap = _profile.AutoSkipRecap;
+                    AutoPlayNextPreview = _profile.AutoPlayNextPreview;
                     MaxPlaybackQuality = _profile.MaxPlaybackQuality;
                     LibraryRestrictionsEnabled = _profile.LibraryRestrictionsEnabled;
                     AllowedLibraryIdsText = _profile.AllowedLibraryIds != null
@@ -491,6 +499,16 @@ public partial class SettingsViewModel : ObservableObject
     partial void OnAutoSkipCreditsChanged(bool value)
     {
         if (!_suppressSave) _ = SaveProfileFieldAsync("auto_skip_credits", value);
+    }
+
+    partial void OnAutoSkipRecapChanged(bool value)
+    {
+        if (!_suppressSave) _ = SaveProfileFieldAsync("auto_skip_recap", value);
+    }
+
+    partial void OnAutoPlayNextPreviewChanged(bool value)
+    {
+        if (!_suppressSave) _ = SaveProfileFieldAsync("auto_play_next_preview", value);
     }
 
     partial void OnShowForcedSubtitlesChanged(bool value)

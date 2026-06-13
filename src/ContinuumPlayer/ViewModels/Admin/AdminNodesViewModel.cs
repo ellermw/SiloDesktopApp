@@ -10,6 +10,14 @@ public partial class AdminNodesViewModel : ObservableObject
 {
     private readonly AdminApi _adminApi;
 
+    public sealed record NodeUpdateArgs(
+        int Id,
+        string Name,
+        string Url,
+        string Group,
+        int? MaxJobs,
+        int? MaxBandwidthKbps);
+
     public AdminNodesViewModel(AdminApi adminApi)
     {
         _adminApi = adminApi;
@@ -63,11 +71,18 @@ public partial class AdminNodesViewModel : ObservableObject
     // ===== Update Node =====
 
     [RelayCommand]
-    public async Task UpdateNodeAsync((int Id, string Name, string Url) args)
+    public async Task UpdateNodeAsync(NodeUpdateArgs args)
     {
         try
         {
-            await _adminApi.UpdateNodeAsync(args.Id, new { name = args.Name, url = args.Url });
+            await _adminApi.UpdateNodeAsync(args.Id, new Dictionary<string, object?>
+            {
+                ["name"] = args.Name,
+                ["url"] = args.Url,
+                ["group"] = args.Group,
+                ["max_jobs"] = args.MaxJobs,
+                ["max_bandwidth_kbps"] = args.MaxBandwidthKbps,
+            });
             StatusMessage = "Node updated.";
             await LoadAsync();
         }
@@ -122,7 +137,7 @@ public partial class AdminNodesViewModel : ObservableObject
         bool newEnabled = !node.Enabled;
         try
         {
-            await _adminApi.UpdateNodeAsync(id, new { enabled = newEnabled });
+            await _adminApi.UpdateNodeAsync(id, new Dictionary<string, object?> { ["enabled"] = newEnabled });
             StatusMessage = newEnabled ? "Node enabled." : "Node disabled.";
             await LoadAsync();
         }

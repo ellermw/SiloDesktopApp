@@ -362,7 +362,7 @@
                                     <TextBox
                                         Text="{x:Bind ViewModel.S3PublicKeyPrefix, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                         Style="{StaticResource DarkTextBoxStyle}"
-                                        PlaceholderText="continuum/prod" />
+                                        PlaceholderText="silo/prod" />
                                 </StackPanel>
                                 <Grid ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
@@ -434,7 +434,7 @@
                                     <TextBox
                                         Text="{x:Bind ViewModel.S3PrivateKeyPrefix, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                         Style="{StaticResource DarkTextBoxStyle}"
-                                        PlaceholderText="continuum/internal" />
+                                        PlaceholderText="silo/internal" />
                                 </StackPanel>
                                 <Grid ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>

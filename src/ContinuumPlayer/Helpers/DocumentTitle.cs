@@ -27,6 +27,8 @@ public static class DocumentTitle
         [typeof(HomePage)] = "Home",
         [typeof(SearchPage)] = "Search",
         [typeof(CalendarPage)] = "Calendar",
+        [typeof(RequestsPage)] = "Requests",
+        [typeof(NotificationsPage)] = "Notifications",
         [typeof(RecommendationsPage)] = "Recommendations",
         [typeof(RecommendationSectionPage)] = "Recommendations",
         [typeof(FavoritesPage)] = "Favorites",
@@ -54,6 +56,7 @@ public static class DocumentTitle
 
         // Admin
         [typeof(AdminShellPage)] = "Admin",
+        [typeof(AdminRequestsPage)] = "Admin Requests",
         [typeof(AdminDashboardPage)] = "Admin · Dashboard",
         [typeof(AdminActivityPage)] = "Admin · Activity",
         [typeof(AdminTasksPage)] = "Admin · Tasks",

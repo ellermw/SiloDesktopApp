@@ -56,8 +56,82 @@
                             FontSize="13" />
                     </Border>
 
+                    <!-- OAuth providers section -->
+                    <StackPanel
+                        Spacing="12"
+                        Visibility="{x:Bind ViewModel.HasOAuthProviders, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.OAuthProviders, Mode=OneWay}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Spacing="8" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button
+                                        Style="{StaticResource OutlineButtonStyle}"
+                                        HorizontalAlignment="Stretch"
+                                        Padding="16,10"
+                                        Tag="{Binding}"
+                                        Click="AuthProviderButton_Click">
+                                        <StackPanel
+                                            Orientation="Horizontal"
+                                            HorizontalAlignment="Center"
+                                            Spacing="8">
+                                            <Image
+                                                Source="{Binding IconUrl}"
+                                                Width="20"
+                                                Height="20"
+                                                Stretch="Uniform"
+                                                Visibility="{Binding IconUrl, Converter={StaticResource NullToVis}}" />
+                                            <TextBlock
+                                                Text="{Binding DisplayName}"
+                                                VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- Divider -->
+                        <Grid Margin="0,4,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Height="1"
+                                    Background="{StaticResource BorderBrush}"
+                                    VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="or"
+                                       FontSize="13"
+                                       Foreground="{StaticResource SecondaryTextBrush}"
+                                       Margin="12,0" />
+                            <Border Grid.Column="2" Height="1"
+                                    Background="{StaticResource BorderBrush}"
+                                    VerticalAlignment="Center" />
+                        </Grid>
+                    </StackPanel>
+
                     <!-- Form fields -->
                     <StackPanel Spacing="16">
+                        <!-- Credential provider picker -->
+                        <StackPanel
+                            Spacing="6"
+                            Visibility="{x:Bind ViewModel.HasCredentialProviderPicker, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                            <TextBlock
+                                Text="Sign in with"
+                                FontSize="14"
+                                FontWeight="Medium"
+                                Foreground="{StaticResource PrimaryTextBrush}" />
+                            <ComboBox
+                                x:Name="CredentialProviderComboBox"
+                                ItemsSource="{x:Bind ViewModel.CredentialProviders, Mode=OneWay}"
+                                SelectedItem="{x:Bind ViewModel.SelectedCredentialProvider, Mode=TwoWay}"
+                                DisplayMemberPath="DisplayName"
+                                HorizontalAlignment="Stretch" />
+                        </StackPanel>
+
                         <!-- Username -->
                         <StackPanel Spacing="6">
                             <TextBlock
@@ -104,51 +178,6 @@
                         Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                         HorizontalAlignment="Center"
                         Width="28" Height="28" />
-
-                    <!-- Auth providers section -->
-                    <StackPanel
-                        Spacing="12"
-                        Visibility="{x:Bind ViewModel.HasAuthProviders, Mode=OneWay, Converter={StaticResource BoolToVis}}">
-
-                        <!-- Divider -->
-                        <Grid Margin="0,4,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0" Height="1"
-                                    Background="{StaticResource BorderBrush}"
-                                    VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="or"
-                                       FontSize="13"
-                                       Foreground="{StaticResource SecondaryTextBrush}"
-                                       Margin="12,0" />
-                            <Border Grid.Column="2" Height="1"
-                                    Background="{StaticResource BorderBrush}"
-                                    VerticalAlignment="Center" />
-                        </Grid>
-
-                        <!-- Provider buttons -->
-                        <ItemsControl ItemsSource="{x:Bind ViewModel.AuthProviders, Mode=OneWay}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Spacing="8" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Button
-                                        Content="{Binding DisplayName}"
-                                        Style="{StaticResource OutlineButtonStyle}"
-                                        HorizontalAlignment="Stretch"
-                                        Padding="16,10"
-                                        Tag="{Binding}"
-                                        Click="AuthProviderButton_Click" />
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
 
                     <!-- Create account link -->
                     <Button

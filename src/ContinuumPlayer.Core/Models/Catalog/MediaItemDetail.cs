@@ -47,6 +47,8 @@ public class MediaItemDetail
     public int? EpisodeNumber { get; set; }
     public bool? IsSpecials { get; set; }
     public OverlaySummary? OverlaySummary { get; set; }
+    public AudiobookDetailExtension? Audiobook { get; set; }
+    public EbookDetailExtension? Ebook { get; set; }
     public List<FileVersion> Versions { get; set; } = [];
     [JsonPropertyName("user_data")]
     public ItemDetailUserData? UserData { get; set; }

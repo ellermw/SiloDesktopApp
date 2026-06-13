@@ -137,16 +137,17 @@ public class AdminApi(ContinuumApiClient client)
     public Task<RateLimitConfig> GetRateLimitConfigAsync(CancellationToken ct = default)
         => client.GetAsync<RateLimitConfig>("/api/v1/admin/rate-limits/config", ct);
 
-    public Task UpdateRateLimitConfigAsync(RateLimitConfig config, CancellationToken ct = default)
-        => client.PutNoContentAsync("/api/v1/admin/rate-limits/config", config, ct);
+    public Task<AdminRestartResponse> UpdateRateLimitConfigAsync(RateLimitConfig config, CancellationToken ct = default)
+        => client.PutAsync<AdminRestartResponse>("/api/v1/admin/rate-limits/config", config, ct);
 
     // ===== Settings =====
 
     public Task<Dictionary<string, string>> GetAdminSettingsAsync(CancellationToken ct = default)
         => client.GetAsync<Dictionary<string, string>>("/api/v1/admin/settings", ct);
 
-    public Task UpdateAdminSettingAsync(string key, string value, CancellationToken ct = default)
-        => client.PutNoContentAsync(
+    // Response includes RestartRequired so the UI can show the restart prompt from the server's source of truth.
+    public Task<AdminSettingUpdateResponse> UpdateAdminSettingAsync(string key, string value, CancellationToken ct = default)
+        => client.PutAsync<AdminSettingUpdateResponse>(
             $"/api/v1/admin/settings/{Uri.EscapeDataString(key)}",
             new Dictionary<string, object?> { ["value"] = value },
             ct);

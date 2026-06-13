@@ -35,17 +35,36 @@
                     Spacing="24">
 
                     <!-- Header -->
-                    <StackPanel Spacing="4">
-                        <TextBlock
-                            Text="Settings"
-                            FontSize="{StaticResource FontSizeDisplayLarge}"
-                            FontWeight="Bold"
-                            Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock
-                            Text="Configure server-wide settings. Most changes require a server restart to take effect."
-                            FontSize="14"
-                            Foreground="{StaticResource SecondaryTextBrush}" />
-                    </StackPanel>
+                    <Grid ColumnSpacing="24">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="360" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock
+                                Text="Settings"
+                                FontSize="{StaticResource FontSizeDisplayLarge}"
+                                FontWeight="Bold"
+                                Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock
+                                Text="Configure server-wide settings. Most changes require a server restart to take effect."
+                                FontSize="14"
+                                Foreground="{StaticResource SecondaryTextBrush}" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Top">
+                            <TextBox
+                                x:Name="SettingsSearchBox"
+                                PlaceholderText="Search settings"
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                TextChanged="SettingsSearchBox_TextChanged" />
+                            <TextBlock
+                                x:Name="SettingsSearchStatusText"
+                                FontSize="12"
+                                Foreground="{StaticResource TertiaryTextBrush}" />
+                        </StackPanel>
+                    </Grid>
 
                     <!-- Outer surface panel with left sidebar nav + right content area
                          (matches webui AdminSettingsLayout). -->

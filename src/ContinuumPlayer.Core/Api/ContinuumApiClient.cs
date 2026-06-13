@@ -140,6 +140,13 @@ public class ContinuumApiClient
         await SendNoContentAsync(request, ct);
     }
 
+    public async Task<T> DeleteReturningAsync<T>(string path, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Delete, BuildUrl(path));
+        AddHeaders(request);
+        return await SendAsync<T>(request, ct);
+    }
+
     public async Task<byte[]> GetBytesAsync(string path, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, BuildUrl(path));
@@ -257,9 +264,9 @@ public class ContinuumApiClient
         if (_accessToken != null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
         if (_profileId != null) request.Headers.Add("X-Profile-Id", _profileId);
         if (_profileToken != null) request.Headers.Add("X-Profile-Token", _profileToken);
-        if (!string.IsNullOrWhiteSpace(_deviceId)) request.Headers.Add("X-Continuum-Device-Id", _deviceId);
-        if (!string.IsNullOrWhiteSpace(_deviceName)) request.Headers.Add("X-Continuum-Device-Name", _deviceName);
-        if (!string.IsNullOrWhiteSpace(_devicePlatform)) request.Headers.Add("X-Continuum-Device-Platform", _devicePlatform);
+        if (!string.IsNullOrWhiteSpace(_deviceId)) request.Headers.Add("X-Silo-Device-Id", _deviceId);
+        if (!string.IsNullOrWhiteSpace(_deviceName)) request.Headers.Add("X-Silo-Device-Name", _deviceName);
+        if (!string.IsNullOrWhiteSpace(_devicePlatform)) request.Headers.Add("X-Silo-Device-Platform", _devicePlatform);
     }
 
     // Buffer content before sending so we can replay on 401 retry

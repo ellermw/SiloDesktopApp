@@ -7,8 +7,8 @@ using ContinuumPlayer.Core.Services;
 namespace ContinuumPlayer.Services;
 
 /// <summary>
-/// WebSocket client for the Continuum playback real-time control protocol.
-/// Connects to /playback/ws/{session_id}, sends hello, receives commands,
+/// WebSocket client for the Silo playback real-time control protocol.
+/// Connects to /playback/sessions/{session_id}/control/ws, sends hello, receives commands,
 /// responds with ack + result.
 /// </summary>
 public sealed class PlaybackWebSocket : IDisposable
@@ -42,7 +42,7 @@ public sealed class PlaybackWebSocket : IDisposable
         _cts = new CancellationTokenSource();
 
         var wsUrl = _baseUrl.Replace("https://", "wss://").Replace("http://", "ws://");
-        wsUrl += $"/api/v1/playback/ws/{_sessionId}";
+        wsUrl += $"/api/v1/playback/sessions/{_sessionId}/control/ws";
         // Pass token as query param (matching web player) — CDN may strip Auth headers on WebSocket upgrades
         wsUrl = UrlHelper.AppendToken(wsUrl, _token);
 
@@ -60,7 +60,7 @@ public sealed class PlaybackWebSocket : IDisposable
             {
                 ["type"] = "hello",
                 ["session_id"] = _sessionId,
-                ["client"] = new Dictionary<string, object> { ["name"] = "continuum-desktop", ["version"] = "1" },
+                ["client"] = new Dictionary<string, object> { ["name"] = "silo-desktop", ["version"] = "1" },
                 ["capabilities"] = new Dictionary<string, object> { ["commands"] = SupportedCommands }
             });
 

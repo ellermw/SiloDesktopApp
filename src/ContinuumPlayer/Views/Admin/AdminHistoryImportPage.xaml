@@ -27,7 +27,7 @@
                     <TextBlock Text="History Import"
                                FontSize="42" FontWeight="Bold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="Import watch history from external Plex, Emby, or Jellyfin servers into Continuum user profiles."
+                    <TextBlock Text="Import watch history from external Plex, Emby, or Jellyfin servers into Silo user profiles."
                                FontSize="14"
                                Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
@@ -119,7 +119,7 @@
                                     <ColumnDefinition Width="100" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Source User" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="Continuum User" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="1" Text="Silo User" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBlock Grid.Column="2" Text="Profile" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBlock Grid.Column="3" Text="Last Imported" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBlock Grid.Column="4" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Right" />

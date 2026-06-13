@@ -23,7 +23,7 @@ public sealed class MainWindowSourceTests
     }
 
     [Fact]
-    public void ApiClientSendsContinuumDeviceHeadersForDeviceScopedSettings()
+    public void ApiClientSendsSiloDeviceHeadersForDeviceScopedSettings()
     {
         var root = FindRepositoryRoot();
         var client = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Api", "ContinuumApiClient.cs"));
@@ -31,9 +31,10 @@ public sealed class MainWindowSourceTests
         var appSettings = File.ReadAllText(Path.Combine(root, "src", "ContinuumPlayer.Core", "Models", "ServerConfig.cs"));
 
         Assert.Contains("SetDeviceMetadata", client);
-        Assert.Contains("X-Continuum-Device-Id", client);
-        Assert.Contains("X-Continuum-Device-Name", client);
-        Assert.Contains("X-Continuum-Device-Platform", client);
+        Assert.Contains("X-Silo-Device-Id", client);
+        Assert.Contains("X-Silo-Device-Name", client);
+        Assert.Contains("X-Silo-Device-Platform", client);
+        Assert.DoesNotContain("X-Continuum-Device-", client);
         Assert.Contains("GetEffectiveSettingsAsync", settingsApi);
         Assert.Contains("PutDeviceSettingAsync", settingsApi);
         Assert.Contains("DeviceId", appSettings);

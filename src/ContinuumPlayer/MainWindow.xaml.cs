@@ -899,6 +899,12 @@ public sealed partial class MainWindow : Window
                 case "Calendar":
                     _navigationService.Navigate<CalendarPage>();
                     break;
+                case "Requests":
+                    _navigationService.Navigate<RequestsPage>();
+                    break;
+                case "Notifications":
+                    _navigationService.Navigate<NotificationsPage>();
+                    break;
                 case "Favorites":
                     _navigationService.Navigate<FavoritesPage>();
                     break;

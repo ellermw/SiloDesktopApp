@@ -599,7 +599,7 @@ public sealed partial class AdminHistoryImportPage : Page
         var selected = checkboxes.Where(x => x.Check.IsChecked == true).Select(x => x.User).ToList();
         if (selected.Count == 0) return;
 
-        // Step 3: Get Continuum users + profiles for mapping
+        // Step 3: Get Silo users + profiles for mapping
         var adminUsers = await _adminApi.GetUsersAsync();
 
         foreach (var extUser in selected)
@@ -679,7 +679,7 @@ public sealed partial class AdminHistoryImportPage : Page
         }
         AddField("External User ID", extIdBox);
         AddField("External Username", extNameBox);
-        AddField("Continuum User", userCombo);
+        AddField("Silo User", userCombo);
         AddField("Profile", profileCombo);
 
         var dialog = new ContentDialog

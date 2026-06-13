@@ -488,6 +488,29 @@
 
                         <Border Style="{StaticResource SettingsSeparator}" />
 
+                        <!-- Skip recaps -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Skip recaps automatically" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Jump past previously-on recaps when recap markers are available."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="AutoSkipRecapToggle"
+                                Grid.Column="1"
+                                IsOn="{x:Bind ViewModel.AutoSkipRecap, Mode=TwoWay}"
+                                VerticalAlignment="Center"
+                                OnContent="" OffContent="" />
+                        </Grid>
+
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
                         <!-- Skip credits -->
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -505,6 +528,29 @@
                                 x:Name="AutoSkipCreditsToggle"
                                 Grid.Column="1"
                                 IsOn="{x:Bind ViewModel.AutoSkipCredits, Mode=TwoWay}"
+                                VerticalAlignment="Center"
+                                OnContent="" OffContent="" />
+                        </Grid>
+
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
+                        <!-- Next episode preview -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Show next episode preview automatically" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Use preview markers when available before the next episode countdown."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="AutoPlayNextPreviewToggle"
+                                Grid.Column="1"
+                                IsOn="{x:Bind ViewModel.AutoPlayNextPreview, Mode=TwoWay}"
                                 VerticalAlignment="Center"
                                 OnContent="" OffContent="" />
                         </Grid>

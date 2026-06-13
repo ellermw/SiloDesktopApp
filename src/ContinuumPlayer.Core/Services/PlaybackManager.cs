@@ -75,6 +75,7 @@ public class PlaybackManager : IDisposable
             Containers = ["mp4", "mkv"],
             MaxResolution = "2160p",
             Hdr = true,
+            PreserveDirectAudioSelection = true,
         };
 
         LogToStateTrace($"StartSession: fileId={fileId}, pos={startPosition}, force={forceStartPosition}, codecs_video=[{string.Join(",", request.CodecsVideo)}], codecs_audio=[{string.Join(",", request.CodecsAudio)}], containers=[{string.Join(",", request.Containers)}], max_res={request.MaxResolution}, hdr={request.Hdr}");

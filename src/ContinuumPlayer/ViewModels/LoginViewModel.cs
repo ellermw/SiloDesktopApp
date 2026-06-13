@@ -40,10 +40,23 @@ public partial class LoginViewModel : ObservableObject
 
     // ===== Auth Providers =====
 
-    public ObservableCollection<AuthProvider> AuthProviders { get; } = [];
+    public ObservableCollection<AuthProvider> OAuthProviders { get; } = [];
+    public ObservableCollection<AuthProvider> CredentialProviders { get; } = [];
+
+    // Kept as a compatibility alias for older source tests and XAML references.
+    public ObservableCollection<AuthProvider> AuthProviders => OAuthProviders;
+
+    [ObservableProperty]
+    private AuthProvider? _selectedCredentialProvider;
 
     [ObservableProperty]
     private bool _hasAuthProviders;
+
+    [ObservableProperty]
+    private bool _hasOAuthProviders;
+
+    [ObservableProperty]
+    private bool _hasCredentialProviderPicker;
 
     [ObservableProperty]
     private bool _isSignupEnabled;
@@ -67,18 +80,38 @@ public partial class LoginViewModel : ObservableObject
         try
         {
             var providers = await _authApi.GetAuthProvidersAsync();
-            AuthProviders.Clear();
-            foreach (var provider in providers.Where(p =>
-                         p.InstallationId > 0 &&
-                         string.Equals(p.Mode, "oauth", StringComparison.OrdinalIgnoreCase)))
+            OAuthProviders.Clear();
+            CredentialProviders.Clear();
+
+            foreach (var provider in providers)
             {
-                AuthProviders.Add(provider);
+                if (string.Equals(provider.Mode, "oauth", StringComparison.OrdinalIgnoreCase) && provider.InstallationId > 0)
+                {
+                    OAuthProviders.Add(provider);
+                    continue;
+                }
+
+                if (string.Equals(provider.Mode, "credentials", StringComparison.OrdinalIgnoreCase))
+                {
+                    CredentialProviders.Add(provider);
+                }
             }
-            HasAuthProviders = AuthProviders.Count > 0;
+
+            SelectedCredentialProvider =
+                CredentialProviders.FirstOrDefault(p => p.IsDefault) ??
+                CredentialProviders.FirstOrDefault();
+            HasOAuthProviders = OAuthProviders.Count > 0;
+            HasAuthProviders = HasOAuthProviders;
+            HasCredentialProviderPicker = CredentialProviders.Count > 1;
         }
         catch
         {
+            OAuthProviders.Clear();
+            CredentialProviders.Clear();
+            SelectedCredentialProvider = null;
+            HasOAuthProviders = false;
             HasAuthProviders = false;
+            HasCredentialProviderPicker = false;
         }
     }
 
@@ -143,7 +176,8 @@ public partial class LoginViewModel : ObservableObject
 
         try
         {
-            var response = await _authService.LoginAsync(Username.Trim(), Password);
+            var providerId = SelectedCredentialProvider?.Id;
+            var response = await _authService.LoginAsync(Username.Trim(), Password, providerId);
 
             // Save refresh token only. Access token is kept in-memory and re-minted
             // from the refresh token on each app launch (matches WebUI security model
