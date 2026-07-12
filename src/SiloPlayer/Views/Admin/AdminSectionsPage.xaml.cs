@@ -3,7 +3,9 @@ using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
+using Windows.ApplicationModel.DataTransfer;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Models.Home;
 using SiloPlayer.ViewModels.Admin;
 
 namespace SiloPlayer.Views.Admin;
@@ -15,6 +17,8 @@ public sealed partial class AdminSectionsPage : Page
     private bool _suppressPickerChange;
     private string _currentScope = "home";
     private bool _rebuildPending;
+    private AdminSection? _editingSection;
+    private Func<object?>? _sectionEditorGetBody;
 
     // Section type labels — matches sectionTypes.ts exactly
     private static readonly Dictionary<string, string> SectionTypeLabels = new()
@@ -90,6 +94,10 @@ public sealed partial class AdminSectionsPage : Page
         ScopeLibraryButton.Foreground = isHome ? secondaryFg : accentFg;
 
         LibraryPickerPanel.Visibility = isHome ? Visibility.Collapsed : Visibility.Visible;
+        var canManage = isHome || ViewModel.Libraries.Count > 0;
+        RestoreDefaultsButton.IsEnabled = canManage;
+        AddFromGalleryButton.IsEnabled = canManage;
+        AddSectionButton.IsEnabled = canManage;
 
         // Subtitle varies by scope — matches web UI
         SubtitleText.Text = isHome
@@ -191,32 +199,47 @@ public sealed partial class AdminSectionsPage : Page
     {
         var row = new Grid
         {
-            Padding = new Thickness(20, 12, 20, 12),
+            Padding = new Thickness(20, 8, 20, 8),
             ColumnSpacing = 12
         };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.5, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
 
-        // ---- Move up/down buttons (column 0) ----
-        var movePanel = new StackPanel
+        // ---- Drag grip (column 0) ----
+        var dragGrip = new FontIcon
         {
-            Orientation = Orientation.Horizontal,
-            Spacing = 2,
-            VerticalAlignment = VerticalAlignment.Center
+            Glyph = "\uE712",
+            FontSize = 16,
+            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            CanDrag = true
         };
 
         var capturedSection = section;
-        var upBtn = MakeSmallIconButton("\uE70E", "Move up");
-        var downBtn = MakeSmallIconButton("\uE70D", "Move down");
-        upBtn.Click += async (_, _) => await ViewModel.MoveSectionAsync(capturedSection, -1);
-        downBtn.Click += async (_, _) => await ViewModel.MoveSectionAsync(capturedSection, +1);
-        movePanel.Children.Add(upBtn);
-        movePanel.Children.Add(downBtn);
+        ToolTipService.SetToolTip(dragGrip, $"Drag {section.Title}");
+        dragGrip.DragStarting += (_, args) =>
+        {
+            args.Data.SetText(capturedSection.Id);
+            args.Data.RequestedOperation = DataPackageOperation.Move;
+        };
+        row.AllowDrop = true;
+        row.DragOver += (_, args) =>
+        {
+            if (args.DataView.Contains(StandardDataFormats.Text))
+                args.AcceptedOperation = DataPackageOperation.Move;
+        };
+        row.Drop += async (_, args) =>
+        {
+            if (!args.DataView.Contains(StandardDataFormats.Text)) return;
+            var sourceId = await args.DataView.GetTextAsync();
+            await ViewModel.MoveSectionToAsync(sourceId, capturedSection.Id);
+        };
 
         // ---- Title column (column 1) ----
         var titleBlock = new TextBlock
@@ -241,7 +264,9 @@ public sealed partial class AdminSectionsPage : Page
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        var typeLabel = SectionTypeLabels.TryGetValue(section.SectionType, out var lbl) ? lbl : section.SectionType;
+        var typeLabel = ViewModel.RecipeLabels.TryGetValue(section.SectionType, out var recipeLabel)
+            ? recipeLabel
+            : SectionTypeLabels.TryGetValue(section.SectionType, out var lbl) ? lbl : section.SectionType;
         typePanel.Children.Add(MakeSecondaryBadge(typeLabel));
 
         // Extract media_scope from Config
@@ -252,6 +277,18 @@ public sealed partial class AdminSectionsPage : Page
             typePanel.Children.Add(MakeOutlineBadge("Series"));
         else if (mediaScope == "episode")
             typePanel.Children.Add(MakeOutlineBadge("Episodes"));
+        else if (mediaScope == "audiobook")
+            typePanel.Children.Add(MakeOutlineBadge("Audiobooks"));
+        else if (mediaScope == "ebook")
+            typePanel.Children.Add(MakeOutlineBadge("Ebooks"));
+
+        if (section.SectionType == "continue_watching")
+        {
+            var continueType = GetConfigString(section, "continue_type");
+            if (continueType == "listening") typePanel.Children.Add(MakeOutlineBadge("Listening"));
+            else if (continueType == "reading") typePanel.Children.Add(MakeOutlineBadge("Reading"));
+            else if (continueType == "watching") typePanel.Children.Add(MakeOutlineBadge("Watching"));
+        }
 
         // Extract library_ids from Config (library filter badges)
         var libraryIds = GetConfigLibraryIds(section);
@@ -328,7 +365,7 @@ public sealed partial class AdminSectionsPage : Page
         actionsPanel.Children.Add(editBtn);
         actionsPanel.Children.Add(deleteBtn);
 
-        Grid.SetColumn(movePanel, 0);
+        Grid.SetColumn(dragGrip, 0);
         Grid.SetColumn(titleBlock, 1);
         Grid.SetColumn(typePanel, 2);
         Grid.SetColumn(itemsBlock, 3);
@@ -336,7 +373,7 @@ public sealed partial class AdminSectionsPage : Page
         Grid.SetColumn(enabledBadge, 5);
         Grid.SetColumn(actionsPanel, 6);
 
-        row.Children.Add(movePanel);
+        row.Children.Add(dragGrip);
         row.Children.Add(titleBlock);
         row.Children.Add(typePanel);
         row.Children.Add(itemsBlock);
@@ -384,6 +421,135 @@ public sealed partial class AdminSectionsPage : Page
     }
 
     // ===== Header Buttons =====
+
+    private async void AddFromGalleryButton_Click(object sender, RoutedEventArgs e)
+    {
+        var catalog = ViewModel.RecipeCatalog;
+        if (catalog == null)
+        {
+            ViewModel.ErrorMessage = "Section gallery is unavailable.";
+            return;
+        }
+
+        var choices = catalog.Categories
+            .SelectMany(category => category.Value)
+            .SelectMany(definition => definition.Presets.Select(preset => new GalleryRecipeChoice(definition, preset)))
+            .OrderBy(choice => choice.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+
+        var searchBox = new TextBox
+        {
+            PlaceholderText = "Search section gallery",
+            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"]
+        };
+        var recipeList = new ListView
+        {
+            Height = 340,
+            SelectionMode = ListViewSelectionMode.Single,
+            DisplayMemberPath = nameof(GalleryRecipeChoice.DisplayName),
+            ItemsSource = choices
+        };
+        var description = new TextBlock
+        {
+            FontSize = 13,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 38
+        };
+        var sectionTitle = new TextBox
+        {
+            Header = "Section title",
+            PlaceholderText = "Section title",
+            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"]
+        };
+        var itemLimit = new NumberBox
+        {
+            Header = "Items",
+            Minimum = 1,
+            Maximum = 100,
+            Value = 20,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact
+        };
+        var featured = new CheckBox { Content = "Featured section" };
+
+        var content = new StackPanel { Spacing = 12, Width = 680 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "Start from a Silo section recipe, then customize its title and presentation.",
+            FontSize = 13,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap
+        });
+        content.Children.Add(searchBox);
+        content.Children.Add(recipeList);
+        content.Children.Add(description);
+        content.Children.Add(sectionTitle);
+        content.Children.Add(itemLimit);
+        content.Children.Add(featured);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Add from Gallery",
+            Content = content,
+            PrimaryButtonText = "Add Section",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            IsPrimaryButtonEnabled = false,
+            XamlRoot = XamlRoot
+        };
+
+        recipeList.SelectionChanged += (_, _) =>
+        {
+            if (recipeList.SelectedItem is not GalleryRecipeChoice choice) return;
+            dialog.IsPrimaryButtonEnabled = true;
+            description.Text = choice.Description;
+            sectionTitle.Text = choice.DisplayName;
+            if (TryGetDefaultLimit(choice.Preset.DefaultParams, out var limit)) itemLimit.Value = limit;
+        };
+        searchBox.TextChanged += (_, _) =>
+        {
+            var query = searchBox.Text.Trim();
+            recipeList.ItemsSource = string.IsNullOrWhiteSpace(query)
+                ? choices
+                : choices.Where(choice =>
+                    choice.DisplayName.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                    choice.Description.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToList();
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary ||
+            recipeList.SelectedItem is not GalleryRecipeChoice selected)
+            return;
+
+        var config = new Dictionary<string, object?>(selected.Preset.DefaultParams
+            .Where(entry => entry.Key != "item_limit")
+            .ToDictionary(entry => entry.Key, entry => (object?)entry.Value));
+        var body = ViewModel.BuildCreateBody(
+            string.IsNullOrWhiteSpace(sectionTitle.Text) ? selected.DisplayName : sectionTitle.Text.Trim(),
+            selected.Definition.Type,
+            double.IsNaN(itemLimit.Value) ? 20 : (int)itemLimit.Value,
+            featured.IsChecked == true,
+            true,
+            config);
+        await ViewModel.CreateSectionCommand.ExecuteAsync(body);
+        ShowStatus(ViewModel.ErrorMessage ?? ViewModel.StatusMessage ?? "Section added.");
+    }
+
+    private static bool TryGetDefaultLimit(IReadOnlyDictionary<string, object> parameters, out int limit)
+    {
+        limit = 20;
+        if (!parameters.TryGetValue("item_limit", out var value) || value == null) return false;
+        if (value is int intValue) { limit = intValue; return true; }
+        if (value is long longValue) { limit = (int)longValue; return true; }
+        if (value is System.Text.Json.JsonElement element && element.TryGetInt32(out var jsonValue))
+        { limit = jsonValue; return true; }
+        return int.TryParse(value.ToString(), out limit);
+    }
+
+    private sealed record GalleryRecipeChoice(RecipeDefinition Definition, GalleryPreset Preset)
+    {
+        public string DisplayName => Preset.DisplayName;
+        public string Description => Preset.DescriptionLong ?? Preset.DescriptionShort;
+    }
 
     private async void AddSectionButton_Click(object sender, RoutedEventArgs e)
     {
@@ -450,61 +616,74 @@ public sealed partial class AdminSectionsPage : Page
 
     // ===== Create Dialog =====
 
-    private async Task OpenCreateDialogAsync()
+    private Task OpenCreateDialogAsync()
     {
         var (formContent, getBody) = BuildSectionForm(null);
-
-        var dialog = new ContentDialog
-        {
-            Title = "Add Section",
-            PrimaryButtonText = "Create",
-            CloseButtonText = "Cancel",
-            XamlRoot = this.XamlRoot,
-            Content = formContent,
-            DefaultButton = ContentDialogButton.Primary
-        };
-
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary)
-        {
-            var body = getBody();
-            if (body == null) return;
-            try
-            {
-                await ViewModel.CreateSectionCommand.ExecuteAsync(body);
-                ShowStatus(ViewModel.StatusMessage ?? "Section created.");
-            }
-            catch { }
-        }
+        OpenSectionEditor(null, formContent, getBody);
+        return Task.CompletedTask;
     }
 
     // ===== Edit Dialog =====
 
-    private async Task OpenEditDialogAsync(AdminSection section)
+    private Task OpenEditDialogAsync(AdminSection section)
     {
         var (formContent, getBody) = BuildSectionForm(section);
+        OpenSectionEditor(section, formContent, getBody);
+        return Task.CompletedTask;
+    }
 
-        var dialog = new ContentDialog
-        {
-            Title = "Edit Section",
-            PrimaryButtonText = "Update",
-            CloseButtonText = "Cancel",
-            XamlRoot = this.XamlRoot,
-            Content = formContent,
-            DefaultButton = ContentDialogButton.Primary
-        };
+    private void OpenSectionEditor(AdminSection? section, FrameworkElement content, Func<object?> getBody)
+    {
+        _editingSection = section;
+        _sectionEditorGetBody = getBody;
+        SectionEditorTitle.Text = section == null ? "Add Section" : "Edit Section";
+        SectionEditorDescription.Text = section == null ? "Configure a new section." : "Modify this section's settings";
+        SaveSectionEditorButton.Content = section == null ? "Add Section" : "Save";
+        SectionEditorContent.Content = content;
+        SectionEditorError.Text = "";
+        SectionEditorError.Visibility = Visibility.Collapsed;
+        SectionEditorOverlay.Visibility = Visibility.Visible;
+    }
 
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary)
+    private void CloseSectionEditor_Click(object sender, RoutedEventArgs e) => CloseSectionEditor();
+
+    private void CloseSectionEditor()
+    {
+        SectionEditorOverlay.Visibility = Visibility.Collapsed;
+        SectionEditorContent.Content = null;
+        _editingSection = null;
+        _sectionEditorGetBody = null;
+    }
+
+    private async void SaveSectionEditor_Click(object sender, RoutedEventArgs e)
+    {
+        var body = _sectionEditorGetBody?.Invoke();
+        if (body == null) return;
+
+        SaveSectionEditorButton.IsEnabled = false;
+        SectionEditorError.Visibility = Visibility.Collapsed;
+        try
         {
-            var body = getBody();
-            if (body == null) return;
-            try
-            {
-                await ViewModel.UpdateSectionCommand.ExecuteAsync((section.Id, body));
-                ShowStatus(ViewModel.StatusMessage ?? "Section updated.");
-            }
-            catch { }
+            if (_editingSection == null)
+                await ViewModel.CreateSectionCommand.ExecuteAsync(body);
+            else
+                await ViewModel.UpdateSectionCommand.ExecuteAsync((_editingSection.Id, body));
+
+            if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+                throw new InvalidOperationException(ViewModel.ErrorMessage);
+
+            var message = ViewModel.StatusMessage ?? (_editingSection == null ? "Section created." : "Section updated.");
+            CloseSectionEditor();
+            ShowStatus(message);
+        }
+        catch (Exception ex)
+        {
+            SectionEditorError.Text = ex.Message;
+            SectionEditorError.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            SaveSectionEditorButton.IsEnabled = true;
         }
     }
 
@@ -553,8 +732,37 @@ public sealed partial class AdminSectionsPage : Page
             FontSize = 13,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
+        var addedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (ViewModel.RecipeCatalog?.Categories.Count > 0)
+        {
+            foreach (var category in ViewModel.RecipeCatalog.Categories)
+            {
+                foreach (var definition in category.Value)
+                {
+                    if (!addedTypes.Add(definition.Type)) continue;
+                    var preset = definition.Presets.FirstOrDefault();
+                    var label = !string.IsNullOrWhiteSpace(preset?.DisplayName)
+                        ? preset.DisplayName
+                        : SectionTypeLabels.GetValueOrDefault(definition.Type, definition.Type.Replace('_', ' '));
+                    typeCombo.Items.Add(new ComboBoxItem
+                    {
+                        Content = string.IsNullOrWhiteSpace(preset?.Icon) ? label : $"{preset.Icon} {label}",
+                        Tag = definition.Type
+                    });
+                }
+            }
+        }
         foreach (var kvp in SectionTypeLabels)
-            typeCombo.Items.Add(new ComboBoxItem { Content = kvp.Value, Tag = kvp.Key });
+        {
+            if (addedTypes.Add(kvp.Key))
+                typeCombo.Items.Add(new ComboBoxItem { Content = kvp.Value, Tag = kvp.Key });
+        }
+        if (existing != null && addedTypes.Add(existing.SectionType))
+            typeCombo.Items.Insert(0, new ComboBoxItem
+            {
+                Content = ViewModel.RecipeLabels.GetValueOrDefault(existing.SectionType, existing.SectionType.Replace('_', ' ')),
+                Tag = existing.SectionType
+            });
         typeCombo.SelectedIndex = 0;
         if (existing != null)
         {
@@ -578,21 +786,7 @@ public sealed partial class AdminSectionsPage : Page
             FontSize = 13
         };
 
-        var featuredSwitch = new ToggleSwitch
-        {
-            IsOn = existing?.Featured ?? false,
-            OnContent = "Featured (Hero Banner)",
-            OffContent = "Not featured"
-        };
-
-        var enabledSwitch = new ToggleSwitch
-        {
-            IsOn = existing?.Enabled ?? true,
-            OnContent = "Enabled",
-            OffContent = "Disabled"
-        };
-
-        var form = new StackPanel { Width = 512, Spacing = 14 };
+        var form = new StackPanel { Spacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch };
 
         void AddField(string label, FrameworkElement control)
         {
@@ -608,9 +802,67 @@ public sealed partial class AdminSectionsPage : Page
             form.Children.Add(group);
         }
 
-        AddField("Title", titleBox);
         AddField("Section Type", typeCombo);
+        AddField("Title", titleBox);
         AddField("Item Limit", itemLimitBox);
+
+        Border MakeSettingCard(UIElement content) => new()
+        {
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12),
+            Child = content
+        };
+
+        var featuredRow = new Grid { ColumnSpacing = 16 };
+        featuredRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        featuredRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
+        var featuredCopy = new StackPanel { Spacing = 4 };
+        featuredCopy.Children.Add(new TextBlock
+        {
+            Text = "Featured", FontSize = 14, FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
+        });
+        featuredCopy.Children.Add(new TextBlock
+        {
+            Text = "Use this section as the hero banner on the home screen.", FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        var featuredSwitchSmall = new ToggleSwitch
+        {
+            IsOn = existing?.Featured ?? false, OnContent = "", OffContent = "", MinWidth = 0,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(featuredCopy, 0);
+        Grid.SetColumn(featuredSwitchSmall, 1);
+        featuredRow.Children.Add(featuredCopy);
+        featuredRow.Children.Add(featuredSwitchSmall);
+        form.Children.Add(MakeSettingCard(featuredRow));
+
+        var enabledRow = new Grid { ColumnSpacing = 16 };
+        enabledRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        enabledRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
+        enabledRow.Children.Add(new TextBlock
+        {
+            Text = "Enabled", FontSize = 14, FontWeight = FontWeights.Medium,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
+        });
+        var enabledSwitchSmall = new ToggleSwitch
+        {
+            IsOn = existing?.Enabled ?? true, OnContent = "", OffContent = "", MinWidth = 0,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(enabledSwitchSmall, 1);
+        enabledRow.Children.Add(enabledSwitchSmall);
+        form.Children.Add(MakeSettingCard(enabledRow));
+        form.Children.Add(new Border
+        {
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(0, 1, 0, 0)
+        });
 
         // === Conditional fields based on section type ===
         var filterTypes = new HashSet<string> { "genre", "custom_filter" };
@@ -655,15 +907,17 @@ public sealed partial class AdminSectionsPage : Page
             CornerRadius = new CornerRadius(6), FontSize = 13, Width = 160,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "All Types", Tag = "" });
+        mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "All Media", Tag = "" });
         mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "Movies", Tag = "movie" });
         mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "Series", Tag = "series" });
         mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "Episodes", Tag = "episode" });
+        mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "Audiobooks", Tag = "audiobook" });
+        mediaScopeCombo.Items.Add(new ComboBoxItem { Content = "Ebooks", Tag = "ebook" });
         mediaScopeCombo.SelectedIndex = 0;
         var mediaScopeField = new StackPanel { Spacing = 6, Visibility = Visibility.Collapsed };
         mediaScopeField.Children.Add(new TextBlock
         {
-            Text = "Media Type Filter", FontSize = 12, FontWeight = FontWeights.SemiBold,
+            Text = "Media Scope", FontSize = 12, FontWeight = FontWeights.SemiBold,
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
         });
         mediaScopeField.Children.Add(mediaScopeCombo);
@@ -739,69 +993,43 @@ public sealed partial class AdminSectionsPage : Page
         genreField.Children.Add(genreInput);
         form.Children.Add(genreField);
 
+        var continueTypeCombo = new ComboBox
+        {
+            CornerRadius = new CornerRadius(6), FontSize = 13,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        continueTypeCombo.Items.Add(new ComboBoxItem { Content = "Watching", Tag = "watching" });
+        continueTypeCombo.Items.Add(new ComboBoxItem { Content = "Listening", Tag = "listening" });
+        var existingContinueType = existing == null
+            ? "watching"
+            : AdminSectionsViewModel.GetConfigString(existing, "continue_type") ?? "watching";
+        continueTypeCombo.SelectedIndex = existingContinueType == "listening" ? 1 : 0;
+        var continueTypeField = new StackPanel { Spacing = 6, Visibility = Visibility.Collapsed };
+        continueTypeField.Children.Add(new TextBlock
+        {
+            Text = "Continue type", FontSize = 12, FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        continueTypeField.Children.Add(continueTypeCombo);
+        form.Children.Add(continueTypeField);
+
         // Visibility toggling based on type selection
         void UpdateConditionalFields()
         {
             var selType = (typeCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
             collectionField.Visibility = selType == "collection" ? Visibility.Visible : Visibility.Collapsed;
             bool isFilter = filterTypes.Contains(selType);
-            bool showScopeAndLibrary = selType != "collection" && !isFilter;
+            bool isKnownRecipe = ViewModel.RecipeCatalog?.Categories.Values
+                .SelectMany(definitions => definitions)
+                .Any(definition => definition.Type == selType) == true;
+            bool showScopeAndLibrary = selType != "collection" && !isFilter && !isKnownRecipe;
             mediaScopeField.Visibility = showScopeAndLibrary ? Visibility.Visible : Visibility.Collapsed;
             libraryField.Visibility = showScopeAndLibrary ? Visibility.Visible : Visibility.Collapsed;
             genreField.Visibility = selType == "genre" ? Visibility.Visible : Visibility.Collapsed;
+            continueTypeField.Visibility = selType == "continue_watching" ? Visibility.Visible : Visibility.Collapsed;
         }
         typeCombo.SelectionChanged += (_, _) => UpdateConditionalFields();
         UpdateConditionalFields();
-
-        // Featured — label + switch in a row matching web UI "flex items-center justify-between"
-        var featuredRow = new Grid();
-        featuredRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        featuredRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
-        var featuredLabel = new TextBlock
-        {
-            Text = "Featured (Hero Banner)",
-            FontSize = 13,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
-        };
-        var featuredSwitchSmall = new ToggleSwitch
-        {
-            IsOn = existing?.Featured ?? false,
-            OnContent = "",
-            OffContent = "",
-            MinWidth = 0,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(featuredLabel, 0);
-        Grid.SetColumn(featuredSwitchSmall, 1);
-        featuredRow.Children.Add(featuredLabel);
-        featuredRow.Children.Add(featuredSwitchSmall);
-        form.Children.Add(featuredRow);
-
-        // Enabled — same layout
-        var enabledRow = new Grid();
-        enabledRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        enabledRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
-        var enabledLabel = new TextBlock
-        {
-            Text = "Enabled",
-            FontSize = 13,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
-        };
-        var enabledSwitchSmall = new ToggleSwitch
-        {
-            IsOn = existing?.Enabled ?? true,
-            OnContent = "",
-            OffContent = "",
-            MinWidth = 0,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(enabledLabel, 0);
-        Grid.SetColumn(enabledSwitchSmall, 1);
-        enabledRow.Children.Add(enabledLabel);
-        enabledRow.Children.Add(enabledSwitchSmall);
-        form.Children.Add(enabledRow);
 
         object? GetBody()
         {
@@ -815,7 +1043,19 @@ public sealed partial class AdminSectionsPage : Page
             int itemLimit = double.IsNaN(itemLimitBox.Value) ? 20 : (int)itemLimitBox.Value;
 
             // Build config based on section type
-            Dictionary<string, object?>? config = null;
+            Dictionary<string, object?>? config = existing?.SectionType != sectionType || existing.Config == null
+                ? null
+                : existing.Config.ToDictionary(entry => entry.Key, entry => (object?)entry.Value);
+
+            if (config == null && ViewModel.RecipeCatalog != null)
+            {
+                var recipe = ViewModel.RecipeCatalog.Categories.Values
+                    .SelectMany(definitions => definitions)
+                    .FirstOrDefault(definition => definition.Type == sectionType);
+                var defaults = recipe?.Presets.FirstOrDefault()?.DefaultParams;
+                if (defaults?.Count > 0)
+                    config = defaults.ToDictionary(entry => entry.Key, entry => (object?)entry.Value);
+            }
 
             if (sectionType == "collection")
             {
@@ -864,6 +1104,12 @@ public sealed partial class AdminSectionsPage : Page
                     if (!string.IsNullOrEmpty(scope)) config["media_scope"] = scope;
                     if (selectedLibIds.Count > 0) config["library_ids"] = selectedLibIds;
                 }
+            }
+
+            if (sectionType == "continue_watching")
+            {
+                config ??= new();
+                config["continue_type"] = (continueTypeCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "watching";
             }
 
             return ViewModel.BuildCreateBody(title, sectionType, itemLimit, featuredSwitchSmall.IsOn, enabledSwitchSmall.IsOn, config);

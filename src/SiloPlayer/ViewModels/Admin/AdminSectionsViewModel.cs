@@ -4,16 +4,19 @@ using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Home;
 
 namespace SiloPlayer.ViewModels.Admin;
 
 public partial class AdminSectionsViewModel : ObservableObject
 {
     private readonly AdminApi _adminApi;
+    private readonly SettingsApi _settingsApi;
 
-    public AdminSectionsViewModel(AdminApi adminApi)
+    public AdminSectionsViewModel(AdminApi adminApi, SettingsApi settingsApi)
     {
         _adminApi = adminApi;
+        _settingsApi = settingsApi;
     }
 
     public ObservableCollection<AdminSection> Sections { get; } = [];
@@ -24,6 +27,8 @@ public partial class AdminSectionsViewModel : ObservableObject
 
     /// <summary>collection_id -> title. Used to display actual collection names in row badges.</summary>
     public Dictionary<string, string> CollectionLabels { get; private set; } = new();
+    public RecipeCatalogResponse? RecipeCatalog { get; private set; }
+    public Dictionary<string, string> RecipeLabels { get; private set; } = new();
 
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string? _errorMessage;
@@ -44,6 +49,27 @@ public partial class AdminSectionsViewModel : ObservableObject
                 var libs = await _adminApi.GetAdminLibrariesAsync();
                 Libraries.Clear();
                 foreach (var l in libs) Libraries.Add(l);
+            }
+
+            if (RecipeCatalog == null)
+            {
+                try
+                {
+                    RecipeCatalog = await _settingsApi.GetRecipeCatalogAsync();
+                    RecipeLabels = RecipeCatalog.Categories
+                        .SelectMany(category => category.Value)
+                        .GroupBy(definition => definition.Type)
+                        .ToDictionary(
+                            group => group.Key,
+                            group => group.SelectMany(definition => definition.Presets)
+                                .Select(preset => preset.DisplayName)
+                                .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? group.Key);
+                }
+                catch
+                {
+                    RecipeCatalog = new RecipeCatalogResponse();
+                    RecipeLabels = new Dictionary<string, string>();
+                }
             }
 
             // Load collections for the section form collection picker + badge labels
@@ -147,6 +173,16 @@ public partial class AdminSectionsViewModel : ObservableObject
             await _adminApi.ReorderSectionsAsync(new { sections = entries });
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
+    }
+
+    public async Task MoveSectionToAsync(string sourceId, string targetId)
+    {
+        var sourceIndex = Sections.ToList().FindIndex(section => section.Id == sourceId);
+        var targetIndex = Sections.ToList().FindIndex(section => section.Id == targetId);
+        if (sourceIndex < 0 || targetIndex < 0 || sourceIndex == targetIndex) return;
+
+        Sections.Move(sourceIndex, targetIndex);
+        await ReorderSectionsAsync(Sections.Select(section => section.Id).ToList());
     }
 
     public async Task ToggleEnabledAsync(AdminSection section)

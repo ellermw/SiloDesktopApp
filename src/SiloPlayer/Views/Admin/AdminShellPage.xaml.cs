@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Helpers;
 
@@ -9,6 +11,8 @@ public sealed partial class AdminShellPage : Page
 {
     private readonly NavigationService _navigationService;
     private readonly Core.Api.AdminApi _adminApi;
+    private readonly Core.Api.SettingsApi _settingsApi;
+    private readonly Core.Api.SiloApiClient _apiClient;
     private Button? _activeButton;
     private DispatcherTimer? _sessionTimer;
     private bool _policyAvailable;
@@ -25,6 +29,8 @@ public sealed partial class AdminShellPage : Page
         this.InitializeComponent();
         _navigationService = App.Services.GetRequiredService<NavigationService>();
         _adminApi = App.Services.GetRequiredService<Core.Api.AdminApi>();
+        _settingsApi = App.Services.GetRequiredService<Core.Api.SettingsApi>();
+        _apiClient = App.Services.GetRequiredService<Core.Api.SiloApiClient>();
 
         Loaded += AdminShellPage_Loaded;
         Unloaded += (_, _) => { _sessionTimer?.Stop(); _sessionTimer = null; };
@@ -43,6 +49,7 @@ public sealed partial class AdminShellPage : Page
         BuildVersionText.Text = version is null
             ? "desktop build"
             : $"desktop {version.Major}.{version.Minor}.{version.Build}";
+        _ = ApplyServerBrandingAsync();
         ReorderNavigationToMatchWebUi();
 
         // Register all nav items for batch state management
@@ -93,6 +100,36 @@ public sealed partial class AdminShellPage : Page
         _sessionTimer.Tick += async (_, _) => await UpdateSessionBadgeAsync();
         _sessionTimer.Start();
         _ = RefreshPolicyAvailabilityAsync();
+    }
+
+    private async Task ApplyServerBrandingAsync()
+    {
+        try
+        {
+            var branding = await _settingsApi.GetServerBrandingAsync();
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                DocumentTitle.SetServerName(branding.ServerName);
+                App.MainWindowInstance?.SetDynamicTitle("Admin");
+            });
+            if (string.IsNullOrWhiteSpace(branding.WordmarkUrl)) return;
+
+            var url = branding.WordmarkUrl;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                uri = new Uri(_apiClient.BaseUrl.TrimEnd('/') + "/" + url.TrimStart('/'));
+
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                AdminSiloBrandImage.Source = new BitmapImage(uri);
+                AutomationProperties.SetName(
+                    AdminSiloBrandImage,
+                    string.IsNullOrWhiteSpace(branding.ServerName) ? "Silo" : branding.ServerName);
+            });
+        }
+        catch
+        {
+            // Branding is optional; retain the bundled Silo wordmark on failure.
+        }
     }
 
     /// <summary>

@@ -14,7 +14,7 @@ namespace SiloPlayer.Helpers;
 /// </summary>
 public static class DocumentTitle
 {
-    public const string AppName = "Silo";
+    public static string AppName { get; private set; } = "Silo";
     private const string Separator = " \u00B7 "; // " · "
 
     /// <summary>
@@ -88,6 +88,11 @@ public static class DocumentTitle
         [typeof(AdminHistoryImportPage)] = "Admin · History Import",
         [typeof(AdminSettingsDetailPage)] = "Admin · Settings",
     };
+
+    public static void SetServerName(string? serverName)
+    {
+        AppName = string.IsNullOrWhiteSpace(serverName) ? "Silo" : serverName.Trim();
+    }
 
     /// <summary>
     /// Compose the full window title for the given page type.

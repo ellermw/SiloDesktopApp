@@ -2,8 +2,21 @@ using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Plugins;
+using System.Text.Json.Serialization;
 
 namespace SiloPlayer.Core.Api;
+
+public sealed class ServerBrandingResponse
+{
+    [JsonPropertyName("server_name")] public string? ServerName { get; set; }
+    [JsonPropertyName("login_subtitle")] public string? LoginSubtitle { get; set; }
+    [JsonPropertyName("accent_color")] public string? AccentColor { get; set; }
+    [JsonPropertyName("default_theme")] public string? DefaultTheme { get; set; }
+    [JsonPropertyName("wordmark_url")] public string? WordmarkUrl { get; set; }
+    [JsonPropertyName("mark_url")] public string? MarkUrl { get; set; }
+    [JsonPropertyName("favicon_url")] public string? FaviconUrl { get; set; }
+    [JsonPropertyName("login_bg_url")] public string? LoginBackgroundUrl { get; set; }
+}
 
 public class SettingsResponse
 {
@@ -74,6 +87,9 @@ public class ThemeFileResponse
 
 public class SettingsApi(SiloApiClient client)
 {
+    public Task<ServerBrandingResponse> GetServerBrandingAsync(CancellationToken ct = default)
+        => client.GetUnauthenticatedAsync<ServerBrandingResponse>("/api/v1/theme/branding", ct);
+
     public Task<SettingEntry> GetSettingAsync(string key, CancellationToken ct = default)
         => client.GetAsync<SettingEntry>($"/api/v1/settings/{Uri.EscapeDataString(key)}", ct);
 

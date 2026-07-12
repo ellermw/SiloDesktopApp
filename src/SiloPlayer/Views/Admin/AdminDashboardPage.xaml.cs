@@ -245,12 +245,43 @@ public sealed partial class AdminDashboardPage : Page
         for (var i = 0; i < cards.Length; i++) { Grid.SetColumn(cards[i], i); metrics.Children.Add(cards[i]); }
         TraktActivityContent.Children.Add(metrics);
         var errors = activity.SyncErrors24h + activity.FailedExports;
-        TraktActivityContent.Children.Add(new TextBlock
+        var footer = new Grid
         {
-            Text = $"Export enabled: {activity.TraktExportEnabled:N0}     Scrobbling: {activity.TraktScrobbleEnabled:N0}     Errors: {errors:N0}",
-            FontSize = 12,
-            Foreground = errors > 0 ? new SolidColorBrush(Color.FromArgb(255, 220, 90, 90)) : (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            Padding = new Thickness(0, 12, 0, 0),
+            ColumnSpacing = 8
+        };
+        for (var i = 0; i < 3; i++) footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        footer.Children.Add(MakeTraktFooterMetric("Export enabled:", activity.TraktExportEnabled.ToString("N0"), false, 0));
+        footer.Children.Add(MakeTraktFooterMetric("Scrobbling:", activity.TraktScrobbleEnabled.ToString("N0"), false, 1));
+        footer.Children.Add(MakeTraktFooterMetric("Errors:", errors.ToString("N0"), errors > 0, 2));
+        TraktActivityContent.Children.Add(new Border
+        {
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Child = footer
         });
+    }
+
+    private static FrameworkElement MakeTraktFooterMetric(string label, string value, bool destructive, int column)
+    {
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = value,
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = destructive
+                ? new SolidColorBrush(Color.FromArgb(255, 220, 90, 90))
+                : (Brush)Application.Current.Resources["PrimaryTextBrush"]
+        });
+        Grid.SetColumn(panel, column);
+        return panel;
     }
 
     private Border MakeTraktMetric(string label, string value, string detail)

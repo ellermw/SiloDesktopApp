@@ -463,7 +463,8 @@ public sealed class ServerContractSourceTests
         var installer = File.ReadAllText(Path.Combine(root, "installer", "SiloInstaller.iss"));
         var readme = File.ReadAllText(Path.Combine(root, "README.md"));
 
-        Assert.Contains("AppName = \"Silo\"", documentTitle);
+        Assert.Contains("AppName { get; private set; } = \"Silo\"", documentTitle);
+        Assert.Contains("SetServerName", documentTitle);
         Assert.Contains("Text=\"Silo\"", login);
         Assert.Contains("Text=\"Silo\"", serverSelect);
         Assert.Contains("Text=\"Silo\"", setup);
