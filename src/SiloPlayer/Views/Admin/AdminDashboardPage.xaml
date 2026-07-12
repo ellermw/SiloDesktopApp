@@ -18,7 +18,7 @@
         <!-- Stat card: surface panel, no border -->
         <Style x:Key="StatCardStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="24" />
+            <Setter Property="CornerRadius" Value="20" />
             <Setter Property="Padding" Value="18" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
@@ -26,8 +26,8 @@
         <!-- Section card: border + radius=24 -->
         <Style x:Key="SectionCardStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="24" />
-            <Setter Property="Padding" Value="20" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="24" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
         </Style>
@@ -41,7 +41,11 @@
 
             <!-- webui parity: AdminDashboard inherits .admin-shell (1560px) from AdminLayout.
                  Match exactly at 1560 so the data grid has full webui breathing room. -->
-            <StackPanel Padding="40,28,40,40" Spacing="28">
+            <StackPanel
+                Padding="40,32,40,40"
+                Spacing="32"
+                MaxWidth="1640"
+                HorizontalAlignment="Stretch">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -51,32 +55,45 @@
                     </Grid.ColumnDefinitions>
 
                     <!-- Left: title + subtitle -->
-                    <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                    <StackPanel Grid.Column="0" Spacing="12" VerticalAlignment="Bottom">
                         <TextBlock
                             Text="Dashboard"
-                            FontSize="42"
-                            FontWeight="Bold"
+                            FontSize="52"
+                            FontWeight="ExtraBold"
+                            CharacterSpacing="-50"
+                            LineHeight="50"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
                             Text="Live sessions, content health, and server activity in one view."
-                            FontSize="14"
+                            FontSize="16"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
 
                     <!-- Right: action buttons -->
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Bottom">
                         <TextBlock x:Name="LastUpdatedText" FontSize="12" Foreground="{StaticResource TertiaryTextBrush}"
                                    VerticalAlignment="Center" Visibility="Collapsed" />
                         <Button
                             x:Name="RefreshButton"
-                            Content="Refresh"
+                            MinWidth="132"
+                            Height="32"
                             Style="{StaticResource SecondaryButtonStyle}"
-                            Click="RefreshButton_Click" />
+                            Click="RefreshButton_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                                <TextBlock x:Name="RefreshButtonLabel" Text="Refresh" />
+                            </StackPanel>
+                        </Button>
                         <Button
                             x:Name="ScanAllButton"
-                            Content="Scan All Libraries"
+                            Height="32"
                             Style="{StaticResource AccentButtonStyle}"
-                            Click="ScanAllButton_Click" />
+                            Click="ScanAllButton_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE8B7;" FontSize="14" />
+                                <TextBlock x:Name="ScanAllButtonLabel" Text="Scan All Libraries" />
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
                 </Grid>
 
@@ -129,7 +146,7 @@
                                     VerticalAlignment="Center" />
                                 <FontIcon
                                     Glyph="&#xEA62;"
-                                    FontSize="14"
+                                    FontSize="16"
                                     Foreground="{StaticResource SecondaryTextBrush}"
                                     HorizontalAlignment="Right"
                                     VerticalAlignment="Center" />
@@ -162,7 +179,7 @@
                                     VerticalAlignment="Center" />
                                 <FontIcon
                                     Glyph="&#xE8B2;"
-                                    FontSize="14"
+                                    FontSize="16"
                                     Foreground="{StaticResource SecondaryTextBrush}"
                                     HorizontalAlignment="Right"
                                     VerticalAlignment="Center" />
@@ -195,7 +212,7 @@
                                     VerticalAlignment="Center" />
                                 <FontIcon
                                     Glyph="&#xE7F4;"
-                                    FontSize="14"
+                                    FontSize="16"
                                     Foreground="{StaticResource SecondaryTextBrush}"
                                     HorizontalAlignment="Right"
                                     VerticalAlignment="Center" />
@@ -228,7 +245,7 @@
                                     VerticalAlignment="Center" />
                                 <FontIcon
                                     Glyph="&#xE716;"
-                                    FontSize="14"
+                                    FontSize="16"
                                     Foreground="{StaticResource SecondaryTextBrush}"
                                     HorizontalAlignment="Right"
                                     VerticalAlignment="Center" />
@@ -261,7 +278,7 @@
                                     VerticalAlignment="Center" />
                                 <FontIcon
                                     Glyph="&#xEDA2;"
-                                    FontSize="14"
+                                    FontSize="16"
                                     Foreground="{StaticResource SecondaryTextBrush}"
                                     HorizontalAlignment="Right"
                                     VerticalAlignment="Center" />

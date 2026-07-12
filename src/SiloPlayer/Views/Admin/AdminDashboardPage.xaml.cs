@@ -73,7 +73,7 @@ public sealed partial class AdminDashboardPage : Page
         var started = DateTime.UtcNow;
         ViewModel.IsLoading = true;
         ViewModel.ErrorMessage = null;
-        if (manual) RefreshButton.Content = "Refreshing…";
+        if (manual) RefreshButtonLabel.Text = "Refreshing…";
         var errors = new List<string>();
 
         async Task LoadSectionAsync(Func<Task> load, Action render, string label)
@@ -96,7 +96,7 @@ public sealed partial class AdminDashboardPage : Page
         {
             var remaining = TimeSpan.FromSeconds(1) - (DateTime.UtcNow - started);
             if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
-            RefreshButton.Content = "Refresh";
+            RefreshButtonLabel.Text = "Refresh";
         }
         ViewModel.ErrorMessage = errors.Count > 0 ? string.Join(Environment.NewLine, errors) : null;
         ViewModel.IsLoading = false;
@@ -120,9 +120,9 @@ public sealed partial class AdminDashboardPage : Page
     {
         if (ViewModel.Libraries.Count == 0) return;
         ScanAllButton.IsEnabled = false;
-        ScanAllButton.Content = "Starting scans…";
+        ScanAllButtonLabel.Text = "Starting scans…";
         await ViewModel.ScanAllCommand.ExecuteAsync(null);
-        ScanAllButton.Content = "Scan All Libraries";
+        ScanAllButtonLabel.Text = "Scan All Libraries";
         ScanAllButton.IsEnabled = true;
     }
 
@@ -195,19 +195,22 @@ public sealed partial class AdminDashboardPage : Page
 
         if (stats != null)
         {
-            StatMovies.Text = stats.TotalMovies.ToString();
-            StatMoviesSub.Text = $"{stats.TotalMovieFiles} files";
+            StatMovies.Text = stats.TotalMovies.ToString("N0");
+            StatMoviesSub.Text = FormatFileCount(stats.TotalMovieFiles);
 
-            StatShows.Text = stats.TotalShows.ToString();
-            StatShowsSub.Text = $"{stats.TotalShowFiles} episode files";
+            StatShows.Text = stats.TotalShows.ToString("N0");
+            StatShowsSub.Text = FormatFileCount(stats.TotalShowFiles);
 
             StatUsers.Text = stats.TotalUsers.ToString();
             StatUsersSub.Text = $"{stats.TotalUsers} registered";
 
             StatStorage.Text = ViewModel.StorageDisplay;
-            StatStorageSub.Text = $"{stats.TotalFiles} files";
+            StatStorageSub.Text = FormatFileCount(stats.TotalFiles);
         }
     }
+
+    private static string FormatFileCount(long count)
+        => count == 1 ? "1 file" : $"{count:N0} files";
 
     private void BuildTraktActivity()
     {
@@ -370,7 +373,7 @@ public sealed partial class AdminDashboardPage : Page
         var card = new Border
         {
             Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
-            CornerRadius = new CornerRadius(16),
+            CornerRadius = new CornerRadius(20),
             Padding = new Thickness(14),
             BorderThickness = new Thickness(0)
         };

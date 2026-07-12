@@ -39,6 +39,10 @@ public sealed partial class AdminShellPage : Page
 
     private void AdminShellPage_Loaded(object sender, RoutedEventArgs e)
     {
+        var version = typeof(AdminShellPage).Assembly.GetName().Version;
+        BuildVersionText.Text = version is null
+            ? "desktop build"
+            : $"desktop {version.Major}.{version.Minor}.{version.Build}";
         ReorderNavigationToMatchWebUi();
 
         // Register all nav items for batch state management

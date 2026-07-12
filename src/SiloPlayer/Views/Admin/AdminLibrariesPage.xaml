@@ -22,7 +22,11 @@
             IsScrollInertiaEnabled="True">
 
             <!-- webui parity: AdminLibraries inherits .admin-shell (1560px) from AdminLayout. -->
-            <StackPanel Padding="48,28,48,40" Spacing="24">
+            <StackPanel
+                Padding="40,32,40,40"
+                Spacing="24"
+                MaxWidth="1640"
+                HorizontalAlignment="Stretch">
 
                 <!-- ===== Page Header (.page-header: flex items-end justify-between) ===== -->
                 <Grid>
@@ -46,8 +50,8 @@
                              line-height 1.7. -->
                         <TextBlock
                             Text="Manage library roots and scans. Catalog import/export now lives under Maintenance."
-                            FontSize="14"
-                            LineHeight="24"
+                            FontSize="16"
+                            LineHeight="27"
                             MaxWidth="560"
                             TextWrapping="Wrap"
                             Opacity="0.85"
@@ -129,14 +133,14 @@
                      inset white highlight + large soft shadow below. -->
                 <Border
                     Background="{StaticResource SurfaceBrush}"
-                    CornerRadius="16"
+                    CornerRadius="20"
                     BorderBrush="{StaticResource BorderBrush}"
-                    BorderThickness="1"
+                    BorderThickness="0"
                     Padding="0">
                     <StackPanel>
                         <!-- Table header (shadcn <TableHeader>/<TableHead>): h-10 px-4, muted foreground,
                              font-medium, sentence case (NOT uppercase). -->
-                        <Grid Padding="16,0" Height="40" ColumnSpacing="12">
+                        <Grid Padding="12,0" Height="40" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="40" />
                                 <ColumnDefinition Width="1.5*" />
@@ -144,7 +148,7 @@
                                 <ColumnDefinition Width="90" />
                                 <ColumnDefinition Width="140" />
                                 <ColumnDefinition Width="150" />
-                                <ColumnDefinition Width="210" />
+                                <ColumnDefinition Width="240" />
                             </Grid.ColumnDefinitions>
                             <!-- Col 0: drag handle slot (w-10) -->
                             <TextBlock Grid.Column="1" Text="Name"         FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
@@ -216,14 +220,14 @@
                 <Border
                     x:Name="UnmatchedItemsSection"
                     Background="{StaticResource SurfaceBrush}"
-                    CornerRadius="16"
+                    CornerRadius="20"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
                     Padding="0"
                     Visibility="Collapsed">
                     <StackPanel>
                         <!-- Header -->
-                        <Grid Padding="20,20,20,16" Background="Transparent" Tapped="UnmatchedHeader_Tapped">
+                        <Grid Padding="20,16" Background="Transparent" Tapped="UnmatchedHeader_Tapped">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
@@ -242,7 +246,11 @@
                                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
-                            <Border x:Name="UnmatchedCountBadge" Grid.Column="2" VerticalAlignment="Top" />
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                                <Border x:Name="UnmatchedCountBadge" />
+                                <FontIcon x:Name="UnmatchedChevron" Glyph="&#xE76C;" FontSize="16"
+                                          Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
                         </Grid>
                         <!-- Search + table -->
                         <StackPanel x:Name="UnmatchedContent" Padding="12,0,12,12" Spacing="8" Visibility="Collapsed">
@@ -260,14 +268,14 @@
                 <Border
                     x:Name="AmbiguousRootsSection"
                     Background="{StaticResource SurfaceBrush}"
-                    CornerRadius="16"
+                    CornerRadius="20"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
                     Padding="0"
                     Visibility="Collapsed">
                     <StackPanel>
                         <!-- Header -->
-                        <Grid Padding="20,20,20,16" Background="Transparent" Tapped="AmbiguousHeader_Tapped">
+                        <Grid Padding="20,16" Background="Transparent" Tapped="AmbiguousHeader_Tapped">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
@@ -286,7 +294,11 @@
                                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
-                            <Border x:Name="AmbiguousCountBadge" Grid.Column="2" VerticalAlignment="Top" />
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                                <Border x:Name="AmbiguousCountBadge" />
+                                <FontIcon x:Name="AmbiguousChevron" Glyph="&#xE76C;" FontSize="16"
+                                          Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
                         </Grid>
                         <!-- Library filter + search + table -->
                         <StackPanel x:Name="AmbiguousContent" Padding="12,0,12,12" Spacing="8" Visibility="Collapsed">
@@ -311,38 +323,47 @@
                 <!-- ===== Skipped Roots Section ===== -->
                 <Border
                     x:Name="SkippedRootsSection"
-                    Background="{StaticResource CardBackgroundBrush}"
-                    CornerRadius="12"
+                    Background="{StaticResource SurfaceBrush}"
+                    CornerRadius="20"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
-                    Padding="16"
+                    Padding="0"
                     Visibility="Collapsed">
-                    <StackPanel Spacing="12">
-                        <StackPanel Spacing="4" Background="Transparent" Tapped="SkippedHeader_Tapped">
-                            <TextBlock
-                                Text="Troubleshooting"
-                                FontSize="14"
-                                FontWeight="SemiBold"
-                                Foreground="{StaticResource PrimaryTextBrush}" />
-                            <TextBlock
-                                Text="Skipped roots are listed here for low-key admin visibility when scanner matching is gated by missing folder IDs."
-                                FontSize="13"
-                                Foreground="{StaticResource SecondaryTextBrush}"
-                                TextWrapping="Wrap" />
-                            <TextBlock x:Name="SkippedCountText" FontSize="22" FontWeight="Bold"
-                                       Foreground="{StaticResource PrimaryTextBrush}" HorizontalAlignment="Right" />
-                        </StackPanel>
+                    <StackPanel>
+                        <Grid Padding="20,16" Background="Transparent" Tapped="SkippedHeader_Tapped">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Width="32" Height="32" CornerRadius="8"
+                                    Background="#19F59E0B" Margin="0,0,12,0">
+                                <FontIcon Glyph="&#xE7BA;" FontSize="14" Foreground="#F59E0B"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock Text="Troubleshooting" FontSize="14" FontWeight="SemiBold"
+                                           CharacterSpacing="25" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Roots where the inferred canonical folder lacks embedded provider IDs."
+                                           FontSize="12" LineHeight="19" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                                <Border x:Name="SkippedCountBadge" />
+                                <FontIcon x:Name="SkippedChevron" Glyph="&#xE76C;" FontSize="16"
+                                          Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                        </Grid>
 
-                        <StackPanel x:Name="SkippedContent" Spacing="12" Visibility="Collapsed">
+                        <StackPanel x:Name="SkippedContent" Padding="12,0,12,12" Spacing="8" Visibility="Collapsed">
 
                         <!-- Skipped roots search filter -->
                         <TextBox
                             x:Name="SkippedRootsSearchBox"
-                            PlaceholderText="Filter skipped roots..."
-                            FontSize="13"
+                            PlaceholderText="Filter by path, library, or reason..."
+                            FontSize="12"
+                            Height="32"
                             CornerRadius="8"
-                            MaxWidth="320"
-                            HorizontalAlignment="Left"
                             TextChanged="SkippedRootsSearchBox_TextChanged" />
 
                         <!-- Skipped roots table header -->
@@ -355,10 +376,10 @@
                                 <ColumnDefinition Width="120" />
                                 <ColumnDefinition Width="120" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Skipped Roots" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="0" Text="Item" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             <TextBlock Grid.Column="1" Text="Library" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             <TextBlock Grid.Column="2" Text="Reason" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="Sample" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="3" Text="Files" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Right" />
                             <TextBlock Grid.Column="4" Text="First Seen" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             <TextBlock Grid.Column="5" Text="Last Seen" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                         </Grid>
@@ -374,14 +395,14 @@
                 <Border
                     x:Name="StaleIdsSection"
                     Background="{StaticResource SurfaceBrush}"
-                    CornerRadius="16"
+                    CornerRadius="20"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
                     Padding="0"
                     Visibility="Collapsed">
                     <StackPanel>
                         <!-- Header -->
-                        <Grid Padding="20,20,20,16" Background="Transparent" Tapped="StaleHeader_Tapped">
+                        <Grid Padding="20,16" Background="Transparent" Tapped="StaleHeader_Tapped">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
@@ -396,11 +417,15 @@
                             <StackPanel Grid.Column="1" Spacing="2">
                                 <TextBlock Text="Stale External IDs" FontSize="14" FontWeight="SemiBold"
                                            Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Provider IDs no longer resolve — metadata refresh will fail until re-matched."
+                                <TextBlock Text="Provider IDs no longer resolve; metadata refresh will fail until re-matched."
                                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
-                            <Border x:Name="StaleCountBadge" Grid.Column="2" VerticalAlignment="Top" />
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                                <Border x:Name="StaleCountBadge" />
+                                <FontIcon x:Name="StaleChevron" Glyph="&#xE76C;" FontSize="16"
+                                          Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
                         </Grid>
                         <!-- Search + table -->
                         <StackPanel x:Name="StaleContent" Padding="12,0,12,12" Spacing="8" Visibility="Collapsed">

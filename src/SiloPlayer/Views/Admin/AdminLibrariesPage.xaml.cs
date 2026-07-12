@@ -66,16 +66,71 @@ public sealed partial class AdminLibrariesPage : Page
     private DispatcherTimer? _unmatchedSearchTimer;
 
     private void UnmatchedHeader_Tapped(object sender, TappedRoutedEventArgs e)
-        => UnmatchedContent.Visibility = UnmatchedContent.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+    {
+        ToggleDiagnosticsSection(UnmatchedContent);
+        UpdateDiagnosticsHeader(UnmatchedContent, UnmatchedCountBadge, UnmatchedChevron, ViewModel.UnmatchedTotal);
+    }
 
     private void AmbiguousHeader_Tapped(object sender, TappedRoutedEventArgs e)
-        => AmbiguousContent.Visibility = AmbiguousContent.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+    {
+        ToggleDiagnosticsSection(AmbiguousContent);
+        UpdateDiagnosticsHeader(AmbiguousContent, AmbiguousCountBadge, AmbiguousChevron, ViewModel.AmbiguousRoots.Count);
+    }
 
     private void StaleHeader_Tapped(object sender, TappedRoutedEventArgs e)
-        => StaleContent.Visibility = StaleContent.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+    {
+        ToggleDiagnosticsSection(StaleContent);
+        UpdateDiagnosticsHeader(StaleContent, StaleCountBadge, StaleChevron, ViewModel.StaleIds.Count);
+    }
 
     private void SkippedHeader_Tapped(object sender, TappedRoutedEventArgs e)
-        => SkippedContent.Visibility = SkippedContent.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+    {
+        SkippedContent.Visibility = SkippedContent.Visibility == Visibility.Visible
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        UpdateSkippedDiagnosticsHeader();
+    }
+
+    private void UpdateSkippedDiagnosticsHeader()
+    {
+        var expanded = SkippedContent.Visibility == Visibility.Visible;
+        SkippedChevron.Glyph = expanded ? "\uE70D" : "\uE76C";
+        SkippedCountBadge.Child = expanded
+            ? MakeBadge($"{ViewModel.SkippedRoots.Count}", "secondary")
+            : new TextBlock
+            {
+                Text = ViewModel.SkippedRoots.Count.ToString("N0"),
+                FontSize = 24,
+                FontWeight = FontWeights.Bold,
+                Foreground = _primaryText,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+    }
+
+    private static void ToggleDiagnosticsSection(StackPanel content)
+        => content.Visibility = content.Visibility == Visibility.Visible
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+
+    private void UpdateDiagnosticsHeader(
+        StackPanel content,
+        Border countHost,
+        FontIcon chevron,
+        long count)
+    {
+        var expanded = content.Visibility == Visibility.Visible;
+        chevron.Glyph = expanded ? "\uE70D" : "\uE76C";
+        countHost.Child = expanded
+            ? MakeBadge($"{count:N0}", "secondary")
+            : new TextBlock
+            {
+                Text = count.ToString("N0"),
+                FontSize = 24,
+                FontWeight = FontWeights.Bold,
+                Foreground = _primaryText,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+    }
 
     // Cached brush lookups to avoid repeated resource dictionary access
     private SolidColorBrush _primaryText = null!;
@@ -258,7 +313,7 @@ public sealed partial class AdminLibrariesPage : Page
     {
         var row = new Grid
         {
-            Padding = new Thickness(16, 12, 16, 12),
+            Padding = new Thickness(12, 8, 12, 8),
             ColumnSpacing = 12,
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
         };
@@ -268,7 +323,7 @@ public sealed partial class AdminLibrariesPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) });
 
         // ---- Col 0: drag handle — now functional with move up/down ----
         var dragPanel = new StackPanel
@@ -1048,7 +1103,7 @@ public sealed partial class AdminLibrariesPage : Page
         }
 
         UnmatchedItemsSection.Visibility = Visibility.Visible;
-        UnmatchedCountBadge.Child = MakeBadge($"{ViewModel.UnmatchedTotal}", "secondary");
+        UpdateDiagnosticsHeader(UnmatchedContent, UnmatchedCountBadge, UnmatchedChevron, ViewModel.UnmatchedTotal);
 
         BuildUnmatchedTable();
         BuildUnmatchedPagination();
@@ -1245,7 +1300,7 @@ public sealed partial class AdminLibrariesPage : Page
         }
 
         StaleIdsSection.Visibility = Visibility.Visible;
-        StaleCountBadge.Child = MakeBadge($"{ViewModel.StaleIds.Count}", "secondary");
+        UpdateDiagnosticsHeader(StaleContent, StaleCountBadge, StaleChevron, ViewModel.StaleIds.Count);
 
         BuildStaleTable();
         BuildStalePagination();
@@ -1416,7 +1471,7 @@ public sealed partial class AdminLibrariesPage : Page
         }
 
         AmbiguousRootsSection.Visibility = Visibility.Visible;
-        AmbiguousCountBadge.Child = MakeBadge($"{ViewModel.AmbiguousRoots.Count}", "secondary");
+        UpdateDiagnosticsHeader(AmbiguousContent, AmbiguousCountBadge, AmbiguousChevron, ViewModel.AmbiguousRoots.Count);
 
         BuildAmbiguousTable();
     }
@@ -1927,7 +1982,7 @@ public sealed partial class AdminLibrariesPage : Page
         }
 
         SkippedRootsSection.Visibility = Visibility.Visible;
-        SkippedCountText.Text = ViewModel.SkippedRoots.Count.ToString();
+        UpdateSkippedDiagnosticsHeader();
 
         // Apply search filter
         var filtered = ViewModel.SkippedRoots.AsEnumerable();

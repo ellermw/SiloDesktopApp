@@ -6,7 +6,7 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.29**](https://transfers.taverncdn.com/8J3OMPxq1e/SiloInstaller-1.1.29-Setup.exe) — Windows 10/11 x64 installer, available for 180 days.
+[**Download Silo Desktop Player 1.1.30**](https://transfers.taverncdn.com/RZdgXLRuLI/SiloInstaller-1.1.30-Setup.exe) — Windows 10/11 x64 installer, available for 180 days.
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -14,7 +14,7 @@ The installer is currently unsigned, so Windows may display a SmartScreen warnin
 
 Status meanings:
 
-- **Current milestone** — audited and rebuilt against the current Silo WebUI source at the time of release.
+- **Functional; visual parity incomplete** — principal data and actions work, but the page is not considered complete until side-by-side visual and interaction verification matches the current WebUI.
 - **Substantial** — the principal workflows exist, with additional visual or edge-case work remaining.
 - **Partial** — usable foundation exists, but meaningful WebUI behavior is still missing.
 - **Hardening** — implemented, with compatibility, performance, or reliability work still underway.
@@ -29,15 +29,23 @@ Status meanings:
 | User collections | Substantial | Browse, create, edit, manual/smart rules, imports, and collection management exist. Current templates, guided rules, collage/scheduling details, and visual polish remain. |
 | Notifications | Substantial | Notification center and user notification settings are implemented, including current delivery configuration foundations. Additional current-server edge cases remain to be audited. |
 | Settings | Substantial | Playback, subtitles, appearance, theme editor, accessibility, home, card overlays, libraries, history import, webhook sync, watch providers, profiles, and notification controls are present. The server continues to add fields, so these routes remain subject to drift audits. |
-| Admin: Libraries | **Current milestone** | Current provider-chain contract, remote server folder browser, library types, metadata language, AI translation, trailer kinds, chapter/intro settings, posters, scan queue/progress/cancel, reorder, unmatched items, ambiguous/skipped roots, stale IDs, and collapsed diagnostics are implemented. |
-| Admin: Dashboard | **Current milestone** | Incremental section loading, active sessions, session controls, current stats, Trakt activity, library scan state/progress, users, activity links, manual refresh, and active-page refresh are implemented. |
-| Admin: Activity | **Current milestone** | Realtime stream state, search/filter/sort, client/profile/IP presentation, IP history lookup, playback position/state, container/video/audio decision details, hardware transcode mode, session controls, log links, and inline FFmpeg output are implemented. |
+| Admin: Libraries | Functional; visual parity incomplete | Current provider-chain contract, remote server folder browser, library types, metadata language, AI translation, trailer kinds, chapter/intro settings, posters, scan queue/progress/cancel, reorder, unmatched items, ambiguous/skipped roots, stale IDs, and collapsed diagnostics are implemented. Layout and styling still require a strict side-by-side WebUI parity pass. |
+| Admin: Dashboard | Functional; visual parity incomplete | Incremental section loading, active sessions, session controls, current stats, Trakt activity, library scan state/progress, users, activity links, manual refresh, and active-page refresh are implemented. Layout and styling still require a strict side-by-side WebUI parity pass. |
+| Admin: Activity | Functional; visual parity incomplete | Realtime stream state, search/filter/sort, client/profile/IP presentation, IP history lookup, playback position/state, container/video/audio decision details, hardware transcode mode, session controls, log links, and inline FFmpeg output are implemented. Layout and styling still require a strict side-by-side WebUI parity pass. |
 | Remaining admin pages | Partial | Users, tasks, logs, history, maintenance, collections, sections, providers, plugins, nodes, API keys, invites, subtitles, requests, recommendations, autoscan, devices, policy, access groups, marker history, and settings have foundations of varying depth. Each still needs a fresh current-WebUI page audit. |
 | Player on-screen controls | Substantial | Current visual control foundation, play/pause, seek, volume, fullscreen state sync, quality/audio/subtitle menus, intro/credits actions, next episode, keyboard shortcuts, and stats are present. Chapter thumbnails, subtitle actions, playing-next/postroll, PiP/mini-player details, and final state polish remain. |
 | Native playback engine | Hardening | Direct play, remux, HLS fallback, D3D11VA, HEVC/AV1/VP9/H.264, HDR paths, subtitle rendering, track switching, progress reporting, and stall recovery foundations exist. High-bitrate 4K, Dolby Vision, HDR/tone mapping, TrueHD/Atmos/DTS passthrough, fastest startup/seek, and long-session reliability remain active work. |
 | Watch Party | Partial | Join/create, room membership, suggestions, and realtime foundations exist. Content search, series drill-down, spotlight/now-playing UI, auto-start, and complete synchronization remain. |
 
 ## Recent release work
+
+### 1.1.30
+
+- Removed the desktop-only Admin header strip and repositioned Server Activity to match the WebUI's floating desktop control.
+- Rebuilt the shared Admin sidebar footer to use the WebUI build-card and Back to App structure.
+- Corrected Dashboard page width, gutters, vertical rhythm, title/subtitle scale, card radii, action icons, number formatting, and stream-card geometry.
+- Corrected Libraries page width, gutters, title/subtitle scale, table surface/row/action sizing, and unified all collapsed diagnostics with the WebUI icon/count/chevron presentation.
+- Dashboard, Libraries, and Activity remain explicitly marked visual-parity-incomplete until side-by-side validation is complete.
 
 ### 1.1.29
 

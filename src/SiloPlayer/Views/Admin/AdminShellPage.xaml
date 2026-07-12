@@ -951,17 +951,30 @@
                     </StackPanel>
                 </ScrollViewer>
 
-                <!-- Footer -->
-                <StackPanel Grid.Row="2" Margin="0,0,0,12" Spacing="4">
-
-                    <!-- Top border separator -->
+                <!-- Footer: WebUI build card followed by Back to App. -->
+                <StackPanel Grid.Row="2" Margin="12,0,12,16" Spacing="12">
                     <Border
-                        Height="1"
-                        Background="{StaticResource SidebarBorderBrush}"
-                        Margin="12,0,12,4"
-                        Opacity="0.7" />
+                        Padding="12,8"
+                        CornerRadius="12"
+                        Background="{StaticResource SidebarAccentBrush}"
+                        BorderBrush="{StaticResource SidebarBorderBrush}"
+                        BorderThickness="1">
+                        <StackPanel Spacing="4">
+                            <TextBlock
+                                Text="BUILD"
+                                FontSize="10"
+                                FontWeight="SemiBold"
+                                CharacterSpacing="180"
+                                Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock
+                                x:Name="BuildVersionText"
+                                Text="loading..."
+                                FontFamily="Consolas"
+                                FontSize="12"
+                                Foreground="{StaticResource PrimaryTextBrush}" />
+                        </StackPanel>
+                    </Border>
 
-                    <!-- Back to App button -->
                     <Button
                         x:Name="BackToAppButton"
                         Background="Transparent"
@@ -969,7 +982,7 @@
                         HorizontalAlignment="Stretch"
                         HorizontalContentAlignment="Left"
                         Padding="16,10"
-                        Margin="4,1"
+                        Margin="0"
                         CornerRadius="12"
                         Click="BackToApp_Click">
                         <StackPanel Orientation="Horizontal" Spacing="10">
@@ -983,34 +996,6 @@
                         </StackPanel>
                     </Button>
 
-                    <!-- Server status card -->
-                    <Border
-                        Margin="8,4,8,0"
-                        Padding="12,10"
-                        CornerRadius="12"
-                        Background="{StaticResource SidebarAccentBrush}"
-                        BorderBrush="{StaticResource SidebarBorderBrush}"
-                        BorderThickness="1">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <!-- Green status dot -->
-                            <Ellipse
-                                Width="8" Height="8"
-                                Fill="#22C55E"
-                                VerticalAlignment="Center" />
-                            <StackPanel VerticalAlignment="Center" Spacing="1">
-                                <TextBlock
-                                    Text="Silo"
-                                    FontSize="12"
-                                    FontWeight="SemiBold"
-                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock
-                                    Text="Server Online"
-                                    FontSize="10"
-                                    Foreground="{StaticResource SecondaryTextBrush}" />
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
                 </StackPanel>
 
             </Grid>
@@ -1018,18 +1003,15 @@
 
         <!-- ===== Content Area ===== -->
         <Grid Grid.Column="1" Background="{StaticResource AppBackgroundBrush}">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-
             <!-- Header strip: server activity popover button (right-aligned).
                  Mirrors webui AdminLayout header. -->
             <Border
-                Grid.Row="0"
-                Padding="20,14"
-                BorderBrush="{StaticResource BorderBrush}"
-                BorderThickness="0,0,0,1">
+                Padding="0"
+                Margin="0,20,20,0"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                BorderThickness="0"
+                Canvas.ZIndex="20">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -1053,7 +1035,6 @@
             <!-- Admin page content frame -->
             <Frame
                 x:Name="AdminContentFrame"
-                Grid.Row="1"
                 Background="{StaticResource AppBackgroundBrush}" />
         </Grid>
 
