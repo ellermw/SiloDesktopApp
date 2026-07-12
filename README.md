@@ -6,7 +6,7 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.35**](https://transfers.taverncdn.com/7a3RQdshAb/SiloInstaller-1.1.35-Setup.exe) — Windows 10/11 x64 installer, available for 180 days.
+[**Download Silo Desktop Player 1.1.36**](https://transfers.taverncdn.com/qhdK0Btsni/SiloInstaller-1.1.36-Setup.exe) — Windows 10/11 x64 installer, available for 180 days.
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -41,6 +41,14 @@ Status meanings:
 | Watch Party | Partial | Join/create, room membership, suggestions, and realtime foundations exist. Content search, series drill-down, spotlight/now-playing UI, auto-start, and complete synchronization remain. |
 
 ## Recent release work
+
+### 1.1.36
+
+- Corrected the visibly broken top-right server-activity control with the WebUI pulse icon, red count badge, and stable geometry instead of a Windows-version-dependent font glyph.
+- Updated Cinema Dark's stale muted-text token to the current WebUI value, improving navigation, subtitles, metadata, and secondary button text across the application.
+- Fixed Admin Libraries initial loading so Unmatched Items, Troubleshooting, Stale External IDs, and refresh-job data are present in the first rendered page instead of arriving after the only rebuild.
+- Fixed the realtime scan snapshot/event subscription so per-library scan queues and progress rows appear and update like the WebUI.
+- Replaced desktop-only move arrows with actual drag-and-drop library ordering, corrected action order/icons, tightened panel radii, and fixed header wrapping/button glyphs.
 
 ### 1.1.35
 

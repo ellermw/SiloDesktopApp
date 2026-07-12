@@ -243,12 +243,12 @@ public sealed partial class ServerActivityButton : UserControl
         {
             CountBadge.Visibility = Visibility.Visible;
             CountBadgeText.Text = total.ToString();
-            ActivityIcon.Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"];
+            ActivityIcon.Stroke = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"];
         }
         else
         {
             CountBadge.Visibility = Visibility.Collapsed;
-            ActivityIcon.Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
+            ActivityIcon.Stroke = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
         }
 
         // Disconnected indicator — small warning dot when WS is down but we

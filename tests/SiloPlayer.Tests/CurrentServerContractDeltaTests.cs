@@ -105,6 +105,20 @@ public sealed class CurrentServerContractDeltaTests
     }
 
     [Fact]
+    public void AdminLibrariesHydratesRealtimeScansAndInitialDiagnosticsBeforeRendering()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "Admin", "AdminLibrariesPage.xaml.cs");
+        var viewModel = Read("src", "SiloPlayer", "ViewModels", "Admin", "AdminLibrariesViewModel.cs");
+
+        Assert.Contains("SnapshotReceived += OnSnapshotReceived", page);
+        Assert.Contains("MoveLibraryToAsync", page);
+        Assert.Contains("await Task.WhenAll(", viewModel);
+        Assert.Contains("LoadUnmatchedItemsAsync()", viewModel);
+        Assert.Contains("LoadSkippedRootsAsync()", viewModel);
+        Assert.Contains("LoadStaleIdsAsync()", viewModel);
+    }
+
+    [Fact]
     public void AdminDashboardLoadsSectionsIncrementallyAndShowsCurrentTraktStats()
     {
         var model = Read("src", "SiloPlayer.Core", "Models", "Admin", "AdminStats.cs");

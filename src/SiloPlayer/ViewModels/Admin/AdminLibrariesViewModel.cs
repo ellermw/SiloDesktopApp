@@ -71,12 +71,15 @@ public partial class AdminLibrariesViewModel : ObservableObject
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsLoading = false; }
 
-        // Load secondary data in background (non-blocking)
-        _ = LoadSkippedRootsAsync();
-        _ = LoadUnmatchedItemsAsync();
-        _ = LoadStaleIdsAsync();
-        _ = LoadMetadataProvidersAsync();
-        _ = LoadActiveRefreshJobsAsync();
+        // These surfaces are part of the page, not optional background data.
+        // Run them concurrently so the first visual rebuild includes every
+        // diagnostics card and active refresh row without serial latency.
+        await Task.WhenAll(
+            LoadSkippedRootsAsync(),
+            LoadUnmatchedItemsAsync(),
+            LoadStaleIdsAsync(),
+            LoadMetadataProvidersAsync(),
+            LoadActiveRefreshJobsAsync());
     }
 
     public async Task RefreshLibrariesOnlyAsync()

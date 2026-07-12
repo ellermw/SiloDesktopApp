@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Shapes;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
@@ -175,6 +176,7 @@ public sealed partial class AdminLibrariesPage : Page
         try
         {
             _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
+            _eventChannel.SnapshotReceived += OnSnapshotReceived;
             _eventChannel.EventReceived += OnEventReceived;
             _eventSubscription = _eventChannel.Subscribe("scans");
         }
@@ -186,7 +188,10 @@ public sealed partial class AdminLibrariesPage : Page
         base.OnNavigatedFrom(e);
         _scanUiRefreshTimer?.Stop();
         if (_eventChannel != null)
+        {
+            _eventChannel.SnapshotReceived -= OnSnapshotReceived;
             _eventChannel.EventReceived -= OnEventReceived;
+        }
         _eventSubscription?.Dispose();
         _eventSubscription = null;
     }
@@ -195,6 +200,21 @@ public sealed partial class AdminLibrariesPage : Page
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
     };
+
+    private void OnSnapshotReceived(string channel, JsonElement data)
+    {
+        if (channel != "scans" || data.ValueKind != JsonValueKind.Array) return;
+        try
+        {
+            var scans = data.Deserialize<List<AdminScanRun>>(_scanJsonOpts) ?? [];
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                ViewModel.ActiveScans = scans.Where(IsActiveScan).ToList();
+                ScheduleScanUiRefresh();
+            });
+        }
+        catch { }
+    }
 
     private void OnEventReceived(string channel, string eventName, JsonElement data)
     {
@@ -209,7 +229,7 @@ public sealed partial class AdminLibrariesPage : Page
             {
                 snapshot = data.Deserialize<List<AdminScanRun>>(_scanJsonOpts) ?? [];
             }
-            else if (eventName == "scan_updated")
+            else if (data.ValueKind == JsonValueKind.Object)
             {
                 updatedRun = data.Deserialize<AdminScanRun>(_scanJsonOpts);
             }
@@ -272,7 +292,7 @@ public sealed partial class AdminLibrariesPage : Page
     }
 
     private static bool IsActiveScan(AdminScanRun scan)
-        => scan.Status is "accepted" or "running" or "queued";
+        => scan.Status is "accepted" or "running";
 
     private void RebuildAll()
     {
@@ -326,45 +346,38 @@ public sealed partial class AdminLibrariesPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) });
 
         // ---- Col 0: drag handle — now functional with move up/down ----
-        var dragPanel = new StackPanel
+        var capturedForReorder = lib;
+        var dragGrip = new TextBlock
         {
-            Orientation = Orientation.Horizontal,
-            Spacing = 0,
+            Text = "⠿",
+            FontFamily = new FontFamily("Segoe UI Symbol"),
+            FontSize = 14,
+            Foreground = _tertiaryText,
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Center,
+            CanDrag = true,
         };
-
-        var capturedForReorder = lib;
-        var moveUpBtn = new Button
+        ToolTipService.SetToolTip(dragGrip, $"Drag {lib.Name}");
+        dragGrip.DragStarting += (_, args) =>
         {
-            Width = 18, Height = 18, MinWidth = 18, MinHeight = 18,
-            Padding = new Thickness(0),
-            Background = new SolidColorBrush(Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            Content = new FontIcon { Glyph = "\uE70E", FontSize = 9, Foreground = _tertiaryText },
-            VerticalAlignment = VerticalAlignment.Center,
+            args.Data.SetText(capturedForReorder.Id.ToString());
+            args.Data.RequestedOperation = DataPackageOperation.Move;
         };
-        ToolTipService.SetToolTip(moveUpBtn, "Move up");
-        moveUpBtn.Click += async (_, _) => await MoveLibraryAsync(capturedForReorder, -1);
-
-        var moveDownBtn = new Button
+        row.AllowDrop = true;
+        row.DragOver += (_, args) =>
         {
-            Width = 18, Height = 18, MinWidth = 18, MinHeight = 18,
-            Padding = new Thickness(0),
-            Background = new SolidColorBrush(Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            Content = new FontIcon { Glyph = "\uE70D", FontSize = 9, Foreground = _tertiaryText },
-            VerticalAlignment = VerticalAlignment.Center,
+            if (args.DataView.Contains(StandardDataFormats.Text))
+                args.AcceptedOperation = DataPackageOperation.Move;
         };
-        ToolTipService.SetToolTip(moveDownBtn, "Move down");
-        moveDownBtn.Click += async (_, _) => await MoveLibraryAsync(capturedForReorder, 1);
-
-        var dragStack = new StackPanel { Spacing = 0 };
-        dragStack.Children.Add(moveUpBtn);
-        dragStack.Children.Add(moveDownBtn);
-
-        Grid.SetColumn(dragStack, 0);
-        row.Children.Add(dragStack);
+        row.Drop += async (_, args) =>
+        {
+            if (!args.DataView.Contains(StandardDataFormats.Text)) return;
+            var sourceText = await args.DataView.GetTextAsync();
+            if (int.TryParse(sourceText, out var sourceId))
+                await MoveLibraryToAsync(sourceId, capturedForReorder.Id);
+        };
+        Grid.SetColumn(dragGrip, 0);
+        row.Children.Add(dragGrip);
 
         // ---- Col 1: Name ----
         var nameBlock = new TextBlock
@@ -500,17 +513,16 @@ public sealed partial class AdminLibrariesPage : Page
         var capturedLib = lib;
 
         // Check mount
-        var mountBtn = MakeIconButton28("\uEDA2", "Check mount");
+        var mountBtn = MakeSymbolButton28(Symbol.Repair, "Check mount");
         mountBtn.Click += async (_, _) =>
         {
             await ViewModel.CheckMountCommand.ExecuteAsync(capturedLib.Id);
             DispatcherQueue.TryEnqueue(RebuildAll);
         };
-        actionsPanel.Children.Add(mountBtn);
 
         // Scan/stop is one stateful control, matching the current WebUI.
-        var scanBtn = MakeIconButton28(
-            libScans.Count > 0 ? "\uE71A" : "\uE72C",
+        var scanBtn = MakeSymbolButton28(
+            libScans.Count > 0 ? Symbol.Stop : Symbol.SyncFolder,
             libScans.Count > 0 ? "Stop Library Scans" : "Scan Library",
             libScans.Count > 0 ? DestructiveColor : null);
         scanBtn.Click += async (_, _) =>
@@ -527,8 +539,8 @@ public sealed partial class AdminLibrariesPage : Page
 
         var activeRefreshJob = FindActiveRefreshJob(lib.Id);
         // Refresh/stop is one stateful control, matching the current WebUI.
-        var refreshBtn = MakeIconButton28(
-            activeRefreshJob != null ? "\uE71A" : "\uE895",
+        var refreshBtn = MakeSymbolButton28(
+            activeRefreshJob != null ? Symbol.Stop : Symbol.Refresh,
             activeRefreshJob != null ? "Stop Metadata Refresh" : "Rescan Metadata",
             activeRefreshJob != null ? DestructiveColor : null);
         refreshBtn.Click += async (_, _) =>
@@ -542,6 +554,7 @@ public sealed partial class AdminLibrariesPage : Page
             refreshBtn.IsEnabled = true;
         };
         actionsPanel.Children.Add(refreshBtn);
+        actionsPanel.Children.Add(mountBtn);
 
         // Empty-root confirm
         if (lib.ScanWarningCode == "empty_root")
@@ -552,12 +565,12 @@ public sealed partial class AdminLibrariesPage : Page
         }
 
         // Edit
-        var editBtn = MakeIconButton28("\uE70F", "Edit library");
+        var editBtn = MakeSymbolButton28(Symbol.Edit, "Edit library");
         editBtn.Click += async (_, _) => await OpenEditDialogAsync(capturedLib);
         actionsPanel.Children.Add(editBtn);
 
         // Delete
-        var deleteBtn = MakeIconButton28("\uE74D", "Delete library");
+        var deleteBtn = MakeSymbolButton28(Symbol.Delete, "Delete library");
         deleteBtn.Click += async (_, _) => await OpenDeleteDialogAsync(capturedLib);
         actionsPanel.Children.Add(deleteBtn);
 
@@ -652,16 +665,16 @@ public sealed partial class AdminLibrariesPage : Page
     //  same functionality as the webui's DnD reorder.)
     // ===================================================================
 
-    private async Task MoveLibraryAsync(Library lib, int direction)
+    private async Task MoveLibraryToAsync(int sourceId, int targetId)
     {
         var list = ViewModel.Libraries.ToList();
-        var idx = list.FindIndex(l => l.Id == lib.Id);
-        if (idx < 0) return;
-        var newIdx = idx + direction;
-        if (newIdx < 0 || newIdx >= list.Count) return;
+        var sourceIndex = list.FindIndex(library => library.Id == sourceId);
+        var targetIndex = list.FindIndex(library => library.Id == targetId);
+        if (sourceIndex < 0 || targetIndex < 0 || sourceIndex == targetIndex) return;
 
-        // Swap
-        (list[idx], list[newIdx]) = (list[newIdx], list[idx]);
+        var moved = list[sourceIndex];
+        list.RemoveAt(sourceIndex);
+        list.Insert(targetIndex, moved);
 
         // Update UI immediately
         ViewModel.Libraries.Clear();
@@ -2173,6 +2186,27 @@ public sealed partial class AdminLibrariesPage : Page
         };
         ToolTipService.SetToolTip(btn, tooltip);
         return btn;
+    }
+
+    private Button MakeSymbolButton28(Symbol symbol, string tooltip, Color? fgColor = null)
+    {
+        var fg = fgColor.HasValue
+            ? new SolidColorBrush(fgColor.Value)
+            : _secondaryText;
+        var button = new Button
+        {
+            Width = 28,
+            Height = 28,
+            MinWidth = 28,
+            MinHeight = 28,
+            Padding = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(6),
+            Content = new SymbolIcon(symbol) { Foreground = fg },
+        };
+        ToolTipService.SetToolTip(button, tooltip);
+        return button;
     }
 
     // ===================================================================

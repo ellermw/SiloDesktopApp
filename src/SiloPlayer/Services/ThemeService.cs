@@ -339,7 +339,10 @@ public class ThemeService
             PrimaryForeground = "#141417",
             Secondary = "#232328",
             SecondaryForeground = "#D0D0D6",
-            MutedForeground = "#6E6E78",
+            // Current WebUI midnight-cinema token. The old #6E6E78 value made
+            // admin subtitles, navigation, table metadata, and button text
+            // visibly dimmer than the live UI.
+            MutedForeground = "#9696A0",
             Border = "#28282E",
             Input = "#1C1C20",
             Sidebar = "#0F0F12",
