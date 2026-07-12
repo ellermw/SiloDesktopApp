@@ -178,7 +178,11 @@ public sealed partial class AdminLogsPage : Page
                 _stream.AppEntryAppended += OnAppAppend;
                 _stream.AuditEntryAppended += OnAuditAppend;
                 _stream.StateChanged += OnStreamStateChanged;
-                _stream.ErrorReceived += (msg) => DispatcherQueue.TryEnqueue(() => ViewModel.ConnectionState = "Disconnected");
+                _stream.ErrorReceived += (msg) => DispatcherQueue.TryEnqueue(() =>
+                {
+                    ViewModel.ConnectionState = "Disconnected";
+                    ReconnectButton.Visibility = Visibility.Visible;
+                });
             }
 
             var filters = BuildCurrentFilters();
@@ -186,6 +190,13 @@ public sealed partial class AdminLogsPage : Page
             await _stream.StartAsync(stream, filters);
         }
         catch { /* surfaced via StateChanged */ }
+    }
+
+    private async void ReconnectButton_Click(object sender, RoutedEventArgs e)
+    {
+        ReconnectButton.IsEnabled = false;
+        await RestartStreamAsync();
+        ReconnectButton.IsEnabled = true;
     }
 
     private Dictionary<string, string> BuildCurrentFilters()
@@ -267,6 +278,9 @@ public sealed partial class AdminLogsPage : Page
                 AdminLogStreamClient.ConnectionState.Live => "Live",
                 _ => "Disconnected",
             };
+            ReconnectButton.Visibility = state == AdminLogStreamClient.ConnectionState.Disconnected
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         });
     }
 
@@ -281,9 +295,17 @@ public sealed partial class AdminLogsPage : Page
 
         TabAppBtn.Background = appTab ? accentBg : transparent;
         TabAppBtn.Foreground = appTab ? accentFg : secondaryFg;
+        TabAppBtn.BorderThickness = new Thickness(1);
+        TabAppBtn.BorderBrush = appTab
+            ? (SolidColorBrush)Application.Current.Resources["BorderBrush"]
+            : transparent;
 
         TabAuditBtn.Background = !appTab ? accentBg : transparent;
         TabAuditBtn.Foreground = !appTab ? accentFg : secondaryFg;
+        TabAuditBtn.BorderThickness = new Thickness(1);
+        TabAuditBtn.BorderBrush = !appTab
+            ? (SolidColorBrush)Application.Current.Resources["BorderBrush"]
+            : transparent;
 
         AppLogsPanel.Visibility = appTab ? Visibility.Visible : Visibility.Collapsed;
         AuditLogsPanel.Visibility = !appTab ? Visibility.Visible : Visibility.Collapsed;
@@ -321,9 +343,9 @@ public sealed partial class AdminLogsPage : Page
         AddSummaryMetric("FFmpeg Logs", ViewModel.SummaryFfmpegCount.ToString(), false);
         AddSummaryMetric("Audit Logs", ViewModel.SummaryAuditCount.ToString(), false);
         AddSummaryMetric("First Seen", ViewModel.SummaryFirstSeen, false);
+        AddSummaryMetric("Nodes Seen", ViewModel.SummaryNodes, ViewModel.SummaryNodes != "-");
         if (ViewModel.SummaryLastSeen != "-")
             AddSummaryMetric("Last Seen", ViewModel.SummaryLastSeen, false);
-        AddSummaryMetric("Nodes Seen", ViewModel.SummaryNodes, ViewModel.SummaryNodes != "-");
 
         // Update ffmpeg button text
         var isFFmpegFilter = ViewModel.AppComponent.Trim().Equals("ffmpeg", StringComparison.OrdinalIgnoreCase);
@@ -336,17 +358,23 @@ public sealed partial class AdminLogsPage : Page
         stack.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 11,
+            FontSize = 12,
             Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
         });
         stack.Children.Add(new TextBlock
         {
             Text = value,
-            FontSize = mono ? 12 : 13,
+            FontSize = mono ? 12 : 14,
             FontFamily = mono ? new FontFamily("Consolas") : null,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
             TextWrapping = TextWrapping.Wrap
         });
+        var index = SummaryMetricsPanel.Children.Count;
+        var row = index / 6;
+        while (SummaryMetricsPanel.RowDefinitions.Count <= row)
+            SummaryMetricsPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetColumn(stack, index % 6);
+        Grid.SetRow(stack, row);
         SummaryMetricsPanel.Children.Add(stack);
     }
 
@@ -443,7 +471,7 @@ public sealed partial class AdminLogsPage : Page
 
         var row = new Grid
         {
-            Padding = new Thickness(16, 8, 16, 8),
+            Padding = new Thickness(12, 8, 12, 8),
             ColumnSpacing = 8,
             Tag = entry,
             Background = highlight
@@ -461,13 +489,13 @@ public sealed partial class AdminLogsPage : Page
         var defaultBg = row.Background;
 
         // Time
-        row.Children.Add(MakeMonoCell(0, AdminLogsViewModel.FormatDateTime(entry.Timestamp), 11));
+        row.Children.Add(MakeTextCell(0, AdminLogsViewModel.FormatDateTime(entry.Timestamp), 14));
 
         // Level (uppercase)
         var levelBlock = new TextBlock
         {
             Text = entry.Level.ToUpperInvariant(),
-            FontSize = 12,
+            FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = GetLevelBrush(entry.Level),
             VerticalAlignment = VerticalAlignment.Center,
@@ -477,19 +505,19 @@ public sealed partial class AdminLogsPage : Page
         row.Children.Add(levelBlock);
 
         // Component
-        row.Children.Add(MakeTextCell(2, entry.Component, 12));
+        row.Children.Add(MakeTextCell(2, entry.Component, 14));
 
         // Status from attrs
-        row.Children.Add(MakeTextCell(3, AdminLogsViewModel.GetAttr(entry, "status"), 12));
+        row.Children.Add(MakeTextCell(3, AdminLogsViewModel.GetAttr(entry, "status"), 14));
 
         // Duration from attrs (duration_ms + " ms")
-        row.Children.Add(MakeTextCell(4, AdminLogsViewModel.GetDurationAttr(entry), 11));
+        row.Children.Add(MakeTextCell(4, AdminLogsViewModel.GetDurationAttr(entry), 14));
 
         // Message (max-w truncated with title tooltip)
         var msgBlock = new TextBlock
         {
             Text = entry.Message,
-            FontSize = 12,
+            FontSize = 14,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center
@@ -530,7 +558,8 @@ public sealed partial class AdminLogsPage : Page
             FontSize = 15,
             FontWeight = FontWeights.SemiBold,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            TextWrapping = TextWrapping.Wrap
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 40, 0),
         });
 
         // Subtitle: component . LEVEL . timestamp
@@ -735,7 +764,7 @@ public sealed partial class AdminLogsPage : Page
     {
         var row = new Grid
         {
-            Padding = new Thickness(16, 8, 16, 8),
+            Padding = new Thickness(12, 8, 12, 8),
             ColumnSpacing = 8
         };
         // Proportional columns matching XAML header
@@ -750,16 +779,16 @@ public sealed partial class AdminLogsPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
 
         // Time (formatted, whitespace-nowrap)
-        row.Children.Add(MakeMonoCell(0, AdminLogsViewModel.FormatDateTime(entry.Timestamp), 11));
+        row.Children.Add(MakeTextCell(0, AdminLogsViewModel.FormatDateTime(entry.Timestamp), 14));
 
         // Method
-        row.Children.Add(MakeTextCell(1, entry.Method, 12, bold: true));
+        row.Children.Add(MakeTextCell(1, entry.Method, 14));
 
         // Path (monospace 12px, max-w 420px truncated with title tooltip)
         var pathBlock = new TextBlock
         {
             Text = entry.Path,
-            FontSize = 11,
+            FontSize = 12,
             FontFamily = new FontFamily("Consolas"),
             Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -774,8 +803,7 @@ public sealed partial class AdminLogsPage : Page
         var statusBlock = new TextBlock
         {
             Text = entry.StatusCode.ToString(),
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
+            FontSize = 14,
             Foreground = GetStatusBrush(entry.StatusCode),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis
@@ -784,19 +812,19 @@ public sealed partial class AdminLogsPage : Page
         row.Children.Add(statusBlock);
 
         // Client IP (strip CIDR suffix, mono 12px)
-        row.Children.Add(MakeMonoCell(4, AdminLogsViewModel.FormatClientIp(entry.ClientIp), 11));
+        row.Children.Add(MakeMonoCell(4, AdminLogsViewModel.FormatClientIp(entry.ClientIp), 12));
 
         // User: #ID or -
-        row.Children.Add(MakeTextCell(5, entry.UserId.HasValue ? $"#{entry.UserId}" : "-", 12));
+        row.Children.Add(MakeTextCell(5, entry.UserId.HasValue ? $"#{entry.UserId}" : "-", 14));
 
         // Session (mono 12px)
-        row.Children.Add(MakeMonoCell(6, entry.SessionId ?? "-", 11));
+        row.Children.Add(MakeMonoCell(6, entry.SessionId ?? "-", 12));
 
         // Playback session (mono 12px)
-        row.Children.Add(MakeMonoCell(7, entry.PlaybackSessionId ?? "-", 11));
+        row.Children.Add(MakeMonoCell(7, entry.PlaybackSessionId ?? "-", 12));
 
         // Request ID (mono 12px)
-        row.Children.Add(MakeMonoCell(8, entry.RequestId ?? "-", 11));
+        row.Children.Add(MakeMonoCell(8, entry.RequestId ?? "-", 12));
 
         row.PointerEntered += (_, _) =>
             row.Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"];

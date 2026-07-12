@@ -15,18 +15,18 @@
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
 
-        <!-- surface-panel rounded-[1.6rem] border-0 -->
+        <!-- WebUI surface-panel rounded-2xl border-0. -->
         <Style x:Key="SurfacePanelStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="26" />
+            <Setter Property="CornerRadius" Value="20" />
             <Setter Property="Padding" Value="12" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
 
-        <!-- surface-panel-subtle rounded-[1.4rem] p-3 -->
+        <!-- WebUI surface-panel-subtle rounded-xl p-3. -->
         <Style x:Key="SubtlePanelStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
-            <Setter Property="CornerRadius" Value="22" />
+            <Setter Property="CornerRadius" Value="16" />
             <Setter Property="Padding" Value="12" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
@@ -34,8 +34,8 @@
         <!-- Table card (no border, rounded top for header)
              B26: 24 was 3x too round; web `rounded-lg`=8. -->
         <Style x:Key="TableCardStyle" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="{StaticResource RadiusLG}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="CornerRadius" Value="0" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
@@ -52,8 +52,8 @@
         <Style x:Key="TabPillStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="CornerRadius" Value="20" />
-            <Setter Property="Padding" Value="20,8" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="8,4" />
             <Setter Property="FontSize" Value="14" />
             <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
         </Style>
@@ -92,7 +92,11 @@
             x:Name="ContentScrollViewer"
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <StackPanel
+                Padding="40,32,40,40"
+                Spacing="24"
+                MaxWidth="1640"
+                HorizontalAlignment="Stretch">
 
                 <!-- ===== Header: title + subtitle left, stream state right ===== -->
                 <Grid>
@@ -101,19 +105,22 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" Spacing="6">
+                    <StackPanel Grid.Column="0" Spacing="12" VerticalAlignment="Bottom">
                         <TextBlock
                             Text="Logs"
-                            FontSize="42"
-                            FontWeight="Bold"
+                            FontSize="48"
+                            FontWeight="ExtraBold"
+                            CharacterSpacing="-50"
+                            LineHeight="46"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
                             Text="Search application logs and request audit trails without leaving the admin UI."
-                            FontSize="15"
+                            FontSize="16"
+                            LineHeight="27"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
 
-                    <StackPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top" Spacing="2">
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Bottom" Spacing="2">
                         <TextBlock
                             Text="STREAM"
                             FontSize="11"
@@ -135,6 +142,16 @@
                             HorizontalAlignment="Right"
                             TextWrapping="Wrap"
                             MaxWidth="300" />
+                        <Button
+                            x:Name="ReconnectButton"
+                            Content="Reconnect"
+                            Height="28"
+                            Padding="8,0"
+                            FontSize="12"
+                            HorizontalAlignment="Right"
+                            Style="{StaticResource GhostButtonStyle}"
+                            Visibility="Collapsed"
+                            Click="ReconnectButton_Click" />
                     </StackPanel>
                 </Grid>
 
@@ -144,7 +161,7 @@
                         <TextBox
                             x:Name="PlaybackSessionBox"
                             PlaceholderText="Playback Session ID"
-                            Width="380"
+                            Width="448"
                             FontFamily="Consolas"
                             FontSize="12"
                             Style="{StaticResource FilterBoxStyle}"
@@ -179,9 +196,17 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
 
-                        <StackPanel x:Name="SummaryMetricsPanel" Orientation="Horizontal" Spacing="24" Grid.Column="0">
-                            <!-- Metrics populated in code-behind -->
-                        </StackPanel>
+                        <Grid x:Name="SummaryMetricsPanel" Grid.Column="0" ColumnSpacing="12" RowSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <!-- Metrics populated in code-behind. -->
+                        </Grid>
 
                         <Button
                             x:Name="BtnFilterFfmpeg"
@@ -203,11 +228,14 @@
                     </Grid>
                 </Border>
 
+                <!-- WebUI Tabs root uses an 8px gap between the tab list and content. -->
+                <StackPanel Spacing="8">
                 <!-- ===== Tab Bar ===== -->
                 <Border
                     Background="{StaticResource SurfaceBrush}"
-                    CornerRadius="16"
-                    Padding="4"
+                    CornerRadius="12"
+                    Padding="3"
+                    Height="36"
                     HorizontalAlignment="Left">
                     <StackPanel Orientation="Horizontal" Spacing="2">
                         <Button
@@ -232,7 +260,7 @@
                             <TextBox
                                 x:Name="AppRequestIdBox"
                                 PlaceholderText="Request ID"
-                                Width="220"
+                                Width="320"
                                 FontFamily="Consolas"
                                 Style="{StaticResource FilterBoxStyle}"
                                 Text="{x:Bind ViewModel.AppRequestId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -240,14 +268,14 @@
                             <TextBox
                                 x:Name="AppMessageBox"
                                 PlaceholderText="Message contains..."
-                                Width="260"
+                                Width="384"
                                 Style="{StaticResource FilterBoxStyle}"
                                 Text="{x:Bind ViewModel.AppMessageQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 KeyDown="FilterBox_KeyDown" />
                             <TextBox
                                 x:Name="AppComponentBox"
                                 PlaceholderText="Component"
-                                Width="180"
+                                Width="320"
                                 Style="{StaticResource FilterBoxStyle}"
                                 Text="{x:Bind ViewModel.AppComponent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 KeyDown="FilterBox_KeyDown" />
@@ -259,7 +287,7 @@
                         <StackPanel>
                             <!-- Column header — matches web: Time / Level / Component / Status / Duration / Message -->
                             <Grid
-                                Padding="16,10"
+                                Padding="12,10"
                                 ColumnSpacing="8"
                                 CornerRadius="8,8,0,0">
                                 <Grid.ColumnDefinitions>
@@ -270,17 +298,16 @@
                                     <ColumnDefinition Width="0.8*" />
                                     <ColumnDefinition Width="3*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="Time" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="Level" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="2" Text="Component" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="3" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="4" Text="Duration" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="5" Text="Message" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="0" Text="Time" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Grid.Column="1" Text="Level" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Text="Component" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="Status" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Grid.Column="4" Text="Duration" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Grid.Column="5" Text="Message" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
                             </Grid>
 
                             <!-- Rows -->
-                            <ScrollViewer MaxHeight="600" VerticalScrollBarVisibility="Auto">
-                                <StackPanel Spacing="0">
+                            <StackPanel Spacing="0">
                                     <StackPanel x:Name="AppLogsPanel_Rows" Spacing="0" />
 
                                     <!-- Cursor-pagination footer: Load more button + status. -->
@@ -302,8 +329,7 @@
                                             Width="18" Height="18"
                                             Visibility="Collapsed" />
                                     </StackPanel>
-                                </StackPanel>
-                            </ScrollViewer>
+                            </StackPanel>
 
                             <!-- Empty / loading states -->
                             <TextBlock
@@ -325,33 +351,6 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Detail panel (shown when row selected) -->
-                    <Border
-                        x:Name="AppDetailPanel"
-                        Style="{StaticResource DetailPanelStyle}"
-                        Visibility="Collapsed">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel x:Name="AppDetailContent" Grid.Column="0" Spacing="16" />
-
-                            <!-- Close button -->
-                            <Button
-                                x:Name="BtnCloseDetail"
-                                Grid.Column="1"
-                                VerticalAlignment="Top"
-                                Background="Transparent"
-                                BorderThickness="0"
-                                Padding="8"
-                                Click="BtnCloseDetail_Click">
-                                <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="{StaticResource TertiaryTextBrush}" />
-                            </Button>
-                        </Grid>
-                    </Border>
-
                 </StackPanel>
 
                 <!-- ===== Audit Logs Tab ===== -->
@@ -363,7 +362,7 @@
                             <TextBox
                                 x:Name="AuditRequestIdBox"
                                 PlaceholderText="Request ID"
-                                Width="220"
+                                Width="320"
                                 FontFamily="Consolas"
                                 Style="{StaticResource FilterBoxStyle}"
                                 Text="{x:Bind ViewModel.AuditRequestId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -378,7 +377,7 @@
                             <TextBox
                                 x:Name="AuditClientIpBox"
                                 PlaceholderText="Client IP"
-                                Width="200"
+                                Width="320"
                                 FontFamily="Consolas"
                                 Style="{StaticResource FilterBoxStyle}"
                                 Text="{x:Bind ViewModel.AuditClientIp, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -391,7 +390,7 @@
                         <StackPanel>
                             <!-- Column header -->
                             <Grid
-                                Padding="16,10"
+                                Padding="12,10"
                                 ColumnSpacing="8"
                                 CornerRadius="8,8,0,0">
                                 <Grid.ColumnDefinitions>
@@ -405,20 +404,19 @@
                                     <ColumnDefinition Width="0.9*" />
                                     <ColumnDefinition Width="1.1*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="Time" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="Method" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="2" Text="Path" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="3" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="4" Text="Client" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="5" Text="User" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="6" Text="Session" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="7" Text="Playback" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="8" Text="Request" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="0" Text="Time" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Grid.Column="1" Text="Method" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Text="Path" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="Status" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Grid.Column="4" Text="Client" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Grid.Column="5" Text="User" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Grid.Column="6" Text="Session" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Grid.Column="7" Text="Playback" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Grid.Column="8" Text="Request" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
                             </Grid>
 
                             <!-- Rows -->
-                            <ScrollViewer MaxHeight="600" VerticalScrollBarVisibility="Auto">
-                                <StackPanel Spacing="0">
+                            <StackPanel Spacing="0">
                                     <StackPanel x:Name="AuditLogsPanel_Rows" Spacing="0" />
 
                                     <!-- Cursor-pagination footer. -->
@@ -440,8 +438,7 @@
                                             Width="18" Height="18"
                                             Visibility="Collapsed" />
                                     </StackPanel>
-                                </StackPanel>
-                            </ScrollViewer>
+                            </StackPanel>
 
                             <!-- Empty / loading states -->
                             <TextBlock
@@ -464,8 +461,46 @@
                     </Border>
 
                 </StackPanel>
+                </StackPanel>
 
             </StackPanel>
         </ScrollViewer>
+
+        <!-- WebUI Sheet: light-dismiss overlay with a right-side 640px detail panel. -->
+        <Grid x:Name="AppDetailPanel" Canvas.ZIndex="40" Visibility="Collapsed">
+            <Button
+                Background="#73000000"
+                BorderThickness="0"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch"
+                Click="BtnCloseDetail_Click" />
+            <Border
+                Width="640"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Stretch"
+                Background="{StaticResource CardBackgroundBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1,0,0,0">
+                <Grid>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel
+                            x:Name="AppDetailContent"
+                            Padding="24,24,24,32"
+                            Spacing="16" />
+                    </ScrollViewer>
+                    <Button
+                        x:Name="BtnCloseDetail"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top"
+                        Margin="0,12,12,0"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Padding="8"
+                        Click="BtnCloseDetail_Click">
+                        <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="{StaticResource TertiaryTextBrush}" />
+                    </Button>
+                </Grid>
+            </Border>
+        </Grid>
     </Grid>
 </Page>
