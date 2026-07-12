@@ -42,6 +42,14 @@ Status meanings:
 
 ## Recent release work
 
+### 1.1.39
+
+- Re-audited Admin Dashboard against public Silo Server commit `28c6ddc237b9a3ef0102a9ec7514e5654865a3fe` and the live WebUI.
+- Added WebUI-style client/version badges to Now Playing cards and client context to Recent Activity.
+- Corrected episode cards to show the episode title with `Sx · Ex — Series` underneath.
+- Added paused poster treatment, neutral link colors, exact Activity/Scan Line icon geometry, and richer live scan phase/progress summaries.
+- Added immediate Dashboard skeletons for stats, Now Playing, libraries, and users so navigation paints useful structure before network requests finish.
+
 ### 1.1.38
 
 - Fixed the overlapping top-right activity indicator by ensuring only the Admin shell owns that control while Admin pages are active.

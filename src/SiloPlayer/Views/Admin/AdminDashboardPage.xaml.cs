@@ -35,7 +35,7 @@ public sealed partial class AdminDashboardPage : Page
     {
         if (_loaded) return;
         _loaded = true;
-        BuildContent();
+        BuildLoadingState();
 
         // Subscribe to realtime session events for live Now Playing refresh
         try
@@ -214,6 +214,46 @@ public sealed partial class AdminDashboardPage : Page
         BuildLibraryRows();
         BuildUserRows();
         BuildActivityItems();
+    }
+
+    private void BuildLoadingState()
+    {
+        foreach (var value in new[] { StatActiveStreams, StatMovies, StatShows, StatUsers, StatStorage })
+            value.Text = "";
+        foreach (var detail in new[] { StatActiveStreamsSub, StatMoviesSub, StatShowsSub, StatUsersSub, StatStorageSub })
+            detail.Text = "";
+
+        TraktActivityCard.Visibility = Visibility.Collapsed;
+        NowPlayingSection.Visibility = Visibility.Visible;
+        StreamCardsGrid.Children.Clear();
+        StreamCardsGrid.RowDefinitions.Clear();
+        StreamCardsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        for (var column = 0; column < 2; column++)
+        {
+            var skeleton = new SiloPlayer.Controls.SkeletonBox
+            {
+                Height = 120,
+                CornerRadius = new CornerRadius(16),
+            };
+            Grid.SetColumn(skeleton, column);
+            StreamCardsGrid.Children.Add(skeleton);
+        }
+        RecentActivitySection.Visibility = Visibility.Collapsed;
+        LibrariesPanel.Children.Clear();
+        UsersPanel.Children.Clear();
+        for (var i = 0; i < 5; i++)
+        {
+            LibrariesPanel.Children.Add(new SiloPlayer.Controls.SkeletonBox
+            {
+                Height = 64,
+                CornerRadius = new CornerRadius(6),
+            });
+            UsersPanel.Children.Add(new SiloPlayer.Controls.SkeletonBox
+            {
+                Height = 42,
+                CornerRadius = new CornerRadius(6),
+            });
+        }
     }
 
     private void UpdateStats()
@@ -417,10 +457,12 @@ public sealed partial class AdminDashboardPage : Page
         string subtitleText;
         if (isEpisode)
         {
-            titleText = session.SeriesName!;
+            titleText = !string.IsNullOrWhiteSpace(session.EpisodeName)
+                ? session.EpisodeName
+                : $"S{session.SeasonNumber}E{session.EpisodeNumber}";
             subtitleText = $"S{session.SeasonNumber} \u00b7 E{session.EpisodeNumber}";
-            if (!string.IsNullOrEmpty(session.MediaTitle))
-                subtitleText += $" \u2014 {session.MediaTitle}";
+            if (!string.IsNullOrEmpty(session.SeriesName))
+                subtitleText += $" \u2014 {session.SeriesName}";
         }
         else
         {
@@ -492,6 +534,32 @@ public sealed partial class AdminDashboardPage : Page
                 VerticalAlignment = VerticalAlignment.Center
             };
         }
+
+        if (session.IsPaused && posterBorder.Child is FrameworkElement posterContent)
+        {
+            posterBorder.Child = null;
+            posterContent.Opacity = 0.45;
+            var pausedOverlay = new Grid();
+            pausedOverlay.Children.Add(posterContent);
+            pausedOverlay.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(230, 16, 23, 34)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(100, 144, 160, 181)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(7, 3, 7, 3),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = "Paused",
+                    FontSize = 10,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+                },
+            });
+            posterBorder.Child = pausedOverlay;
+        }
         Grid.SetColumn(posterBorder, 0);
 
         // Right info column
@@ -513,6 +581,8 @@ public sealed partial class AdminDashboardPage : Page
                 },
                 Padding = new Thickness(0),
                 HorizontalAlignment = HorizontalAlignment.Left,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+                Background = new SolidColorBrush(Colors.Transparent),
             };
             titleLink.Click += (_, _) =>
             {
@@ -565,6 +635,30 @@ public sealed partial class AdminDashboardPage : Page
             FontWeight = FontWeights.SemiBold
         };
         tagsRow.Children.Add(pmBadge);
+
+        var clientLabel = AdminActivityViewModel.GetSessionClientLabel(session);
+        if (!string.IsNullOrWhiteSpace(clientLabel))
+        {
+            var clientBadge = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(38, 128, 128, 128)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(96, 128, 128, 128)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(6, 2, 6, 2),
+                MaxWidth = 144,
+                Child = new TextBlock
+                {
+                    Text = clientLabel,
+                    FontSize = 9,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                    FontWeight = FontWeights.SemiBold,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                },
+            };
+            ToolTipService.SetToolTip(clientBadge, session.ClientUserAgent ?? clientLabel);
+            tagsRow.Children.Add(clientBadge);
+        }
 
         // Node badge (border-primary/10 bg-primary/5 text-primary)
         if (!string.IsNullOrEmpty(session.NodeDisplayName ?? session.ReportingNode))
@@ -754,33 +848,37 @@ public sealed partial class AdminDashboardPage : Page
             TextTrimming = TextTrimming.CharacterEllipsis
         });
         var pathCount = lib.Paths?.Count ?? 0;
-        nameStack.Children.Add(new TextBlock
+        var metadataRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        metadataRow.Children.Add(new TextBlock
         {
             Text = $"{lib.Type ?? "unknown"} \u00b7 {pathCount} {(pathCount == 1 ? "path" : "paths")}",
             FontSize = 11,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
         });
 
         var activeScans = ViewModel.ActiveScans.Where(scan => scan.LibraryId == lib.Id).ToList();
         if (activeScans.Count > 0)
         {
-            var running = activeScans.Count(scan => scan.Status == "running");
-            var queued = activeScans.Count - running;
             var leading = activeScans.FirstOrDefault(scan => scan.Status == "running") ?? activeScans[0];
-            var progress = leading.Result is { TotalFiles: > 0 } result
-                ? $" · {result.FilesProcessed:N0} / {result.TotalFiles:N0} ({Math.Clamp((int)Math.Round(result.FilesProcessed * 100d / result.TotalFiles), 0, 100)}%)"
-                : "";
-            nameStack.Children.Add(new TextBlock
+            metadataRow.Children.Add(new TextBlock
             {
-                Text = (running > 0 ? "Scanning: " : "Queued: ")
-                    + (string.IsNullOrWhiteSpace(progress)
-                        ? (running > 0 ? FormatDashboardScanMode(leading) : "Waiting for capacity")
-                        : progress.TrimStart(' ', '\u00b7'))
-                    + (activeScans.Count > 1 ? $" + {activeScans.Count - 1} more" : ""),
-                FontSize = 10,
-                Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+                Text = "\u00b7",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Color.FromArgb(90, 128, 128, 128)),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            metadataRow.Children.Add(new TextBlock
+            {
+                Text = FormatDashboardLibraryScanProgress(leading, activeScans.Count),
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Color.FromArgb(255, 252, 211, 77)),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 352,
+                VerticalAlignment = VerticalAlignment.Center,
             });
         }
+        nameStack.Children.Add(metadataRow);
 
         // One stateful scan/stop button, matching the current WebUI.
         var scanButton = new Button
@@ -851,6 +949,32 @@ public sealed partial class AdminDashboardPage : Page
         "file" => "Single file scan",
         _ => scan.Mode,
     };
+
+    private static string FormatDashboardLibraryScanProgress(AdminScanRun scan, int activeScanCount)
+    {
+        var status = scan.Status == "running" ? "Scanning" : "Queued";
+        var detail = "";
+        if (scan.Result is { } result)
+        {
+            if (result.TotalFiles > 0 && result.FilesProcessed > 0)
+            {
+                var percent = Math.Clamp(
+                    (int)Math.Round(result.FilesProcessed * 100d / result.TotalFiles), 0, 100);
+                detail = $"{(string.IsNullOrWhiteSpace(result.Message) ? "Processing files" : result.Message)} \u00b7 "
+                    + $"{result.FilesProcessed:N0} / {result.TotalFiles:N0} ({percent}%)";
+            }
+            else
+            {
+                detail = result.Message ?? "";
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(detail))
+            detail = scan.Status == "running" ? FormatDashboardScanMode(scan) : "Waiting for capacity";
+
+        var extra = activeScanCount > 1 ? $" + {activeScanCount - 1} more" : "";
+        return $"{status}: {detail}{extra}";
+    }
 
     private static Border BuildLibraryIconBox()
     {
@@ -1112,8 +1236,17 @@ public sealed partial class AdminDashboardPage : Page
 
     private FrameworkElement BuildActivityItem(AdminSession session)
     {
-        var title = !string.IsNullOrEmpty(session.MediaTitle) ? session.MediaTitle : $"File #{session.MediaFileId}";
+        var isEpisode = !string.IsNullOrWhiteSpace(session.SeriesName)
+            && session.SeasonNumber != null
+            && session.EpisodeNumber != null;
+        var title = isEpisode
+            ? (!string.IsNullOrWhiteSpace(session.EpisodeName)
+                ? session.EpisodeName
+                : $"S{session.SeasonNumber}E{session.EpisodeNumber}")
+            : (!string.IsNullOrEmpty(session.MediaTitle) ? session.MediaTitle : $"File #{session.MediaFileId}");
         var username = !string.IsNullOrEmpty(session.Username) ? session.Username : $"User #{session.UserId}";
+        var profileDisplay = session.ProfileName ?? session.ProfileId;
+        var clientLabel = AdminActivityViewModel.GetSessionClientLabel(session);
 
         // Outer container with bottom border (border-b border-border/30 py-2.5)
         var outerBorder = new Border
@@ -1170,6 +1303,16 @@ public sealed partial class AdminDashboardPage : Page
         };
         textLine.Inlines.Add(usernameRun);
 
+        if (!string.IsNullOrWhiteSpace(profileDisplay))
+        {
+            textLine.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
+            {
+                Text = $"  {profileDisplay}",
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+            });
+        }
+
         // " started watching " span (text-muted-foreground text-xs)
         var middleRun = new Microsoft.UI.Xaml.Documents.Run
         {
@@ -1197,7 +1340,11 @@ public sealed partial class AdminDashboardPage : Page
         // Line 2: timestamp (text-[10px] mt-0.5)
         var timeBlock = new TextBlock
         {
-            Text = AdminDashboardViewModel.GetTimeAgo(session.StartedAt),
+            Text = string.Join(" \u00b7 ", new[]
+            {
+                AdminDashboardViewModel.GetTimeAgo(session.StartedAt),
+                clientLabel,
+            }.Where(value => !string.IsNullOrWhiteSpace(value))),
             FontSize = 10,
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
             Margin = new Thickness(0, 2, 0, 0)
