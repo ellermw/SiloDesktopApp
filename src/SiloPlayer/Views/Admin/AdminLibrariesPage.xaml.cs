@@ -160,6 +160,7 @@ public sealed partial class AdminLibrariesPage : Page
         if (_loaded) return; // Prevent double-subscription on re-navigation
         _loaded = true;
         CacheBrushes();
+        BuildLibraryLoadingRows();
 
         try
         {
@@ -349,6 +350,54 @@ public sealed partial class AdminLibrariesPage : Page
             LibrariesPanel.Children.Add(BuildEmptyRootWarningRow(lib));
     }
 
+    private void BuildLibraryLoadingRows()
+    {
+        LibrariesPanel.Children.Clear();
+        EmptyState.Visibility = Visibility.Collapsed;
+
+        // Match the WebUI table skeleton so navigation never presents a large
+        // empty body while the primary libraries request is in flight.
+        for (var i = 0; i < 6; i++)
+        {
+            var row = new Grid
+            {
+                Height = 46,
+                Padding = new Thickness(12, 8, 12, 8),
+                ColumnSpacing = 16,
+            };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) });
+
+            foreach (var (column, width) in new[] { (1, 112d), (2, 210d), (3, 54d), (4, 62d), (5, 92d), (6, 132d) })
+            {
+                var bar = new Border
+                {
+                    Width = width,
+                    Height = column is 3 or 4 ? 18 : 10,
+                    CornerRadius = new CornerRadius(column is 3 or 4 ? 7 : 5),
+                    Background = _surfaceBrush,
+                    Opacity = 0.72,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                Grid.SetColumn(bar, column);
+                row.Children.Add(bar);
+            }
+
+            LibrariesPanel.Children.Add(new Border
+            {
+                Child = row,
+                BorderBrush = _borderBrush,
+                BorderThickness = new Thickness(0, 0, 0, 1),
+            });
+        }
+    }
+
     private FrameworkElement BuildLibraryRow(Library lib)
     {
         var row = new Grid
@@ -533,7 +582,7 @@ public sealed partial class AdminLibrariesPage : Page
         var capturedLib = lib;
 
         // Check mount
-        var mountBtn = MakeSymbolButton28(Symbol.Repair, "Check mount");
+        var mountBtn = MakeSymbolButton28(Symbol.Repair, "Verify Mounts");
         mountBtn.Click += async (_, _) =>
         {
             await ViewModel.CheckMountCommand.ExecuteAsync(capturedLib.Id);
@@ -542,7 +591,7 @@ public sealed partial class AdminLibrariesPage : Page
 
         // Scan/stop is one stateful control, matching the current WebUI.
         var scanBtn = MakeSymbolButton28(
-            libScans.Count > 0 ? Symbol.Stop : Symbol.SyncFolder,
+            libScans.Count > 0 ? Symbol.Stop : Symbol.Refresh,
             libScans.Count > 0 ? "Stop Library Scans" : "Scan Library",
             libScans.Count > 0 ? DestructiveColor : null);
         scanBtn.Click += async (_, _) =>
@@ -560,7 +609,7 @@ public sealed partial class AdminLibrariesPage : Page
         var activeRefreshJob = FindActiveRefreshJob(lib.Id);
         // Refresh/stop is one stateful control, matching the current WebUI.
         var refreshBtn = MakeSymbolButton28(
-            activeRefreshJob != null ? Symbol.Stop : Symbol.Refresh,
+            activeRefreshJob != null ? Symbol.Stop : Symbol.Save,
             activeRefreshJob != null ? "Stop Metadata Refresh" : "Rescan Metadata",
             activeRefreshJob != null ? DestructiveColor : null);
         refreshBtn.Click += async (_, _) =>
@@ -576,14 +625,6 @@ public sealed partial class AdminLibrariesPage : Page
         actionsPanel.Children.Add(refreshBtn);
         actionsPanel.Children.Add(mountBtn);
 
-        // Empty-root confirm
-        if (lib.ScanWarningCode == "empty_root")
-        {
-            var confirmCleanupBtn = MakeIconButton28("\uE74D", "Confirm empty root cleanup", DestructiveColor);
-            confirmCleanupBtn.Click += async (_, _) => await OpenConfirmEmptyRootDialogAsync(capturedLib);
-            actionsPanel.Children.Add(confirmCleanupBtn);
-        }
-
         // Edit
         var editBtn = MakeSymbolButton28(Symbol.Edit, "Edit library");
         editBtn.Click += async (_, _) => await OpenEditDialogAsync(capturedLib);
@@ -593,6 +634,14 @@ public sealed partial class AdminLibrariesPage : Page
         var deleteBtn = MakeSymbolButton28(Symbol.Delete, "Delete library");
         deleteBtn.Click += async (_, _) => await OpenDeleteDialogAsync(capturedLib);
         actionsPanel.Children.Add(deleteBtn);
+
+        // The current WebUI places the guarded destructive confirmation last.
+        if (lib.ScanWarningCode == "empty_root")
+        {
+            var confirmCleanupBtn = MakeIconButton28("\uE74D", "Confirm deletion for the next empty-root scan", DestructiveColor);
+            confirmCleanupBtn.Click += async (_, _) => await OpenConfirmEmptyRootDialogAsync(capturedLib);
+            actionsPanel.Children.Add(confirmCleanupBtn);
+        }
 
         actionsWrapper.Children.Add(actionsPanel);
 
@@ -2409,23 +2458,18 @@ public sealed partial class AdminLibrariesPage : Page
     private async Task OpenCreateDialogAsync()
     {
         var (formContent, getBody, getProviderChain, getPosterFile) = BuildLibraryForm(null);
-
-        var dialog = new ContentDialog
+        var (dialog, submitButton, cancelButton) = BuildLibraryEditorDialog(false, formContent);
+        var shouldSubmit = false;
+        submitButton.Click += (_, _) =>
         {
-            Title = BuildLibraryDialogTitle(false),
-            PrimaryButtonText = "Create Library",
-            CloseButtonText = "Cancel",
-            XamlRoot = this.XamlRoot,
-            Content = formContent,
-            DefaultButton = ContentDialogButton.Primary
+            if (getBody() == null) return;
+            shouldSubmit = true;
+            dialog.Hide();
         };
-        dialog.PrimaryButtonClick += (_, args) =>
-        {
-            if (getBody() == null) args.Cancel = true;
-        };
+        cancelButton.Click += (_, _) => dialog.Hide();
 
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary)
+        await dialog.ShowAsync();
+        if (shouldSubmit)
         {
             var body = getBody();
             if (body == null) return;
@@ -2463,23 +2507,18 @@ public sealed partial class AdminLibrariesPage : Page
     private async Task OpenEditDialogAsync(Library lib)
     {
         var (formContent, getBody, getProviderChain, getPosterFile) = BuildLibraryForm(lib);
-
-        var dialog = new ContentDialog
+        var (dialog, submitButton, cancelButton) = BuildLibraryEditorDialog(true, formContent);
+        var shouldSubmit = false;
+        submitButton.Click += (_, _) =>
         {
-            Title = BuildLibraryDialogTitle(true),
-            PrimaryButtonText = "Save Changes",
-            CloseButtonText = "Cancel",
-            XamlRoot = this.XamlRoot,
-            Content = formContent,
-            DefaultButton = ContentDialogButton.Primary
+            if (getBody() == null) return;
+            shouldSubmit = true;
+            dialog.Hide();
         };
-        dialog.PrimaryButtonClick += (_, args) =>
-        {
-            if (getBody() == null) args.Cancel = true;
-        };
+        cancelButton.Click += (_, _) => dialog.Hide();
 
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary)
+        await dialog.ShowAsync();
+        if (shouldSubmit)
         {
             var body = getBody();
             if (body == null) return;
@@ -2504,6 +2543,73 @@ public sealed partial class AdminLibrariesPage : Page
             }
             catch { }
         }
+    }
+
+    private (ContentDialog Dialog, Button SubmitButton, Button CancelButton) BuildLibraryEditorDialog(
+        bool editing, FrameworkElement formContent)
+    {
+        var dialog = new ContentDialog { XamlRoot = XamlRoot };
+
+        // WinUI's stock ContentDialog caps itself at roughly 548 px.  The
+        // current WebUI editor is `sm:max-w-3xl` (768 px), with a 176 px
+        // navigation rail.  Override both the local properties and theme
+        // resources so the presenter cannot squeeze the form into slivers.
+        dialog.Width = 768;
+        dialog.MinWidth = 768;
+        dialog.MaxWidth = 768;
+        dialog.Resources["ContentDialogMinWidth"] = 768d;
+        dialog.Resources["ContentDialogMaxWidth"] = 768d;
+
+        var shell = new Grid { Width = 720 };
+        shell.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        shell.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        shell.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var header = new Border
+        {
+            BorderBrush = _borderBrush,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Padding = new Thickness(0, 0, 0, 16),
+            Child = BuildLibraryDialogTitle(editing),
+        };
+        Grid.SetRow(header, 0);
+        shell.Children.Add(header);
+
+        Grid.SetRow(formContent, 1);
+        shell.Children.Add(formContent);
+
+        var cancelButton = new Button
+        {
+            Content = "Cancel",
+            Padding = new Thickness(14, 7, 14, 7),
+            Style = (Style)Application.Current.Resources["SecondaryButtonStyle"],
+        };
+        var submitButton = new Button
+        {
+            Content = editing ? "Save Changes" : "Create Library",
+            Padding = new Thickness(14, 7, 14, 7),
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+        };
+        var footerButtons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        footerButtons.Children.Add(cancelButton);
+        footerButtons.Children.Add(submitButton);
+        var footer = new Border
+        {
+            BorderBrush = _borderBrush,
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(0, 16, 0, 0),
+            Child = footerButtons,
+        };
+        Grid.SetRow(footer, 2);
+        shell.Children.Add(footer);
+        dialog.Content = shell;
+
+        return (dialog, submitButton, cancelButton);
     }
 
     // ===================================================================
@@ -2768,6 +2874,7 @@ public sealed partial class AdminLibrariesPage : Page
             {
                 Tag = choice.Value,
                 Content = content,
+                MinWidth = 0,
                 MinHeight = 62,
                 Padding = new Thickness(8, 10, 8, 10),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -3279,20 +3386,24 @@ public sealed partial class AdminLibrariesPage : Page
         AddNavButton("Metadata", "\uE8B7", metadataPanel);
         AddNavButton("Advanced", "\uE9F5", advancedPanel);
         SelectSection(generalPanel);
-        var form = new Grid { Width = 720, Height = 520 };
+        var form = new Grid
+        {
+            Width = 720,
+            Height = 480,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
         form.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(176) });
         form.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Grid.SetColumn(nav, 0); Grid.SetColumn(sectionScroll, 1);
         form.Children.Add(nav);
-        form.Children.Add(new Border { BorderBrush = _borderBrush, BorderThickness = new Thickness(1, 0, 0, 0), Child = sectionScroll });
-
-        // Keep the editor bounded like the WebUI's min(40rem, viewport) dialog.
-        var scrollViewer = new ScrollViewer
+        var sectionBorder = new Border
         {
-            Content = form,
-            MaxHeight = 500,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            BorderBrush = _borderBrush,
+            BorderThickness = new Thickness(1, 0, 0, 0),
+            Child = sectionScroll,
         };
+        Grid.SetColumn(sectionBorder, 1);
+        form.Children.Add(sectionBorder);
 
         // GetBody func
         object? GetBody()
@@ -3359,7 +3470,7 @@ public sealed partial class AdminLibrariesPage : Page
 
         (byte[]? Bytes, string? Name, string? ContentType) GetPosterFile() => (posterFileBytes, posterFileName, posterContentType);
 
-        return (scrollViewer, GetBody, GetProviderChain, GetPosterFile);
+        return (form, GetBody, GetProviderChain, GetPosterFile);
     }
 
     // ===================================================================

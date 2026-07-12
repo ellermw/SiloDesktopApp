@@ -643,10 +643,10 @@ public class AdminApi(SiloApiClient client)
         => client.DeleteAsync($"/api/v1/libraries/{libraryId}/poster", ct);
 
     public Task<List<StaleMediaId>> GetStaleIdsAsync(CancellationToken ct = default)
-        => client.GetAsync<List<StaleMediaId>>("/api/v1/admin/libraries/stale-ids", ct);
+        => client.GetAsync<List<StaleMediaId>>("/api/v1/libraries/stale-ids", ct);
 
     public Task RematchStaleIdAsync(string contentId, CancellationToken ct = default)
-        => client.PostNoContentAsync($"/api/v1/admin/libraries/stale-ids/{Uri.EscapeDataString(contentId)}/rematch", new { }, ct);
+        => client.PostNoContentAsync($"/api/v1/libraries/stale-ids/{Uri.EscapeDataString(contentId)}/rematch", new { }, ct);
 
     public Task<UnmatchedLibraryItemsResponse> GetUnmatchedItemsAsync(int limit = 10, int offset = 0, string? search = null, CancellationToken ct = default)
     {

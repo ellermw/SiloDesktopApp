@@ -6,7 +6,7 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.37**](https://transfers.taverncdn.com/GuUTiXRvpq/SiloInstaller-1.1.37-Setup.exe) — Windows 10/11 x64 installer, available for 180 days.
+[**Download the latest Silo Desktop Player**](https://github.com/ellermw/SiloDesktopApp/releases/latest/download/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -41,6 +41,14 @@ Status meanings:
 | Watch Party | Partial | Join/create, room membership, suggestions, and realtime foundations exist. Content search, series drill-down, spotlight/now-playing UI, auto-start, and complete synchronization remain. |
 
 ## Recent release work
+
+### 1.1.38
+
+- Fixed the overlapping top-right activity indicator by ensuring only the Admin shell owns that control while Admin pages are active.
+- Restored the current WebUI's Stale External IDs diagnostic by updating the desktop client to the current public Silo API route.
+- Prevented the Libraries table from appearing blank during its initial request by rendering WebUI-style loading rows immediately.
+- Corrected the Add/Edit Library editor's 768 px layout, section rail, type-card grid, and right-aligned footer actions.
+- Aligned library-row scan, metadata refresh, mount verification, edit, delete, and guarded empty-root actions with the current WebUI order and labels.
 
 ### 1.1.37
 

@@ -86,16 +86,19 @@ public sealed partial class MainWindow : Window
             // otherwise the user sees two navigation panes side-by-side
             // (main nav + AdminShellPage's own admin nav).
             NavView.IsPaneVisible = false;
+            MainServerActivityButton.Visibility = Visibility.Collapsed;
             _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminActivityPage));
         };
         MainServerActivityButton.OnViewTasks = () =>
         {
             NavView.IsPaneVisible = false;
+            MainServerActivityButton.Visibility = Visibility.Collapsed;
             _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminTasksPage));
         };
         MainServerActivityButton.OnViewScans = () =>
         {
             NavView.IsPaneVisible = false;
+            MainServerActivityButton.Visibility = Visibility.Collapsed;
             _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminLibrariesPage));
         };
 
@@ -615,6 +618,9 @@ public sealed partial class MainWindow : Window
     public void RestoreMainPane()
     {
         NavView.IsPaneVisible = true;
+        MainServerActivityButton.Visibility = _authService.CurrentUser?.Role == "admin"
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     private void OnPlayerStateChanged(PlayerState state)
@@ -962,6 +968,7 @@ public sealed partial class MainWindow : Window
     private void Admin_Click(object sender, RoutedEventArgs e)
     {
         NavView.IsPaneVisible = false;
+        MainServerActivityButton.Visibility = Visibility.Collapsed;
         _navigationService.Navigate<Views.Admin.AdminShellPage>();
     }
 
