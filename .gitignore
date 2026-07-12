@@ -43,6 +43,12 @@ Desktop.ini
 installer/deps/
 installer/output/
 installer/publish/
+installer/publish-*/
+
+# Local Codex/remote workspaces and caches
+.codex-*/
+remote-work/
+__pycache__/
 
 # Diagnostic / intermediate publish directories
 publish_test*

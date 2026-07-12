@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="SiloPlayer.Controls.HeroCarousel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:SiloPlayer.Controls"
+    mc:Ignorable="d"
+    IsTabStop="True"
+    KeyDown="OnKeyDown"
+    Loaded="OnLoaded"
+    Unloaded="OnUnloaded">
+
+    <!-- Height set in code-behind to 72% of window (matching web UI min-h-[72dvh]) -->
+    <Grid
+        x:Name="RootGrid"
+        PointerEntered="RootGrid_PointerEntered"
+        PointerExited="RootGrid_PointerExited">
+        <!-- Two stacked backdrop layers for the crossfade transition. The
+             "active" one is the one currently fully visible; when a new
+             item is shown we load into the inactive layer then animate the
+             opacities in opposite directions. -->
+        <controls:BackdropImage
+            x:Name="BackdropImageA"
+            AnchorY="0.2" />
+        <controls:BackdropImage
+            x:Name="BackdropImageB"
+            AnchorY="0.2"
+            Opacity="0" />
+
+        <!-- Brightness overlay: web uses brightness(0.78), so ~22% darkening -->
+        <Border Background="#101722" Opacity="0.22" />
+
+        <!-- Bottom-to-top gradient (hero-gradient) -->
+        <Border>
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="Transparent" Offset="0.0" />
+                    <GradientStop Color="#33101722" Offset="0.25" />
+                    <GradientStop Color="#8C101722" Offset="0.5" />
+                    <GradientStop Color="#EB101722" Offset="0.8" />
+                    <GradientStop Color="#101722" Offset="1.0" />
+                </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+
+        <!-- Left-to-right gradient (hero-gradient-left) -->
+        <Border>
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                    <GradientStop Color="#101722" Offset="0.0" />
+                    <GradientStop Color="#CC101722" Offset="0.2" />
+                    <GradientStop Color="#66101722" Offset="0.4" />
+                    <GradientStop Color="Transparent" Offset="0.6" />
+                </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+
+        <!-- Vignette: combined left + bottom gradient -->
+        <Border>
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,1" EndPoint="1,0">
+                    <GradientStop Color="#66101722" Offset="0.0" />
+                    <GradientStop Color="#33101722" Offset="0.3" />
+                    <GradientStop Color="Transparent" Offset="0.6" />
+                </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+
+        <!-- Content overlay -->
+        <StackPanel
+            VerticalAlignment="Bottom"
+            HorizontalAlignment="Left"
+            Margin="48,0,0,60"
+            MaxWidth="600"
+            Spacing="8">
+
+            <!-- Stacked title: a dark "shadow" copy behind the white text
+                 to approximate a CSS text-shadow (WinUI TextBlock has no
+                 built-in shadow). Offset 1px down/right, pure black, 60%
+                 opacity — enough to keep the title readable over bright
+                 backdrops without looking like a drop shadow. -->
+            <!-- Eyebrow: "FEATURED — No. 01" -->
+            <TextBlock
+                x:Name="HeroEyebrow"
+                FontSize="11"
+                FontWeight="SemiBold"
+                CharacterSpacing="200"
+                Foreground="{StaticResource TertiaryTextBrush}"
+                Margin="0,0,0,4" />
+
+            <Grid>
+                <TextBlock
+                    x:Name="HeroTitleShadow"
+                    Style="{StaticResource DisplayTextStyle}"
+                    FontSize="48"
+                    TextWrapping="Wrap"
+                    MaxLines="2"
+                    Foreground="#99000000"
+                    Margin="1,1,0,0"
+                    IsHitTestVisible="False" />
+                <TextBlock
+                    x:Name="HeroTitle"
+                    Style="{StaticResource DisplayTextStyle}"
+                    FontSize="48"
+                    TextWrapping="Wrap"
+                    MaxLines="2" />
+            </Grid>
+
+            <!-- Metadata pills row: year · IMDb badge · first 3 genres.
+                 Dark-glass pills matching webui .metadata-badge pattern.
+                 Populated in code-behind ShowCurrentItem(). -->
+            <StackPanel x:Name="HeroMetaPillsRow" Orientation="Horizontal" Spacing="8" />
+
+            <TextBlock x:Name="HeroOverview"
+                Style="{StaticResource SecondaryTextStyle}"
+                TextWrapping="Wrap" MaxLines="3"
+                TextTrimming="CharacterEllipsis" />
+
+            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,8,0,0">
+                <!-- Primary CTA: Play (pill-primary) -->
+                <Button x:Name="PlayButton" Style="{StaticResource AccentButtonStyle}" Padding="20,10"
+                        CornerRadius="20"
+                        Click="PlayButton_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE768;" FontSize="16" FontFamily="{ThemeResource SymbolThemeFontFamily}" />
+                        <TextBlock Text="Play" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <!-- Secondary CTA: More Info (pill-glass) -->
+                <Button x:Name="MoreInfoButton" Padding="20,10"
+                        CornerRadius="20"
+                        Background="#44FFFFFF" BorderThickness="1"
+                        BorderBrush="#33FFFFFF"
+                        Click="PlayButton_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE946;" FontSize="14" Foreground="White" />
+                        <TextBlock Text="More Info" Foreground="White" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </StackPanel>
+
+        <!-- Nav arrows — hover-reveal (web: lg:opacity-0 lg:group-hover:opacity-100).
+             Start invisible; PointerEntered on RootGrid animates to full. -->
+        <Button x:Name="PrevButton" Style="{StaticResource GhostButtonStyle}"
+            VerticalAlignment="Center" HorizontalAlignment="Left"
+            Margin="8,0,0,0" Width="40" Height="40"
+            Click="PrevButton_Click" Opacity="0">
+            <FontIcon Glyph="&#xE76B;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
+        </Button>
+        <Button x:Name="NextButton" Style="{StaticResource GhostButtonStyle}"
+            VerticalAlignment="Center" HorizontalAlignment="Right"
+            Margin="0,0,8,0" Width="40" Height="40"
+            Click="NextButton_Click" Opacity="0">
+            <FontIcon Glyph="&#xE76C;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
+        </Button>
+
+        <!-- Slide counter + progress rail (bottom-right, replaces dots) -->
+        <StackPanel
+            x:Name="SlideControlsPanel"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Bottom"
+            Margin="0,0,24,20"
+            Spacing="8">
+            <!-- Slide counter: "01 / 04" monospace -->
+            <TextBlock
+                x:Name="SlideCounterText"
+                FontSize="11"
+                FontWeight="Medium"
+                FontFamily="Consolas"
+                CharacterSpacing="120"
+                Foreground="#AAFFFFFF"
+                HorizontalAlignment="Right" />
+            <!-- Progress rail: animated fill bar (8s duration) -->
+            <Border
+                Width="100"
+                Height="3"
+                CornerRadius="2"
+                Background="#33FFFFFF">
+                <Border
+                    x:Name="ProgressRailFill"
+                    HorizontalAlignment="Left"
+                    Width="0"
+                    Height="3"
+                    CornerRadius="2"
+                    Background="{StaticResource AccentBrush}" />
+            </Border>
+        </StackPanel>
+
+        <!-- Dots (hidden, kept for backward compat) -->
+        <StackPanel x:Name="DotsPanel" Orientation="Horizontal"
+            HorizontalAlignment="Center" VerticalAlignment="Bottom"
+            Margin="0,0,0,12" Spacing="8" Visibility="Collapsed" />
+    </Grid>
+</UserControl>

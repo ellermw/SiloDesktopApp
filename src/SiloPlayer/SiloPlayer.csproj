@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+        <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+        <OutputType>WinExe</OutputType>
+
+        <!-- WinUI 3 -->
+        <UseWinUI>true</UseWinUI>
+        <EnableMsixTooling>true</EnableMsixTooling>
+        <WindowsPackageType>None</WindowsPackageType>
+
+        <!-- Project Options -->
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <LangVersion>latest</LangVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <RootNamespace>SiloPlayer</RootNamespace>
+        <AssemblyName>SiloPlayer</AssemblyName>
+
+        <!-- Publishing — force reflection-based JSON serialization in Release/publish builds.
+             Without this, .NET 8 self-contained publish disables reflection for System.Text.Json
+             and all POCO serialization produces empty {} -->
+        <PublishTrimmed>false</PublishTrimmed>
+        <PublishSingleFile>false</PublishSingleFile>
+        <PublishReadyToRun>false</PublishReadyToRun>
+        <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+        <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+
+        <!-- Version -->
+        <Version>1.1.28</Version>
+        <FileVersion>1.1.28.0</FileVersion>
+        <AssemblyVersion>1.1.28.0</AssemblyVersion>
+
+        <!-- App Options -->
+        <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+        <UseRidGraph>true</UseRidGraph>
+        <Platforms>x86;x64;ARM64</Platforms>
+        <ApplicationManifest>app.manifest</ApplicationManifest>
+        <PublishProfile>win-$(Platform).pubxml</PublishProfile>
+        <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetFrameworkVersion('$(TargetFramework)')) &gt;= 8">win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+        <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetFrameworkVersion('$(TargetFramework)')) &lt; 8">win10-x86;win10-x64;win10-arm64</RuntimeIdentifiers>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Content Include="Assets\SplashScreen.scale-200.png" />
+        <Content Include="Assets\LockScreenLogo.scale-200.png" />
+        <Content Include="Assets\Square150x150Logo.scale-200.png" />
+        <Content Include="Assets\Square44x44Logo.scale-200.png" />
+        <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
+        <Content Include="Assets\silo-icon-1024.png">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="Assets\silo-wordmark-sidebar.png">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="Assets\silo-mark-transparent.png">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="Assets\app.ico">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="Assets\StoreLogo.png" />
+        <Content Include="Assets\Wide310x150Logo.scale-200.png" />
+        <Content Include="Assets\Fonts\*.ttf" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+        <PackageReference Include="CommunityToolkit.WinUI.Controls.Primitives" Version="8.2.251219" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.5" />
+        <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
+        <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003" />
+        <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7705" />
+        <PackageReference Include="SharpCompress" Version="0.49.1" />
+
+        <Manifest Include="$(ApplicationManifest)" />
+    </ItemGroup>
+
+    <!-- 
+        Defining the "Msix" ProjectCapability here allows the Single-project MSIX Packaging
+        Tools extension to be activated for this project even if the Windows App SDK Nuget
+        package has not yet been restored.
+    -->
+    <ItemGroup Condition="'$(DisableMsixProjectCapabilityAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
+        <ProjectCapability Include="Msix" />
+    </ItemGroup>
+    <ItemGroup>
+      <ProjectReference Include="..\SiloPlayer.Core\SiloPlayer.Core.csproj" />
+      <ProjectReference Include="..\SiloPlayer.Player\SiloPlayer.Player.csproj" />
+    </ItemGroup>
+
+    <!-- Prevent the ILC/trimmer from stripping assemblies needed at runtime -->
+    <ItemGroup>
+      <TrimmerRootAssembly Include="SiloPlayer.Core" />
+      <TrimmerRootAssembly Include="System.Net.WebSockets" />
+      <TrimmerRootAssembly Include="System.Net.WebSockets.Client" />
+    </ItemGroup>
+
+    <!-- 
+        Defining the "HasPackageAndPublishMenuAddedByProject" property here allows the Solution 
+        Explorer "Package and Publish" context menu entry to be enabled for this project even if 
+        the Windows App SDK Nuget package has not yet been restored.
+    -->
+    <PropertyGroup Condition="'$(DisableHasPackageAndPublishMenuAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
+        <HasPackageAndPublishMenu>true</HasPackageAndPublishMenu>
+    </PropertyGroup>
+</Project>

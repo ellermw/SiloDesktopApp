@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "SiloPlayer (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "SiloPlayer (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

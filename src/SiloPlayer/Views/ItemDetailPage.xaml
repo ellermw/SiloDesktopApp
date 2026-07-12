@@ -1,0 +1,651 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="SiloPlayer.Views.ItemDetailPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:SiloPlayer.Controls"
+    xmlns:converters="using:SiloPlayer.Converters"
+    mc:Ignorable="d"
+    Background="{StaticResource AppBackgroundBrush}">
+
+    <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
+        <converters:NullToVisibilityConverter x:Key="NullToVis" />
+    </Page.Resources>
+
+    <Grid>
+        <!-- F6: Skeleton placeholder — shown while ViewModel.IsLoading is
+             true. Approximates the hero backdrop + title + metadata row
+             layout so the user sees page structure immediately instead of
+             a blank spinner. Real content fades in when loading finishes. -->
+        <StackPanel
+            x:Name="DetailSkeleton"
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+            Spacing="20"
+            Padding="40,40,40,0">
+            <!-- Backdrop skeleton -->
+            <controls:SkeletonBackdrop Height="360" HorizontalAlignment="Stretch" />
+            <!-- Title line -->
+            <controls:SkeletonText Width="420" Height="36" />
+            <!-- Metadata row -->
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <controls:SkeletonText Width="60" Height="16" />
+                <controls:SkeletonText Width="50" Height="16" />
+                <controls:SkeletonText Width="80" Height="16" />
+                <controls:SkeletonText Width="70" Height="16" />
+            </StackPanel>
+            <!-- Overview lines -->
+            <StackPanel Spacing="8">
+                <controls:SkeletonText Width="700" Height="14" />
+                <controls:SkeletonText Width="680" Height="14" />
+                <controls:SkeletonText Width="540" Height="14" />
+            </StackPanel>
+        </StackPanel>
+
+        <!-- Error -->
+        <TextBlock
+            Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
+            Foreground="{StaticResource ErrorBrush}"
+            Style="{StaticResource BodyTextStyle}"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center" />
+
+        <!-- Content -->
+        <ScrollViewer
+            x:Name="ContentScroll"
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
+
+            <StackPanel>
+                <!-- Backdrop hero area: 60% of viewport height -->
+                <Grid x:Name="BackdropContainer" MinHeight="300">
+                    <controls:BackdropImage
+                        x:Name="BackdropImage"
+                        AnchorY="0.2"
+                        EnableKenBurns="True" />
+
+                    <!-- Brightness overlay: web uses brightness(0.4), so ~60% darkening -->
+                    <Border Background="#101722" Opacity="0.6" />
+
+                    <!-- Bottom-to-top gradient (hero-gradient) -->
+                    <Border>
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Color="Transparent" Offset="0.0" />
+                                <GradientStop Color="#33101722" Offset="0.25" />
+                                <GradientStop Color="#8C101722" Offset="0.5" />
+                                <GradientStop Color="#EB101722" Offset="0.8" />
+                                <GradientStop Color="#101722" Offset="1.0" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <!-- Left-to-right gradient (hero-gradient-left) -->
+                    <Border>
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                <GradientStop Color="#101722" Offset="0.0" />
+                                <GradientStop Color="#CC101722" Offset="0.2" />
+                                <GradientStop Color="#66101722" Offset="0.4" />
+                                <GradientStop Color="Transparent" Offset="0.6" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <!-- Vignette: combined left + bottom gradient -->
+                    <Border>
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,1" EndPoint="1,0">
+                                <GradientStop Color="#66101722" Offset="0.0" />
+                                <GradientStop Color="#33101722" Offset="0.3" />
+                                <GradientStop Color="Transparent" Offset="0.6" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <!-- Ambient glow: radial gradient from bottom tinted by dominant backdrop color.
+                         Color is extracted in code-behind after backdrop loads. -->
+                    <Border x:Name="AmbientGlowBorder" Opacity="0.08" IsHitTestVisible="False">
+                        <Border.Background>
+                            <RadialGradientBrush Center="0.5,1.0" RadiusX="0.8" RadiusY="0.6">
+                                <GradientStop x:Name="AmbientGlowColor" Color="#78AEFC" Offset="0.0" />
+                                <GradientStop Color="Transparent" Offset="1.0" />
+                            </RadialGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <!-- Back button -->
+                    <Button
+                        x:Name="BackButton"
+                        Style="{StaticResource GhostButtonStyle}"
+                        VerticalAlignment="Top"
+                        HorizontalAlignment="Left"
+                        Margin="16,16,0,0"
+                        Click="BackButton_Click"
+                        Padding="8,6">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE72B;" FontSize="16" Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock Text="Back" Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Hero content row: 170×255 poster column on the left,
+                         title/metadata column on the right. Mirrors the
+                         webui DetailHero layout (lib/detailHero.tsx). -->
+                    <Grid
+                        VerticalAlignment="Bottom"
+                        HorizontalAlignment="Left"
+                        Margin="48,0,48,24"
+                        ColumnSpacing="24">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Portrait poster column -->
+                        <Border
+                            x:Name="HeroPosterContainer"
+                            Grid.Column="0"
+                            Width="170"
+                            Height="255"
+                            CornerRadius="12"
+                            Background="{StaticResource SurfaceRaisedBrush}"
+                            VerticalAlignment="Bottom"
+                            Visibility="Collapsed">
+                            <Image
+                                x:Name="HeroPosterImage"
+                                Stretch="UniformToFill" />
+                        </Border>
+
+                        <!-- Title / metadata column -->
+                        <StackPanel
+                            Grid.Column="1"
+                            VerticalAlignment="Bottom"
+                            MaxWidth="720"
+                            Spacing="6">
+
+                            <!-- Parent navigation breadcrumbs (episodes: Series › Season › Episode).
+                                 Populated in code-behind when the item is an episode. -->
+                            <StackPanel
+                                x:Name="BreadcrumbPanel"
+                                Orientation="Horizontal"
+                                Spacing="0"
+                                Visibility="Collapsed" />
+
+                            <!-- Studio/network kicker (web: mb-2 text-xs font-semibold
+                                 uppercase tracking-[0.16em]). Shown above the title when
+                                 the item has a studio or network. -->
+                            <TextBlock
+                                x:Name="StudioKickerText"
+                                FontSize="11"
+                                FontWeight="SemiBold"
+                                CharacterSpacing="160"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                Visibility="Collapsed" />
+
+                            <!-- Logo image — when LogoUrl is present, replaces the
+                                 plain title with the item's stylized logo (web parity).
+                                 Falls back to TitleText when no logo is available. -->
+                            <Image
+                                x:Name="HeroLogoImage"
+                                Stretch="Uniform"
+                                HorizontalAlignment="Left"
+                                MaxWidth="420"
+                                MaxHeight="120"
+                                Visibility="Collapsed" />
+
+                            <TextBlock
+                                x:Name="TitleText"
+                                Style="{StaticResource DisplayTextStyle}"
+                                FontSize="36"
+                                TextWrapping="Wrap"
+                                MaxLines="2" />
+
+                            <TextBlock
+                                x:Name="TaglineText"
+                                Style="{StaticResource SecondaryTextStyle}"
+                                FontStyle="Italic"
+                                TextWrapping="Wrap"
+                                MaxLines="2" />
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
+                <!-- Detail content below backdrop -->
+                <StackPanel Padding="48,0,48,48" Spacing="16">
+
+                    <!-- Metadata row: year · content rating pill · runtime · TMDB score + quality badges -->
+                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <StackPanel x:Name="MetaPanel" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
+                            <TextBlock x:Name="YearText" Foreground="{StaticResource SecondaryTextBrush}" FontSize="15" VerticalAlignment="Center" />
+                            <TextBlock x:Name="MetaDot1" Text=" · " Foreground="{StaticResource TertiaryTextBrush}" FontSize="15" VerticalAlignment="Center" Visibility="Collapsed" />
+                            <!-- Content rating in a pill badge -->
+                            <Border x:Name="ContentRatingBadge" CornerRadius="4" Padding="8,2,8,2"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                    VerticalAlignment="Center" Visibility="Collapsed">
+                                <TextBlock x:Name="ContentRatingText" FontSize="12" FontWeight="SemiBold"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Border>
+                            <TextBlock x:Name="MetaDot2" Text=" · " Foreground="{StaticResource TertiaryTextBrush}" FontSize="15" VerticalAlignment="Center" Visibility="Collapsed" />
+                            <TextBlock x:Name="RuntimeText" Foreground="{StaticResource SecondaryTextBrush}" FontSize="15" VerticalAlignment="Center" />
+                        </StackPanel>
+
+                        <!-- Scores: IMDb / TMDB / RT inline with metadata -->
+                        <StackPanel x:Name="ScoresPanel" Orientation="Horizontal" Spacing="16" Visibility="Collapsed" VerticalAlignment="Center">
+                            <TextBlock Text=" · " Foreground="{StaticResource TertiaryTextBrush}" FontSize="15" VerticalAlignment="Center" />
+                            <!-- IMDb score -->
+                            <StackPanel x:Name="ImdbScorePanel" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
+                                <TextBlock Text="IMDb" FontSize="12" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" />
+                                <TextBlock x:Name="ImdbScoreText" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="/10" FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
+                            </StackPanel>
+
+                            <!-- TMDB score -->
+                            <StackPanel x:Name="TmdbScorePanel" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
+                                <FontIcon Glyph="&#xE735;" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                                <TextBlock x:Name="TmdbScoreText" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="/10" FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
+                            </StackPanel>
+
+                            <!-- RT Critic score -->
+                            <StackPanel x:Name="RtCriticPanel" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
+                                <TextBlock Text="&#x1F345;" FontSize="13" VerticalAlignment="Center" />
+                                <TextBlock x:Name="RtCriticText" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                            </StackPanel>
+
+                            <!-- RT Audience score -->
+                            <StackPanel x:Name="RtAudiencePanel" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
+                                <TextBlock Text="&#x1F37F;" FontSize="13" VerticalAlignment="Center" />
+                                <TextBlock x:Name="RtAudienceText" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- Quality badges (populated in code-behind from version info) -->
+                        <StackPanel x:Name="QualityBadgesPanel" Orientation="Horizontal" Spacing="6"
+                                    VerticalAlignment="Center" Margin="4,0,0,0" Visibility="Collapsed" />
+                    </StackPanel>
+
+                    <!-- Crew line in hero: "Directed by X · Written by Y" (webui: HeroCrewLine) -->
+                    <TextBlock x:Name="HeroCrewLine" FontSize="13"
+                               Foreground="{StaticResource SecondaryTextBrush}"
+                               TextWrapping="Wrap" MaxWidth="600"
+                               Visibility="Collapsed" />
+
+                    <!-- Genres: styled badge pills (webui: flex-wrap gap-1.5) -->
+                    <StackPanel
+                        x:Name="GenresBadgesPanel"
+                        Orientation="Horizontal"
+                        Spacing="6"
+                        Visibility="Collapsed" />
+                    <!-- Hidden TextBlock kept for code-behind compat -->
+                    <TextBlock x:Name="GenresText" Visibility="Collapsed" />
+
+                    <!-- Action buttons row -->
+                    <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+
+                        <!-- Split play button: [Play / Resume ... | dropdown] -->
+                        <Grid x:Name="SplitPlayButton" CornerRadius="22" HorizontalAlignment="Left">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Accent background spanning both columns -->
+                            <Border Grid.ColumnSpan="2" Background="{StaticResource AccentBrush}" CornerRadius="22" />
+
+                            <!-- Progress bar overlay -->
+                            <Border x:Name="PlayProgressBar" Grid.ColumnSpan="2" CornerRadius="22"
+                                    HorizontalAlignment="Left" Width="0" Opacity="0.2" IsHitTestVisible="False">
+                                <Border.Background>
+                                    <SolidColorBrush Color="{StaticResource AccentForegroundColor}" />
+                                </Border.Background>
+                            </Border>
+
+                            <!-- Main play/resume button -->
+                            <Button Grid.Column="0" Click="PlayButton_Click"
+                                Background="Transparent" BorderThickness="0"
+                                Padding="24,10" CornerRadius="22,0,0,22">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon x:Name="PlayButtonIcon" Glyph="&#xE768;" FontSize="16" Foreground="{StaticResource AccentForegroundBrush}" />
+                                    <TextBlock x:Name="PlayButtonText" Text="Play" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="Bold" FontSize="15" />
+                                </StackPanel>
+                            </Button>
+
+                            <!-- Dropdown arrow for versions — shows the active version's quality
+                                 summary beside the chevron (webui commit a42f46b). -->
+                            <Button x:Name="VersionDropdownButton" Grid.Column="1" Background="Transparent" BorderThickness="0"
+                                Padding="10,10,12,10" CornerRadius="0,22,22,0" Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <TextBlock x:Name="VersionSummaryText" Text=""
+                                               Foreground="{StaticResource AccentForegroundBrush}"
+                                               Opacity="0.75" FontSize="13" FontWeight="SemiBold"
+                                               VerticalAlignment="Center"
+                                               MaxWidth="160" TextTrimming="CharacterEllipsis" />
+                                    <FontIcon Glyph="&#xE70D;" FontSize="12" Foreground="{StaticResource AccentForegroundBrush}" />
+                                </StackPanel>
+                                <Button.Flyout>
+                                    <MenuFlyout x:Name="VersionFlyout" />
+                                </Button.Flyout>
+                            </Button>
+
+                            <!-- Left border separator between play and dropdown -->
+                            <Border x:Name="VersionSeparator" Grid.Column="1" Width="1" Opacity="0.3" HorizontalAlignment="Left" Visibility="Collapsed">
+                                <Border.Background>
+                                    <SolidColorBrush Color="{StaticResource AccentForegroundColor}" />
+                                </Border.Background>
+                            </Border>
+                        </Grid>
+
+                        <!-- Audio tracks popover (pre-play selection) — Phase 2a.
+                             Visible only when the current version has 2+ audio tracks.
+                             Flyout is populated programmatically from the version's audio_tracks[]. -->
+                        <Button
+                            x:Name="AudioTracksButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Padding="14,10"
+                            CornerRadius="22"
+                            Visibility="Collapsed">
+                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xE767;" FontSize="14" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Audio" VerticalAlignment="Center" FontSize="13" />
+                                <TextBlock x:Name="AudioTracksSummary" Text="" FontSize="12"
+                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                           VerticalAlignment="Center" MaxWidth="180" TextTrimming="CharacterEllipsis" />
+                                <FontIcon Glyph="&#xE70D;" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                            <Button.Flyout>
+                                <MenuFlyout x:Name="AudioTracksFlyout" />
+                            </Button.Flyout>
+                        </Button>
+
+                        <!-- Subtitles popover (pre-play selection) — Phase 2b.
+                             Visible only when the current version has subtitle tracks or downloaded subs.
+                             Flyout populated from version.subtitle_tracks + WatchDetail.subtitles. -->
+                        <Button
+                            x:Name="SubtitlesPopoverButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Padding="14,10"
+                            CornerRadius="22"
+                            Visibility="Collapsed">
+                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xED1E;" FontSize="14" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Subtitles" VerticalAlignment="Center" FontSize="13" />
+                                <TextBlock x:Name="SubtitlesSummary" Text="" FontSize="12"
+                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                           VerticalAlignment="Center" MaxWidth="180" TextTrimming="CharacterEllipsis" />
+                                <FontIcon Glyph="&#xE70D;" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                            <Button.Flyout>
+                                <MenuFlyout x:Name="SubtitlesPopoverFlyout" />
+                            </Button.Flyout>
+                        </Button>
+
+                        <!-- Watched toggle button -->
+                        <Button
+                            x:Name="WatchedButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Click="WatchedButton_Click"
+                            Padding="16,10"
+                            CornerRadius="22">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon x:Name="WatchedIcon" Glyph="&#xE73E;" FontSize="16"
+                                          Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock x:Name="WatchedText" Text="Mark as Watched" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <!-- Favorite button (icon only, pill) -->
+                        <Button
+                            x:Name="FavoriteButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Click="FavoriteButton_Click"
+                            Padding="12,10"
+                            CornerRadius="22"
+                            ToolTipService.ToolTip="Favorite">
+                            <FontIcon x:Name="FavoriteIcon" Glyph="&#xEB51;" FontSize="18"
+                                      Foreground="{StaticResource PrimaryTextBrush}" />
+                        </Button>
+
+                        <!-- Star rating: 5 stars wrapped in a glass-subtle
+                             rounded capsule (web parity). PointerEntered /
+                             Exited on each star drive the hover preview. -->
+                        <Border
+                            x:Name="StarRatingContainer"
+                            Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="22"
+                            Padding="6,2"
+                            PointerExited="StarPanel_PointerExited"
+                            VerticalAlignment="Center">
+                            <StackPanel x:Name="StarRatingPanel" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
+                                <Button x:Name="Star1" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" Tag="1">
+                                    <FontIcon x:Name="Star1Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                                </Button>
+                                <Button x:Name="Star2" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" Tag="2">
+                                    <FontIcon x:Name="Star2Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                                </Button>
+                                <Button x:Name="Star3" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" Tag="3">
+                                    <FontIcon x:Name="Star3Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                                </Button>
+                                <Button x:Name="Star4" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" Tag="4">
+                                    <FontIcon x:Name="Star4Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                                </Button>
+                                <Button x:Name="Star5" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" Tag="5">
+                                    <FontIcon x:Name="Star5Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
+                                </Button>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- "More" kebab menu — consolidates less-common actions
+                             (Watchlist, Download, admin Match/Refresh) to reduce
+                             action bar clutter. Matches webui 3-dot overflow. -->
+                        <Button
+                            x:Name="MoreButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Padding="12,10"
+                            CornerRadius="22"
+                            ToolTipService.ToolTip="More actions">
+                            <FontIcon Glyph="&#xE712;" FontSize="16"
+                                      Foreground="{StaticResource PrimaryTextBrush}" />
+                            <Button.Flyout>
+                                <MenuFlyout x:Name="MoreFlyout" />
+                            </Button.Flyout>
+                        </Button>
+
+                        <!-- Hidden elements kept for code-behind references but
+                             no longer directly in the action bar layout. Their
+                             state is driven by the More flyout items instead. -->
+                        <Button x:Name="WatchlistButton" Visibility="Collapsed" />
+                        <Button x:Name="DownloadButton" Visibility="Collapsed" />
+                        <Button x:Name="MatchButton" Visibility="Collapsed" />
+
+                        <!-- Refresh metadata (admin only) — B12 -->
+                        <Button
+                            x:Name="RefreshMetadataButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Click="RefreshMetadataButton_Click"
+                            Padding="16,10"
+                            CornerRadius="22"
+                            Visibility="Collapsed">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE72C;" FontSize="16"
+                                          Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Refresh metadata" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <!-- Edit metadata (admin only) — inline dialog with title, year, overview, rating -->
+                        <Button
+                            x:Name="EditMetadataButton"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Click="EditMetadataButton_Click"
+                            Padding="16,10"
+                            CornerRadius="22"
+                            Visibility="Collapsed">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE70F;" FontSize="16"
+                                          Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Edit metadata" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Overview -->
+                    <TextBlock
+                        x:Name="OverviewText"
+                        Style="{StaticResource BodyTextStyle}"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        TextWrapping="Wrap"
+                        MaxWidth="800"
+                        HorizontalAlignment="Left"
+                        LineHeight="24"
+                        FontSize="15" />
+
+                    <!-- Cast section -->
+                    <TextBlock
+                        x:Name="CastHeader"
+                        Text="Cast"
+                        Style="{StaticResource TitleTextStyle}"
+                        Visibility="Collapsed"
+                        Margin="0,12,0,0" />
+
+                    <ScrollViewer
+                        x:Name="CastScrollViewer"
+                        HorizontalScrollBarVisibility="Hidden"
+                        VerticalScrollBarVisibility="Disabled"
+                        HorizontalScrollMode="Disabled"
+                        VerticalScrollMode="Disabled"
+                        Visibility="Collapsed">
+                        <StackPanel x:Name="CastPanel" Orientation="Horizontal" Spacing="16" />
+                    </ScrollViewer>
+
+                    <!-- Crew section (directors + writers) -->
+                    <StackPanel x:Name="CrewSection" Visibility="Collapsed" Spacing="4" Margin="0,8,0,0">
+                        <StackPanel x:Name="DirectorsPanel" Orientation="Horizontal" Spacing="0" Visibility="Collapsed">
+                            <TextBlock Text="Directed by  " FontSize="13" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
+                            <StackPanel x:Name="DirectorNamesPanel" Orientation="Horizontal" Spacing="0" />
+                        </StackPanel>
+                        <StackPanel x:Name="WritersPanel" Orientation="Horizontal" Spacing="0" Visibility="Collapsed">
+                            <TextBlock Text="Written by  " FontSize="13" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
+                            <StackPanel x:Name="WriterNamesPanel" Orientation="Horizontal" Spacing="0" />
+                        </StackPanel>
+                        <StackPanel x:Name="ProducersPanel" Orientation="Horizontal" Spacing="0" Visibility="Collapsed">
+                            <TextBlock Text="Produced by  " FontSize="13" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
+                            <StackPanel x:Name="ProducerNamesPanel" Orientation="Horizontal" Spacing="0" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Studios row -->
+                    <TextBlock
+                        x:Name="StudiosText"
+                        FontSize="13"
+                        Foreground="{StaticResource TertiaryTextBrush}"
+                        TextWrapping="Wrap"
+                        MaxWidth="800"
+                        HorizontalAlignment="Left"
+                        Visibility="Collapsed" />
+
+                    <!-- Networks row (series only) -->
+                    <TextBlock
+                        x:Name="NetworksText"
+                        FontSize="13"
+                        Foreground="{StaticResource TertiaryTextBrush}"
+                        TextWrapping="Wrap"
+                        MaxWidth="800"
+                        HorizontalAlignment="Left"
+                        Visibility="Collapsed" />
+
+                    <!-- Countries row -->
+                    <TextBlock
+                        x:Name="CountriesText"
+                        FontSize="13"
+                        Foreground="{StaticResource TertiaryTextBrush}"
+                        TextWrapping="Wrap"
+                        MaxWidth="800"
+                        HorizontalAlignment="Left"
+                        Visibility="Collapsed" />
+
+                    <!-- Subtitles section (downloaded subs for the current file) -->
+                    <StackPanel x:Name="SubtitlesSection" Visibility="Collapsed" Spacing="8" Margin="0,12,0,0">
+                        <TextBlock
+                            Text="Subtitles"
+                            Style="{StaticResource TitleTextStyle}"
+                            FontSize="18" />
+                        <StackPanel x:Name="SubtitlesList" Spacing="6" />
+                    </StackPanel>
+
+                    <!-- Seasons (for series only) -->
+                    <StackPanel x:Name="SeasonsSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">
+                        <TextBlock Text="Seasons" Style="{StaticResource TitleTextStyle}" FontSize="18" />
+                        <ProgressRing
+                            x:Name="SeasonsLoadingRing"
+                            IsActive="False"
+                            Visibility="Collapsed"
+                            Width="32" Height="32"
+                            HorizontalAlignment="Left" />
+                        <ScrollViewer
+                            HorizontalScrollBarVisibility="Hidden"
+                            VerticalScrollBarVisibility="Disabled"
+                            HorizontalScrollMode="Disabled"
+                            VerticalScrollMode="Disabled">
+                            <StackPanel x:Name="SeasonsPanel" Orientation="Horizontal" Spacing="12" />
+                        </ScrollViewer>
+                    </StackPanel>
+
+                    <!-- Episodes (shown when a season is selected) -->
+                    <StackPanel x:Name="EpisodesSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">
+                        <TextBlock x:Name="EpisodesHeader" Style="{StaticResource TitleTextStyle}" FontSize="18" />
+                        <ProgressRing
+                            x:Name="EpisodesLoadingRing"
+                            IsActive="False"
+                            Visibility="Collapsed"
+                            Width="32" Height="32"
+                            HorizontalAlignment="Left" />
+                        <!-- Grid container populated in code-behind: responsive column count
+                             driven by available width, mirrors upstream's grid-cols-1 →
+                             grid-cols-5 pattern. Cards placed at (row, col) programmatically. -->
+                        <Grid x:Name="EpisodesPanel" SizeChanged="EpisodesPanel_SizeChanged" />
+                    </StackPanel>
+
+                    <!-- Sibling Episodes (shown when viewing an episode — other episodes in same season) -->
+                    <StackPanel x:Name="SiblingEpisodesSection" Visibility="Collapsed" Spacing="12" Margin="0,24,0,0">
+                        <TextBlock x:Name="SiblingEpisodesTitle" Text="More Episodes" Style="{StaticResource TitleTextStyle}" FontSize="18" />
+                        <ScrollViewer
+                            HorizontalScrollBarVisibility="Hidden"
+                            VerticalScrollBarVisibility="Disabled"
+                            HorizontalScrollMode="Disabled"
+                            VerticalScrollMode="Disabled">
+                            <StackPanel x:Name="SiblingEpisodesPanel" Orientation="Horizontal" Spacing="12" />
+                        </ScrollViewer>
+                    </StackPanel>
+
+                    <!-- More Like This section -->
+                    <StackPanel x:Name="SimilarSection" Visibility="Collapsed" Spacing="12" Margin="0,24,0,0">
+                        <TextBlock Text="More Like This" Style="{StaticResource TitleTextStyle}" FontSize="18" />
+                        <ScrollViewer
+                            x:Name="SimilarScrollViewer"
+                            HorizontalScrollBarVisibility="Hidden"
+                            VerticalScrollBarVisibility="Disabled"
+                            HorizontalScrollMode="Disabled"
+                            VerticalScrollMode="Disabled">
+                            <StackPanel x:Name="SimilarPanel" Orientation="Horizontal" Spacing="12" />
+                        </ScrollViewer>
+                    </StackPanel>
+
+                    <!-- Media locations (admin-only) — webui parity component.
+                         Shows folder/filename for each version with a copy-path
+                         action. Rendered below cast + more-like-this. -->
+                    <StackPanel x:Name="MediaLocationsSection" Visibility="Collapsed" Spacing="10" Margin="0,24,0,0">
+                        <TextBlock Text="Media locations" Style="{StaticResource TitleTextStyle}" FontSize="18" />
+                        <StackPanel x:Name="MediaLocationsPanel" Spacing="8" />
+                    </StackPanel>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

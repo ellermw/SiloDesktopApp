@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="SiloPlayer.Controls.MatchItemDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="Match Item"
+    PrimaryButtonText="Apply"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary"
+    IsPrimaryButtonEnabled="False">
+
+    <StackPanel Width="520" Spacing="16">
+        <!-- Local media section (admin-only): folder/file paths for each version
+             (movies) or library roots (series). Mirrors webui MediaLocations +
+             FolderPathsList used inside MatchItemDialog. -->
+        <StackPanel x:Name="LocalMediaSection" Spacing="8" Visibility="Collapsed">
+            <TextBlock Text="Local media" FontSize="14" FontWeight="SemiBold"
+                       Foreground="{StaticResource PrimaryTextBrush}" />
+            <StackPanel x:Name="LocalMediaPanel" Spacing="6" />
+            <TextBlock x:Name="LocalMediaEmpty" FontSize="12"
+                       Foreground="{StaticResource SecondaryTextBrush}"
+                       Visibility="Collapsed" />
+        </StackPanel>
+
+        <!-- Search row -->
+        <Grid ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox
+                x:Name="SearchBox"
+                Grid.Column="0"
+                PlaceholderText="Search by title, IMDB ID, TMDB ID..."
+                FontSize="13"
+                CornerRadius="8"
+                KeyDown="SearchBox_KeyDown" />
+            <Button
+                x:Name="SearchButton"
+                Grid.Column="1"
+                Style="{StaticResource AccentButtonStyle}"
+                Click="SearchButton_Click">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <FontIcon Glyph="&#xE721;" FontSize="13" />
+                    <TextBlock Text="Search" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <!-- Loading -->
+        <ProgressRing
+            x:Name="LoadingRing"
+            IsActive="False"
+            Visibility="Collapsed"
+            Width="32" Height="32"
+            HorizontalAlignment="Center" />
+
+        <!-- Results list -->
+        <ScrollViewer MaxHeight="400" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="ResultsPanel" Spacing="4" />
+        </ScrollViewer>
+
+        <!-- Empty / no results text -->
+        <TextBlock
+            x:Name="EmptyText"
+            Text=""
+            FontSize="13"
+            Foreground="{StaticResource SecondaryTextBrush}"
+            HorizontalAlignment="Center"
+            Visibility="Collapsed" />
+    </StackPanel>
+</ContentDialog>

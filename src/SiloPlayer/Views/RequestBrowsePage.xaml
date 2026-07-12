@@ -1,0 +1,62 @@
+<Page
+    x:Class="SiloPlayer.Views.RequestBrowsePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:requests="using:SiloPlayer.Core.Models.Requests"
+    xmlns:controls="using:SiloPlayer.Controls"
+    Background="{StaticResource AppBackgroundBrush}">
+    <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <StackPanel Grid.Row="0" Padding="30,22,30,12" Spacing="18">
+            <Button HorizontalAlignment="Left" Click="Back_Click"><StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE72B;" /><TextBlock Text="Requests" /></StackPanel></Button>
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                    <Border x:Name="HeaderTile" Width="112" Height="64" CornerRadius="7" Background="{StaticResource SurfaceRaisedBrush}">
+                        <Grid>
+                            <Image x:Name="HeaderLogo" Stretch="Uniform" Margin="10" />
+                            <TextBlock x:Name="HeaderTileText" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" FontSize="12" FontWeight="SemiBold" Margin="8" />
+                        </Grid>
+                    </Border>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock x:Name="TitleText" FontSize="28" FontWeight="SemiBold" />
+                        <TextBlock x:Name="PageText" FontSize="13" Opacity="0.65" />
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                    <ComboBox x:Name="MediaTypeCombo" Width="130" SelectionChanged="Filter_Changed"><ComboBoxItem Content="Movies" Tag="movie" IsSelected="True" /><ComboBoxItem Content="Series" Tag="series" /></ComboBox>
+                    <ComboBox x:Name="SortCombo" Width="170" SelectionChanged="Filter_Changed"><ComboBoxItem Content="Popularity" Tag="popularity" IsSelected="True" /><ComboBoxItem Content="Rating" Tag="vote_average" /><ComboBoxItem Content="Release date" Tag="release_date" /></ComboBox>
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+        <GridView x:Name="ResultsGrid" Grid.Row="1" Padding="26,8,26,20" SelectionMode="None" IsItemClickEnabled="True" ItemClick="ResultsGrid_ItemClick">
+            <GridView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" ItemWidth="164" ItemHeight="312" /></ItemsPanelTemplate></GridView.ItemsPanel>
+            <GridView.ItemTemplate>
+                <DataTemplate x:DataType="requests:RequestMediaResult">
+                    <Grid Width="150" Margin="6">
+                        <Grid.RowDefinitions><RowDefinition Height="225" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <Border CornerRadius="8" Background="{StaticResource SurfaceRaisedBrush}"><Image Source="{x:Bind PosterUrl}" Stretch="UniformToFill" /></Border>
+                        <TextBlock Grid.Row="1" Text="{x:Bind Title}" Margin="1,7,1,0" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Row="2" Text="{x:Bind YearText}" Margin="1,2" FontSize="11" Opacity="0.6" />
+                        <Button Grid.Row="3" Content="{x:Bind RequestLabel}" Tag="{x:Bind}" Click="Request_Click" IsEnabled="{x:Bind Request.Requestable}" HorizontalAlignment="Stretch" Padding="8,4" />
+                    </Grid>
+                </DataTemplate>
+            </GridView.ItemTemplate>
+        </GridView>
+        <Grid Grid.Row="2" Padding="30,8,30,18">
+            <Button x:Name="PreviousButton" Content="Previous" Click="Previous_Click" HorizontalAlignment="Left" />
+            <TextBlock x:Name="FooterPageText" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.7" />
+            <Button x:Name="NextButton" Content="Next" Click="Next_Click" HorizontalAlignment="Right" />
+        </Grid>
+        <Grid x:Name="LoadingLayer" Grid.RowSpan="3" Background="{StaticResource AppBackgroundBrush}">
+            <StackPanel x:Name="BrowseSkeleton" Padding="30,120,30,20" Spacing="22">
+                <StackPanel Orientation="Horizontal" Spacing="14"><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /></StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="14"><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /></StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="14"><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /></StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="14"><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /></StackPanel>
+            </StackPanel>
+            <ProgressRing x:Name="LoadingRing" IsActive="False" Visibility="Collapsed" />
+            <TextBlock x:Name="LoadingText" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="480" Visibility="Collapsed" />
+        </Grid>
+    </Grid>
+</Page>

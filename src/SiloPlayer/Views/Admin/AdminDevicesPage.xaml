@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="SiloPlayer.Views.Admin.AdminDevicesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:converters="using:SiloPlayer.Converters"
+    xmlns:vm="using:SiloPlayer.ViewModels.Admin"
+    Background="{StaticResource AppBackgroundBrush}"
+    Loaded="Page_Loaded">
+
+    <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
+    </Page.Resources>
+
+    <Grid>
+        <ScrollViewer Visibility="{x:Bind ViewModel.IsFleetVisible, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+            <StackPanel Padding="40,28,40,48" Spacing="20">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Devices" FontSize="42" FontWeight="Bold" />
+                    <TextBlock Text="See every client that has connected to Silo and audit profile-specific playback and interface overrides."
+                               FontSize="14" MaxWidth="820" TextWrapping="Wrap" HorizontalAlignment="Left"
+                               Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Background="{StaticResource SurfaceBrush}" CornerRadius="14" Padding="18">
+                        <StackPanel Spacing="4"><TextBlock Text="DEVICES" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /><TextBlock Text="{x:Bind ViewModel.TotalDevices, Mode=OneWay}" FontSize="26" FontWeight="SemiBold" /></StackPanel>
+                    </Border>
+                    <Border Grid.Column="1" Background="{StaticResource SurfaceBrush}" CornerRadius="14" Padding="18">
+                        <StackPanel Spacing="4"><TextBlock Text="PROFILES" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /><TextBlock Text="{x:Bind ViewModel.TotalProfiles, Mode=OneWay}" FontSize="26" FontWeight="SemiBold" /></StackPanel>
+                    </Border>
+                    <Border Grid.Column="2" Background="{StaticResource SurfaceBrush}" CornerRadius="14" Padding="18">
+                        <StackPanel Spacing="4"><TextBlock Text="OVERRIDES" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /><TextBlock Text="{x:Bind ViewModel.TotalOverrides, Mode=OneWay}" FontSize="26" FontWeight="SemiBold" /></StackPanel>
+                    </Border>
+                </Grid>
+
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="14" Padding="16">
+                    <Grid ColumnSpacing="12" RowSpacing="12">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="190" /><ColumnDefinition Width="180" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBox PlaceholderText="Search device, user, platform, or ID" Text="{x:Bind ViewModel.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <ComboBox Grid.Column="1" SelectedItem="{x:Bind ViewModel.PlatformFilter, Mode=TwoWay}">
+                            <x:String>All platforms</x:String><x:String>TV</x:String><x:String>Mobile</x:String><x:String>Tablet</x:String><x:String>Desktop</x:String><x:String>Other</x:String>
+                        </ComboBox>
+                        <ComboBox Grid.Column="2" SelectedItem="{x:Bind ViewModel.RecencyFilter, Mode=TwoWay}">
+                            <x:String>Any activity</x:String><x:String>Last 24 hours</x:String><x:String>Last 7 days</x:String><x:String>Last 30 days</x:String>
+                        </ComboBox>
+                        <ToggleSwitch Grid.Column="3" Header="Overrides only" IsOn="{x:Bind ViewModel.OverridesOnly, Mode=TwoWay}" />
+                    </Grid>
+                </Border>
+
+                <Grid>
+                    <TextBlock Text="{x:Bind ViewModel.ResultsLabel, Mode=OneWay}" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                    <ProgressRing HorizontalAlignment="Right" Width="24" Height="24" IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                                  Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
+                </Grid>
+
+                <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" />
+
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="14" Padding="28"
+                        Visibility="{x:Bind ViewModel.HasDevices, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
+                    <StackPanel HorizontalAlignment="Center" Spacing="7">
+                        <FontIcon Glyph="&#xE772;" FontSize="28" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBlock Text="No devices match this view" FontSize="17" FontWeight="SemiBold" />
+                        <TextBlock Text="Devices appear after a client connects with a stable device ID." Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                </Border>
+
+                <ListView ItemsSource="{x:Bind ViewModel.Devices, Mode=OneWay}" IsItemClickEnabled="True" ItemClick="DeviceList_ItemClick"
+                          SelectionMode="None" HorizontalContentAlignment="Stretch">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="vm:AdminDeviceCardViewModel">
+                            <Border Background="{StaticResource SurfaceBrush}" CornerRadius="12" Padding="16" Margin="0,0,0,8">
+                                <Grid ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="2*" /><ColumnDefinition Width="1.4*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Border Width="38" Height="38" CornerRadius="8" Background="{StaticResource SurfaceRaisedBrush}">
+                                        <FontIcon Glyph="&#xE7F4;" FontSize="17" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Spacing="3">
+                                        <StackPanel Orientation="Horizontal" Spacing="8"><TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" FontSize="15" /><TextBlock Text="{x:Bind PlatformKind}" FontSize="11" Foreground="{StaticResource AccentBrush}" /></StackPanel>
+                                        <TextBlock Text="{x:Bind Platform}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <TextBlock Text="{x:Bind DeviceId}" FontSize="10" FontFamily="Consolas" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" Spacing="4" VerticalAlignment="Center"><TextBlock Text="{x:Bind User}" TextTrimming="CharacterEllipsis" /><TextBlock Text="{x:Bind Activity}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+                                    <StackPanel Grid.Column="3" Spacing="3" VerticalAlignment="Center" Margin="12,0"><TextBlock Text="{x:Bind Overrides}" FontWeight="SemiBold" /><TextBlock Text="{x:Bind Profiles}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+                                    <FontIcon Grid.Column="4" Glyph="&#xE76C;" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </StackPanel>
+        </ScrollViewer>
+
+        <ScrollViewer Visibility="{x:Bind ViewModel.IsDetailVisible, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+            <StackPanel Padding="40,28,40,48" Spacing="18">
+                <Button Content="‹  All devices" Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Left" Click="Back_Click" />
+                <Grid ColumnSpacing="18">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel Spacing="5">
+                        <TextBlock Text="{x:Bind ViewModel.SelectedDevice.Name, Mode=OneWay, FallbackValue=Device}" FontSize="34" FontWeight="Bold" />
+                        <TextBlock Text="{x:Bind ViewModel.SelectedDevice.User, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBlock Text="{x:Bind ViewModel.SelectedDevice.DeviceId, Mode=OneWay}" FontFamily="Consolas" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <ComboBox Width="280" ItemsSource="{x:Bind ViewModel.Profiles, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedProfile, Mode=TwoWay}" DisplayMemberPath="DisplayName" />
+                        <Button Content="Reset profile" Style="{StaticResource DestructiveButtonStyle}" Click="ResetProfile_Click" />
+                    </StackPanel>
+                </Grid>
+                <ProgressRing Width="32" Height="32" HorizontalAlignment="Center" IsActive="{x:Bind ViewModel.IsDetailLoading, Mode=OneWay}"
+                              Visibility="{x:Bind ViewModel.IsDetailLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
+                <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" />
+                <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{StaticResource AccentBrush}" />
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="14" Padding="18">
+                    <StackPanel Spacing="4"><TextBlock Text="Profile-specific settings" FontSize="19" FontWeight="SemiBold" /><TextBlock Text="Inherited rows show Silo's current manifest default. Saving creates a device override; Reset returns to the fallback chain." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" /></StackPanel>
+                </Border>
+                <StackPanel x:Name="SettingsHost" Spacing="8" />
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

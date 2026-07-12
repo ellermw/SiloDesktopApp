@@ -1,0 +1,516 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="SiloPlayer.Views.CollectionEditorPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:converters="using:SiloPlayer.Converters"
+    mc:Ignorable="d"
+    Background="{StaticResource AppBackgroundBrush}">
+
+    <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
+        <converters:NullToVisibilityConverter x:Key="NullToVis" />
+
+        <!-- Type toggle button style (inactive) -->
+        <Style x:Key="TypeToggleInactiveStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="20,10" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="MinWidth" Value="0" />
+        </Style>
+
+        <!-- Type toggle button style (active) -->
+        <Style x:Key="TypeToggleActiveStyle" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource AccentBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="20,10" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="MinWidth" Value="0" />
+        </Style>
+
+        <!-- Settings group card style -->
+        <Style x:Key="EditorGroupStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
+            <Setter Property="CornerRadius" Value="22" />
+            <Setter Property="Padding" Value="24,20" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+    </Page.Resources>
+
+    <Grid>
+        <!-- Loading overlay -->
+        <ProgressRing
+            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Width="48" Height="48" />
+
+        <ScrollViewer
+            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
+            IsScrollInertiaEnabled="True">
+
+            <StackPanel MaxWidth="800" Margin="48,24,48,48" Spacing="24">
+
+                <!-- ===== Header ===== -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Button
+                        x:Name="BackButton"
+                        Grid.Column="0"
+                        Style="{StaticResource GhostButtonStyle}"
+                        VerticalAlignment="Top"
+                        Margin="0,8,12,0"
+                        Click="BackButton_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE72B;" FontSize="14" />
+                            <TextBlock Text="Back to Collections" FontSize="13" />
+                        </StackPanel>
+                    </Button>
+
+                    <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                        <TextBlock
+                            x:Name="PageTitle"
+                            Text="New Collection"
+                            FontSize="{StaticResource FontSizeDisplayLarge}"
+                            FontWeight="Bold"
+                            Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock
+                            Text="Build collections in a full-page editor so sharing, rules, and preview stay visible."
+                            FontSize="14"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            TextWrapping="Wrap"
+                            MaxWidth="620" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===== Error Message ===== -->
+                <Border
+                    Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
+                    Background="{StaticResource SurfaceBrush}"
+                    CornerRadius="12"
+                    Padding="16,12">
+                    <TextBlock
+                        Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                        Foreground="{StaticResource ErrorBrush}"
+                        FontSize="13"
+                        TextWrapping="Wrap" />
+                </Border>
+
+                <!-- ===== Basic Info Section ===== -->
+                <Border x:Name="BasicInfoSection" Style="{StaticResource EditorGroupStyle}">
+                    <StackPanel Spacing="20">
+                        <TextBlock
+                            Text="Basic Info"
+                            FontSize="18"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource PrimaryTextBrush}" />
+
+                        <!-- Name -->
+                        <StackPanel Spacing="6">
+                            <TextBlock
+                                Text="Name"
+                                FontSize="13"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBox
+                                x:Name="NameTextBox"
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                PlaceholderText="My Collection"
+                                Text="{x:Bind ViewModel.Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                MaxWidth="500"
+                                HorizontalAlignment="Left" />
+                        </StackPanel>
+
+                        <!-- Description -->
+                        <StackPanel Spacing="6">
+                            <TextBlock
+                                Text="Description"
+                                FontSize="13"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBox
+                                x:Name="DescriptionTextBox"
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                PlaceholderText="Optional collection description"
+                                Text="{x:Bind ViewModel.Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                TextWrapping="Wrap"
+                                AcceptsReturn="True"
+                                Height="86"
+                                MaxWidth="500"
+                                HorizontalAlignment="Left" />
+                        </StackPanel>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Poster" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBox
+                                x:Name="PosterSourceUrlTextBox"
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                PlaceholderText="Optional poster image URL"
+                                Text="{x:Bind ViewModel.PosterSourceUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                MaxWidth="560"
+                                HorizontalAlignment="Left" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button Content="Choose image" Click="ChoosePoster_Click" Style="{StaticResource SecondaryButtonStyle}" />
+                                <Button x:Name="RemovePosterButton" Content="Remove poster" Click="RemovePoster_Click" Visibility="Collapsed" />
+                                <TextBlock x:Name="PosterFileStatusText" Text="JPG, PNG, or WebP · maximum 20 MB" VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- Type selector -->
+                        <StackPanel Spacing="6">
+                            <TextBlock
+                                Text="Type"
+                                FontSize="13"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource SecondaryTextBrush}" />
+                            <StackPanel
+                                x:Name="TypeSelectorPanel"
+                                Orientation="Horizontal"
+                                Spacing="8">
+                                <Button
+                                    x:Name="ManualTypeButton"
+                                    Content="Manual"
+                                    Style="{StaticResource TypeToggleActiveStyle}"
+                                    Click="ManualType_Click" />
+                                <Button
+                                    x:Name="SmartTypeButton"
+                                    Content="Smart"
+                                    Style="{StaticResource TypeToggleInactiveStyle}"
+                                    Click="SmartType_Click" />
+                            </StackPanel>
+                            <TextBlock
+                                x:Name="TypeDescription"
+                                Text="Manually add items to this collection."
+                                FontSize="12"
+                                Foreground="{StaticResource TertiaryTextBrush}"
+                                Margin="0,2,0,0" />
+                        </StackPanel>
+
+                        <!-- Shared toggle -->
+                        <StackPanel Spacing="6">
+                            <TextBlock
+                                Text="Visibility"
+                                FontSize="13"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ToggleSwitch
+                                x:Name="SharedToggle"
+                                IsOn="{x:Bind ViewModel.IsShared, Mode=TwoWay}"
+                                Toggled="SharedToggle_Toggled"
+                                OnContent="Shared with all profiles"
+                                OffContent="Private to your profile" />
+                        </StackPanel>
+
+                        <StackPanel x:Name="ImportedProfileAccessSection" Spacing="8" Visibility="Collapsed">
+                            <TextBlock Text="Profile access" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Choose profiles that can access this shared collection. Leave all unchecked to allow every profile." FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
+                            <StackPanel x:Name="ImportedProfilesPanel" Spacing="6" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== Imported Source Section (visible for MDBList/TMDB/Trakt) ===== -->
+                <Border
+                    x:Name="ImportedSourceSection"
+                    Style="{StaticResource EditorGroupStyle}"
+                    Visibility="Collapsed">
+                    <StackPanel Spacing="16">
+                        <TextBlock
+                            Text="Imported Source"
+                            FontSize="18"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource PrimaryTextBrush}" />
+
+                        <TextBlock
+                            Text="Imported collections stay connected to their source. Edit the safe sync settings here, or use Sync now from the collection menu."
+                            FontSize="13"
+                            Foreground="{StaticResource TertiaryTextBrush}"
+                            TextWrapping="Wrap" />
+
+                        <StackPanel Spacing="6">
+                            <TextBlock
+                                Text="Source URL"
+                                FontSize="13"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBox
+                                x:Name="SourceUrlTextBox"
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                PlaceholderText="Source URL"
+                                Text="{x:Bind ViewModel.SourceUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                MaxWidth="560"
+                                HorizontalAlignment="Left" />
+                        </StackPanel>
+
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Spacing="6">
+                                <TextBlock
+                                    Text="Max Items"
+                                    FontSize="13"
+                                    FontWeight="SemiBold"
+                                    Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBox
+                                    x:Name="MaxItemsTextBox"
+                                    Style="{StaticResource DarkTextBoxStyle}"
+                                    PlaceholderText="No limit"
+                                    Text="{x:Bind ViewModel.MaxItemsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Spacing="6">
+                                <TextBlock
+                                    Text="Auto Refresh"
+                                    FontSize="13"
+                                    FontWeight="SemiBold"
+                                    Foreground="{StaticResource SecondaryTextBrush}" />
+                                <Border
+                                    Background="{StaticResource SurfaceBrush}"
+                                    CornerRadius="10"
+                                    Padding="12,10"
+                                    MinHeight="40">
+                                    <TextBlock
+                                        x:Name="SyncScheduleTextBlock"
+                                        Text="{x:Bind ViewModel.SyncSchedule, Mode=OneWay}"
+                                        FontSize="13"
+                                        Foreground="{StaticResource SecondaryTextBrush}" />
+                                </Border>
+                            </StackPanel>
+                        </Grid>
+
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Libraries" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Choose which local libraries imported items may match against. No selection uses every eligible library." FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
+                            <StackPanel x:Name="ImportedLibrariesPanel" Spacing="6" />
+                        </StackPanel>
+
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <ComboBox x:Name="WatchFilterCombo" Header="Watch filter" SelectionChanged="WatchFilter_Changed" HorizontalAlignment="Stretch">
+                                <ComboBoxItem Content="All" Tag="all" IsSelected="True" />
+                                <ComboBoxItem Content="Unwatched" Tag="unwatched" />
+                                <ComboBoxItem Content="Watched" Tag="watched" />
+                            </ComboBox>
+                            <ComboBox x:Name="MediaFilterCombo" Grid.Column="1" Header="Media filter" SelectionChanged="MediaFilter_Changed" HorizontalAlignment="Stretch">
+                                <ComboBoxItem Content="All" Tag="all" IsSelected="True" />
+                                <ComboBoxItem Content="Movies" Tag="movie" />
+                                <ComboBoxItem Content="Shows" Tag="series" />
+                            </ComboBox>
+                        </Grid>
+
+                        <ToggleSwitch
+                            x:Name="IncludeInServerCollectionsToggle"
+                            IsOn="{x:Bind ViewModel.IncludeInServerCollections, Mode=TwoWay}"
+                            OnContent="Include on server collection surfaces"
+                            OffContent="Hide from server collection surfaces" />
+
+                        <Border Padding="14" CornerRadius="10" Background="{StaticResource SurfaceBrush}">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Source synchronization" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="LastSyncSummaryText" Text="Not synced yet" FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Sync now" Click="SyncNow_Click" Style="{StaticResource SecondaryButtonStyle}" />
+                            </Grid>
+                        </Border>
+
+                        <Button Content="Delete collection" Click="DeleteCollection_Click" Foreground="{StaticResource ErrorBrush}" HorizontalAlignment="Left" />
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== Smart Rules Section (visible when type=smart) ===== -->
+                <Border
+                    x:Name="SmartRulesSection"
+                    Style="{StaticResource EditorGroupStyle}"
+                    Visibility="Collapsed">
+                    <StackPanel Spacing="16">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock
+                                Grid.Column="0"
+                                Text="Smart Rules"
+                                FontSize="18"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource PrimaryTextBrush}"
+                                VerticalAlignment="Center" />
+
+                            <Button
+                                Grid.Column="1"
+                                Style="{StaticResource GhostButtonStyle}"
+                                Click="AddRule_Click"
+                                VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE710;" FontSize="12" />
+                                    <TextBlock Text="Add Rule" FontSize="13" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <TextBlock
+                            Text="Define rules to automatically match items. All rules must match."
+                            FontSize="13"
+                            Foreground="{StaticResource TertiaryTextBrush}" />
+
+                        <!-- Rules list -->
+                        <StackPanel x:Name="RulesPanel" Spacing="8" />
+
+                        <!-- Empty rules state -->
+                        <TextBlock
+                            x:Name="NoRulesText"
+                            Text="No rules defined. Add a rule to get started."
+                            FontSize="13"
+                            Foreground="{StaticResource TertiaryTextBrush}"
+                            HorizontalAlignment="Center"
+                            Margin="0,8,0,8" />
+
+                        <!-- Preview button and results -->
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <Button
+                                Style="{StaticResource AccentButtonStyle}"
+                                Click="Preview_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE7B3;" FontSize="14" />
+                                    <TextBlock Text="Preview Results" />
+                                </StackPanel>
+                            </Button>
+                            <ProgressRing
+                                IsActive="{x:Bind ViewModel.IsPreviewing, Mode=OneWay}"
+                                Visibility="{x:Bind ViewModel.IsPreviewing, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                                Width="24" Height="24" />
+                            <TextBlock
+                                x:Name="PreviewCountText"
+                                FontSize="13"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                VerticalAlignment="Center"
+                                Visibility="Collapsed" />
+                        </StackPanel>
+
+                        <!-- Preview items list -->
+                        <StackPanel x:Name="PreviewItemsPanel" Spacing="4" />
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== Manual Items Section (visible when type=manual) ===== -->
+                <Border
+                    x:Name="ManualItemsSection"
+                    Style="{StaticResource EditorGroupStyle}">
+                    <StackPanel Spacing="16">
+                        <TextBlock
+                            Text="Collection Items"
+                            FontSize="18"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource PrimaryTextBrush}" />
+
+                        <!-- Search bar -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBox
+                                x:Name="SearchBox"
+                                Grid.Column="0"
+                                Style="{StaticResource DarkTextBoxStyle}"
+                                PlaceholderText="Search for movies or shows to add..."
+                                MaxWidth="500"
+                                HorizontalAlignment="Stretch"
+                                KeyDown="SearchBox_KeyDown" />
+
+                            <Button
+                                Grid.Column="1"
+                                Style="{StaticResource GhostButtonStyle}"
+                                Margin="8,0,0,0"
+                                Click="SearchItems_Click"
+                                VerticalAlignment="Center">
+                                <FontIcon Glyph="&#xE721;" FontSize="16" />
+                            </Button>
+                        </Grid>
+
+                        <!-- Search results -->
+                        <StackPanel x:Name="SearchResultsPanel" Spacing="4" />
+
+                        <!-- Separator between search and added items -->
+                        <Border
+                            x:Name="ItemsSeparator"
+                            Background="{StaticResource BorderBrush}"
+                            Opacity="0.5"
+                            Height="1"
+                            Visibility="Collapsed" />
+
+                        <!-- Added items header -->
+                        <TextBlock
+                            x:Name="AddedItemsHeader"
+                            FontSize="14"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            Visibility="Collapsed" />
+
+                        <!-- Added items list -->
+                        <StackPanel x:Name="ManualItemsPanel" Spacing="4" />
+
+                        <!-- Empty items state -->
+                        <TextBlock
+                            x:Name="NoItemsText"
+                            Text="No items added. Search above to find and add movies or shows."
+                            FontSize="13"
+                            Foreground="{StaticResource TertiaryTextBrush}"
+                            HorizontalAlignment="Center"
+                            Margin="0,8,0,8" />
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== Action Buttons ===== -->
+                <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right">
+                    <Button
+                        Style="{StaticResource GhostButtonStyle}"
+                        Content="Cancel"
+                        Click="Cancel_Click"
+                        Padding="20,10" />
+                    <Button
+                        x:Name="SaveButton"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Click="Save_Click"
+                        Padding="20,10">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <ProgressRing
+                                IsActive="{x:Bind ViewModel.IsSaving, Mode=OneWay}"
+                                Visibility="{x:Bind ViewModel.IsSaving, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                                Width="16" Height="16" />
+                            <TextBlock x:Name="SaveButtonText" Text="Save Collection" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

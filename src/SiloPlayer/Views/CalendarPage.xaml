@@ -1,0 +1,364 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="SiloPlayer.Views.CalendarPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:converters="using:SiloPlayer.Converters"
+    mc:Ignorable="d"
+    Background="{StaticResource AppBackgroundBrush}"
+    Loaded="Page_Loaded">
+
+    <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
+        <converters:NullToVisibilityConverter x:Key="NullToVis" />
+
+        <!-- Pill-shaped filter toggle buttons (All / Favorites / Watchlist).
+             Uses a minimal Border-rooted ControlTemplate so the rounded fill
+             renders as a proper brush, not a clip. Default Button templates
+             produce off-center sub-borders at large CornerRadius values. -->
+        <Style x:Key="FilterPillButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="Padding" Value="18,0" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="UseSystemFocusVisuals" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border
+                            x:Name="RootBorder"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="{TemplateBinding CornerRadius}">
+                            <ContentPresenter
+                                x:Name="ContentPresenter"
+                                Padding="{TemplateBinding Padding}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                HorizontalContentAlignment="Center"
+                                VerticalContentAlignment="Center"
+                                Content="{TemplateBinding Content}"
+                                ContentTemplate="{TemplateBinding ContentTemplate}"
+                                ContentTransitions="{TemplateBinding ContentTransitions}" />
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal" />
+                                    <VisualState x:Name="PointerOver">
+                                        <VisualState.Setters>
+                                            <Setter Target="RootBorder.Opacity" Value="0.85" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                    <VisualState x:Name="Pressed">
+                                        <VisualState.Setters>
+                                            <Setter Target="RootBorder.Opacity" Value="0.7" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                    <VisualState x:Name="Disabled">
+                                        <VisualState.Setters>
+                                            <Setter Target="RootBorder.Opacity" Value="0.4" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="FilterPillActiveButtonStyle" TargetType="Button" BasedOn="{StaticResource FilterPillButtonStyle}">
+            <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource AccentForegroundBrush}" />
+        </Style>
+
+        <!-- Outline variant of the pill button (used for "Today" — transparent bg with border) -->
+        <Style x:Key="FilterPillOutlineButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource FilterPillButtonStyle}">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+        </Style>
+
+        <!-- Library filter dropdown — use a sensible corner radius (half of MinHeight)
+             so the default ComboBox template clips the drop target to a pill shape
+             cleanly. 999 fights with the default template's internal geometry. -->
+        <Style x:Key="LibraryComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="CornerRadius" Value="18" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="MinHeight" Value="36" />
+            <Setter Property="MinWidth" Value="140" />
+            <Setter Property="Padding" Value="14,6,8,6" />
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+        </Style>
+
+        <!-- Week strip day cell — min-w-[2.75rem] (44px) py-2 px-3 rounded-xl (12) -->
+        <Style x:Key="WeekDayCellBorderStyle" TargetType="Border">
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="MinWidth" Value="44" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+    </Page.Resources>
+
+    <Grid>
+        <!-- Error banner (centered, above scroll content) -->
+        <StackPanel
+            VerticalAlignment="Center"
+            HorizontalAlignment="Center"
+            Spacing="12"
+            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+            <TextBlock
+                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                Foreground="{StaticResource ErrorBrush}"
+                Style="{StaticResource BodyTextStyle}"
+                HorizontalAlignment="Center"
+                TextWrapping="Wrap"
+                MaxWidth="480" />
+            <Button
+                Content="Retry"
+                Style="{StaticResource AccentButtonStyle}"
+                HorizontalAlignment="Center"
+                Command="{x:Bind ViewModel.LoadCommand}" />
+        </StackPanel>
+
+        <!-- Loading ring (centered) — only shown on first load when there's no content yet -->
+        <ProgressRing
+            x:Name="LoadingRing"
+            IsActive="False"
+            Visibility="Collapsed"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Width="48" Height="48" />
+
+        <!-- Main scroll content -->
+        <ScrollViewer
+            x:Name="ContentScrollViewer"
+            IsScrollInertiaEnabled="True"
+            VerticalScrollBarVisibility="Auto"
+            HorizontalScrollBarVisibility="Disabled">
+
+            <StackPanel Padding="0,0,0,32">
+
+                <!-- ===== Header: Title + filter pills + library dropdown ===== -->
+                <Grid Margin="48,28,48,20">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Spacing="6">
+                        <TextBlock
+                            Text="Calendar"
+                            FontSize="{StaticResource FontSizeDisplayLarge}"
+                            FontWeight="Bold"
+                            Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock
+                            Text="Upcoming releases and new episodes this week."
+                            FontSize="14"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                Spacing="10"
+                                VerticalAlignment="Center">
+                        <!-- Filter pill group — outer wrapper height = 32 (pill) + 2*4 (padding)
+                             = 40. Outer radius 20 is exactly half so ends are semicircles.
+                             Inner pills at radius 16 nest neatly inside the 4px padding. -->
+                        <Border
+                            Background="{StaticResource SurfaceRaisedBrush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="20"
+                            Padding="4"
+                            VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                                <Button
+                                    x:Name="FilterFollowingBtn"
+                                    Content="Following"
+                                    Click="FilterFollowingBtn_Click"
+                                    Style="{StaticResource FilterPillButtonStyle}" />
+                                <Button
+                                    x:Name="FilterTrendingBtn"
+                                    Content="Trending"
+                                    Click="FilterTrendingBtn_Click"
+                                    Style="{StaticResource FilterPillButtonStyle}" />
+                                <Button
+                                    x:Name="FilterEverythingBtn"
+                                    Content="All"
+                                    Click="FilterEverythingBtn_Click"
+                                    Style="{StaticResource FilterPillButtonStyle}" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Library dropdown (hidden when <= 1 library) -->
+                        <ComboBox
+                            x:Name="LibraryComboBox"
+                            Style="{StaticResource LibraryComboBoxStyle}"
+                            Visibility="Collapsed"
+                            SelectionChanged="LibraryComboBox_SelectionChanged"
+                            PlaceholderText="All Libraries" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===== Week Navigator =====
+                     Layout mirrors web WeekNavigator.tsx: outer rounded card with
+                     a centered range label on top, then a 3-column row where the
+                     SIDE columns are 1fr (flexible) and the MIDDLE column is Auto
+                     (natural size). Prev is right-aligned in col 0, Today+Next
+                     are left-aligned in col 2, so they hug the day strip instead
+                     of being pushed to the container edges. -->
+                <Border
+                    Margin="48,0,48,24"
+                    Padding="16,12"
+                    CornerRadius="16"
+                    Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1">
+                    <StackPanel Spacing="8">
+                        <TextBlock
+                            x:Name="WeekRangeLabel"
+                            Text="{x:Bind ViewModel.WeekRangeLabel, Mode=OneWay}"
+                            FontSize="11"
+                            FontWeight="Medium"
+                            CharacterSpacing="80"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            HorizontalAlignment="Center" />
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Prev week — right-aligned inside the left 1fr column,
+                                 so it sits right next to the day strip -->
+                            <Button
+                                Grid.Column="0"
+                                Style="{StaticResource GhostButtonStyle}"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"
+                                Margin="0,0,12,0"
+                                Width="32" Height="32"
+                                Padding="0"
+                                CornerRadius="16"
+                                Command="{x:Bind ViewModel.PrevWeekCommand}"
+                                ToolTipService.ToolTip="Previous week">
+                                <FontIcon Glyph="&#xE76B;" FontSize="12"
+                                          Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Button>
+
+                            <!-- Week day strip (7 cells) — auto-sized and centered -->
+                            <StackPanel
+                                x:Name="WeekStripPanel"
+                                Grid.Column="1"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Spacing="4" />
+
+                            <!-- Today + Next week — left-aligned inside the right 1fr
+                                 column, so they sit right next to the day strip -->
+                            <StackPanel
+                                Grid.Column="2"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Center"
+                                Margin="12,0,0,0"
+                                Spacing="4">
+                                <Button
+                                    Content="Today"
+                                    Style="{StaticResource FilterPillOutlineButtonStyle}"
+                                    Command="{x:Bind ViewModel.TodayCommand}" />
+                                <Button
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Width="32" Height="32"
+                                    Padding="0"
+                                    CornerRadius="16"
+                                    Command="{x:Bind ViewModel.NextWeekCommand}"
+                                    ToolTipService.ToolTip="Next week">
+                                    <FontIcon Glyph="&#xE76C;" FontSize="12"
+                                              Foreground="{StaticResource SecondaryTextBrush}" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border x:Name="SelectedDayEmptyState" Margin="48,0,48,16" Padding="16,12" CornerRadius="14" Background="{StaticResource SurfaceBrush}" Visibility="Collapsed">
+                    <TextBlock x:Name="SelectedDayEmptyText" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                </Border>
+
+                <!-- Inline loading indicator under the navigator -->
+                <ProgressRing
+                    IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                    Width="32" Height="32"
+                    Margin="0,8,0,16"
+                    HorizontalAlignment="Center" />
+
+                <!-- ===== Day groups (populated from code-behind) ===== -->
+                <StackPanel x:Name="DaysPanel" Spacing="32" />
+
+                <!-- Empty state -->
+                <StackPanel
+                    x:Name="EmptyState"
+                    Visibility="Collapsed"
+                    HorizontalAlignment="Center"
+                    Margin="48,32,48,48"
+                    Padding="48,48"
+                    MinWidth="420"
+                    Spacing="12">
+                    <Border
+                        Background="{StaticResource SurfaceBrush}"
+                        BorderBrush="{StaticResource BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="24"
+                        Padding="48,36"
+                        MinHeight="240">
+                        <StackPanel Spacing="12"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center">
+                            <FontIcon
+                                Glyph="&#xE787;"
+                                FontSize="40"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                HorizontalAlignment="Center" />
+                            <TextBlock
+                                x:Name="EmptyStateText"
+                                Text="Nothing scheduled this week."
+                                FontSize="14"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                HorizontalAlignment="Center"
+                                TextAlignment="Center"
+                                TextWrapping="Wrap"
+                                MaxWidth="360" />
+                            <StackPanel x:Name="EmptyActionsPanel" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Visibility="Collapsed">
+                                <Button Content="Trending" Style="{StaticResource GhostButtonStyle}" Foreground="{StaticResource AccentBrush}" Click="ShowTrending_Click" />
+                                <Button Content="Show everything" Style="{StaticResource GhostButtonStyle}" Foreground="{StaticResource AccentBrush}" Click="ShowEverything_Click" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

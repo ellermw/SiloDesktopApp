@@ -1,0 +1,79 @@
+using SiloPlayer.Core.Models.Plugins;
+
+namespace SiloPlayer.Core.Api;
+
+public class PluginsApi(SiloApiClient client)
+{
+    // ===== Repositories =====
+
+    public Task<List<PluginRepository>> GetRepositoriesAsync(CancellationToken ct = default)
+        => client.GetAsync<List<PluginRepository>>("/api/v1/admin/plugins/repositories", ct);
+
+    public Task<PluginRepository> CreateRepositoryAsync(CreatePluginRepositoryRequest request, CancellationToken ct = default)
+        => client.PostAsync<PluginRepository>("/api/v1/admin/plugins/repositories", request, ct);
+
+    public Task<PluginRepository> UpdateRepositoryAsync(int id, UpdatePluginRepositoryRequest request, CancellationToken ct = default)
+        => client.PutAsync<PluginRepository>($"/api/v1/admin/plugins/repositories/{id}", request, ct);
+
+    public Task DeleteRepositoryAsync(int id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/plugins/repositories/{id}", ct);
+
+    public Task RefreshRepositoryAsync(int id, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/admin/plugins/repositories/{id}/refresh", new { }, ct);
+
+    // ===== Catalog =====
+
+    public Task<List<PluginCatalogEntry>> GetCatalogAsync(CancellationToken ct = default)
+        => client.GetAsync<List<PluginCatalogEntry>>("/api/v1/admin/plugins/catalog", ct);
+
+    public Task<PluginCatalogSettings> GetCatalogSettingsAsync(CancellationToken ct = default)
+        => client.GetAsync<PluginCatalogSettings>("/api/v1/admin/plugins/catalog-settings", ct);
+
+    public Task<PluginCatalogSettings> UpdateCatalogSettingsAsync(bool includeApprovedCommunityPlugins,
+        CancellationToken ct = default)
+        => client.PutAsync<PluginCatalogSettings>("/api/v1/admin/plugins/catalog-settings",
+            new Dictionary<string, object?>
+            {
+                ["include_approved_community_plugins"] = includeApprovedCommunityPlugins,
+            }, ct);
+
+    // ===== Installations =====
+
+    public Task<List<PluginInstallation>> GetInstallationsAsync(CancellationToken ct = default)
+        => client.GetAsync<List<PluginInstallation>>("/api/v1/admin/plugins/installations", ct);
+
+    public Task<PluginInstallation> InstallPluginAsync(InstallPluginRequest request, CancellationToken ct = default)
+        => client.PostAsync<PluginInstallation>("/api/v1/admin/plugins/installations", request, ct);
+
+    public Task<PluginInstallation> UpdateInstallationAsync(int id, UpdatePluginInstallationRequest request, CancellationToken ct = default)
+        => client.PutAsync<PluginInstallation>($"/api/v1/admin/plugins/installations/{id}", request, ct);
+
+    public Task DeleteInstallationAsync(int id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/plugins/installations/{id}", ct);
+
+    public Task UpdatePluginAsync(int id, CancellationToken ct = default)
+        => client.PostNoContentAsync($"/api/v1/admin/plugins/installations/{id}/update", new { }, ct);
+
+    // ===== Config =====
+
+    public Task SaveGlobalConfigAsync(int installationId, SavePluginConfigRequest request, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/admin/plugins/installations/{installationId}/config", request, ct);
+
+    // ===== Auth Bindings =====
+
+    public Task SaveAuthBindingAsync(int installationId, SavePluginAuthBindingRequest request, CancellationToken ct = default)
+        => client.PutNoContentAsync($"/api/v1/admin/plugins/installations/{installationId}/auth-bindings/{Uri.EscapeDataString(request.CapabilityId)}", request, ct);
+
+    // ===== Task Bindings =====
+
+    public Task<PluginTaskBindingUpdateResponse> SaveTaskBindingAsync(int installationId, string capabilityId, SavePluginTaskBindingRequest request, CancellationToken ct = default)
+        => client.PutAsync<PluginTaskBindingUpdateResponse>($"/api/v1/admin/plugins/installations/{installationId}/task-bindings/{Uri.EscapeDataString(capabilityId)}", request, ct);
+
+    // NOTE: Analyzer bindings endpoint removed — does not exist in server router.
+    // The SaveAnalyzerBindingsAsync method was calling a non-existent endpoint.
+
+    // ===== Legacy Metadata Import =====
+
+    public Task<PluginLegacyMetadataImportResponse> ImportLegacyMetadataAsync(int installationId, string importType, CancellationToken ct = default)
+        => client.PostAsync<PluginLegacyMetadataImportResponse>($"/api/v1/admin/plugins/installations/{installationId}/legacy-metadata-import", new { import_type = importType }, ct);
+}

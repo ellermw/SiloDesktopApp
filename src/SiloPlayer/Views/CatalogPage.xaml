@@ -1,0 +1,60 @@
+<Page
+    x:Class="SiloPlayer.Views.CatalogPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:SiloPlayer.Controls"
+    xmlns:models="using:SiloPlayer.Core.Models.Home"
+    Background="{StaticResource AppBackgroundBrush}">
+    <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+        <Grid Grid.Row="0" Margin="40,24,40,16">
+            <StackPanel><TextBlock x:Name="PageTitleText" Text="Catalog" FontSize="42" FontWeight="Bold" /><TextBlock x:Name="PageSubtitleText" Text="Refine the archive by library, type, era, rating, or genre." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+            <StackPanel x:Name="CountPanel" HorizontalAlignment="Right" VerticalAlignment="Bottom" Orientation="Horizontal" Spacing="6"><TextBlock x:Name="CountText" FontSize="28" FontWeight="Light" /><TextBlock x:Name="ResultNounText" Text="RESULTS" FontSize="11" CharacterSpacing="150" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+        </Grid>
+        <Border Grid.Row="1" Margin="40,0,40,18" Padding="14" CornerRadius="14" Background="{StaticResource SurfaceBrush}">
+            <StackPanel Spacing="10">
+                <Grid ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="160" /><ColumnDefinition Width="180" /></Grid.ColumnDefinitions>
+                    <TextBox x:Name="QueryBox" PlaceholderText="Search the catalog" TextChanged="Filter_Changed" />
+                    <ComboBox x:Name="LibraryCombo" Grid.Column="1" SelectionChanged="Filter_Changed" />
+                    <ComboBox x:Name="TypeCombo" Grid.Column="2" SelectionChanged="Filter_Changed"><ComboBoxItem Content="All Media" Tag="" IsSelected="True" /><ComboBoxItem Content="Movies &amp; Series" Tag="video" /><ComboBoxItem Content="Movies" Tag="movie" /><ComboBoxItem Content="Series" Tag="series" /><ComboBoxItem Content="Episodes" Tag="episode" /><ComboBoxItem Content="Audiobooks" Tag="audiobook" /><ComboBoxItem Content="Ebooks" Tag="ebook" /><ComboBoxItem Content="Manga" Tag="manga" /></ComboBox>
+                </Grid>
+                <Grid ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="130" /></Grid.ColumnDefinitions>
+                    <ComboBox x:Name="GenreCombo" PlaceholderText="All genres" SelectionChanged="Filter_Changed" />
+                    <ComboBox x:Name="RatingCombo" Grid.Column="1" PlaceholderText="All ratings" SelectionChanged="Filter_Changed" />
+                    <ComboBox x:Name="ResolutionCombo" Grid.Column="2" PlaceholderText="All resolutions" SelectionChanged="Filter_Changed" />
+                    <ComboBox x:Name="CountryCombo" Grid.Column="3" PlaceholderText="All countries" SelectionChanged="Filter_Changed" />
+                    <ComboBox x:Name="SortCombo" Grid.Column="4" SelectionChanged="Sort_Changed"><ComboBoxItem Content="Title" Tag="title" IsSelected="True" /><ComboBoxItem Content="Date Added" Tag="added_at" /><ComboBoxItem Content="Release Date" Tag="release_date" /><ComboBoxItem Content="Latest Episode Air Date" Tag="last_air_date" /><ComboBoxItem Content="Latest Episode Added" Tag="latest_episode_added" /><ComboBoxItem Content="Year" Tag="year" /><ComboBoxItem Content="Content Rating" Tag="content_rating" /><ComboBoxItem Content="Duration" Tag="runtime" /><ComboBoxItem Content="IMDb Rating" Tag="rating_imdb" /><ComboBoxItem Content="TMDB Rating" Tag="rating_tmdb" /><ComboBoxItem Content="Rotten Tomatoes Critics" Tag="rating_rt_critic" /><ComboBoxItem Content="Rotten Tomatoes Audience" Tag="rating_rt_audience" /><ComboBoxItem Content="Resolution" Tag="resolution" /><ComboBoxItem Content="Bitrate" Tag="bitrate" /><ComboBoxItem Content="Watch Progress" Tag="progress" /><ComboBoxItem Content="Date Viewed" Tag="date_viewed" /><ComboBoxItem Content="Play Count" Tag="plays" /><ComboBoxItem Content="Author" Tag="author" /><ComboBoxItem Content="Narrator" Tag="narrator" /><ComboBoxItem Content="Series" Tag="series" /></ComboBox>
+                    <ComboBox x:Name="OrderCombo" Grid.Column="5" SelectionChanged="Filter_Changed"><ComboBoxItem Content="Descending" Tag="desc" /><ComboBoxItem Content="Ascending" Tag="asc" IsSelected="True" /></ComboBox>
+                </Grid>
+            </StackPanel>
+        </Border>
+        <Border x:Name="HistoryActions" Grid.Row="2" Margin="40,0,40,18" Padding="14" CornerRadius="14" Background="{StaticResource SurfaceBrush}" Visibility="Collapsed">
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Watch History" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Text="Removing items clears watch history, watched status, and resume progress for this profile." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBlock x:Name="SelectedCountText" Text="0 selected" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
+                    <Button x:Name="SelectLoadedButton" Content="Select Loaded" Click="SelectLoaded_Click" Visibility="Collapsed" />
+                    <Button x:Name="ClearSelectionButton" Content="Clear" Click="ClearSelection_Click" Visibility="Collapsed" />
+                    <Button x:Name="RemoveSelectedButton" Content="Remove Selected" Click="RemoveSelected_Click" Visibility="Collapsed" />
+                    <Button x:Name="SelectionModeButton" Content="Select" Click="SelectionMode_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+        <ScrollViewer Grid.Row="3" Padding="40,0,40,28" ViewChanged="CatalogScroll_ViewChanged">
+            <StackPanel Spacing="16">
+                <TextBlock x:Name="ErrorText" Visibility="Collapsed" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" HorizontalAlignment="Center" />
+                <ItemsRepeater x:Name="ItemsRepeater" ElementPrepared="ItemsRepeater_ElementPrepared">
+                    <ItemsRepeater.Layout><UniformGridLayout MinItemWidth="150" MinItemHeight="260" MinColumnSpacing="12" MinRowSpacing="16" ItemsStretch="None" /></ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate><DataTemplate x:DataType="models:MediaItem"><controls:PosterCard MediaItem="{x:Bind}" /></DataTemplate></ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+                <ProgressRing x:Name="LoadingRing" Width="30" Height="30" HorizontalAlignment="Center" />
+                <TextBlock x:Name="EmptyText" Text="Nothing matched these filters." HorizontalAlignment="Center" Visibility="Collapsed" Foreground="{StaticResource SecondaryTextBrush}" />
+                <Button x:Name="LoadMoreButton" Content="Load more" Click="LoadMore_Click" HorizontalAlignment="Center" Visibility="Collapsed" />
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="SiloPlayer.Controls.LandscapeCard"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Width="280"
+    PointerEntered="OnPointerEntered"
+    PointerExited="OnPointerExited">
+
+    <Grid
+        x:Name="RootGrid"
+        Width="280"
+        Background="Transparent"
+        CacheMode="BitmapCache">
+
+        <Grid.RowDefinitions>
+            <RowDefinition Height="158" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Backdrop image area (16:9 aspect, rounded) —
+             B32: image click starts playback (→ PlayerService.PlayAsync),
+             text click (below) navigates to the detail page. -->
+        <Grid Grid.Row="0" CornerRadius="12" Tapped="OnImageTapped" Background="Transparent">
+            <!-- Card background for hover -->
+            <Border
+                x:Name="CardBackground"
+                Background="{StaticResource CardBackgroundBrush}"
+                CornerRadius="12" />
+
+            <!-- Actual backdrop image — hover zoom on image only (not the
+                 whole card) so the rounded clip frame stays still. -->
+            <Image
+                x:Name="BackdropImage"
+                Stretch="UniformToFill"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Opacity="0"
+                RenderTransformOrigin="0.5,0.5">
+                <Image.RenderTransform>
+                    <CompositeTransform x:Name="HoverTransform" ScaleX="1" ScaleY="1" />
+                </Image.RenderTransform>
+            </Image>
+
+            <!-- Bottom gradient overlay -->
+            <Border VerticalAlignment="Bottom" Height="64" IsHitTestVisible="False">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="Transparent" Offset="0.0" />
+                        <GradientStop Color="#99000000" Offset="1.0" />
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
+
+            <!-- Progress bar at bottom -->
+            <Grid
+                x:Name="ProgressContainer"
+                VerticalAlignment="Bottom"
+                Height="3"
+                Visibility="Collapsed">
+                <!-- Track -->
+                <Border
+                    Background="#40FFFFFF"
+                    CornerRadius="0,0,12,12" />
+                <!-- Fill -->
+                <Border
+                    x:Name="ProgressFill"
+                    Background="{StaticResource AccentBrush}"
+                    CornerRadius="0,0,0,12"
+                    HorizontalAlignment="Left" />
+            </Grid>
+
+            <!-- Remaining time badge -->
+            <Border
+                x:Name="RemainingBadge"
+                VerticalAlignment="Bottom"
+                HorizontalAlignment="Right"
+                Margin="0,0,8,8"
+                Background="#B3000000"
+                CornerRadius="4"
+                Padding="6,2"
+                Visibility="Collapsed">
+                <TextBlock
+                    x:Name="RemainingText"
+                    FontSize="10"
+                    FontWeight="SemiBold"
+                    Foreground="White" />
+            </Border>
+
+            <!-- Hover overlays — MUST be last so they paint on top of image/gradient/progress/badges.
+                 Z-order: background → image → gradient → progress → remaining badge → dim → play → border. -->
+            <Border
+                x:Name="HoverDim"
+                CornerRadius="12"
+                Background="#55000000"
+                Opacity="0"
+                IsHitTestVisible="False" />
+
+            <!-- Circular Play button — fades and scales in on hover. -->
+            <Grid
+                x:Name="HoverPlayButton"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Width="48" Height="48"
+                Opacity="0"
+                IsHitTestVisible="False"
+                RenderTransformOrigin="0.5,0.5">
+                <Grid.RenderTransform>
+                    <CompositeTransform x:Name="HoverPlayButtonTransform" ScaleX="0.7" ScaleY="0.7" />
+                </Grid.RenderTransform>
+                <Ellipse Fill="{StaticResource AccentBrush}" />
+                <FontIcon
+                    Glyph="&#xE768;"
+                    FontSize="18"
+                    Foreground="{StaticResource AccentForegroundBrush}"
+                    Margin="3,0,0,0" />
+            </Grid>
+
+            <!-- Dismiss X button (top-right) — visible on hover for CW/NU cards.
+                 Clicking dismisses the item from the home section and shows
+                 the undo banner. Uses DismissRequested event, consumed by
+                 HomePage which owns the HomeViewModel.DismissItem flow. -->
+            <Button
+                x:Name="DismissButton"
+                Width="28" Height="28"
+                CornerRadius="14"
+                Padding="0"
+                Background="#AA000000"
+                BorderThickness="0"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Margin="6"
+                Opacity="0"
+                IsHitTestVisible="True"
+                Click="DismissButton_Click"
+                ToolTipService.ToolTip="Dismiss"
+                Visibility="Collapsed">
+                <FontIcon Glyph="&#xE711;" FontSize="12" Foreground="White" />
+            </Button>
+
+            <!-- Hover accent border — topmost layer -->
+            <Border
+                x:Name="HoverBorder"
+                CornerRadius="12"
+                BorderBrush="{StaticResource AccentBrush}"
+                BorderThickness="2"
+                Opacity="0"
+                IsHitTestVisible="False" />
+        </Grid>
+
+        <!-- Text below image — B32: text click navigates to details -->
+        <StackPanel Grid.Row="1" Margin="4,8,4,0" Spacing="2" Tapped="OnTextTapped" Background="Transparent">
+            <!-- Title -->
+            <TextBlock
+                x:Name="TitleText"
+                FontSize="13"
+                FontWeight="SemiBold"
+                Foreground="{StaticResource PrimaryTextBrush}"
+                TextTrimming="CharacterEllipsis"
+                MaxLines="1" />
+            <!-- Episode context: "Series Title · S1 E3" -->
+            <TextBlock
+                x:Name="SubtitleText"
+                FontSize="11"
+                Foreground="{StaticResource SecondaryTextBrush}"
+                TextTrimming="CharacterEllipsis"
+                MaxLines="1"
+                Visibility="Collapsed" />
+            <!-- Badge row (e.g. "SEASON PREMIERE") — WebUI parity with ContinueWatchingCard.
+                 Uses a rounded-full pill with emerald accent. Visible only when the server
+                 attaches a badge string to the section item. -->
+            <Border
+                x:Name="BadgePill"
+                HorizontalAlignment="Left"
+                Margin="0,4,0,0"
+                Height="18"
+                Padding="8,0"
+                CornerRadius="9"
+                BorderThickness="1"
+                BorderBrush="#4D34D399"
+                Background="#1A34D399"
+                Visibility="Collapsed">
+                <TextBlock
+                    x:Name="BadgeText"
+                    FontSize="10"
+                    FontWeight="SemiBold"
+                    CharacterSpacing="80"
+                    Foreground="#6EE7B7"
+                    VerticalAlignment="Center" />
+            </Border>
+        </StackPanel>
+    </Grid>
+</UserControl>

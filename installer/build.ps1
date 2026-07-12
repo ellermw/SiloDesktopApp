@@ -5,15 +5,22 @@
 
 param(
     [string]$Configuration = "Release",
-    [string]$Runtime = "win-x64"
+    [string]$Runtime = "win-x64",
+    [string]$PublishDirectory = ""
 )
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $InstallerDir = $PSScriptRoot
-$PublishDir = "$InstallerDir\publish"
+$PublishDir = if ([string]::IsNullOrWhiteSpace($PublishDirectory)) {
+    "$InstallerDir\publish"
+} elseif ([System.IO.Path]::IsPathRooted($PublishDirectory)) {
+    $PublishDirectory
+} else {
+    Join-Path $RepoRoot $PublishDirectory
+}
 $OutputDir = "$InstallerDir\output"
-$ProjectPath = "$RepoRoot\src\ContinuumPlayer\ContinuumPlayer.csproj"
+$ProjectPath = "$RepoRoot\src\SiloPlayer\SiloPlayer.csproj"
 
 # Find ISCC.exe (check multiple locations)
 $IsccPaths = @(
@@ -82,17 +89,54 @@ if (-not (Test-Path $MpvDll)) {
     Copy-Item "$RepoRoot\libs\mpv\libmpv-2.dll" $MpvDll
 }
 
+# A Git LFS pointer is a small text file that still satisfies MSBuild's content
+# copy step. Publishing one produces a successful build whose player cannot start.
+$MpvInfo = Get-Item -LiteralPath $MpvDll
+if ($MpvInfo.Length -lt 10MB) {
+    throw "Published libmpv-2.dll is only $($MpvInfo.Length) bytes. Run 'git lfs checkout -- libs/mpv/libmpv-2.dll' before packaging."
+}
+$MpvHeader = [System.IO.File]::ReadAllBytes($MpvDll)[0..1]
+if ($MpvHeader[0] -ne 0x4D -or $MpvHeader[1] -ne 0x5A) {
+    throw "Published libmpv-2.dll is not a Windows PE binary."
+}
+$SourceMpvHash = (Get-FileHash -LiteralPath "$RepoRoot\libs\mpv\libmpv-2.dll" -Algorithm SHA256).Hash
+$PublishedMpvHash = (Get-FileHash -LiteralPath $MpvDll -Algorithm SHA256).Hash
+if ($SourceMpvHash -ne $PublishedMpvHash) {
+    throw "Published libmpv-2.dll does not match the verified repository asset."
+}
+
+# Prove the native loader can resolve the bundled library and its dependencies.
+$EscapedMpvPath = $MpvDll.Replace('\', '\\')
+$MpvSmokeSource = @"
+using System;
+using System.Runtime.InteropServices;
+public static class SiloPlayerMpvPublishSmoke
+{
+    [DllImport("$EscapedMpvPath", CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr mpv_create();
+    [DllImport("$EscapedMpvPath", CallingConvention = CallingConvention.Cdecl)]
+    public static extern void mpv_destroy(IntPtr context);
+}
+"@
+Add-Type -TypeDefinition $MpvSmokeSource
+$MpvContext = [SiloPlayerMpvPublishSmoke]::mpv_create()
+if ($MpvContext -eq [IntPtr]::Zero) {
+    throw "Published libmpv loaded, but mpv_create returned a null context."
+}
+[SiloPlayerMpvPublishSmoke]::mpv_destroy($MpvContext)
+Write-Host "Verified libmpv binary, hash, and mpv_create smoke test."
+
 # Ensure Assets\app.ico is in publish output
 $IconDest = "$PublishDir\Assets\app.ico"
 if (-not (Test-Path $IconDest)) {
     $null = New-Item -ItemType Directory -Path "$PublishDir\Assets" -Force
-    Copy-Item "$RepoRoot\src\ContinuumPlayer\Assets\app.ico" $IconDest
+    Copy-Item "$RepoRoot\src\SiloPlayer\Assets\app.ico" $IconDest
 }
 
 Write-Host "=== Compiling installer ==="
 if (-not (Test-Path $OutputDir)) { $null = New-Item -ItemType Directory -Path $OutputDir }
 
-& $IsccPath "$InstallerDir\SiloInstaller.iss"
+& $IsccPath "/DPublishSourceDir=$PublishDir" "$InstallerDir\SiloInstaller.iss"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Inno Setup compilation failed"

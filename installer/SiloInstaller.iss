@@ -2,7 +2,7 @@
 ; Inno Setup script for Silo Desktop Player
 
 #define MyAppName "Silo Desktop Player"
-#define MyAppVersion "1.1.10"
+#define MyAppVersion "1.1.28"
 #define MyAppPublisher "Silo"
 #define MyAppExeName "SiloPlayer.exe"
 #ifndef PublishSourceDir
@@ -19,7 +19,7 @@ DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=output
 OutputBaseFilename=SiloInstaller-{#MyAppVersion}-Setup
-SetupIconFile=..\src\ContinuumPlayer\Assets\app.ico
+SetupIconFile=..\src\SiloPlayer\Assets\app.ico
 UninstallDisplayIcon={app}\Assets\app.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

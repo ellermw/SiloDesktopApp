@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="SiloPlayer.Controls.CustomSeekBar"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Height="24"
+    Background="Transparent"
+    IsHitTestVisible="True"
+    PointerPressed="Root_PointerPressed"
+    PointerMoved="Root_PointerMoved"
+    PointerReleased="Root_PointerReleased"
+    PointerCaptureLost="Root_PointerCaptureLost"
+    PointerEntered="Root_PointerEntered"
+    PointerExited="Root_PointerExited">
+
+    <Grid x:Name="RootGrid">
+        <!-- Centered track (4px tall track area, grows slightly on hover) -->
+        <Grid x:Name="TrackArea" Height="4" VerticalAlignment="Center">
+            <!-- Background rail -->
+            <Border x:Name="BackgroundRail" Background="#33FFFFFF" CornerRadius="2" />
+
+            <!-- Buffered fill (lighter white) — left-anchored, width varies. -->
+            <Border x:Name="BufferedFill" Background="#55FFFFFF" CornerRadius="2"
+                    HorizontalAlignment="Left" Width="0" />
+
+            <!-- Intro region tint (amber) — webui parity. Grid overlays sit above
+                 background but below progress fill so the accent stays visible. -->
+            <Border x:Name="IntroRegion" Background="#40E8B86E" CornerRadius="2"
+                    HorizontalAlignment="Left" Width="0" Visibility="Collapsed" />
+
+            <!-- Credits region tint (muted cyan) -->
+            <Border x:Name="CreditsRegion" Background="#4078AEFC" CornerRadius="2"
+                    HorizontalAlignment="Left" Width="0" Visibility="Collapsed" />
+
+            <!-- Progress fill (accent) — left-anchored, width varies. -->
+            <Border x:Name="ProgressFill" Background="{ThemeResource AccentBrush}" CornerRadius="2"
+                    HorizontalAlignment="Left" Width="0" />
+        </Grid>
+
+        <!-- Chapter markers layer — overlays the full width. Populated by code-behind. -->
+        <Canvas x:Name="ChapterMarkersLayer" Height="24" Background="Transparent" IsHitTestVisible="False" />
+
+        <!-- Scrub thumb (visible on hover / during drag) -->
+        <Ellipse x:Name="ScrubThumb" Width="12" Height="12" Fill="White"
+                 HorizontalAlignment="Left" VerticalAlignment="Center"
+                 Margin="-6,0,0,0"
+                 Opacity="0"
+                 IsHitTestVisible="False" />
+    </Grid>
+</UserControl>

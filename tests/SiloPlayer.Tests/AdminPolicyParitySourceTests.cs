@@ -1,0 +1,9 @@
+namespace SiloPlayer.Tests;
+public sealed class AdminPolicyParitySourceTests
+{
+ [Fact] public void PolicyWorkspaceUsesCurrentCapabilityAndAdminContracts(){var api=Read("src","SiloPlayer.Core","Api","AdminApi.cs");foreach(var value in new[]{"/api/v1/policy/capability","/admin/policy/vendor","/admin/policy/documents","/versions","/activate","/enabled","/validate","/simulate","/decisions"})Assert.Contains(value,api);}
+ [Fact] public void PolicyNavigationIsCapabilityGated(){var shell=Read("src","SiloPlayer","Views","Admin","AdminShellPage.xaml.cs");Assert.Contains("capability.Enabled && capability.EditorAvailable",shell);Assert.Contains("if (_policyAvailable)",shell);Assert.Contains("typeof(AdminPolicyPage)",shell);}
+ [Fact] public void PolicyPageProvidesOverridesBaselineSimulationVersionsAndDecisions(){var page=Read("src","SiloPlayer","Views","Admin","AdminPolicyPage.xaml");foreach(var value in new[]{"Overrides","Baseline","Decision Log","Version history","Validate, save &amp; activate","Simulate this policy","User ID","Allowed","Denied","Silo decides the baseline","Your overrides narrow it","Every decision is logged","RFC3339 or blank"})Assert.Contains(value,page);}
+ [Fact] public void PolicyOverridesAreGroupedByDomainAndDecisionLogIsPaged(){var page=Read("src","SiloPlayer","Views","Admin","AdminPolicyPage.xaml.cs");foreach(var value in new[]{"BuildDomainCard","DomainPresentation","New override","Make live","NextDecisionPageAsync","PreviousDecisionPageAsync"})Assert.Contains(value,page);}
+ static string Read(params string[] parts){var d=AppContext.BaseDirectory;while(!string.IsNullOrEmpty(d)&&!File.Exists(Path.Combine(d,"SiloPlayer.sln")))d=Directory.GetParent(d)?.FullName??"";if(string.IsNullOrEmpty(d))throw new InvalidOperationException();return File.ReadAllText(Path.Combine([d,..parts]));}
+}
