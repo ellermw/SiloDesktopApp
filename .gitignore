@@ -7,9 +7,9 @@ obj/
 # Superpowers plugin cache
 .superpowers/
 
-# Claude local settings (permissions, session-specific)
-.claude/settings.local.json
-.claude/worktrees/
+# Claude local instructions, settings, worktrees, and session artifacts
+.claude/
+claude.md
 
 # Development reference files (not needed in repo)
 test_images/
