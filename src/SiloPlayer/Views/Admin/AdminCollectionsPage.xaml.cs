@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
@@ -59,10 +60,17 @@ public sealed partial class AdminCollectionsPage : Page
         _suppressPickerChange = true;
 
         LibraryPicker.Items.Clear();
-        LibraryPicker.Items.Add(new ComboBoxItem { Content = "All Libraries", Tag = (int?)null });
+        LibraryPicker.Items.Add(new ComboBoxItem
+        {
+            Content = $"All libraries ({ViewModel.Collections.Count})",
+            Tag = (int?)null
+        });
 
         foreach (var lib in ViewModel.Libraries)
-            LibraryPicker.Items.Add(new ComboBoxItem { Content = lib.Name, Tag = (int?)lib.Id });
+        {
+            var count = ViewModel.Collections.Count(c => CollectionLibraryIds(c).Contains(lib.Id));
+            LibraryPicker.Items.Add(new ComboBoxItem { Content = $"{lib.Name} ({count})", Tag = (int?)lib.Id });
+        }
 
         LibraryPicker.SelectedIndex = 0;
         _suppressPickerChange = false;
@@ -99,19 +107,20 @@ public sealed partial class AdminCollectionsPage : Page
             return;
         }
 
-        bool isFirst = true;
-        foreach (var col in ViewModel.Collections)
+        foreach (var library in ViewModel.Libraries)
         {
-            if (!isFirst)
-            {
-                CollectionsPanel.Children.Add(new Border
-                {
-                    BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
-                    BorderThickness = new Thickness(0, 1, 0, 0)
-                });
-            }
-            isFirst = false;
-            CollectionsPanel.Children.Add(BuildCollectionRow(col));
+            var collections = ViewModel.Collections
+                .Where(c => CollectionLibraryIds(c).Contains(library.Id))
+                .OrderBy(c => c.SortOrder)
+                .ThenBy(c => c.Title)
+                .ToList();
+            if (collections.Count == 0) continue;
+
+            CollectionsPanel.Children.Add(BuildCollectionSection(
+                library.Name,
+                $"{collections.Count} collection{(collections.Count == 1 ? "" : "s")}",
+                collections,
+                showReorder: false));
         }
     }
 
@@ -127,18 +136,7 @@ public sealed partial class AdminCollectionsPage : Page
             .ToList();
 
         foreach (var (group, items) in groupedCollections)
-        {
-            CollectionsPanel.Children.Add(BuildGroupHeader(group.Name, group));
-            if (items.Count == 0)
-            {
-                CollectionsPanel.Children.Add(BuildEmptyGroupRow("No collections in this group."));
-            }
-            else
-            {
-                foreach (var collection in items)
-                    CollectionsPanel.Children.Add(BuildCollectionRow(collection));
-            }
-        }
+            CollectionsPanel.Children.Add(BuildCollectionSection(group.Name, group.DefaultSortMode, items, true, group));
 
         var ungrouped = ViewModel.Collections
             .Where(c => string.IsNullOrEmpty(c.GroupId))
@@ -146,24 +144,53 @@ public sealed partial class AdminCollectionsPage : Page
             .ThenBy(c => c.Title)
             .ToList();
 
-        CollectionsPanel.Children.Add(BuildGroupHeader("Ungrouped", null));
-        if (ungrouped.Count == 0)
+        CollectionsPanel.Children.Add(BuildCollectionSection("Ungrouped", $"{ungrouped.Count} collection{(ungrouped.Count == 1 ? "" : "s")}", ungrouped, true));
+    }
+
+    private FrameworkElement BuildCollectionSection(
+        string title,
+        string badge,
+        IReadOnlyList<LibraryCollection> collections,
+        bool showReorder,
+        LibraryCollectionGroup? group = null)
+    {
+        var content = new StackPanel { Spacing = 0 };
+        content.Children.Add(BuildGroupHeader(title, group, badge));
+        if (collections.Count == 0)
         {
-            CollectionsPanel.Children.Add(BuildEmptyGroupRow("No ungrouped collections."));
+            content.Children.Add(BuildEmptyGroupRow("No collections in this group."));
         }
         else
         {
-            foreach (var collection in ungrouped)
-                CollectionsPanel.Children.Add(BuildCollectionRow(collection));
+            for (var index = 0; index < collections.Count; index++)
+            {
+                if (index > 0)
+                    content.Children.Add(new Border
+                    {
+                        BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                        BorderThickness = new Thickness(0, 1, 0, 0)
+                    });
+                content.Children.Add(BuildCompactCollectionRow(collections[index], showReorder));
+            }
         }
+
+        return new Border
+        {
+            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Child = content
+        };
     }
 
-    private FrameworkElement BuildGroupHeader(string title, LibraryCollectionGroup? group)
+    private FrameworkElement BuildGroupHeader(string title, LibraryCollectionGroup? group, string? badgeText = null)
     {
         var header = new Grid
         {
-            Padding = new Thickness(20, 16, 20, 12),
-            Background = new SolidColorBrush(Color.FromArgb(18, 255, 255, 255))
+            Padding = new Thickness(16, 12, 16, 12),
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(0, 0, 0, 1)
         };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -178,8 +205,7 @@ public sealed partial class AdminCollectionsPage : Page
             VerticalAlignment = VerticalAlignment.Center
         });
 
-        if (group != null)
-            titlePanel.Children.Add(MakeBadgeSecondary(group.DefaultSortMode));
+        titlePanel.Children.Add(MakeBadgeOutline(badgeText ?? group?.DefaultSortMode ?? ""));
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         if (group != null)
@@ -217,6 +243,113 @@ public sealed partial class AdminCollectionsPage : Page
             Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
         };
     }
+
+    private FrameworkElement BuildCompactCollectionRow(LibraryCollection col, bool showReorder)
+    {
+        var row = new Grid { Padding = new Thickness(16, 12, 16, 12), ColumnSpacing = 12 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        FrameworkElement artwork;
+        if (Uri.TryCreate(col.PosterUrl, UriKind.Absolute, out var posterUri))
+        {
+            artwork = new Image
+            {
+                Width = 32,
+                Height = 48,
+                Stretch = Stretch.UniformToFill,
+                Source = new BitmapImage(posterUri)
+            };
+        }
+        else
+        {
+            artwork = new Border
+            {
+                Width = 32,
+                Height = 48,
+                CornerRadius = new CornerRadius(4),
+                Background = (Brush)Application.Current.Resources["SurfaceBrush"]
+            };
+        }
+
+        var info = new StackPanel { Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
+        var titleLine = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
+        titleLine.Children.Add(new TextBlock
+        {
+            Text = col.Title,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 620
+        });
+        if (col.Featured) titleLine.Children.Add(MakeBadgeSecondary("Featured"));
+        if (string.Equals(col.Visibility, "hidden", StringComparison.OrdinalIgnoreCase))
+            titleLine.Children.Add(MakeBadgeOutline("Hidden"));
+        info.Children.Add(titleLine);
+
+        var metadata = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 9 };
+        metadata.Children.Add(new TextBlock
+        {
+            Text = $"{col.ItemCount} items",
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"]
+        });
+        metadata.Children.Add(MakeBadgeOutline(col.CollectionType));
+        var libraryNames = string.Join(", ", CollectionLibraryIds(col)
+            .Select(id => ViewModel.Libraries.FirstOrDefault(l => l.Id == id)?.Name ?? $"Library {id}"));
+        if (!string.IsNullOrWhiteSpace(libraryNames))
+            metadata.Children.Add(new TextBlock
+            {
+                Text = libraryNames,
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 420
+            });
+        info.Children.Add(metadata);
+
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        if (showReorder)
+        {
+            var up = MakeIconButton("\uE70E", "Move collection up");
+            var down = MakeIconButton("\uE70D", "Move collection down");
+            up.Click += async (_, _) => await MoveCollectionInGroupAsync(col, -1);
+            down.Click += async (_, _) => await MoveCollectionInGroupAsync(col, 1);
+            actions.Children.Add(up);
+            actions.Children.Add(down);
+        }
+        if (!string.Equals(col.CollectionType, "manual", StringComparison.OrdinalIgnoreCase))
+        {
+            var sync = MakeIconButton("\uE72C", $"Sync {col.Title}");
+            sync.Click += async (_, _) =>
+            {
+                sync.IsEnabled = false;
+                try { await ViewModel.SyncCollectionCommand.ExecuteAsync(col.Id); }
+                finally { sync.IsEnabled = true; }
+            };
+            actions.Children.Add(sync);
+        }
+        var edit = MakeIconButton("\uE70F", $"Edit {col.Title}");
+        edit.Click += async (_, _) => await OpenEditDialogAsync(col);
+        actions.Children.Add(edit);
+        var delete = MakeIconButton("\uE74D", $"Delete {col.Title}");
+        delete.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
+        delete.Click += async (_, _) => await OpenDeleteDialogAsync(col);
+        actions.Children.Add(delete);
+
+        Grid.SetColumn(artwork, 0);
+        Grid.SetColumn(info, 1);
+        Grid.SetColumn(actions, 2);
+        row.Children.Add(artwork);
+        row.Children.Add(info);
+        row.Children.Add(actions);
+        return row;
+    }
+
+    private static IReadOnlyList<int> CollectionLibraryIds(LibraryCollection collection) =>
+        collection.LibraryIds.Count > 0 ? collection.LibraryIds : [collection.LibraryId];
 
     private FrameworkElement BuildCollectionRow(LibraryCollection col)
     {
@@ -431,14 +564,71 @@ public sealed partial class AdminCollectionsPage : Page
 
     private async void AddCollectionButton_Click(object sender, RoutedEventArgs e)
     {
-        await OpenCreateDialogAsync();
+        await OpenCollectionTypePickerAsync();
     }
 
-    private void SmartCollectionButton_Click(object sender, RoutedEventArgs e)
+    private async Task OpenCollectionTypePickerAsync()
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Choose a Collection Type",
+            CloseButtonText = "Cancel",
+            XamlRoot = XamlRoot,
+            MaxWidth = 720
+        };
+
+        var panel = new StackPanel { Spacing = 10, MinWidth = 560 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Smart/manual collections open the full query builder. Imports keep their source-specific setup.",
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+
+        AddChoice("\uE9D9", "Smart / Manual", "Build rules with the full collection query wizard.", () =>
+        {
+            App.Services.GetRequiredService<NavigationService>().Navigate<SmartCollectionWizardPage>(
+                new SmartCollectionWizardNavigationArgs(IsAdmin: true, LibraryId: ViewModel.SelectedLibraryId));
+        });
+        AddChoice("\uE8B7", "MDBList", "Import and keep a public MDBList collection synchronized.", () => _ = OpenCreateDialogAsync("mdblist"));
+        AddChoice("\uE8B7", "TMDB", "Create a collection from a TMDB discovery preset.", () => _ = OpenCreateDialogAsync("tmdb"));
+        AddChoice("\uE8B7", "Trakt", "Sync a Trakt discovery feed or public list.", () => _ = OpenCreateDialogAsync("trakt"));
+        AddChoice("\uE9D9", "Templates", "Start from Silo's curated collection recipes.", () => BrowseTemplatesButton_Click(this, new RoutedEventArgs()));
+
+        void AddChoice(string glyph, string title, string description, Action action)
+        {
+            var button = new Button
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Padding = new Thickness(14, 11, 14, 11),
+                CornerRadius = new CornerRadius(10),
+                Background = (Brush)Application.Current.Resources["SurfaceBrush"]
+            };
+            var content = new Grid { ColumnSpacing = 12 };
+            content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
+            content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            content.Children.Add(new FontIcon { Glyph = glyph, FontSize = 17, VerticalAlignment = VerticalAlignment.Center });
+            var copy = new StackPanel { Spacing = 2 };
+            copy.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold });
+            copy.Children.Add(new TextBlock { Text = description, FontSize = 12, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"] });
+            Grid.SetColumn(copy, 1);
+            content.Children.Add(copy);
+            button.Content = content;
+            button.Click += (_, _) => { dialog.Hide(); action(); };
+            panel.Children.Add(button);
+        }
+
+        dialog.Content = panel;
+        await dialog.ShowAsync();
+    }
+
+    private void BrowseTemplatesButton_Click(object sender, RoutedEventArgs e)
     {
         var nav = App.Services.GetRequiredService<NavigationService>();
-        nav.Navigate<SmartCollectionWizardPage>(
-            new SmartCollectionWizardNavigationArgs(IsAdmin: true, LibraryId: ViewModel.SelectedLibraryId));
+        nav.Navigate<CollectionsPage>(new CollectionsNavigationArgs(OpenTemplates: true, ReturnAfterTemplates: true));
     }
 
     private async void CreateGroupButton_Click(object sender, RoutedEventArgs e)
@@ -539,9 +729,9 @@ public sealed partial class AdminCollectionsPage : Page
 
     // ===== Create Dialog =====
 
-    private async Task OpenCreateDialogAsync()
+    private async Task OpenCreateDialogAsync(string initialType = "manual")
     {
-        var (formContent, getBody, getPosterFile, getBackdropFile) = BuildCollectionForm(null);
+        var (formContent, getBody, getPosterFile, getBackdropFile) = BuildCollectionForm(null, initialType);
 
         var dialog = new ContentDialog
         {
@@ -639,7 +829,7 @@ public sealed partial class AdminCollectionsPage : Page
 
     private (FrameworkElement Content, Func<SiloPlayer.Core.Models.Admin.CreateLibraryCollectionRequest?> GetBody,
         Func<(byte[]? Bytes, string? Name, string? ContentType)> GetPosterFile,
-        Func<(byte[]? Bytes, string? Name, string? ContentType)> GetBackdropFile) BuildCollectionForm(LibraryCollection? existing)
+        Func<(byte[]? Bytes, string? Name, string? ContentType)> GetBackdropFile) BuildCollectionForm(LibraryCollection? existing, string initialType = "manual")
     {
         var titleBox = new TextBox
         {
@@ -676,7 +866,10 @@ public sealed partial class AdminCollectionsPage : Page
         typeCombo.Items.Add(new ComboBoxItem { Content = "Smart", Tag = "smart" });
         typeCombo.Items.Add(new ComboBoxItem { Content = "MDBList", Tag = "mdblist" });
         typeCombo.Items.Add(new ComboBoxItem { Content = "TMDB", Tag = "tmdb" });
+        typeCombo.Items.Add(new ComboBoxItem { Content = "Trakt", Tag = "trakt" });
         typeCombo.SelectedIndex = 0;
+        foreach (ComboBoxItem item in typeCombo.Items)
+            if (item.Tag is string initial && initial == initialType) { typeCombo.SelectedItem = item; break; }
         if (existing != null)
         {
             foreach (ComboBoxItem item in typeCombo.Items)

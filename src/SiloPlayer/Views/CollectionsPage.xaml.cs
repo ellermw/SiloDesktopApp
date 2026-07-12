@@ -15,6 +15,8 @@ public sealed partial class CollectionsPage : Page
     private StackPanel? _templateCardsPanel;
     private string _templateCategoryFilter = "all";
     private string _templateSearch = "";
+    private bool _openTemplatesOnLoad;
+    private bool _returnAfterTemplates;
 
     public CollectionsPage()
     {
@@ -34,6 +36,23 @@ public sealed partial class CollectionsPage : Page
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         await ViewModel.LoadCollectionsCommand.ExecuteAsync(null);
+        if (_openTemplatesOnLoad)
+        {
+            _openTemplatesOnLoad = false;
+            await ShowCollectionTemplateGalleryAsync();
+            if (_returnAfterTemplates)
+                App.Services.GetRequiredService<NavigationService>().GoBack();
+        }
+    }
+
+    protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        if (e.Parameter is CollectionsNavigationArgs args)
+        {
+            _openTemplatesOnLoad = args.OpenTemplates;
+            _returnAfterTemplates = args.ReturnAfterTemplates;
+        }
     }
 
     private void UpdateEmptyState()
@@ -1052,3 +1071,5 @@ public sealed partial class CollectionsPage : Page
         }
     }
 }
+
+public sealed record CollectionsNavigationArgs(bool OpenTemplates = false, bool ReturnAfterTemplates = false);

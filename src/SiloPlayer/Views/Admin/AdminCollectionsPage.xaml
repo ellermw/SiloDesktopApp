@@ -21,8 +21,8 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
-            <!-- webui parity: AdminCollections inherits .admin-shell (1560px) from AdminLayout. -->
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <!-- AdminCollections inherits the shared 1560px admin shell in the WebUI. -->
+            <StackPanel Padding="32,24,32,40" Spacing="24" MaxWidth="1560" HorizontalAlignment="Stretch">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -34,7 +34,7 @@
                     <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
                         <TextBlock
                             Text="Collections"
-                            FontSize="42"
+                            FontSize="48"
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
@@ -56,13 +56,13 @@
                             FontSize="13"
                             SelectionChanged="LibraryPicker_SelectionChanged" />
                         <Button
-                            x:Name="SmartCollectionButton"
+                            x:Name="BrowseTemplatesButton"
                             Style="{StaticResource GhostButtonStyle}"
                             VerticalAlignment="Center"
-                            Click="SmartCollectionButton_Click">
+                            Click="BrowseTemplatesButton_Click">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <FontIcon Glyph="&#xE9D9;" FontSize="14" />
-                                <TextBlock Text="Smart Wizard" />
+                                <TextBlock Text="Browse Templates" />
                             </StackPanel>
                         </Button>
                         <Button
@@ -88,35 +88,8 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- ===== Collections Table ===== -->
-                <Border
-                    Background="{StaticResource CardBackgroundBrush}"
-                    CornerRadius="16"
-                    BorderThickness="0"
-                    Padding="0">
-                    <StackPanel>
-                        <!-- Table header -->
-                        <Grid Padding="20,14,20,14" ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="2.5*" />
-                                <ColumnDefinition Width="1.5*" />
-                                <ColumnDefinition Width="60" />
-                                <ColumnDefinition Width="1.5*" />
-                                <ColumnDefinition Width="1.2*" />
-                                <ColumnDefinition Width="120" />
-                                <ColumnDefinition Width="110" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Title" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock Grid.Column="1" Text="Source" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="Items" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock Grid.Column="3" Text="Sync" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock Grid.Column="4" Text="Schedule" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock Grid.Column="5" Text="Updated" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock Grid.Column="6" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                        </Grid>
-
-                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
-
+                <!-- ===== Collection boards ===== -->
+                <StackPanel>
                         <!-- Inline loading indicator -->
                         <ProgressRing
                             IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
@@ -146,18 +119,22 @@
                         </StackPanel>
 
                         <!-- Collection rows — populated in code-behind -->
-                        <StackPanel x:Name="CollectionsPanel" Spacing="0" />
+                        <StackPanel x:Name="CollectionsPanel" Spacing="16" />
 
                         <!-- Empty state -->
-                        <Border x:Name="EmptyState" Padding="20,40" Visibility="Collapsed">
-                            <TextBlock
-                                Text="No collections found for this library yet."
-                                FontSize="13"
-                                Foreground="{StaticResource TertiaryTextBrush}"
-                                HorizontalAlignment="Center" />
+                        <Border x:Name="EmptyState" Padding="20,64" CornerRadius="8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Visibility="Collapsed">
+                            <StackPanel Spacing="10" HorizontalAlignment="Center">
+                                <FontIcon Glyph="&#xE8B7;" FontSize="34" Foreground="{StaticResource TertiaryTextBrush}" HorizontalAlignment="Center" />
+                                <TextBlock Text="No collections yet" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" HorizontalAlignment="Center" />
+                                <TextBlock Text="Create collections to curate library shelves, or sync them from MDBList or TMDB trending."
+                                           FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" MaxWidth="390" TextAlignment="Center" />
+                                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                                    <Button Style="{StaticResource GhostButtonStyle}" Click="BrowseTemplatesButton_Click" Content="Start from a template" />
+                                    <Button Style="{StaticResource GhostButtonStyle}" Click="AddCollectionButton_Click" Content="Create from scratch" />
+                                </StackPanel>
+                            </StackPanel>
                         </Border>
-                    </StackPanel>
-                </Border>
+                </StackPanel>
 
             </StackPanel>
         </ScrollViewer>
