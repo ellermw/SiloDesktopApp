@@ -47,6 +47,10 @@ public sealed class EventChannelClient : IDisposable
     /// connection indicators.</summary>
     public event Action<WebSocketState>? StateChanged;
 
+    /// <summary>Current transport state for controls that subscribe after the
+    /// shared channel has already connected.</summary>
+    public WebSocketState CurrentState => _ws?.State ?? WebSocketState.Closed;
+
     public EventChannelClient(SiloApiClient apiClient, AuthService authService)
     {
         _apiClient = apiClient;

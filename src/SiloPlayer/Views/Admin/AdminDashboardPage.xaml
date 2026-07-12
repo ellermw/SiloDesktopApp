@@ -18,7 +18,7 @@
         <!-- Stat card: surface panel, no border -->
         <Style x:Key="StatCardStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="20" />
+            <Setter Property="CornerRadius" Value="16" />
             <Setter Property="Padding" Value="18" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
@@ -75,7 +75,7 @@
                                    VerticalAlignment="Center" Visibility="Collapsed" />
                         <Button
                             x:Name="RefreshButton"
-                            MinWidth="0"
+                            MinWidth="132"
                             MinHeight="32"
                             Padding="12,6"
                             Style="{StaticResource SecondaryButtonStyle}"
@@ -98,13 +98,6 @@
                         </Button>
                     </StackPanel>
                 </Grid>
-
-                <!-- Inline loading indicator -->
-                <ProgressBar
-                    IsIndeterminate="True"
-                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                    HorizontalAlignment="Stretch"
-                    Height="2" />
 
                 <!-- Inline error state -->
                 <StackPanel

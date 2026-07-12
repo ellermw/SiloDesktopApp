@@ -74,7 +74,7 @@
                             </StackPanel>
                             <Button.Flyout>
                                 <Flyout x:Name="ScanQueueFlyout" Placement="Bottom">
-                                    <StackPanel x:Name="ScanQueueFlyoutContent" Width="380" Spacing="0" />
+                                    <StackPanel x:Name="ScanQueueFlyoutContent" Width="400" Spacing="0" />
                                 </Flyout>
                             </Button.Flyout>
                         </Button>

@@ -163,24 +163,39 @@ public sealed partial class AdminLibrariesPage : Page
 
         try
         {
-            await ViewModel.LoadCommand.ExecuteAsync(null);
-            // Rebuild ONCE after all data is loaded — no CollectionChanged subscriptions needed for initial load
-            RebuildAll();
-        }
-        catch (Exception ex)
-        {
-            ViewModel.ErrorMessage = $"Error: {ex.Message}";
-        }
-
-        // Subscribe to realtime scan events for live refresh
-        try
-        {
             _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
             _eventChannel.SnapshotReceived += OnSnapshotReceived;
             _eventChannel.EventReceived += OnEventReceived;
             _eventSubscription = _eventChannel.Subscribe("scans");
         }
         catch { }
+
+        try
+        {
+            await ViewModel.LoadLibrariesAsync();
+            // Rebuild ONCE after all data is loaded — no CollectionChanged subscriptions needed for initial load
+            BuildLibraryRows();
+            BuildScanQueuePopover();
+            BuildAmbiguousRootsSection();
+
+            async Task LoadAndRenderAsync(Func<Task> load, Action render)
+            {
+                await load();
+                render();
+            }
+
+            await Task.WhenAll(
+                LoadAndRenderAsync(ViewModel.LoadSkippedRootsAsync, BuildSkippedRootsRows),
+                LoadAndRenderAsync(() => ViewModel.LoadUnmatchedItemsAsync(), BuildUnmatchedItemsSection),
+                LoadAndRenderAsync(ViewModel.LoadStaleIdsAsync, BuildStaleIdsSection),
+                LoadAndRenderAsync(ViewModel.LoadMetadataProvidersAsync, () => { }),
+                LoadAndRenderAsync(ViewModel.LoadActiveRefreshJobsAsync, BuildLibraryRows));
+        }
+        catch (Exception ex)
+        {
+            ViewModel.ErrorMessage = $"Error: {ex.Message}";
+        }
+
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -323,10 +338,15 @@ public sealed partial class AdminLibrariesPage : Page
         foreach (var lib in ViewModel.Libraries)
         {
             LibrariesPanel.Children.Add(BuildLibraryRow(lib));
-
-            if (lib.ScanWarningCode == "empty_root")
-                LibrariesPanel.Children.Add(BuildEmptyRootWarningRow(lib));
+            var activeScans = ViewModel.ActiveScans.Where(scan => scan.LibraryId == lib.Id).ToList();
+            var activeRefreshJob = FindActiveRefreshJob(lib.Id);
+            if (activeScans.Count > 0 || activeRefreshJob != null)
+                LibrariesPanel.Children.Add(BuildLibraryActiveWorkRow(lib, activeScans, activeRefreshJob));
         }
+
+        // The WebUI keeps warnings in a distinct block below the library/work rows.
+        foreach (var lib in ViewModel.Libraries.Where(library => library.ScanWarningCode == "empty_root"))
+            LibrariesPanel.Children.Add(BuildEmptyRootWarningRow(lib));
     }
 
     private FrameworkElement BuildLibraryRow(Library lib)
@@ -580,58 +600,6 @@ public sealed partial class AdminLibrariesPage : Page
         if (ViewModel.MountCheckResults.TryGetValue(lib.Id, out var mountCheck))
             actionsWrapper.Children.Add(BuildMountCheckInlineResult(mountCheck, isWarningRow: false));
 
-        // Inline active refresh job progress (webui lines 533-538)
-        if (activeRefreshJob != null)
-        {
-            var refreshPanel = new StackPanel { Spacing = 2, Margin = new Thickness(0, 6, 0, 0) };
-            refreshPanel.Children.Add(new TextBlock
-            {
-                Text = !string.IsNullOrEmpty(activeRefreshJob.Message) ? activeRefreshJob.Message : "Metadata refresh queued",
-                FontSize = 10,
-                Foreground = _tertiaryText,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            });
-            if (activeRefreshJob.ProgressTotal > 0)
-            {
-                refreshPanel.Children.Add(new TextBlock
-                {
-                    Text = $"Progress: {activeRefreshJob.ProgressCurrent:N0} / {activeRefreshJob.ProgressTotal:N0}",
-                    FontSize = 10,
-                    Foreground = _tertiaryText,
-                });
-            }
-            actionsWrapper.Children.Add(refreshPanel);
-        }
-
-        // Inline active scans list (up to 2 + "+N more")
-        if (libScans.Count > 0)
-        {
-            var scanInfoPanel = new StackPanel { Spacing = 1, Margin = new Thickness(0, 8, 0, 0) };
-            foreach (var scan in libScans.Take(2))
-            {
-                var label = FormatActiveScanMode(scan);
-                label += scan.Status == "running" ? " running" : " queued";
-                if (!string.IsNullOrEmpty(scan.Path)) label += $" \u00b7 {scan.Path}";
-                scanInfoPanel.Children.Add(new TextBlock
-                {
-                    Text = label,
-                    FontSize = 10,
-                    Foreground = _tertiaryText,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                });
-            }
-            if (libScans.Count > 2)
-            {
-                scanInfoPanel.Children.Add(new TextBlock
-                {
-                    Text = $"+{libScans.Count - 2} more scan(s)",
-                    FontSize = 10,
-                    Foreground = _tertiaryText,
-                });
-            }
-            actionsWrapper.Children.Add(scanInfoPanel);
-        }
-
         Grid.SetColumn(actionsWrapper, 6);
         row.Children.Add(actionsWrapper);
 
@@ -647,6 +615,102 @@ public sealed partial class AdminLibrariesPage : Page
         rowBorder.PointerEntered += (s, _) => { if (s is Border b) b.Background = hoverBrush; };
         rowBorder.PointerExited  += (s, _) => { if (s is Border b) b.Background = transparentBrush; };
         return rowBorder;
+    }
+
+    private FrameworkElement BuildLibraryActiveWorkRow(Library lib, List<AdminScanRun> scans, AdminJob? refreshJob)
+    {
+        var workPanel = new StackPanel
+        {
+            Spacing = 8,
+            Margin = new Thickness(52, 0, 12, 0),
+        };
+
+        if (refreshJob != null)
+        {
+            var refreshRow = new Grid { ColumnSpacing = 10 };
+            refreshRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            refreshRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var copy = new StackPanel { Spacing = 2 };
+            copy.Children.Add(new TextBlock
+            {
+                Text = !string.IsNullOrWhiteSpace(refreshJob.Message) ? refreshJob.Message : "Metadata refresh queued",
+                FontSize = 12,
+                FontWeight = FontWeights.Medium,
+                Foreground = _primaryText,
+            });
+            if (refreshJob.ProgressTotal > 0)
+            {
+                copy.Children.Add(new TextBlock
+                {
+                    Text = $"Progress: {refreshJob.ProgressCurrent:N0} / {refreshJob.ProgressTotal:N0}",
+                    FontSize = 11,
+                    Foreground = _tertiaryText,
+                });
+            }
+            refreshRow.Children.Add(copy);
+
+            var stopRefresh = MakeSymbolButton28(Symbol.Stop, "Stop Metadata Refresh", DestructiveColor);
+            stopRefresh.Click += async (_, _) =>
+            {
+                stopRefresh.IsEnabled = false;
+                await ViewModel.CancelRefreshJobAsync(refreshJob.Id);
+                ShowStatus(ViewModel.StatusMessage ?? "Metadata refresh cancellation requested.");
+            };
+            Grid.SetColumn(stopRefresh, 1);
+            refreshRow.Children.Add(stopRefresh);
+            workPanel.Children.Add(refreshRow);
+        }
+
+        foreach (var scan in scans)
+        {
+            var scanRow = new Grid { ColumnSpacing = 10 };
+            scanRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            scanRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var copy = new StackPanel { Spacing = 2 };
+            var progress = FormatActiveScanProgress(scan);
+            copy.Children.Add(new TextBlock
+            {
+                Text = scan.Status == "running"
+                    ? $"Scanning: {(string.IsNullOrWhiteSpace(progress) ? FormatActiveScanMode(scan) : progress)}"
+                    : $"Queued: {(string.IsNullOrWhiteSpace(progress) ? "Waiting for capacity" : progress)}",
+                FontSize = 12,
+                FontWeight = FontWeights.Medium,
+                Foreground = _primaryText,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+            var detail = FormatActiveScanMode(scan);
+            if (!string.IsNullOrWhiteSpace(scan.Path)) detail += $" \u00b7 {scan.Path}";
+            copy.Children.Add(new TextBlock
+            {
+                Text = detail,
+                FontSize = 11,
+                Foreground = _tertiaryText,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+            scanRow.Children.Add(copy);
+
+            var stopScan = MakeSymbolButton28(Symbol.Stop, "Stop Scan", DestructiveColor);
+            stopScan.Click += async (_, _) =>
+            {
+                stopScan.IsEnabled = false;
+                await ViewModel.CancelLibraryScansCommand.ExecuteAsync(lib.Id);
+                ShowStatus(ViewModel.StatusMessage ?? "Scan cancellation requested.");
+            };
+            Grid.SetColumn(stopScan, 1);
+            scanRow.Children.Add(stopScan);
+            workPanel.Children.Add(scanRow);
+        }
+
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)),
+            BorderBrush = _borderBrush,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Padding = new Thickness(0, 10, 0, 10),
+            Child = workPanel,
+        };
     }
 
     private AdminJob? FindActiveRefreshJob(int libraryId)
@@ -866,7 +930,7 @@ public sealed partial class AdminLibrariesPage : Page
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var headerLeft = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-        headerLeft.Children.Add(new FontIcon { Glyph = "\uE72C", FontSize = 12, Foreground = _accentBrush });
+        headerLeft.Children.Add(new SymbolIcon { Symbol = Symbol.Refresh, Foreground = _accentBrush });
         headerLeft.Children.Add(new TextBlock { Text = "Scan Queue", FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = _primaryText });
         Grid.SetColumn(headerLeft, 0);
         header.Children.Add(headerLeft);
@@ -2304,18 +2368,60 @@ public sealed partial class AdminLibrariesPage : Page
     //  Create Dialog
     // ===================================================================
 
+    private FrameworkElement BuildLibraryDialogTitle(bool editing)
+    {
+        var icon = new Border
+        {
+            Width = 36,
+            Height = 36,
+            CornerRadius = new CornerRadius(10),
+            Background = new SolidColorBrush(Color.FromArgb(0x1A, 0xC0, 0x84, 0xFC)),
+            Child = new SymbolIcon
+            {
+                Symbol = Symbol.Library,
+                Foreground = _accentBrush,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
+        var copy = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
+        copy.Children.Add(new TextBlock
+        {
+            Text = editing ? "Edit Library" : "Add Library",
+            FontSize = 18,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = _primaryText,
+        });
+        copy.Children.Add(new TextBlock
+        {
+            Text = editing
+                ? "Update this library's folders, metadata, and processing options."
+                : "Set up a new library from folders on your server.",
+            FontSize = 12,
+            Foreground = _tertiaryText,
+        });
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        header.Children.Add(icon);
+        header.Children.Add(copy);
+        return header;
+    }
+
     private async Task OpenCreateDialogAsync()
     {
         var (formContent, getBody, getProviderChain, getPosterFile) = BuildLibraryForm(null);
 
         var dialog = new ContentDialog
         {
-            Title = "Add Library",
-            PrimaryButtonText = "Save",
+            Title = BuildLibraryDialogTitle(false),
+            PrimaryButtonText = "Create Library",
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
             Content = formContent,
             DefaultButton = ContentDialogButton.Primary
+        };
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            if (getBody() == null) args.Cancel = true;
         };
 
         var result = await dialog.ShowAsync();
@@ -2360,12 +2466,16 @@ public sealed partial class AdminLibrariesPage : Page
 
         var dialog = new ContentDialog
         {
-            Title = "Edit Library",
-            PrimaryButtonText = "Save",
+            Title = BuildLibraryDialogTitle(true),
+            PrimaryButtonText = "Save Changes",
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
             Content = formContent,
             DefaultButton = ContentDialogButton.Primary
+        };
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            if (getBody() == null) args.Cancel = true;
         };
 
         var result = await dialog.ShowAsync();
@@ -2571,6 +2681,16 @@ public sealed partial class AdminLibrariesPage : Page
             CornerRadius = new CornerRadius(8),
             FontSize = 13
         };
+        var nameError = new TextBlock
+        {
+            Text = "Name is required.",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(DestructiveColor),
+            Visibility = Visibility.Collapsed,
+        };
+        nameBox.TextChanged += (_, _) => nameError.Visibility = string.IsNullOrWhiteSpace(nameBox.Text)
+            ? nameError.Visibility
+            : Visibility.Collapsed;
 
         // Enabled toggle
         var enabledSwitch = new ToggleSwitch
@@ -2606,6 +2726,67 @@ public sealed partial class AdminLibrariesPage : Page
         }
         if (typeCombo.SelectedItem == null && typeCombo.Items.Count > 0)
             typeCombo.SelectedIndex = 0;
+
+        // The WebUI exposes every library type as a card instead of hiding the
+        // most important choice in a dropdown.
+        var typeSelector = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
+        for (var i = 0; i < 5; i++)
+            typeSelector.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        typeSelector.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        typeSelector.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var typeButtons = new List<Button>();
+        var typeChoices = new (string Value, string Label, Symbol Icon)[]
+        {
+            ("movies", "Movies", Symbol.Video),
+            ("series", "Series", Symbol.Video),
+            ("mixed", "Mixed", Symbol.AllApps),
+            ("audiobooks", "Audiobooks", Symbol.Audio),
+            ("ebooks", "Ebooks", Symbol.PreviewLink),
+            ("manga", "Manga", Symbol.Library),
+            ("podcasts", "Podcasts", Symbol.Microphone),
+        };
+        void RefreshTypeCards()
+        {
+            var selectedType = (typeCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "movies";
+            foreach (var button in typeButtons)
+            {
+                var selected = string.Equals(button.Tag as string, selectedType, StringComparison.OrdinalIgnoreCase);
+                button.Background = selected
+                    ? new SolidColorBrush(Color.FromArgb(0x1A, 0xC0, 0x84, 0xFC))
+                    : (SolidColorBrush)Application.Current.Resources["SurfaceBrush"];
+                button.BorderBrush = selected ? _accentBrush : _borderBrush;
+                button.Foreground = selected ? _primaryText : _secondaryText;
+            }
+        }
+        for (var i = 0; i < typeChoices.Length; i++)
+        {
+            var choice = typeChoices[i];
+            var content = new StackPanel { Spacing = 6, HorizontalAlignment = HorizontalAlignment.Center };
+            content.Children.Add(new SymbolIcon { Symbol = choice.Icon, HorizontalAlignment = HorizontalAlignment.Center });
+            content.Children.Add(new TextBlock { Text = choice.Label, FontSize = 11, FontWeight = FontWeights.Medium, HorizontalAlignment = HorizontalAlignment.Center });
+            var button = new Button
+            {
+                Tag = choice.Value,
+                Content = content,
+                MinHeight = 62,
+                Padding = new Thickness(8, 10, 8, 10),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                CornerRadius = new CornerRadius(12),
+                BorderThickness = new Thickness(1),
+            };
+            button.Click += (_, _) =>
+            {
+                typeCombo.SelectedItem = typeCombo.Items.Cast<ComboBoxItem>()
+                    .First(item => string.Equals(item.Tag as string, choice.Value, StringComparison.OrdinalIgnoreCase));
+                RefreshTypeCards();
+            };
+            typeButtons.Add(button);
+            Grid.SetColumn(button, i % 5);
+            Grid.SetRow(button, i / 5);
+            typeSelector.Children.Add(button);
+        }
+        RefreshTypeCards();
 
         // ---- Paths section ----
         var pathsPanel = new StackPanel { Spacing = 6 };
@@ -2752,32 +2933,24 @@ public sealed partial class AdminLibrariesPage : Page
         var metadataPanel = MakeSection("Metadata", "Control where artwork and descriptions come from, and in which language.");
         var advancedPanel = MakeSection("Advanced", "Optional background processing for this library.");
 
-        // Row 1: Name + Enabled
-        var nameRow = new Grid { ColumnSpacing = 12 };
-        nameRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        nameRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
         var nameGroup = new StackPanel { Spacing = 6 };
         nameGroup.Children.Add(MakeFormLabel("Name"));
         nameGroup.Children.Add(nameBox);
-
-        var enabledGroup = new StackPanel
-        {
-            Spacing = 6,
-            VerticalAlignment = VerticalAlignment.Bottom
-        };
-        enabledGroup.Children.Add(enabledSwitch);
-
-        Grid.SetColumn(nameGroup, 0);
-        Grid.SetColumn(enabledGroup, 1);
-        nameRow.Children.Add(nameGroup);
-        nameRow.Children.Add(enabledGroup);
-        generalPanel.Children.Add(nameRow);
+        nameGroup.Children.Add(nameError);
+        generalPanel.Children.Add(nameGroup);
 
         // Row 2: Paths
         var pathsGroup = new StackPanel { Spacing = 6 };
         pathsGroup.Children.Add(MakeFormLabel("Paths"));
         pathsGroup.Children.Add(pathsPanel);
+        var pathsError = new TextBlock
+        {
+            Text = "Add at least one server folder.",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(DestructiveColor),
+            Visibility = Visibility.Collapsed,
+        };
+        pathsGroup.Children.Add(pathsError);
         pathsGroup.Children.Add(addPathBtn);
         foldersPanel.Children.Add(pathsGroup);
 
@@ -2787,14 +2960,14 @@ public sealed partial class AdminLibrariesPage : Page
         string? posterContentType = null;
 
         // Row 3: Type + Poster
-        var typeRow = new Grid { ColumnSpacing = 12 };
-        typeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        typeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var typeRow = new Grid { RowSpacing = 12 };
+        typeRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        typeRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var typeGroup = new StackPanel { Spacing = 6 };
         typeGroup.Children.Add(MakeFormLabel("Type"));
-        typeGroup.Children.Add(typeCombo);
-        Grid.SetColumn(typeGroup, 0);
+        typeGroup.Children.Add(typeSelector);
+        Grid.SetRow(typeGroup, 0);
         typeRow.Children.Add(typeGroup);
 
         // Poster section (only when editing)
@@ -2909,11 +3082,37 @@ public sealed partial class AdminLibrariesPage : Page
             }
 
             posterGroup.Children.Add(posterRow);
-            Grid.SetColumn(posterGroup, 1);
+            Grid.SetRow(posterGroup, 1);
             typeRow.Children.Add(posterGroup);
         }
 
         generalPanel.Children.Add(typeRow);
+
+        var enabledCopy = new StackPanel { Spacing = 2 };
+        enabledCopy.Children.Add(new TextBlock { Text = "Enabled", FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = _primaryText });
+        enabledCopy.Children.Add(new TextBlock
+        {
+            Text = "Disabled libraries are hidden from browsing and skipped by scans.",
+            FontSize = 11,
+            Foreground = _tertiaryText,
+            TextWrapping = TextWrapping.Wrap,
+        });
+        var enabledRow = new Grid { ColumnSpacing = 12 };
+        enabledRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        enabledRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        enabledRow.Children.Add(enabledCopy);
+        enabledSwitch.OnContent = null;
+        enabledSwitch.OffContent = null;
+        Grid.SetColumn(enabledSwitch, 1);
+        enabledRow.Children.Add(enabledSwitch);
+        generalPanel.Children.Add(new Border
+        {
+            BorderBrush = _borderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(12),
+            Child = enabledRow,
+        });
 
         // Metadata Language selector (webui LibraryForm: language select)
         var langCombo = new ComboBox
@@ -3040,12 +3239,21 @@ public sealed partial class AdminLibrariesPage : Page
         sectionHost.Children.Add(advancedPanel);
         var sectionScroll = new ScrollViewer { Content = sectionHost, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var nav = new StackPanel { Spacing = 4, Padding = new Thickness(10, 12, 10, 12) };
+        var navButtons = new List<(Button Button, StackPanel Target)>();
         void SelectSection(StackPanel selected)
         {
             generalPanel.Visibility = selected == generalPanel ? Visibility.Visible : Visibility.Collapsed;
             foldersPanel.Visibility = selected == foldersPanel ? Visibility.Visible : Visibility.Collapsed;
             metadataPanel.Visibility = selected == metadataPanel ? Visibility.Visible : Visibility.Collapsed;
             advancedPanel.Visibility = selected == advancedPanel ? Visibility.Visible : Visibility.Collapsed;
+            foreach (var entry in navButtons)
+            {
+                var active = entry.Target == selected;
+                entry.Button.Background = active
+                    ? new SolidColorBrush(Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF))
+                    : new SolidColorBrush(Colors.Transparent);
+                entry.Button.Foreground = active ? _primaryText : _secondaryText;
+            }
         }
         Button AddNavButton(string label, string glyph, StackPanel target)
         {
@@ -3063,14 +3271,16 @@ public sealed partial class AdminLibrariesPage : Page
             };
             button.Click += (_, _) => SelectSection(target);
             nav.Children.Add(button);
+            navButtons.Add((button, target));
             return button;
         }
         AddNavButton("General", "\uE713", generalPanel);
         AddNavButton("Folders", "\uED25", foldersPanel);
         AddNavButton("Metadata", "\uE8B7", metadataPanel);
         AddNavButton("Advanced", "\uE9F5", advancedPanel);
-        var form = new Grid { Width = 720, Height = 470 };
-        form.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });
+        SelectSection(generalPanel);
+        var form = new Grid { Width = 720, Height = 520 };
+        form.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(176) });
         form.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Grid.SetColumn(nav, 0); Grid.SetColumn(sectionScroll, 1);
         form.Children.Add(nav);
@@ -3088,7 +3298,7 @@ public sealed partial class AdminLibrariesPage : Page
         object? GetBody()
         {
             string name = nameBox.Text.Trim();
-            if (string.IsNullOrEmpty(name)) return null;
+            nameError.Visibility = string.IsNullOrEmpty(name) ? Visibility.Visible : Visibility.Collapsed;
 
             string selectedType = "movies";
             if (typeCombo.SelectedItem is ComboBoxItem selected && selected.Tag is string tag)
@@ -3098,6 +3308,19 @@ public sealed partial class AdminLibrariesPage : Page
                 .Select(tb => tb.Text.Trim())
                 .Where(p => !string.IsNullOrWhiteSpace(p))
                 .ToList();
+            pathsError.Visibility = paths.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (string.IsNullOrEmpty(name))
+            {
+                SelectSection(generalPanel);
+                nameBox.Focus(FocusState.Programmatic);
+                return null;
+            }
+            if (paths.Count == 0)
+            {
+                SelectSection(foldersPanel);
+                pathInputs[0].Focus(FocusState.Programmatic);
+                return null;
+            }
 
             var selectedLang = (langCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "en";
             return new Dictionary<string, object>

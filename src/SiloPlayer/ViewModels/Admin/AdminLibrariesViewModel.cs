@@ -59,6 +59,18 @@ public partial class AdminLibrariesViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadAsync()
     {
+        await LoadLibrariesAsync();
+
+        await Task.WhenAll(
+            LoadSkippedRootsAsync(),
+            LoadUnmatchedItemsAsync(),
+            LoadStaleIdsAsync(),
+            LoadMetadataProvidersAsync(),
+            LoadActiveRefreshJobsAsync());
+    }
+
+    public async Task LoadLibrariesAsync()
+    {
         IsLoading = true;
         ErrorMessage = null;
         StatusMessage = null;
@@ -71,15 +83,6 @@ public partial class AdminLibrariesViewModel : ObservableObject
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsLoading = false; }
 
-        // These surfaces are part of the page, not optional background data.
-        // Run them concurrently so the first visual rebuild includes every
-        // diagnostics card and active refresh row without serial latency.
-        await Task.WhenAll(
-            LoadSkippedRootsAsync(),
-            LoadUnmatchedItemsAsync(),
-            LoadStaleIdsAsync(),
-            LoadMetadataProvidersAsync(),
-            LoadActiveRefreshJobsAsync());
     }
 
     public async Task RefreshLibrariesOnlyAsync()
@@ -96,7 +99,7 @@ public partial class AdminLibrariesViewModel : ObservableObject
         }
     }
 
-    private async Task LoadSkippedRootsAsync()
+    public async Task LoadSkippedRootsAsync()
     {
         try
         {
@@ -120,7 +123,7 @@ public partial class AdminLibrariesViewModel : ObservableObject
         catch { /* Non-critical */ }
     }
 
-    private async Task LoadStaleIdsAsync()
+    public async Task LoadStaleIdsAsync()
     {
         try
         {
@@ -141,7 +144,7 @@ public partial class AdminLibrariesViewModel : ObservableObject
         catch { AmbiguousRoots = []; OnPropertyChanged(nameof(AmbiguousRoots)); }
     }
 
-    private async Task LoadMetadataProvidersAsync()
+    public async Task LoadMetadataProvidersAsync()
     {
         try
         {
@@ -151,7 +154,7 @@ public partial class AdminLibrariesViewModel : ObservableObject
         catch { /* Non-critical */ }
     }
 
-    private async Task LoadActiveRefreshJobsAsync()
+    public async Task LoadActiveRefreshJobsAsync()
     {
         try
         {

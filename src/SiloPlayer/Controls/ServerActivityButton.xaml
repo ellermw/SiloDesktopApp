@@ -11,16 +11,16 @@
         x:Name="RootButton"
         Background="Transparent"
         BorderThickness="0"
-        Width="40"
-        Height="40"
-        Padding="8"
-        CornerRadius="10"
+        Width="36"
+        Height="36"
+        Padding="6"
+        CornerRadius="12"
         Click="RootButton_Click"
         ToolTipService.ToolTip="Server Activity">
         <Grid Width="24" Height="24">
             <!-- Lucide Activity: the WebUI uses the pulse line, not a heart or
                  a platform font glyph whose shape varies by Windows version. -->
-            <Viewbox Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <Viewbox Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center">
                 <Canvas Width="24" Height="24">
                     <Path x:Name="ActivityIcon"
                           Data="M 22,12 L 18,12 L 15,21 L 9,3 L 6,12 L 2,12"
@@ -35,33 +35,36 @@
             <Border
                 x:Name="CountBadge"
                 Background="#EF4444"
-                CornerRadius="8"
-                Height="16"
-                MinWidth="16"
+                CornerRadius="9"
+                Height="18"
+                MinWidth="18"
                 Padding="4,0,4,0"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Top"
-                Margin="0,-5,-5,0"
+                Margin="0,-2,-2,0"
                 Visibility="Collapsed">
                 <TextBlock
                     x:Name="CountBadgeText"
                     Text="0"
-                    FontSize="9"
+                    FontSize="10"
                     FontWeight="Bold"
                     Foreground="White"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center" />
             </Border>
-            <!-- Small amber dot when WS is disconnected but activity is present.
-                 Mirrors upstream ServerActivity.tsx line 100. -->
-            <Ellipse
+            <!-- WebUI connection-problem marker: red, ringed, and distinct
+                 from the active-count badge. -->
+            <Border
                 x:Name="DisconnectedDot"
-                Width="8"
-                Height="8"
-                Fill="#F59E0B"
+                Width="10"
+                Height="10"
+                CornerRadius="5"
+                Background="#EF4444"
+                BorderBrush="{StaticResource AppBackgroundBrush}"
+                BorderThickness="2"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Bottom"
-                Margin="0,0,-3,-3"
+                Margin="0,0,-2,-2"
                 Visibility="Collapsed" />
         </Grid>
         <Button.Flyout>

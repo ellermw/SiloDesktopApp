@@ -41,6 +41,7 @@ public sealed partial class AdminDashboardPage : Page
         try
         {
             _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
+            _eventChannel.SnapshotReceived += OnSnapshotReceived;
             _eventChannel.EventReceived += OnEventReceived;
             _eventSubscription = _eventChannel.Subscribe("sessions");
             _scanEventSubscription = _eventChannel.Subscribe("scans");
@@ -61,7 +62,10 @@ public sealed partial class AdminDashboardPage : Page
         base.OnNavigatedFrom(e);
         _autoRefreshTimer?.Stop();
         if (_eventChannel != null)
+        {
+            _eventChannel.SnapshotReceived -= OnSnapshotReceived;
             _eventChannel.EventReceived -= OnEventReceived;
+        }
         _eventSubscription?.Dispose();
         _eventSubscription = null;
         _scanEventSubscription?.Dispose();
@@ -135,27 +139,53 @@ public sealed partial class AdminDashboardPage : Page
     private void ManageUsersLink_Tapped(object sender, TappedRoutedEventArgs e)
         => Frame.Navigate(typeof(AdminUsersPage));
 
-    private void OnEventReceived(string channel, string eventName, System.Text.Json.JsonElement data)
+    private static readonly JsonSerializerOptions _scanJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+    };
+
+    private void OnSnapshotReceived(string channel, JsonElement data)
+    {
+        if (channel != "scans" || data.ValueKind != JsonValueKind.Array) return;
+        try
+        {
+            var scans = data.Deserialize<List<AdminScanRun>>(_scanJsonOptions) ?? [];
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                ViewModel.ActiveScans = scans.Where(IsActiveScan).ToList();
+                BuildLibraryRows();
+            });
+        }
+        catch { }
+    }
+
+    private void OnEventReceived(string channel, string eventName, JsonElement data)
     {
         if (channel == "scans")
         {
+            List<AdminScanRun>? snapshot = null;
+            AdminScanRun? updated = null;
             try
             {
-                var options = new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower };
-                if (eventName == "snapshot")
-                    ViewModel.ActiveScans = data.Deserialize<List<AdminScanRun>>(options)?.Where(IsActiveScan).ToList() ?? [];
-                else if (eventName == "scan_updated")
-                {
-                    var updated = data.Deserialize<AdminScanRun>(options);
-                    if (updated != null)
-                    {
-                        ViewModel.ActiveScans = ViewModel.ActiveScans.Where(scan => scan.Id != updated.Id).ToList();
-                        if (IsActiveScan(updated)) ViewModel.ActiveScans.Add(updated);
-                    }
-                }
-                DispatcherQueue.TryEnqueue(BuildLibraryRows);
+                if (eventName == "snapshot" && data.ValueKind == JsonValueKind.Array)
+                    snapshot = data.Deserialize<List<AdminScanRun>>(_scanJsonOptions) ?? [];
+                else if (data.ValueKind == JsonValueKind.Object)
+                    updated = data.Deserialize<AdminScanRun>(_scanJsonOptions);
             }
-            catch { }
+            catch { return; }
+
+            if (snapshot == null && updated == null) return;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (snapshot != null)
+                    ViewModel.ActiveScans = snapshot.Where(IsActiveScan).ToList();
+                else if (updated != null)
+                {
+                    ViewModel.ActiveScans = ViewModel.ActiveScans.Where(scan => scan.Id != updated.Id).ToList();
+                    if (IsActiveScan(updated)) ViewModel.ActiveScans.Add(updated);
+                }
+                BuildLibraryRows();
+            });
             return;
         }
         if (channel != "sessions") return;
@@ -168,13 +198,14 @@ public sealed partial class AdminDashboardPage : Page
                 await ViewModel.RefreshSessionsOnlyAsync();
                 UpdateStats();
                 BuildStreamCards();
+                BuildActivityItems();
             }
             catch { }
         });
     }
 
     private static bool IsActiveScan(AdminScanRun scan)
-        => scan.Status is "accepted" or "running" or "queued";
+        => scan.Status is "accepted" or "running";
 
     private void BuildContent()
     {
@@ -741,7 +772,11 @@ public sealed partial class AdminDashboardPage : Page
                 : "";
             nameStack.Children.Add(new TextBlock
             {
-                Text = (running > 0 ? $"{running} running" : $"{queued} queued") + progress,
+                Text = (running > 0 ? "Scanning: " : "Queued: ")
+                    + (string.IsNullOrWhiteSpace(progress)
+                        ? (running > 0 ? FormatDashboardScanMode(leading) : "Waiting for capacity")
+                        : progress.TrimStart(' ', '\u00b7'))
+                    + (activeScans.Count > 1 ? $" + {activeScans.Count - 1} more" : ""),
                 FontSize = 10,
                 Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
             });
@@ -753,15 +788,16 @@ public sealed partial class AdminDashboardPage : Page
             Width = 28,
             Height = 28,
             Padding = new Thickness(0),
-            Background = new SolidColorBrush(Colors.Transparent),
+            Background = activeScans.Count > 0
+                ? new SolidColorBrush(Color.FromArgb(255, 239, 68, 68))
+                : new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
-            Content = new FontIcon
+            Content = new SymbolIcon
             {
-                Glyph = activeScans.Count > 0 ? "\uE71A" : "\uE72C",
-                FontSize = 12,
+                Symbol = activeScans.Count > 0 ? Symbol.Stop : Symbol.SyncFolder,
                 Foreground = activeScans.Count > 0
-                    ? new SolidColorBrush(Color.FromArgb(255, 220, 90, 90))
+                    ? new SolidColorBrush(Colors.White)
                     : (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
             },
             CornerRadius = new CornerRadius(4)
@@ -776,15 +812,17 @@ public sealed partial class AdminDashboardPage : Page
             scanButton.IsEnabled = true;
         };
 
-        // Enabled dot (8px circle, green if enabled, gray if not)
+        // Active work is amber in the WebUI; otherwise enabled is green and disabled is muted.
         var dot = new Border
         {
             Width = 8,
             Height = 8,
             CornerRadius = new CornerRadius(4),
-            Background = new SolidColorBrush(lib.Enabled
-                ? Color.FromArgb(255, 34, 197, 94)  // bg-green-500
-                : Color.FromArgb(77, 160, 160, 160)),  // bg-muted-foreground/30
+            Background = new SolidColorBrush(activeScans.Count > 0
+                ? Color.FromArgb(255, 245, 158, 11)
+                : lib.Enabled
+                    ? Color.FromArgb(255, 34, 197, 94)
+                    : Color.FromArgb(77, 160, 160, 160)),
             VerticalAlignment = VerticalAlignment.Center
         };
 
@@ -806,6 +844,14 @@ public sealed partial class AdminDashboardPage : Page
         return cardBorder;
     }
 
+    private static string FormatDashboardScanMode(AdminScanRun scan) => scan.Mode switch
+    {
+        "library" => "Full library scan",
+        "subtree" => "Subtree scan",
+        "file" => "Single file scan",
+        _ => scan.Mode,
+    };
+
     private static Border BuildLibraryIconBox()
     {
         // 40x40 rounded-lg bordered icon (bg-primary/5 border-primary/10)
@@ -819,10 +865,9 @@ public sealed partial class AdminDashboardPage : Page
             BorderBrush = new SolidColorBrush(Color.FromArgb(26, accentColor.R, accentColor.G, accentColor.B)),
             BorderThickness = new Thickness(1)
         };
-        iconBox.Child = new FontIcon
+        iconBox.Child = new SymbolIcon
         {
-            Glyph = "\uE8B7", // Library icon
-            FontSize = 16,
+            Symbol = Symbol.Library,
             Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center

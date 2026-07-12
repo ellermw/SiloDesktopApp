@@ -101,6 +101,10 @@ public sealed partial class ServerActivityButton : UserControl
         if (_subscription != null) return;
         try
         {
+            // The shared client may already be live before this control loads.
+            // Seed from its current state instead of showing a false warning
+            // until the next reconnect transition.
+            _wsConnected = _events.CurrentState == WebSocketState.Open;
             _events.SnapshotReceived += OnSnapshot;
             _events.EventReceived += OnEvent;
             _events.StateChanged += OnWsStateChanged;

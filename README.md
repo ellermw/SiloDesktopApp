@@ -6,7 +6,7 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.36**](https://transfers.taverncdn.com/qhdK0Btsni/SiloInstaller-1.1.36-Setup.exe) — Windows 10/11 x64 installer, available for 180 days.
+[**Download Silo Desktop Player 1.1.37**](https://transfers.taverncdn.com/GuUTiXRvpq/SiloInstaller-1.1.37-Setup.exe) — Windows 10/11 x64 installer, available for 180 days.
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -29,8 +29,8 @@ Status meanings:
 | User collections | Substantial | Browse, create, edit, manual/smart rules, imports, and collection management exist. Current templates, guided rules, collage/scheduling details, and visual polish remain. |
 | Notifications | Substantial | Notification center and user notification settings are implemented, including current delivery configuration foundations. Additional current-server edge cases remain to be audited. |
 | Settings | Substantial | Playback, subtitles, appearance, theme editor, accessibility, home, card overlays, libraries, history import, webhook sync, watch providers, profiles, and notification controls are present. The server continues to add fields, so these routes remain subject to drift audits. |
-| Admin: Libraries | Functional; visual parity incomplete | Current provider-chain contract, remote server folder browser, library types, metadata language, AI translation, trailer kinds, chapter/intro settings, posters, scan queue/progress/cancel, reorder, unmatched items, ambiguous/skipped roots, stale IDs, and collapsed diagnostics are implemented. Layout and styling still require a strict side-by-side WebUI parity pass. |
-| Admin: Dashboard | Functional; visual parity incomplete | Incremental section loading, active sessions, session controls, current stats, Trakt activity, library scan state/progress, users, activity links, manual refresh, and active-page refresh are implemented. Layout and styling still require a strict side-by-side WebUI parity pass. |
+| Admin: Libraries | Functional; visual parity incomplete | The current table, real drag reorder, separate live scan/metadata work rows, warning rows, scan queue, diagnostics, and seven-type editor are implemented. Primary rows now render before slower diagnostics. A final installed-build side-by-side pass and remaining fine visual tuning are still required. |
+| Admin: Dashboard | Functional; visual parity incomplete | Incremental sections, live sessions, current stats, corrected Trakt 24h metrics, WebUI scan snapshot/progress states, users, activity links, and scan controls are implemented. A final installed-build side-by-side pass and remaining fine visual tuning are still required. |
 | Admin: Activity | Functional; visual parity incomplete | Realtime stream state, search/filter/sort, client/profile/IP presentation, IP history lookup, playback position/state, container/video/audio decision details, hardware transcode mode, session controls, log links, and inline FFmpeg output are implemented. Layout and styling still require a strict side-by-side WebUI parity pass. |
 | Admin: Logs | Functional; visual parity incomplete | Live application/audit streams, shared playback-session filtering, playback summaries, cursor loading, reconnect, FFmpeg focus, and full operational-log detail sheets are implemented. Live screenshot comparison is still required before declaring visual parity. |
 | Admin: Collections | Functional; visual parity incomplete | The list follows the current WebUI's all-library sections and scoped group boards, including artwork, counts, visibility/featured/source badges, template entry, source selection, sync, edit, delete, and reorder actions. Create/edit now uses a dedicated full-page workspace; exact source-specific import layouts and live screenshot comparison remain incomplete. |
@@ -41,6 +41,15 @@ Status meanings:
 | Watch Party | Partial | Join/create, room membership, suggestions, and realtime foundations exist. Content search, series drill-down, spotlight/now-playing UI, auto-start, and complete synchronization remain. |
 
 ## Recent release work
+
+### 1.1.37
+
+- Reworked Admin Libraries as a complete surface: live scan and metadata activity now occupy WebUI-style full-width rows beneath each library, while empty-root warnings remain in their own block below normal rows.
+- Rebuilt Add/Edit Library General with visible seven-type cards, the WebUI Enabled setting, active section-rail states, matching dialog headers/actions, and validation that keeps the editor open and focuses the invalid section.
+- Removed the multi-second blank Libraries page by rendering its primary table immediately and loading diagnostics, providers, and refresh-job data independently.
+- Corrected Dashboard scan snapshots/events, active-scan copy, amber status state, stop controls, recent activity refresh, stat-card radius, and header action geometry.
+- Fixed Trakt 24-hour counters that incorrectly displayed zero because numeric-suffix JSON fields were not mapped to the server contract.
+- Corrected Server Activity's false disconnected marker when it loads after the shared event channel is already connected, and matched the WebUI's 36px trigger and 18px badge geometry.
 
 ### 1.1.36
 
