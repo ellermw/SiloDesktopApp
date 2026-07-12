@@ -6,7 +6,7 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.33**](https://transfers.taverncdn.com/7dLRtv10K1/SiloInstaller-1.1.33-Setup.exe) — Windows 10/11 x64 installer, available for 180 days.
+[**Download Silo Desktop Player 1.1.34**](https://transfers.taverncdn.com/4o5Fdg2TAu/SiloInstaller-1.1.34-Setup.exe) — Windows 10/11 x64 installer, available for 180 days.
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -33,13 +33,19 @@ Status meanings:
 | Admin: Dashboard | Functional; visual parity incomplete | Incremental section loading, active sessions, session controls, current stats, Trakt activity, library scan state/progress, users, activity links, manual refresh, and active-page refresh are implemented. Layout and styling still require a strict side-by-side WebUI parity pass. |
 | Admin: Activity | Functional; visual parity incomplete | Realtime stream state, search/filter/sort, client/profile/IP presentation, IP history lookup, playback position/state, container/video/audio decision details, hardware transcode mode, session controls, log links, and inline FFmpeg output are implemented. Layout and styling still require a strict side-by-side WebUI parity pass. |
 | Admin: Logs | Functional; visual parity incomplete | Live application/audit streams, shared playback-session filtering, playback summaries, cursor loading, reconnect, FFmpeg focus, and full operational-log detail sheets are implemented. Live screenshot comparison is still required before declaring visual parity. |
-| Admin: Collections | Functional; visual parity incomplete | The list now follows the current WebUI's all-library sections and scoped group boards, including artwork, counts, visibility/featured/source badges, template entry, source selection, sync, edit, delete, and reorder actions. The dedicated full-page create/edit/import workspaces and live screenshot comparison remain incomplete. |
+| Admin: Collections | Functional; visual parity incomplete | The list follows the current WebUI's all-library sections and scoped group boards, including artwork, counts, visibility/featured/source badges, template entry, source selection, sync, edit, delete, and reorder actions. Create/edit now uses a dedicated full-page workspace; exact source-specific import layouts and live screenshot comparison remain incomplete. |
 | Remaining admin pages | Partial | Users, tasks, history, maintenance, sections, providers, plugins, nodes, API keys, invites, subtitles, requests, recommendations, autoscan, devices, policy, access groups, marker history, and settings have foundations of varying depth. Each still needs a fresh current-WebUI page audit. |
 | Player on-screen controls | Substantial | Current visual control foundation, play/pause, seek, volume, fullscreen state sync, quality/audio/subtitle menus, intro/credits actions, next episode, keyboard shortcuts, and stats are present. Chapter thumbnails, subtitle actions, playing-next/postroll, PiP/mini-player details, and final state polish remain. |
 | Native playback engine | Hardening | Direct play, remux, HLS fallback, D3D11VA, HEVC/AV1/VP9/H.264, HDR paths, subtitle rendering, track switching, progress reporting, and stall recovery foundations exist. High-bitrate 4K, Dolby Vision, HDR/tone mapping, TrueHD/Atmos/DTS passthrough, fastest startup/seek, and long-session reliability remain active work. |
 | Watch Party | Partial | Join/create, room membership, suggestions, and realtime foundations exist. Content search, series drill-down, spotlight/now-playing UI, auto-start, and complete synchronization remain. |
 
 ## Recent release work
+
+### 1.1.34
+
+- Replaced the remaining Admin Collections create/edit dialog with a dedicated full-page workspace inside the Admin route.
+- Added WebUI-style back navigation, source-aware editor titles, change-source handling, a wide form surface, persistent save/cancel actions, and visible save errors.
+- Preserved collection artwork upload, multi-library assignment, group placement, source configuration, scheduling, visibility, and featured controls.
 
 ### 1.1.33
 

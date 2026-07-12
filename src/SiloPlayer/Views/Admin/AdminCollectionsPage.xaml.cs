@@ -20,6 +20,10 @@ public sealed partial class AdminCollectionsPage : Page
     // Track whether the picker is being updated programmatically so we don't re-trigger a load
     private bool _suppressPickerChange;
     private bool _rebuildPending;
+    private LibraryCollection? _editingCollection;
+    private Func<CreateLibraryCollectionRequest?>? _editorGetBody;
+    private Func<(byte[]? Bytes, string? Name, string? ContentType)>? _editorGetPosterFile;
+    private Func<(byte[]? Bytes, string? Name, string? ContentType)>? _editorGetBackdropFile;
 
     public AdminCollectionsPage()
     {
@@ -729,73 +733,107 @@ public sealed partial class AdminCollectionsPage : Page
 
     // ===== Create Dialog =====
 
-    private async Task OpenCreateDialogAsync(string initialType = "manual")
+    private Task OpenCreateDialogAsync(string initialType = "manual")
     {
-        var (formContent, getBody, getPosterFile, getBackdropFile) = BuildCollectionForm(null, initialType);
-
-        var dialog = new ContentDialog
-        {
-            Title = "Add Collection",
-            PrimaryButtonText = "Save",
-            CloseButtonText = "Cancel",
-            XamlRoot = this.XamlRoot,
-            Content = formContent,
-            DefaultButton = ContentDialogButton.Primary
-        };
-
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary)
-        {
-            var body = getBody();
-            if (body == null) return;
-
-            try
-            {
-                var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
-                var created = await adminApi.CreateCollectionAsync(body);
-
-                // Upload poster/backdrop files if selected
-                await UploadCollectionImagesAsync(adminApi, created.Id, getPosterFile(), getBackdropFile());
-
-                await ViewModel.LoadCommand.ExecuteAsync(null);
-            }
-            catch { }
-        }
+        OpenEditorWorkspace(null, initialType);
+        return Task.CompletedTask;
     }
 
     // ===== Edit Dialog =====
 
-    private async Task OpenEditDialogAsync(LibraryCollection col)
+    private Task OpenEditDialogAsync(LibraryCollection col)
     {
-        var (formContent, getBody, getPosterFile, getBackdropFile) = BuildCollectionForm(col);
+        OpenEditorWorkspace(col, col.CollectionType);
+        return Task.CompletedTask;
+    }
 
-        var dialog = new ContentDialog
-        {
-            Title = "Edit Collection",
-            PrimaryButtonText = "Save",
-            CloseButtonText = "Cancel",
-            XamlRoot = this.XamlRoot,
-            Content = formContent,
-            DefaultButton = ContentDialogButton.Primary
-        };
-
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary)
-        {
-            var body = getBody();
-            if (body == null) return;
-
-            try
+    private void OpenEditorWorkspace(LibraryCollection? collection, string sourceType)
+    {
+        var (content, getBody, getPosterFile, getBackdropFile) = BuildCollectionForm(collection, sourceType);
+        _editingCollection = collection;
+        _editorGetBody = getBody;
+        _editorGetPosterFile = getPosterFile;
+        _editorGetBackdropFile = getBackdropFile;
+        EditorContent.Content = content;
+        EditorTitle.Text = collection == null
+            ? sourceType switch
             {
-                var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
-                await adminApi.UpdateCollectionAsync(col.Id, body);
-
-                // Upload poster/backdrop files if selected
-                await UploadCollectionImagesAsync(adminApi, col.Id, getPosterFile(), getBackdropFile());
-
-                await ViewModel.LoadCommand.ExecuteAsync(null);
+                "mdblist" => "Import MDBList Collection",
+                "tmdb" => "Import TMDB Collection",
+                "trakt" => "Import Trakt Collection",
+                _ => "Add Collection"
             }
-            catch { }
+            : $"Edit {collection.Title}";
+        EditorSubtitle.Text = collection == null
+            ? "Build the collection in a full-page editor instead of a cramped dialog."
+            : "Keep rules, artwork, scheduling, and source configuration visible while editing.";
+        ChangeSourceButton.Visibility = collection == null ? Visibility.Visible : Visibility.Collapsed;
+        BrowsePanel.Visibility = Visibility.Collapsed;
+        EditorPanel.Visibility = Visibility.Visible;
+        EditorError.Visibility = Visibility.Collapsed;
+        EditorError.Text = "";
+    }
+
+    private void CloseEditorWorkspace()
+    {
+        EditorPanel.Visibility = Visibility.Collapsed;
+        BrowsePanel.Visibility = Visibility.Visible;
+        EditorContent.Content = null;
+        _editingCollection = null;
+        _editorGetBody = null;
+        _editorGetPosterFile = null;
+        _editorGetBackdropFile = null;
+    }
+
+    private void EditorBackButton_Click(object sender, RoutedEventArgs e) => CloseEditorWorkspace();
+
+    private async void ChangeSourceButton_Click(object sender, RoutedEventArgs e)
+    {
+        CloseEditorWorkspace();
+        await OpenCollectionTypePickerAsync();
+    }
+
+    private async void EditorSaveButton_Click(object sender, RoutedEventArgs e)
+    {
+        var body = _editorGetBody?.Invoke();
+        if (body == null) return;
+
+        EditorSaveButton.IsEnabled = false;
+        ViewModel.ErrorMessage = null;
+        try
+        {
+            var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
+            var id = _editingCollection?.Id;
+            if (_editingCollection == null)
+            {
+                var created = await adminApi.CreateCollectionAsync(body);
+                id = created.Id;
+            }
+            else
+            {
+                await adminApi.UpdateCollectionAsync(_editingCollection.Id, body);
+            }
+
+            if (!string.IsNullOrEmpty(id))
+            {
+                await UploadCollectionImagesAsync(
+                    adminApi,
+                    id,
+                    _editorGetPosterFile?.Invoke() ?? default,
+                    _editorGetBackdropFile?.Invoke() ?? default);
+            }
+            CloseEditorWorkspace();
+            await ViewModel.LoadCommand.ExecuteAsync(null);
+        }
+        catch (Exception ex)
+        {
+            ViewModel.ErrorMessage = ex.Message;
+            EditorError.Text = ex.Message;
+            EditorError.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            EditorSaveButton.IsEnabled = true;
         }
     }
 
@@ -898,7 +936,12 @@ public sealed partial class AdminCollectionsPage : Page
             OffContent = "Not featured"
         };
 
-        var form = new StackPanel { Width = 420, Spacing = 14 };
+        var form = new StackPanel
+        {
+            MaxWidth = 900,
+            Spacing = 16,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
 
         void AddField(string label, FrameworkElement control)
         {
