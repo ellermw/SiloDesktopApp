@@ -122,6 +122,23 @@ public sealed class CurrentServerContractDeltaTests
         Assert.Contains("TimeSpan.FromSeconds(60)", page);
     }
 
+    [Fact]
+    public void AdminActivityCarriesCurrentClientPlaybackAndTranscodeDetails()
+    {
+        var model = Read("src", "SiloPlayer.Core", "Models", "Admin", "AdminSession.cs");
+        var viewModel = Read("src", "SiloPlayer", "ViewModels", "Admin", "AdminActivityViewModel.cs");
+        var page = Read("src", "SiloPlayer", "Views", "Admin", "AdminActivityPage.xaml.cs");
+        Assert.Contains("PositionSeconds", model);
+        Assert.Contains("ClientLabel", model);
+        Assert.Contains("ClientUserAgent", model);
+        Assert.Contains("TranscodeHwAccel", model);
+        Assert.Contains("GetSessionClientLabel", viewModel);
+        Assert.Contains("FormatPlaybackPosition", viewModel);
+        Assert.Contains("FormatTranscodeMode", viewModel);
+        Assert.Contains("BuildPlaybackDetailsPanel", page);
+        Assert.Contains("RunIpLookupAsync", page);
+    }
+
     private static string Read(params string[] parts)
     {
         var dir = AppContext.BaseDirectory;

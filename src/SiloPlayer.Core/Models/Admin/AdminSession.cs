@@ -21,9 +21,14 @@ public class AdminSession
     public double? FileDuration { get; set; }
     public string StartedAt { get; set; } = "";
     public string UpdatedAt { get; set; } = "";
+    public double PositionSeconds { get; set; }
     public bool IsPaused { get; set; }
     public bool HasPlaybackControl { get; set; }
     public string? ClientIp { get; set; }
+    public string? ClientName { get; set; }
+    public string? ClientVersion { get; set; }
+    public string? ClientLabel { get; set; }
+    public string? ClientUserAgent { get; set; }
     public int AudioTrackIndex { get; set; }
     public bool TranscodeAudio { get; set; }
     public int? StreamBitrateKbps { get; set; }
@@ -31,6 +36,7 @@ public class AdminSession
     public string? TargetVideoCodec { get; set; }
     public string? TargetAudioCodec { get; set; }
     public int? TargetBitrateKbps { get; set; }
+    public string? TranscodeHwAccel { get; set; }
     public string? SourceContainer { get; set; }
     public int? SourceBitrateKbps { get; set; }
     public string? SourceVideoCodec { get; set; }

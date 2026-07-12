@@ -41,6 +41,8 @@ public sealed partial class AdminActivityPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        SizeChanged += ActivityPage_SizeChanged;
+        UpdateResponsiveTitle(ActualWidth);
         ViewModel.FilteredSessions.CollectionChanged += (_, _) => ScheduleRebuildStream();
         ViewModel.IPLookupResults.CollectionChanged += (_, _) => ScheduleRebuildIp();
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
@@ -80,6 +82,26 @@ public sealed partial class AdminActivityPage : Page
         }
         _eventSubscription?.Dispose();
         _eventSubscription = null;
+        SizeChanged -= ActivityPage_SizeChanged;
+    }
+
+    private void ActivityPage_SizeChanged(object sender, SizeChangedEventArgs e)
+        => UpdateResponsiveTitle(e.NewSize.Width);
+
+    private void UpdateResponsiveTitle(double width)
+        => PageTitle.FontSize = Math.Clamp(width * 0.04, 32, 48);
+
+    private async void ActivityRefreshButton_Click(object sender, RoutedEventArgs e)
+    {
+        var started = DateTime.UtcNow;
+        ActivityRefreshButton.IsEnabled = false;
+        ActivityRefreshLabel.Text = "Refreshing…";
+        await ViewModel.LoadCommand.ExecuteAsync(null);
+        RebuildAll();
+        var remaining = TimeSpan.FromSeconds(1) - (DateTime.UtcNow - started);
+        if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
+        ActivityRefreshLabel.Text = "Refresh";
+        ActivityRefreshButton.IsEnabled = true;
     }
 
     private void OnEventReceived(string channel, string eventName, System.Text.Json.JsonElement data)
@@ -549,7 +571,7 @@ public sealed partial class AdminActivityPage : Page
         };
 
         var userStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        // Username as clickable link -> AdminPlaybackHistoryPage with user_id
+        // Current WebUI links the stream user to the admin user detail page.
         var capturedUserId = session.UserId;
         var userLink = new HyperlinkButton
         {
@@ -559,16 +581,39 @@ public sealed partial class AdminActivityPage : Page
             FontWeight = FontWeights.Medium,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
         };
-        userLink.Click += (_, _) => Frame.Navigate(typeof(AdminPlaybackHistoryPage), capturedUserId);
+        userLink.Click += (_, _) => Frame.Navigate(typeof(AdminUserDetailPage), capturedUserId);
         userStack.Children.Add(userLink);
-        string userMeta = session.ClientIp?.Trim() ?? "\u2014";
-        userStack.Children.Add(new TextBlock
+        var profileDisplay = session.ProfileName ?? session.ProfileId;
+        if (!string.IsNullOrWhiteSpace(profileDisplay))
         {
-            Text = userMeta,
-            FontSize = 10,
-            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis
-        });
+            userStack.Children.Add(new Border
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+                BorderBrush = new SolidColorBrush(Color.FromArgb(76, 120, 174, 252)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(5, 1, 5, 1),
+                Child = new TextBlock { Text = profileDisplay, FontSize = 10, Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"], TextTrimming = TextTrimming.CharacterEllipsis },
+            });
+        }
+        var clientMeta = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        var clientLabel = AdminActivityViewModel.GetSessionClientLabel(session);
+        if (!string.IsNullOrWhiteSpace(clientLabel))
+        {
+            var label = new TextBlock { Text = clientLabel, FontSize = 10, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 128 };
+            ToolTipService.SetToolTip(label, session.ClientUserAgent ?? clientLabel);
+            clientMeta.Children.Add(label);
+        }
+        if (!string.IsNullOrWhiteSpace(clientLabel) && !string.IsNullOrWhiteSpace(session.ClientIp))
+            clientMeta.Children.Add(new TextBlock { Text = "·", FontSize = 10, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] });
+        if (!string.IsNullOrWhiteSpace(session.ClientIp))
+        {
+            var capturedIp = session.ClientIp.Trim();
+            var ipLink = new HyperlinkButton { Content = capturedIp, Padding = new Thickness(0), FontSize = 10, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] };
+            ipLink.Click += async (_, _) => await RunIpLookupAsync(capturedIp);
+            clientMeta.Children.Add(ipLink);
+        }
+        if (clientMeta.Children.Count > 0) userStack.Children.Add(clientMeta);
 
         Grid.SetColumn(avatar, 0);
         Grid.SetColumn(userStack, 1);
@@ -706,8 +751,8 @@ public sealed partial class AdminActivityPage : Page
         // Col 5: Time — monospace text-[12px] right-aligned, muted
         var timeBlock = new TextBlock
         {
-            Text = AdminActivityViewModel.GetElapsed(session.StartedAt),
-            FontSize = 12,
+            Text = $"Session active {AdminActivityViewModel.GetElapsed(session.StartedAt)}",
+            FontSize = 10,
             Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center,
@@ -874,6 +919,24 @@ public sealed partial class AdminActivityPage : Page
 
         // Wrap time and controls vertically
         var timeControlStack = new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+        var stateColor = session.IsPaused ? Color.FromArgb(255, 252, 211, 77) : Color.FromArgb(255, 52, 211, 153);
+        timeControlStack.Children.Add(new Border
+        {
+            HorizontalAlignment = HorizontalAlignment.Right,
+            BorderBrush = new SolidColorBrush(Color.FromArgb(90, stateColor.R, stateColor.G, stateColor.B)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 2, 6, 2),
+            Child = new TextBlock { Text = session.IsPaused ? "Paused" : "Playing", FontSize = 9, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(stateColor) },
+        });
+        timeControlStack.Children.Add(new TextBlock
+        {
+            Text = AdminActivityViewModel.FormatPlaybackPosition(session),
+            FontSize = 12,
+            FontFamily = new FontFamily("Consolas"),
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            HorizontalAlignment = HorizontalAlignment.Right,
+        });
         timeControlStack.Children.Add(timeBlock);
         timeControlStack.Children.Add(controlPanel);
         Grid.SetColumn(timeControlStack, 5);
@@ -886,6 +949,28 @@ public sealed partial class AdminActivityPage : Page
         row.Children.Add(timeControlStack);
 
         // FFmpeg inline log panel — collapsible, loads on demand
+        var detailsPanel = BuildPlaybackDetailsPanel(session);
+        var expandedPanel = new StackPanel
+        {
+            Spacing = 8,
+            Visibility = Visibility.Collapsed,
+            Padding = new Thickness(16, 8, 16, 12),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x14, 0x15, 0x1E, 0x2B)),
+        };
+        expandedPanel.Children.Add(detailsPanel);
+        var detailsToggle = new Button
+        {
+            Content = "Details",
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(4),
+            FontSize = 10,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        };
+        detailsToggle.Click += (_, _) =>
+            expandedPanel.Visibility = expandedPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        controlPanel.Children.Add(detailsToggle);
+
         var ffmpegPanel = new StackPanel
         {
             Spacing = 4,
@@ -893,6 +978,7 @@ public sealed partial class AdminActivityPage : Page
             Padding = new Thickness(16, 8, 16, 12),
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x14, 0x15, 0x1E, 0x2B)),
         };
+        expandedPanel.Children.Add(ffmpegPanel);
 
         // Add FFmpeg toggle to the control panel (next to logs links)
         var capturedSessionId = session.SessionId;
@@ -929,6 +1015,7 @@ public sealed partial class AdminActivityPage : Page
         ffmpegToggle.Click += async (_, _) =>
         {
             bool isNowOpen = ffmpegPanel.Visibility == Visibility.Collapsed;
+            if (isNowOpen) expandedPanel.Visibility = Visibility.Visible;
             ffmpegPanel.Visibility = isNowOpen ? Visibility.Visible : Visibility.Collapsed;
             ffmpegChevron.Glyph = isNowOpen ? "\uE70E" : "\uE70D"; // ChevronUp / ChevronDown
 
@@ -1035,9 +1122,65 @@ public sealed partial class AdminActivityPage : Page
         // Wrap row + ffmpeg panel in a container
         var wrapper = new StackPanel { Spacing = 0 };
         wrapper.Children.Add(row);
-        wrapper.Children.Add(ffmpegPanel);
+        wrapper.Children.Add(expandedPanel);
 
         return wrapper;
+    }
+
+    private FrameworkElement BuildPlaybackDetailsPanel(AdminSession session)
+    {
+        var root = new StackPanel { Spacing = 8 };
+        root.Children.Add(new TextBlock
+        {
+            Text = $"Playback · {session.SessionId}",
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        var grid = new Grid { ColumnSpacing = 8 };
+        for (var i = 0; i < 3; i++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var cards = new[]
+        {
+            BuildPlaybackDetailCard("Container", session.PlayMethod, AdminActivityViewModel.FormatSourceContainer(session), AdminActivityViewModel.FormatDeliveredContainer(session), AdminActivityViewModel.FormatContainerDetail(session), null),
+            BuildPlaybackDetailCard("Video", session.VideoDecision ?? session.PlayMethod, AdminActivityViewModel.FormatVideoSummary(session), AdminActivityViewModel.FormatDeliveredVideo(session), AdminActivityViewModel.FormatVideoDetail(session), AdminActivityViewModel.FormatTranscodeMode(session)),
+            BuildPlaybackDetailCard("Audio", session.AudioDecision ?? (session.TranscodeAudio ? "transcode" : session.PlayMethod), AdminActivityViewModel.FormatAudioSummary(session), AdminActivityViewModel.FormatDeliveredAudio(session), AdminActivityViewModel.FormatAudioDetail(session), session.VideoDecision == "transcode" ? null : AdminActivityViewModel.FormatTranscodeMode(session)),
+        };
+        for (var i = 0; i < cards.Length; i++) { Grid.SetColumn(cards[i], i); grid.Children.Add(cards[i]); }
+        root.Children.Add(grid);
+        return root;
+    }
+
+    private Border BuildPlaybackDetailCard(string label, string decision, string source, string delivered, string detail, string? mode)
+    {
+        var panel = new StackPanel { Spacing = 4 };
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        header.Children.Add(new TextBlock { Text = label.ToUpperInvariant(), FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] });
+        header.Children.Add(BuildDecisionBadge(decision));
+        panel.Children.Add(header);
+        AddPlaybackDetailLine(panel, "Source", source);
+        AddPlaybackDetailLine(panel, "Delivered", delivered);
+        if (!string.IsNullOrWhiteSpace(mode)) AddPlaybackDetailLine(panel, "Mode", mode);
+        AddPlaybackDetailLine(panel, "Detail", detail);
+        return new Border
+        {
+            BorderBrush = new SolidColorBrush(Color.FromArgb(80, 80, 100, 125)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10),
+            Child = panel,
+        };
+    }
+
+    private void AddPlaybackDetailLine(StackPanel panel, string label, string value)
+    {
+        var grid = new Grid { ColumnSpacing = 6 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(64) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var name = new TextBlock { Text = label, FontSize = 10, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] };
+        var text = new TextBlock { Text = value, FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"], TextWrapping = TextWrapping.Wrap };
+        Grid.SetColumn(name, 0); Grid.SetColumn(text, 1);
+        grid.Children.Add(name); grid.Children.Add(text);
+        panel.Children.Add(grid);
     }
 
     private static Button MakeSmallIconButton(string glyph, string tooltip)
@@ -1292,11 +1435,28 @@ public sealed partial class AdminActivityPage : Page
         SearchBox.Text = "";
     }
 
-    private void IpLookupBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    private async void IpLookupBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
         if (e.Key == Windows.System.VirtualKey.Enter)
         {
-            ViewModel.LookupIPCommand.Execute(null);
+            await RunIpLookupAsync(IpLookupBox.Text);
         }
+    }
+
+    private void IpLookupBox_TextChanged(object sender, TextChangedEventArgs e)
+        => IpLookupButton.IsEnabled = !ViewModel.IpLookupLoading && !string.IsNullOrWhiteSpace(IpLookupBox.Text);
+
+    private async void IpLookupButton_Click(object sender, RoutedEventArgs e)
+        => await RunIpLookupAsync(IpLookupBox.Text);
+
+    private async Task RunIpLookupAsync(string ip)
+    {
+        if (string.IsNullOrWhiteSpace(ip)) return;
+        IpLookupExpander.IsExpanded = true;
+        ViewModel.IpLookupText = ip.Trim();
+        IpLookupButton.IsEnabled = false;
+        await ViewModel.LookupIPCommand.ExecuteAsync(null);
+        IpLookupButton.IsEnabled = !string.IsNullOrWhiteSpace(IpLookupBox.Text);
+        RebuildIpResults();
     }
 }

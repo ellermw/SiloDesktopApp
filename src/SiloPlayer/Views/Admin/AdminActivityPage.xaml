@@ -19,7 +19,7 @@
         <!-- Borderless surface panel style: rounded-[1.6rem] p-4, no border -->
         <Style x:Key="SurfacePanelStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="26" />
+            <Setter Property="CornerRadius" Value="16" />
             <Setter Property="Padding" Value="16" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
@@ -57,6 +57,7 @@
                         <!-- Title row with session count badge -->
                         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                             <TextBlock
+                                x:Name="PageTitle"
                                 Text="Activity"
                                 FontSize="42"
                                 FontWeight="Bold"
@@ -108,14 +109,15 @@
                                 Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
                         <Button
+                            x:Name="ActivityRefreshButton"
                             Style="{StaticResource OutlineButtonStyle}"
                             Padding="12,6"
                             MinHeight="32"
                             VerticalAlignment="Center"
-                            Command="{x:Bind ViewModel.LoadCommand}">
+                            Click="ActivityRefreshButton_Click">
                             <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon Glyph="&#xE72C;" FontSize="13" />
-                                <TextBlock Text="Refresh" FontSize="13" />
+                                <FontIcon x:Name="ActivityRefreshIcon" Glyph="&#xE72C;" FontSize="13" />
+                                <TextBlock x:Name="ActivityRefreshLabel" Text="Refresh" FontSize="13" />
                             </StackPanel>
                         </Button>
                     </StackPanel>
@@ -123,6 +125,7 @@
 
                 <!-- ===== IP Lookup Panel (collapsible, default collapsed — matches webui <details>) ===== -->
                 <Expander
+                    x:Name="IpLookupExpander"
                     Header="IP Lookup"
                     IsExpanded="False"
                     HorizontalAlignment="Stretch"
@@ -141,17 +144,19 @@
                                 PlaceholderText="IP lookup (e.g. 203.0.113.50)"
                                 Text="{x:Bind ViewModel.IpLookupText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 KeyDown="IpLookupBox_KeyDown"
+                                TextChanged="IpLookupBox_TextChanged"
                                 FontSize="13"
                                 FontFamily="Consolas"
                                 CornerRadius="8"
                                 MaxWidth="320"
                                 HorizontalAlignment="Left" />
                             <Button
+                                x:Name="IpLookupButton"
                                 Grid.Column="1"
                                 Content="Lookup"
                                 Style="{StaticResource SecondaryButtonStyle}"
-                                Command="{x:Bind ViewModel.LookupIPCommand}"
-                                IsEnabled="{x:Bind ViewModel.IpLookupLoading, Mode=OneWay, Converter={StaticResource InverseBool}}" />
+                                IsEnabled="False"
+                                Click="IpLookupButton_Click" />
                         </Grid>
 
                         <!-- IP results table -->

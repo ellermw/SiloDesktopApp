@@ -153,7 +153,11 @@ public partial class AdminActivityViewModel : ObservableObject
             result = result.Where(s =>
                 (s.Username?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) == true) ||
                 (s.MediaTitle?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) == true) ||
-                (s.SeriesName?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) == true));
+                (s.SeriesName?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) == true) ||
+                (s.EpisodeName?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) == true) ||
+                GetSessionClientLabel(s).Contains(SearchText, StringComparison.OrdinalIgnoreCase) ||
+                (s.ClientUserAgent?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) == true) ||
+                (s.ClientIp?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) == true));
         }
         if (MethodFilter != null) result = result.Where(s => s.PlayMethod == MethodFilter);
         if (NodeFilter != null) result = result.Where(s => s.ReportingNode == NodeFilter);
@@ -172,7 +176,7 @@ public partial class AdminActivityViewModel : ObservableObject
         {
             "username" => s => s.Username ?? "",
             "media" => s => GetDisplayTitle(s),
-            "method" => s => s.VideoDecision ?? s.PlayMethod ?? "",
+            "method" => s => s.PlayMethod ?? "",
             "node" => s => s.NodeDisplayName ?? s.ReportingNode ?? "",
             "started" => s => s.StartedAt ?? "",
             _ => s => s.StartedAt ?? ""
@@ -321,11 +325,82 @@ public partial class AdminActivityViewModel : ObservableObject
         return "\u2014";
     }
 
+    public static string FormatSourceContainer(AdminSession session)
+        => string.IsNullOrWhiteSpace(session.SourceContainer) ? "Unknown source" : session.SourceContainer.Trim().ToUpperInvariant();
+
+    public static string FormatDeliveredContainer(AdminSession session)
+        => session.PlayMethod switch
+        {
+            "direct" => FormatSourceContainer(session),
+            "remux" => "Remux",
+            "transcode" or "hls" => "HLS",
+            _ => FormatSourceContainer(session),
+        };
+
+    public static string FormatContainerDetail(AdminSession session)
+        => session.PlayMethod switch
+        {
+            "direct" => "Original container",
+            "remux" => $"{FormatSourceContainer(session)} → Remux",
+            "transcode" or "hls" => $"{FormatSourceContainer(session)} → HLS",
+            _ => "—",
+        };
+
+    public static string FormatDeliveredVideo(AdminSession session)
+        => session.VideoDecision == "transcode" || session.PlayMethod == "transcode"
+            ? string.Join(" · ", new[] { FormatCodecLabel(session.TargetVideoCodec), session.TargetResolution?.Trim() }.Where(value => !string.IsNullOrWhiteSpace(value) && value != "—")) is { Length: > 0 } target ? target : "Transcoding"
+            : FormatVideoSummary(session);
+
+    public static string FormatDeliveredAudio(AdminSession session)
+        => session.AudioDecision == "transcode" || session.TranscodeAudio
+            ? string.Join(" ", new[] { FormatCodecLabel(session.TargetAudioCodec ?? "aac"), FormatChannelLayout(session.SourceAudioChannels) }.Where(value => !string.IsNullOrWhiteSpace(value) && value != "—"))
+            : FormatAudioSummary(session);
+
+    public static string? FormatTranscodeMode(AdminSession session)
+    {
+        var videoTranscode = session.VideoDecision == "transcode" || session.PlayMethod == "transcode";
+        var audioTranscode = session.AudioDecision == "transcode" || session.TranscodeAudio;
+        if (!videoTranscode && !audioTranscode) return null;
+        if (!videoTranscode) return "Audio SW";
+        return session.TranscodeHwAccel?.Trim().ToLowerInvariant() switch
+        {
+            "qsv" => "HW QSV",
+            "vaapi" => "HW VAAPI",
+            "none" => "SW",
+            "auto" => "HW/SW pending",
+            null or "" => "HW/SW unknown",
+            var value => $"HW {value.ToUpperInvariant()}",
+        };
+    }
+
     public static string FormatSessionBitrate(int? kbps)
     {
         if (!kbps.HasValue || kbps.Value <= 0) return "";
         if (kbps.Value >= 1000) return $"{kbps.Value / 1000.0:F1} Mbps";
         return $"{kbps.Value} kbps";
+    }
+
+    public static string GetSessionClientLabel(AdminSession session)
+    {
+        if (!string.IsNullOrWhiteSpace(session.ClientLabel)) return session.ClientLabel.Trim();
+        if (!string.IsNullOrWhiteSpace(session.ClientName) && !string.IsNullOrWhiteSpace(session.ClientVersion))
+            return $"{session.ClientName.Trim()} {session.ClientVersion.Trim()}";
+        return session.ClientName?.Trim() ?? "";
+    }
+
+    public static string FormatPlaybackPosition(AdminSession session)
+    {
+        var current = FormatClockTime(session.PositionSeconds);
+        return session.FileDuration is > 0 ? $"{current} / {FormatClockTime(session.FileDuration.Value)}" : current;
+    }
+
+    private static string FormatClockTime(double seconds)
+    {
+        var value = Math.Max(0, (int)Math.Floor(seconds));
+        var hours = value / 3600;
+        var minutes = value % 3600 / 60;
+        var secs = value % 60;
+        return hours > 0 ? $"{hours}:{minutes:D2}:{secs:D2}" : $"{minutes}:{secs:D2}";
     }
 
     public static string GetElapsed(string dateStr)
