@@ -19,7 +19,7 @@
         <!-- Borderless surface panel style: rounded-[1.6rem] p-4, no border -->
         <Style x:Key="SurfacePanelStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="CornerRadius" Value="20" />
             <Setter Property="Padding" Value="16" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
@@ -44,7 +44,11 @@
             IsScrollInertiaEnabled="True">
 
             <!-- webui parity: AdminActivity inherits .admin-shell (1560px) from AdminLayout. -->
-            <StackPanel Padding="40,28,40,40" Spacing="20">
+            <StackPanel
+                Padding="40,32,40,40"
+                Spacing="24"
+                MaxWidth="1640"
+                HorizontalAlignment="Stretch">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -53,34 +57,38 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                    <StackPanel Grid.Column="0" Spacing="12" VerticalAlignment="Bottom">
                         <!-- Title row with session count badge -->
                         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                             <TextBlock
                                 x:Name="PageTitle"
                                 Text="Activity"
-                                FontSize="42"
-                                FontWeight="Bold"
+                                FontSize="52"
+                                FontWeight="ExtraBold"
+                                CharacterSpacing="-50"
+                                LineHeight="50"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
                             <!-- Live badge -->
                             <Border
                                 x:Name="LiveBadge"
-                                Background="{StaticResource AccentBackgroundBrush}"
-                                CornerRadius="12"
-                                Padding="10,4"
+                                Background="#1FFF3C3C"
+                                BorderBrush="#33FF3C3C"
+                                BorderThickness="1"
+                                CornerRadius="6"
+                                Padding="8,2"
                                 VerticalAlignment="Center">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon
                                         Glyph="&#xE978;"
                                         FontSize="12"
-                                        Foreground="{StaticResource AccentBrush}"
+                                        Foreground="#F87171"
                                         VerticalAlignment="Center" />
                                     <TextBlock
                                         x:Name="LiveBadgeText"
                                         Text="0 live"
-                                        FontSize="13"
-                                        FontWeight="SemiBold"
-                                        Foreground="{StaticResource AccentBrush}" />
+                                        FontSize="10"
+                                        FontWeight="Bold"
+                                        Foreground="#F87171" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -88,50 +96,55 @@
                         <TextBlock
                             x:Name="SubtitleText"
                             Text="No active streams"
-                            FontSize="13"
+                            FontSize="16"
+                            LineHeight="27"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
 
                     <!-- Connection state indicator + Refresh -->
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Bottom">
+                        <Button
+                            x:Name="ActivityRefreshButton"
+                            Style="{StaticResource OutlineButtonStyle}"
+                            MinWidth="132"
+                            Height="32"
+                            VerticalAlignment="Center"
+                            Click="ActivityRefreshButton_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon x:Name="ActivityRefreshIcon" Glyph="&#xE72C;" FontSize="14" />
+                                <TextBlock x:Name="ActivityRefreshLabel" Text="Refresh" FontSize="13" />
+                            </StackPanel>
+                        </Button>
                         <!-- Connection state eyebrow: "Stream" label + Live/Connecting/Disconnected -->
-                        <StackPanel x:Name="ConnectionStatePanel" VerticalAlignment="Center" Spacing="0">
+                        <StackPanel x:Name="ConnectionStatePanel" Width="140" Padding="4,0"
+                                    VerticalAlignment="Center" Spacing="0" HorizontalAlignment="Right">
                             <TextBlock
-                                Text="STREAM"
+                                Text="REALTIME UPDATES"
                                 FontSize="10"
                                 FontWeight="SemiBold"
                                 CharacterSpacing="80"
+                                TextAlignment="Right"
                                 Foreground="{StaticResource TertiaryTextBrush}" />
                             <TextBlock
                                 x:Name="ConnectionStateText"
                                 Text="Disconnected"
                                 FontSize="12"
+                                TextAlignment="Right"
                                 Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
-                        <Button
-                            x:Name="ActivityRefreshButton"
-                            Style="{StaticResource OutlineButtonStyle}"
-                            Padding="12,6"
-                            MinHeight="32"
-                            VerticalAlignment="Center"
-                            Click="ActivityRefreshButton_Click">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon x:Name="ActivityRefreshIcon" Glyph="&#xE72C;" FontSize="13" />
-                                <TextBlock x:Name="ActivityRefreshLabel" Text="Refresh" FontSize="13" />
-                            </StackPanel>
-                        </Button>
                     </StackPanel>
                 </Grid>
 
                 <!-- ===== IP Lookup Panel (collapsible, default collapsed — matches webui <details>) ===== -->
-                <Expander
-                    x:Name="IpLookupExpander"
-                    Header="IP Lookup"
-                    IsExpanded="False"
-                    HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Stretch"
-                    Padding="0">
-                    <StackPanel Spacing="12" Padding="4,8,4,4">
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="20" BorderThickness="0">
+                    <Expander
+                        x:Name="IpLookupExpander"
+                        Header="IP Lookup"
+                        IsExpanded="False"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        Padding="0">
+                        <StackPanel Spacing="12" Padding="16,0,16,16">
                         <!-- Input row -->
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
@@ -177,8 +190,9 @@
                             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Margin="0,0,0,8" />
                             <StackPanel x:Name="IpResultsRows" Spacing="4" />
                         </StackPanel>
-                    </StackPanel>
-                </Expander>
+                        </StackPanel>
+                    </Expander>
+                </Border>
 
                 <!-- ===== Play Method Distribution (Summary Strip) ===== -->
                 <!-- Web: surface-panel rounded-[1.6rem] border-0 p-4, only shown when sessions > 0 -->
@@ -319,19 +333,19 @@
                     Padding="0">
                     <StackPanel>
                         <!-- Table header: bg-surface/50 py-2.5 -->
-                        <Grid x:Name="TableHeader" Padding="16,10,16,10" ColumnSpacing="12">
+                        <Grid x:Name="TableHeader" Padding="12,10" ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="1.5*" MinWidth="140" />
-                                <ColumnDefinition Width="2.2*" MinWidth="220" />
-                                <ColumnDefinition Width="1.4*" MinWidth="150" />
-                                <ColumnDefinition Width="1.4*" MinWidth="150" />
-                                <ColumnDefinition Width="*" MinWidth="90" />
-                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="1.1*" MinWidth="120" />
+                                <ColumnDefinition Width="1.7*" MinWidth="190" />
+                                <ColumnDefinition Width="1.9*" MinWidth="220" />
+                                <ColumnDefinition Width="0.8*" MinWidth="90" />
+                                <ColumnDefinition Width="0.9*" MinWidth="125" />
+                                <ColumnDefinition Width="1.4*" MinWidth="220" />
                             </Grid.ColumnDefinitions>
                             <!-- Sortable header buttons (USER, STREAM, VIDEO, NODE, TIME) — AUDIO is not sortable -->
                             <Button x:Name="SortUser" Grid.Column="0" Click="SortHeader_Click" Tag="username" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="4">
-                                    <TextBlock Text="User" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" />
+                                    <TextBlock Text="USER" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" />
                                     <TextBlock x:Name="SortUserIndicator" Text="" FontSize="8" Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
@@ -394,8 +408,9 @@
 
                         <!-- Stream rows — internal scroll so header/filters stay pinned (webui: max-h-[calc(100vh-420px)] min-h-[200px]) -->
                         <ScrollViewer
+                            x:Name="StreamsScrollViewer"
                             MinHeight="200"
-                            MaxHeight="600"
+                            MaxHeight="660"
                             VerticalScrollBarVisibility="Auto"
                             HorizontalScrollBarVisibility="Disabled">
                             <StackPanel x:Name="StreamsPanel" Spacing="0" />

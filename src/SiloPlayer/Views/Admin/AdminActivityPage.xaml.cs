@@ -86,10 +86,13 @@ public sealed partial class AdminActivityPage : Page
     }
 
     private void ActivityPage_SizeChanged(object sender, SizeChangedEventArgs e)
-        => UpdateResponsiveTitle(e.NewSize.Width);
+    {
+        UpdateResponsiveTitle(e.NewSize.Width);
+        StreamsScrollViewer.MaxHeight = Math.Max(200, e.NewSize.Height - 420);
+    }
 
     private void UpdateResponsiveTitle(double width)
-        => PageTitle.FontSize = Math.Clamp(width * 0.04, 32, 48);
+        => PageTitle.FontSize = Math.Clamp(width * 0.04, 32, 52);
 
     private async void ActivityRefreshButton_Click(object sender, RoutedEventArgs e)
     {
@@ -529,8 +532,8 @@ public sealed partial class AdminActivityPage : Page
 
         var row = new Grid
         {
-            Padding = new Thickness(16, 10, 16, 10),
-            ColumnSpacing = 12,
+            Padding = new Thickness(12, 10, 12, 10),
+            ColumnSpacing = 8,
             Background = isOdd
                 ? new SolidColorBrush(Color.FromArgb(51, 21, 30, 43)) // bg-surface/20
                 : new SolidColorBrush(Colors.Transparent),
@@ -538,12 +541,12 @@ public sealed partial class AdminActivityPage : Page
             BorderBrush = new SolidColorBrush(Color.FromArgb(77, 40, 56, 77)), // border-border/30
             BorderThickness = new Thickness(0, 0, 0, 1)
         };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.2, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star), MinWidth = 120 });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.7, GridUnitType.Star), MinWidth = 190 });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.9, GridUnitType.Star), MinWidth = 220 });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.8, GridUnitType.Star), MinWidth = 90 });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star), MinWidth = 125 });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star), MinWidth = 220 });
 
         // Col 0: User — avatar 24px (h-6 w-6), text-[9px] initial, username text-[13px] font-medium, IP text-[10px]
         var userCol = new Grid { ColumnSpacing = 8, VerticalAlignment = VerticalAlignment.Center };

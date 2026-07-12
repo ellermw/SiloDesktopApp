@@ -6,7 +6,7 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.30**](https://transfers.taverncdn.com/RZdgXLRuLI/SiloInstaller-1.1.30-Setup.exe) — Windows 10/11 x64 installer, available for 180 days.
+[**Download Silo Desktop Player 1.1.31**](https://transfers.taverncdn.com/j6pnS0jSmc/SiloInstaller-1.1.31-Setup.exe) — Windows 10/11 x64 installer, available for 180 days.
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -38,6 +38,13 @@ Status meanings:
 | Watch Party | Partial | Join/create, room membership, suggestions, and realtime foundations exist. Content search, series drill-down, spotlight/now-playing UI, auto-start, and complete synchronization remain. |
 
 ## Recent release work
+
+### 1.1.31
+
+- Reworked Admin Activity against the current WebUI desktop layout: page width, 52px title, 24px rhythm, red live badge, compact refresh/realtime header, and 20px summary/IP surfaces.
+- Matched the current six-column stream table proportions, row gutters, header spacing, and viewport-relative scroll height.
+- Preserved the current client/profile/IP presentation, expandable playback decisions, session controls, logs, and FFmpeg inspection from 1.1.29.
+- Activity remains marked visual-parity-incomplete until a live side-by-side screenshot pass is available.
 
 ### 1.1.30
 
