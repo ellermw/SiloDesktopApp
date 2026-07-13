@@ -357,23 +357,23 @@
                             </Button>
                             <Button x:Name="SortVideo" Grid.Column="2" Click="SortHeader_Click" Tag="method" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="4">
-                                    <TextBlock Text="VIDEO" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" />
+                                    <TextBlock Text="PLAYBACK" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" />
                                     <TextBlock x:Name="SortVideoIndicator" Text="" FontSize="8" Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
-                            <TextBlock Grid.Column="3" Text="AUDIO" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" />
-                            <Button x:Name="SortNode" Grid.Column="4" Click="SortHeader_Click" Tag="node" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" HorizontalContentAlignment="Left">
+                            <Button x:Name="SortNode" Grid.Column="3" Click="SortHeader_Click" Tag="node" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="4">
                                     <TextBlock Text="NODE" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" />
                                     <TextBlock x:Name="SortNodeIndicator" Text="" FontSize="8" Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
-                            <Button x:Name="SortTime" Grid.Column="5" Click="SortHeader_Click" Tag="started" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Right" HorizontalContentAlignment="Right">
+                            <Button x:Name="SortTime" Grid.Column="4" Click="SortHeader_Click" Tag="started" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Right" HorizontalContentAlignment="Right">
                                 <StackPanel Orientation="Horizontal" Spacing="4">
                                     <TextBlock Text="TIME" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" />
                                     <TextBlock x:Name="SortTimeIndicator" Text="" FontSize="8" Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
+                            <TextBlock Grid.Column="5" Text="ACTIONS" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TertiaryTextBrush}" CharacterSpacing="80" HorizontalAlignment="Right" />
                         </Grid>
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />

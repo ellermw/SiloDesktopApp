@@ -10,6 +10,7 @@ namespace SiloPlayer.ViewModels.Admin;
 public partial class AdminCollectionsViewModel : ObservableObject
 {
     private readonly AdminApi _adminApi;
+    private int _loadVersion;
 
     public AdminCollectionsViewModel(AdminApi adminApi)
     {
@@ -31,28 +32,37 @@ public partial class AdminCollectionsViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadAsync()
     {
+        var loadVersion = Interlocked.Increment(ref _loadVersion);
         IsLoading = true;
         ErrorMessage = null;
         StatusMessage = null;
         try
         {
-            // Load libraries if not yet loaded
-            if (Libraries.Count == 0)
+            var libraryTask = Libraries.Count == 0 ? _adminApi.GetAdminLibrariesAsync() : null;
+            var collectionsTask = _adminApi.GetCollectionsAsync(SelectedLibraryId);
+            var groupsTask = SelectedLibraryId.HasValue
+                ? _adminApi.GetCollectionGroupsAsync(SelectedLibraryId.Value)
+                : null;
+            var requests = new List<Task> { collectionsTask };
+            if (libraryTask != null) requests.Add(libraryTask);
+            if (groupsTask != null) requests.Add(groupsTask);
+            await Task.WhenAll(requests);
+            if (loadVersion != _loadVersion) return;
+
+            if (libraryTask != null)
             {
-                var libs = await _adminApi.GetAdminLibrariesAsync();
                 Libraries.Clear();
-                foreach (var l in libs) Libraries.Add(l);
+                foreach (var library in await libraryTask) Libraries.Add(library);
             }
 
-            // Load collections, optionally filtered
-            var response = await _adminApi.GetCollectionsAsync(SelectedLibraryId);
+            var response = await collectionsTask;
             Collections.Clear();
             foreach (var c in response.Collections) Collections.Add(c);
 
             CollectionGroups.Clear();
             if (SelectedLibraryId.HasValue)
             {
-                var groupResponse = await _adminApi.GetCollectionGroupsAsync(SelectedLibraryId.Value);
+                var groupResponse = await groupsTask!;
                 UngroupedSortOrder = groupResponse.UngroupedSortOrder;
                 foreach (var group in groupResponse.Groups.OrderBy(g => g.SortOrder))
                     CollectionGroups.Add(group);
@@ -65,7 +75,10 @@ public partial class AdminCollectionsViewModel : ObservableObject
             }
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
-        finally { IsLoading = false; }
+        finally
+        {
+            if (loadVersion == _loadVersion) IsLoading = false;
+        }
     }
 
     public async Task CreateGroupAsync(string name)

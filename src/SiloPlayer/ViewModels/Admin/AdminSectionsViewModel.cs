@@ -12,6 +12,7 @@ public partial class AdminSectionsViewModel : ObservableObject
 {
     private readonly AdminApi _adminApi;
     private readonly SettingsApi _settingsApi;
+    private int _loadVersion;
 
     public AdminSectionsViewModel(AdminApi adminApi, SettingsApi settingsApi)
     {
@@ -39,60 +40,69 @@ public partial class AdminSectionsViewModel : ObservableObject
     [RelayCommand]
     public async Task LoadAsync()
     {
+        var loadVersion = Interlocked.Increment(ref _loadVersion);
         IsLoading = true;
         ErrorMessage = null;
         StatusMessage = null;
         try
         {
-            if (Libraries.Count == 0)
+            var librariesTask = Libraries.Count == 0 ? _adminApi.GetAdminLibrariesAsync() : null;
+            var recipesTask = RecipeCatalog == null ? LoadRecipeCatalogSafeAsync() : null;
+            var collectionsTask = Collections.Count == 0 ? LoadCollectionsSafeAsync() : null;
+            var sectionsTask = Scope == "library" && SelectedLibraryId.HasValue
+                ? _adminApi.GetSectionsAsync("library", SelectedLibraryId.Value)
+                : _adminApi.GetSectionsAsync("home");
+            var requests = new List<Task> { sectionsTask };
+            if (librariesTask != null) requests.Add(librariesTask);
+            if (recipesTask != null) requests.Add(recipesTask);
+            if (collectionsTask != null) requests.Add(collectionsTask);
+            await Task.WhenAll(requests);
+            if (loadVersion != _loadVersion) return;
+
+            if (librariesTask != null)
             {
-                var libs = await _adminApi.GetAdminLibrariesAsync();
                 Libraries.Clear();
-                foreach (var l in libs) Libraries.Add(l);
+                foreach (var library in await librariesTask) Libraries.Add(library);
             }
-
-            if (RecipeCatalog == null)
+            if (recipesTask != null)
             {
-                try
-                {
-                    RecipeCatalog = await _settingsApi.GetRecipeCatalogAsync();
-                    RecipeLabels = RecipeCatalog.Categories
-                        .SelectMany(category => category.Value)
-                        .GroupBy(definition => definition.Type)
-                        .ToDictionary(
-                            group => group.Key,
-                            group => group.SelectMany(definition => definition.Presets)
-                                .Select(preset => preset.DisplayName)
-                                .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? group.Key);
-                }
-                catch
-                {
-                    RecipeCatalog = new RecipeCatalogResponse();
-                    RecipeLabels = new Dictionary<string, string>();
-                }
+                RecipeCatalog = await recipesTask;
+                RecipeLabels = RecipeCatalog.Categories
+                    .SelectMany(category => category.Value)
+                    .GroupBy(definition => definition.Type)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.SelectMany(definition => definition.Presets)
+                            .Select(preset => preset.DisplayName)
+                            .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? group.Key);
             }
-
-            // Load collections for the section form collection picker + badge labels
-            if (Collections.Count == 0)
+            if (collectionsTask != null)
             {
-                try
-                {
-                    var resp = await _adminApi.GetCollectionsAsync();
-                    Collections = resp?.Collections ?? [];
-                    CollectionLabels = Collections.ToDictionary(c => c.Id.ToString(), c => c.Title);
-                }
-                catch { Collections = []; CollectionLabels = new(); }
+                Collections = await collectionsTask;
+                CollectionLabels = Collections.ToDictionary(c => c.Id.ToString(), c => c.Title);
             }
 
-            // B10: pass scope=library with library_id rather than the bare id as the scope.
-            var sections = Scope == "library" && SelectedLibraryId.HasValue
-                ? await _adminApi.GetSectionsAsync("library", SelectedLibraryId.Value)
-                : await _adminApi.GetSectionsAsync("home");
+            var sections = await sectionsTask;
             Sections.Clear();
             foreach (var s in sections) Sections.Add(s);
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
-        finally { IsLoading = false; }
+        finally
+        {
+            if (loadVersion == _loadVersion) IsLoading = false;
+        }
+    }
+
+    private async Task<RecipeCatalogResponse> LoadRecipeCatalogSafeAsync()
+    {
+        try { return await _settingsApi.GetRecipeCatalogAsync(); }
+        catch { return new RecipeCatalogResponse(); }
+    }
+
+    private async Task<List<LibraryCollection>> LoadCollectionsSafeAsync()
+    {
+        try { return (await _adminApi.GetCollectionsAsync()).Collections; }
+        catch { return []; }
     }
 
     [RelayCommand]

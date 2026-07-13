@@ -27,6 +27,8 @@ public sealed partial class AdminLogsPage : Page
     // Live log stream (webui parity — /api/v1/admin/logs/ws). One client per
     // active tab; reconnect on tab switch or filter change.
     private AdminLogStreamClient? _stream;
+    private readonly SemaphoreSlim _streamRestartGate = new(1, 1);
+    private bool _isNavigatedAway;
     private const int LogStreamCap = 500;
 
     // Navigation parameter: pass a string "sessionId" or "sessionId|ffmpeg" to pre-filter logs
@@ -42,6 +44,7 @@ public sealed partial class AdminLogsPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _isNavigatedAway = false;
         if (e.Parameter is string param && !string.IsNullOrWhiteSpace(param))
         {
             var parts = param.Split('|');
@@ -93,6 +96,7 @@ public sealed partial class AdminLogsPage : Page
         AuditRequestIdBox.TextChanged += (_, _) => RestartFilterDebounce();
         AuditMethodBox.TextChanged += (_, _) => RestartFilterDebounce();
         AuditClientIpBox.TextChanged += (_, _) => RestartFilterDebounce();
+        PlaybackSessionBox.TextChanged += PlaybackSessionBox_TextChanged;
 
         SetActiveTab(true);
         UpdatePlaybackSessionTag();
@@ -106,12 +110,19 @@ public sealed partial class AdminLogsPage : Page
     protected override async void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
-        if (_stream != null)
+        _isNavigatedAway = true;
+        _filterDebounce?.Stop();
+        await _streamRestartGate.WaitAsync();
+        try
         {
-            try { await _stream.StopAsync(); } catch { }
-            _stream.Dispose();
-            _stream = null;
+            if (_stream != null)
+            {
+                try { await _stream.StopAsync(); } catch { }
+                _stream.Dispose();
+                _stream = null;
+            }
         }
+        finally { _streamRestartGate.Release(); }
     }
 
     private void RestartFilterDebounce()
@@ -162,8 +173,10 @@ public sealed partial class AdminLogsPage : Page
 
     private async Task RestartStreamAsync()
     {
+        await _streamRestartGate.WaitAsync();
         try
         {
+            if (_isNavigatedAway) return;
             if (_stream != null)
             {
                 await _stream.StopAsync();
@@ -190,6 +203,7 @@ public sealed partial class AdminLogsPage : Page
             await _stream.StartAsync(stream, filters);
         }
         catch { /* surfaced via StateChanged */ }
+        finally { _streamRestartGate.Release(); }
     }
 
     private async void ReconnectButton_Click(object sender, RoutedEventArgs e)
@@ -378,22 +392,27 @@ public sealed partial class AdminLogsPage : Page
         SummaryMetricsPanel.Children.Add(stack);
     }
 
-    private void BtnFilterFfmpeg_Click(object sender, RoutedEventArgs e)
+    private async void BtnFilterFfmpeg_Click(object sender, RoutedEventArgs e)
     {
         var isFFmpegFilter = ViewModel.AppComponent.Trim().Equals("ffmpeg", StringComparison.OrdinalIgnoreCase);
         ViewModel.AppComponent = isFFmpegFilter ? "" : "ffmpeg";
         RebuildPlaybackSummary();
-        _ = ViewModel.LoadAppLogsCommand.ExecuteAsync(null);
+        _filterDebounce?.Stop();
+        await RestartStreamAsync();
     }
 
-    private void PlaybackSessionBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    private void PlaybackSessionBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        UpdatePlaybackSessionTag();
+        RestartFilterDebounce();
+    }
+
+    private async void PlaybackSessionBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
         if (e.Key == Windows.System.VirtualKey.Enter)
         {
-            UpdatePlaybackSessionTag();
-            // Reload both tabs with the playback session filter
-            _ = ViewModel.LoadAppLogsCommand.ExecuteAsync(null);
-            _ = ViewModel.LoadAuditLogsCommand.ExecuteAsync(null);
+            _filterDebounce?.Stop();
+            await RestartStreamAsync();
         }
     }
 
@@ -414,14 +433,19 @@ public sealed partial class AdminLogsPage : Page
 
     // ===== KeyDown handlers =====
 
-    private void FilterBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    private async void FilterBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
-        if (e.Key == Windows.System.VirtualKey.Enter) BtnSearchApp_Click(sender, e);
+        if (e.Key != Windows.System.VirtualKey.Enter) return;
+        _filterDebounce?.Stop();
+        HideAppDetail();
+        await RestartStreamAsync();
     }
 
-    private void AuditFilterBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    private async void AuditFilterBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
-        if (e.Key == Windows.System.VirtualKey.Enter) BtnSearchAudit_Click(sender, e);
+        if (e.Key != Windows.System.VirtualKey.Enter) return;
+        _filterDebounce?.Stop();
+        await RestartStreamAsync();
     }
 
     // ===== App log table =====

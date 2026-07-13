@@ -689,45 +689,29 @@ public sealed partial class AdminActivityPage : Page
 
         // Col 2: Video — decision badge text-[9px] with border, summary text-[12px] font-medium, detail text-[10px]
         string videoDecision = session.VideoDecision ?? session.PlayMethod;
-        var videoStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-        videoStack.Children.Add(BuildDecisionBadge(videoDecision));
-        videoStack.Children.Add(new TextBlock
-        {
-            Text = AdminActivityViewModel.FormatVideoSummary(session),
-            FontSize = 12,
-            FontWeight = FontWeights.Medium,
-            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis
-        });
-        videoStack.Children.Add(new TextBlock
-        {
-            Text = AdminActivityViewModel.FormatVideoDetail(session),
-            FontSize = 10,
-            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis
-        });
-        Grid.SetColumn(videoStack, 2);
 
         // Col 3: Audio — same pattern as video
         string audioDecision = session.AudioDecision ?? (session.TranscodeAudio ? "transcode" : session.PlayMethod);
-        var audioStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-        audioStack.Children.Add(BuildDecisionBadge(audioDecision));
-        audioStack.Children.Add(new TextBlock
+        var playbackStack = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        var playbackHeader = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var transcodeMode = AdminActivityViewModel.FormatTranscodeMode(session);
+        if (!string.IsNullOrWhiteSpace(transcodeMode))
+            playbackHeader.Children.Add(BuildTranscodeModeBadge(transcodeMode));
+        var detailsToggle = new Button
         {
-            Text = AdminActivityViewModel.FormatAudioSummary(session),
-            FontSize = 12,
-            FontWeight = FontWeights.Medium,
-            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis
-        });
-        audioStack.Children.Add(new TextBlock
-        {
-            Text = AdminActivityViewModel.FormatAudioDetail(session),
+            Content = "Details  ⌄",
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
             FontSize = 10,
-            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis
-        });
-        Grid.SetColumn(audioStack, 3);
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        };
+        playbackHeader.Children.Add(detailsToggle);
+        playbackStack.Children.Add(playbackHeader);
+        playbackStack.Children.Add(BuildPlaybackSummaryLine("Container", session.PlayMethod, AdminActivityViewModel.FormatDeliveredContainer(session)));
+        playbackStack.Children.Add(BuildPlaybackSummaryLine("Video", videoDecision, AdminActivityViewModel.FormatDeliveredVideo(session)));
+        playbackStack.Children.Add(BuildPlaybackSummaryLine("Audio", audioDecision, AdminActivityViewModel.FormatDeliveredAudio(session)));
+        Grid.SetColumn(playbackStack, 2);
 
         // Col 4: Node — text-[12px] muted (not bold), profile text-[10px]
         var nodeStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
@@ -739,17 +723,7 @@ public sealed partial class AdminActivityPage : Page
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis
         });
-        if (!string.IsNullOrEmpty(session.ProfileName) || !string.IsNullOrEmpty(session.ProfileId))
-        {
-            nodeStack.Children.Add(new TextBlock
-            {
-                Text = session.ProfileName ?? session.ProfileId ?? "",
-                FontSize = 10,
-                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
-                TextTrimming = TextTrimming.CharacterEllipsis
-            });
-        }
-        Grid.SetColumn(nodeStack, 4);
+        Grid.SetColumn(nodeStack, 3);
 
         // Col 5: Time — monospace text-[12px] right-aligned, muted
         var timeBlock = new TextBlock
@@ -761,7 +735,7 @@ public sealed partial class AdminActivityPage : Page
             VerticalAlignment = VerticalAlignment.Center,
             FontFamily = new FontFamily("Consolas")
         };
-        Grid.SetColumn(timeBlock, 5);
+        Grid.SetColumn(timeBlock, 4);
 
         // Col 6: Action overflow menu + deep links
         var capturedSession = session;
@@ -791,7 +765,6 @@ public sealed partial class AdminActivityPage : Page
             }
             catch (Exception ex) { toastService.Error($"Failed: {ex.Message}"); }
         };
-        flyout.Items.Add(pauseItem);
 
         // Stop
         var stopItem = new MenuFlyoutItem
@@ -810,7 +783,6 @@ public sealed partial class AdminActivityPage : Page
             }
             catch (Exception ex) { toastService.Error($"Stop failed: {ex.Message}"); }
         };
-        flyout.Items.Add(stopItem);
 
         // Message
         var msgItem = new MenuFlyoutItem
@@ -840,9 +812,13 @@ public sealed partial class AdminActivityPage : Page
                 catch (Exception ex) { toastService.Error($"Message failed: {ex.Message}"); }
             }
         };
+        var viewLogsItem = new MenuFlyoutItem { Text = "View Logs", Icon = new FontIcon { Glyph = "\uE8A5" } };
+        viewLogsItem.Click += (_, _) => Frame.Navigate(typeof(AdminLogsPage), capturedSession.SessionId);
+        flyout.Items.Add(viewLogsItem);
+        var ffmpegLogsItem = new MenuFlyoutItem { Text = "FFmpeg Logs", Icon = new FontIcon { Glyph = "\uE756" } };
+        ffmpegLogsItem.Click += (_, _) => Frame.Navigate(typeof(AdminLogsPage), $"{capturedSession.SessionId}|ffmpeg");
+        flyout.Items.Add(ffmpegLogsItem);
         flyout.Items.Add(msgItem);
-
-        flyout.Items.Add(new MenuFlyoutSeparator());
 
         // Terminate (destructive — red text + confirmation dialog)
         var terminateItem = new MenuFlyoutItem
@@ -874,7 +850,6 @@ public sealed partial class AdminActivityPage : Page
                 catch (Exception ex) { toastService.Error($"Terminate failed: {ex.Message}"); }
             }
         };
-        flyout.Items.Add(terminateItem);
 
         // Action button that opens the flyout
         var actionBtn = new Button
@@ -893,32 +868,13 @@ public sealed partial class AdminActivityPage : Page
         };
         ToolTipService.SetToolTip(actionBtn, "Actions");
 
-        // Deep links: View Logs + FFmpeg Logs
-        var viewLogsLink = new HyperlinkButton
+        var controlPanel = new StackPanel
         {
-            Content = "Logs",
-            Padding = new Thickness(0),
-            FontSize = 10,
-            Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right,
         };
-        viewLogsLink.Click += (_, _) => Frame.Navigate(typeof(AdminLogsPage), capturedSession.SessionId);
-
-        var ffmpegLogsLink = new HyperlinkButton
-        {
-            Content = "FFmpeg",
-            Padding = new Thickness(0),
-            FontSize = 10,
-            Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
-        };
-        ffmpegLogsLink.Click += (_, _) => Frame.Navigate(typeof(AdminLogsPage), $"{capturedSession.SessionId}|ffmpeg");
-
-        var linksPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        linksPanel.Children.Add(viewLogsLink);
-        linksPanel.Children.Add(ffmpegLogsLink);
-
-        var controlPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
-        controlPanel.Children.Add(actionBtn);
-        controlPanel.Children.Add(linksPanel);
 
         // Wrap time and controls vertically
         var timeControlStack = new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
@@ -941,13 +897,11 @@ public sealed partial class AdminActivityPage : Page
             HorizontalAlignment = HorizontalAlignment.Right,
         });
         timeControlStack.Children.Add(timeBlock);
-        timeControlStack.Children.Add(controlPanel);
-        Grid.SetColumn(timeControlStack, 5);
+        Grid.SetColumn(timeControlStack, 4);
 
         row.Children.Add(userCol);
         row.Children.Add(streamStack);
-        row.Children.Add(videoStack);
-        row.Children.Add(audioStack);
+        row.Children.Add(playbackStack);
         row.Children.Add(nodeStack);
         row.Children.Add(timeControlStack);
 
@@ -961,18 +915,11 @@ public sealed partial class AdminActivityPage : Page
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x14, 0x15, 0x1E, 0x2B)),
         };
         expandedPanel.Children.Add(detailsPanel);
-        var detailsToggle = new Button
-        {
-            Content = "Details",
-            Background = new SolidColorBrush(Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(4),
-            FontSize = 10,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-        };
         detailsToggle.Click += (_, _) =>
+        {
             expandedPanel.Visibility = expandedPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-        controlPanel.Children.Add(detailsToggle);
+            detailsToggle.Content = expandedPanel.Visibility == Visibility.Visible ? "Details  ⌃" : "Details  ⌄";
+        };
 
         var ffmpegPanel = new StackPanel
         {
@@ -1120,7 +1067,33 @@ public sealed partial class AdminActivityPage : Page
                 }
             }
         };
+        var inlineTerminate = new Button
+        {
+            Content = "Terminate",
+            Height = 28,
+            Padding = new Thickness(9, 0, 9, 0),
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["ErrorBrush"],
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5),
+        };
+        inlineTerminate.Click += async (_, _) =>
+        {
+            try
+            {
+                await adminApi.TerminateSessionAsync(capturedSession.SessionId);
+                toastService.Success("Session terminated");
+                await ViewModel.LoadCommand.ExecuteAsync(null);
+            }
+            catch (Exception ex) { toastService.Error($"Terminate failed: {ex.Message}"); }
+        };
         controlPanel.Children.Add(ffmpegToggle);
+        controlPanel.Children.Add(inlineTerminate);
+        controlPanel.Children.Add(actionBtn);
+        Grid.SetColumn(controlPanel, 5);
+        row.Children.Add(controlPanel);
 
         // Wrap row + ffmpeg panel in a container
         var wrapper = new StackPanel { Spacing = 0 };
@@ -1128,6 +1101,65 @@ public sealed partial class AdminActivityPage : Page
         wrapper.Children.Add(expandedPanel);
 
         return wrapper;
+    }
+
+    private static FrameworkElement BuildPlaybackSummaryLine(string label, string? decision, string value)
+    {
+        var line = new Grid { ColumnSpacing = 6 };
+        line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(56) });
+        line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var labelBlock = new TextBlock
+        {
+            Text = label.ToUpperInvariant(),
+            FontSize = 9,
+            FontWeight = FontWeights.SemiBold,
+            CharacterSpacing = 60,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var badge = BuildDecisionBadge(decision);
+        badge.Margin = new Thickness(0);
+        badge.Padding = new Thickness(5, 1, 5, 1);
+        var valueBlock = new TextBlock
+        {
+            Text = value,
+            FontSize = 11,
+            FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(labelBlock, 0);
+        Grid.SetColumn(badge, 1);
+        Grid.SetColumn(valueBlock, 2);
+        line.Children.Add(labelBlock);
+        line.Children.Add(badge);
+        line.Children.Add(valueBlock);
+        return line;
+    }
+
+    private static Border BuildTranscodeModeBadge(string label)
+    {
+        var software = label.Equals("SW", StringComparison.OrdinalIgnoreCase)
+            || label.Equals("Audio SW", StringComparison.OrdinalIgnoreCase);
+        var color = software ? Color.FromArgb(255, 248, 113, 113) : Color.FromArgb(255, 165, 243, 252);
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(26, color.R, color.G, color.B)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(52, color.R, color.G, color.B)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(5, 1, 5, 1),
+            Child = new TextBlock
+            {
+                Text = label,
+                FontSize = 9,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(color),
+            },
+        };
     }
 
     private FrameworkElement BuildPlaybackDetailsPanel(AdminSession session)

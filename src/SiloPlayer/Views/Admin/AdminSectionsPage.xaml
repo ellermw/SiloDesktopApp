@@ -19,9 +19,9 @@
         <Style x:Key="ScopeTabButtonStyle" TargetType="Button">
             <Setter Property="Height" Value="34" />
             <Setter Property="Padding" Value="18,0" />
-            <Setter Property="CornerRadius" Value="17" />
+            <Setter Property="CornerRadius" Value="6" />
             <Setter Property="FontSize" Value="13" />
-            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontWeight" Value="Medium" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
     </Page.Resources>
@@ -172,14 +172,6 @@
                         </Grid>
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
-
-                        <!-- Inline loading indicator -->
-                        <ProgressRing
-                            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-                            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                            HorizontalAlignment="Center"
-                            Margin="0,24"
-                            Width="32" Height="32" />
 
                         <!-- Inline error state -->
                         <StackPanel

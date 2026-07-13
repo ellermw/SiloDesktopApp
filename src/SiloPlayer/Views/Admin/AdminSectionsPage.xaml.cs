@@ -53,8 +53,10 @@ public sealed partial class AdminSectionsPage : Page
         {
             ViewModel.Sections.CollectionChanged += (_, _) => ScheduleRebuild();
             SetScopeActive("home");
+            BuildLoadingSkeletons();
             await ViewModel.LoadCommand.ExecuteAsync(null);
             PopulateLibraryPicker();
+            BuildSectionRows();
         }
         catch (Exception ex)
         {
@@ -64,6 +66,7 @@ public sealed partial class AdminSectionsPage : Page
 
     private void ScheduleRebuild()
     {
+        if (ViewModel.IsLoading) return;
         if (_rebuildPending) return;
         _rebuildPending = true;
         DispatcherQueue.TryEnqueue(() =>
@@ -109,7 +112,9 @@ public sealed partial class AdminSectionsPage : Page
     {
         SetScopeActive("home");
         ViewModel.SelectedLibraryId = null;
+        BuildLoadingSkeletons();
         await ViewModel.LoadCommand.ExecuteAsync(null);
+        BuildSectionRows();
     }
 
     private async void ScopeLibraryButton_Click(object sender, RoutedEventArgs e)
@@ -117,7 +122,9 @@ public sealed partial class AdminSectionsPage : Page
         SetScopeActive("library");
         if (LibraryPicker.SelectedItem is ComboBoxItem item && item.Tag is int libId)
             ViewModel.SelectedLibraryId = libId;
+        BuildLoadingSkeletons();
         await ViewModel.LoadCommand.ExecuteAsync(null);
+        BuildSectionRows();
     }
 
     // ===== Library Picker =====
@@ -155,7 +162,29 @@ public sealed partial class AdminSectionsPage : Page
         {
             ViewModel.SelectedLibraryId = libId;
             if (_currentScope == "library")
+            {
+                BuildLoadingSkeletons();
                 await ViewModel.LoadCommand.ExecuteAsync(null);
+                BuildSectionRows();
+            }
+        }
+    }
+
+    private void BuildLoadingSkeletons()
+    {
+        EmptyState.Visibility = Visibility.Collapsed;
+        ReorderHintText.Visibility = Visibility.Collapsed;
+        SectionsPanel.Children.Clear();
+        for (var index = 0; index < 6; index++)
+        {
+            SectionsPanel.Children.Add(new Border
+            {
+                Height = 44,
+                Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+                Opacity = index % 2 == 0 ? 0.52 : 0.36,
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = index == 0 ? new Thickness(0) : new Thickness(0, 1, 0, 0),
+            });
         }
     }
 

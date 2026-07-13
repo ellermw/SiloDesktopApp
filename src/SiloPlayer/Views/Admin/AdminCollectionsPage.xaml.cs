@@ -37,8 +37,10 @@ public sealed partial class AdminCollectionsPage : Page
         {
             ViewModel.Collections.CollectionChanged += (_, _) => ScheduleRebuild();
             ViewModel.CollectionGroups.CollectionChanged += (_, _) => ScheduleRebuild();
+            BuildLoadingSkeletons();
             await ViewModel.LoadCommand.ExecuteAsync(null);
             PopulateLibraryPicker();
+            BuildCollectionRows();
         }
         catch (Exception ex)
         {
@@ -48,6 +50,7 @@ public sealed partial class AdminCollectionsPage : Page
 
     private void ScheduleRebuild()
     {
+        if (ViewModel.IsLoading) return;
         if (_rebuildPending) return;
         _rebuildPending = true;
         DispatcherQueue.TryEnqueue(() =>
@@ -86,7 +89,25 @@ public sealed partial class AdminCollectionsPage : Page
         if (LibraryPicker.SelectedItem is ComboBoxItem item)
         {
             ViewModel.SelectedLibraryId = item.Tag as int?;
+            BuildLoadingSkeletons();
             await ViewModel.LoadCommand.ExecuteAsync(null);
+            BuildCollectionRows();
+        }
+    }
+
+    private void BuildLoadingSkeletons()
+    {
+        EmptyState.Visibility = Visibility.Collapsed;
+        CollectionsPanel.Children.Clear();
+        for (var index = 0; index < 5; index++)
+        {
+            CollectionsPanel.Children.Add(new Border
+            {
+                Height = index == 0 ? 40 : 52,
+                CornerRadius = new CornerRadius(8),
+                Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+                Opacity = index == 0 ? 0.72 : 0.5,
+            });
         }
     }
 
