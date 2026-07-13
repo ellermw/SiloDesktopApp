@@ -18,7 +18,7 @@ public sealed class AdminSettingsDetailPageSourceTests
     }
 
     [Fact]
-    public void ScannerSettingsIncludeMarkersSection()
+    public void IntroSettingsOwnMarkerLookupProvidersAndTasks()
     {
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
@@ -28,10 +28,14 @@ public sealed class AdminSettingsDetailPageSourceTests
             "Admin",
             "AdminSettingsDetailPage.xaml.cs"));
 
-        Assert.Contains("AddSectionHeader(\"Markers\")", source);
+        Assert.Contains("BuildIntroMarkersTab", source);
+        Assert.Contains("AddSectionHeader(\"Marker Providers\")", source);
         Assert.Contains("\"markers.mode\"", source);
         Assert.Contains("\"markers.lazy_playback\"", source);
         Assert.Contains("Fetch Markers at Playback if Missing", source);
+        Assert.Contains("LoadMarkerProvidersAsync", source);
+        Assert.Contains("detect_intro_markers", source);
+        Assert.Contains("contribute_markers", source);
     }
 
     [Fact]

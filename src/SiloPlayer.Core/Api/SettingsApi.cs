@@ -18,6 +18,226 @@ public sealed class ServerBrandingResponse
     [JsonPropertyName("login_bg_url")] public string? LoginBackgroundUrl { get; set; }
 }
 
+public sealed class BrandingAssetUploadResponse
+{
+    [JsonPropertyName("kind")] public string Kind { get; set; } = "";
+    [JsonPropertyName("url")] public string Url { get; set; } = "";
+}
+
+public sealed class CatalogSearchStatus
+{
+    [JsonPropertyName("configured_provider")] public string ConfiguredProvider { get; set; } = "";
+    [JsonPropertyName("active_provider")] public string ActiveProvider { get; set; } = "";
+    [JsonPropertyName("meilisearch")] public CatalogSearchMeilisearchStatus Meilisearch { get; set; } = new();
+    [JsonPropertyName("index")] public CatalogSearchIndexStatus Index { get; set; } = new();
+    [JsonPropertyName("semantic")] public CatalogSearchSemanticStatus? Semantic { get; set; }
+    [JsonPropertyName("tasks")] public List<CatalogSearchTaskLink> Tasks { get; set; } = [];
+}
+
+public sealed class CatalogSearchMeilisearchStatus
+{
+    [JsonPropertyName("configured")] public bool Configured { get; set; }
+    [JsonPropertyName("healthy")] public bool Healthy { get; set; }
+    [JsonPropertyName("circuit_state")] public string CircuitState { get; set; } = "";
+    [JsonPropertyName("circuit_reason")] public string? CircuitReason { get; set; }
+    [JsonPropertyName("circuit_until")] public string? CircuitUntil { get; set; }
+    [JsonPropertyName("last_fallback")] public string? LastFallback { get; set; }
+    [JsonPropertyName("timeout_ms")] public int TimeoutMs { get; set; }
+    [JsonPropertyName("matching_strategy")] public string MatchingStrategy { get; set; } = "";
+    [JsonPropertyName("index_types")] public List<string> IndexTypes { get; set; } = [];
+    [JsonPropertyName("semantic_enabled")] public bool SemanticEnabled { get; set; }
+    [JsonPropertyName("binary_quantized")] public bool BinaryQuantized { get; set; }
+    [JsonPropertyName("semantic_ratio")] public double SemanticRatio { get; set; }
+    [JsonPropertyName("embedder")] public string Embedder { get; set; } = "";
+}
+
+public sealed class CatalogSearchIndexStatus
+{
+    [JsonPropertyName("active_index_uid")] public string ActiveIndexUid { get; set; } = "";
+    [JsonPropertyName("schema_version")] public int SchemaVersion { get; set; }
+    [JsonPropertyName("expected_schema_version")] public int ExpectedSchemaVersion { get; set; }
+    [JsonPropertyName("document_count")] public long DocumentCount { get; set; }
+    [JsonPropertyName("vector_document_count")] public long VectorDocumentCount { get; set; }
+    [JsonPropertyName("pending_events")] public long PendingEvents { get; set; }
+    [JsonPropertyName("dead_lettered_events")] public long DeadLetteredEvents { get; set; }
+    [JsonPropertyName("last_rebuild_at")] public string? LastRebuildAt { get; set; }
+    [JsonPropertyName("last_sync_at")] public string? LastSyncAt { get; set; }
+    [JsonPropertyName("last_processed_event_id")] public long LastProcessedEventId { get; set; }
+}
+
+public sealed class CatalogSearchSemanticStatus
+{
+    [JsonPropertyName("ready")] public bool Ready { get; set; }
+    [JsonPropertyName("disabled_reason")] public string? DisabledReason { get; set; }
+    [JsonPropertyName("vector_coverage_ratio")] public double VectorCoverageRatio { get; set; }
+    [JsonPropertyName("coverage_updated_at")] public string? CoverageUpdatedAt { get; set; }
+    [JsonPropertyName("per_type")] public List<CatalogSearchTypeCoverage> PerType { get; set; } = [];
+    [JsonPropertyName("capability")] public CatalogSearchEmbedderCapability Capability { get; set; } = new();
+}
+
+public sealed class CatalogSearchTypeCoverage
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "";
+    [JsonPropertyName("eligible")] public long Eligible { get; set; }
+    [JsonPropertyName("vectorized")] public long Vectorized { get; set; }
+    [JsonPropertyName("vector_coverage_ratio")] public double VectorCoverageRatio { get; set; }
+    [JsonPropertyName("ready")] public bool Ready { get; set; }
+}
+
+public sealed class CatalogSearchEmbedderCapability
+{
+    [JsonPropertyName("ok")] public bool Ok { get; set; }
+    [JsonPropertyName("reason")] public string? Reason { get; set; }
+    [JsonPropertyName("embedder")] public string? Embedder { get; set; }
+    [JsonPropertyName("dimensions")] public int? Dimensions { get; set; }
+}
+
+public sealed class CatalogSearchTaskLink
+{
+    [JsonPropertyName("key")] public string Key { get; set; } = "";
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("href")] public string Href { get; set; } = "";
+}
+
+public sealed class JellyfinCompatStatus
+{
+    [JsonPropertyName("enabled")] public bool Enabled { get; set; }
+    [JsonPropertyName("api_state")] public string ApiState { get; set; } = "";
+    [JsonPropertyName("listen")] public string Listen { get; set; } = "";
+    [JsonPropertyName("public_url")] public string PublicUrl { get; set; } = "";
+    [JsonPropertyName("emulated_server_version")] public string EmulatedServerVersion { get; set; } = "";
+    [JsonPropertyName("server_name")] public string ServerName { get; set; } = "";
+    [JsonPropertyName("web_enabled")] public bool WebEnabled { get; set; }
+    [JsonPropertyName("web_state")] public string WebState { get; set; } = "";
+    [JsonPropertyName("pinned_version")] public string PinnedVersion { get; set; } = "";
+    [JsonPropertyName("installed_version")] public string? InstalledVersion { get; set; }
+    [JsonPropertyName("source_url")] public string SourceUrl { get; set; } = "";
+    [JsonPropertyName("tag")] public string? Tag { get; set; }
+    [JsonPropertyName("commit_sha")] public string? CommitSha { get; set; }
+    [JsonPropertyName("checksum")] public string? Checksum { get; set; }
+    [JsonPropertyName("install_root")] public string InstallRoot { get; set; } = "";
+    [JsonPropertyName("install_path")] public string InstallPath { get; set; } = "";
+    [JsonPropertyName("installed_at")] public string? InstalledAt { get; set; }
+    [JsonPropertyName("license_present")] public bool LicensePresent { get; set; }
+    [JsonPropertyName("provenance_present")] public bool ProvenancePresent { get; set; }
+    [JsonPropertyName("installer_ready")] public bool InstallerReady { get; set; }
+    [JsonPropertyName("prerequisites")] public List<JellyfinCompatPrerequisite> Prerequisites { get; set; } = [];
+    [JsonPropertyName("operation")] public JellyfinCompatOperation? Operation { get; set; }
+    [JsonPropertyName("last_error")] public string? LastError { get; set; }
+    [JsonPropertyName("restart_required")] public bool RestartRequired { get; set; }
+}
+
+public sealed class JellyfinCompatPrerequisite
+{
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("command")] public string Command { get; set; } = "";
+    [JsonPropertyName("available")] public bool Available { get; set; }
+    [JsonPropertyName("path")] public string? Path { get; set; }
+    [JsonPropertyName("message")] public string? Message { get; set; }
+}
+
+public sealed class JellyfinCompatOperation
+{
+    [JsonPropertyName("id")] public string Id { get; set; } = "";
+    [JsonPropertyName("kind")] public string Kind { get; set; } = "";
+    [JsonPropertyName("state")] public string State { get; set; } = "";
+    [JsonPropertyName("started_at")] public string StartedAt { get; set; } = "";
+    [JsonPropertyName("completed_at")] public string? CompletedAt { get; set; }
+    [JsonPropertyName("phase")] public string? Phase { get; set; }
+    [JsonPropertyName("progress_percent")] public double? ProgressPercent { get; set; }
+    [JsonPropertyName("message")] public string? Message { get; set; }
+    [JsonPropertyName("error")] public string? Error { get; set; }
+}
+
+public sealed class MarkerProviderListResponse
+{
+    [JsonPropertyName("providers")] public List<MarkerProviderConfig> Providers { get; set; } = [];
+}
+
+public sealed class MarkerProviderConfig
+{
+    [JsonPropertyName("provider")] public string Provider { get; set; } = "";
+    [JsonPropertyName("display_name")] public string? DisplayName { get; set; }
+    [JsonPropertyName("source_type")] public string? SourceType { get; set; }
+    [JsonPropertyName("plugin_id")] public string? PluginId { get; set; }
+    [JsonPropertyName("plugin_installation_id")] public long? PluginInstallationId { get; set; }
+    [JsonPropertyName("capability_id")] public string? CapabilityId { get; set; }
+    [JsonPropertyName("is_submitter")] public bool IsSubmitter { get; set; }
+    [JsonPropertyName("fetch_enabled")] public bool FetchEnabled { get; set; }
+    [JsonPropertyName("fetch_priority")] public int FetchPriority { get; set; }
+    [JsonPropertyName("contribute_enabled")] public bool ContributeEnabled { get; set; }
+    [JsonPropertyName("contribute_auto_local")] public bool ContributeAutoLocal { get; set; }
+    [JsonPropertyName("contribute_min_confidence")] public double ContributeMinConfidence { get; set; }
+}
+
+public sealed class MarkerProviderValidationResponse
+{
+    [JsonPropertyName("valid")] public bool Valid { get; set; }
+    [JsonPropertyName("stats")] public MarkerProviderStats? Stats { get; set; }
+    [JsonPropertyName("error")] public string? Error { get; set; }
+}
+
+public sealed class MarkerProviderStats
+{
+    [JsonPropertyName("total")] public long Total { get; set; }
+    [JsonPropertyName("accepted")] public long Accepted { get; set; }
+    [JsonPropertyName("pending")] public long Pending { get; set; }
+    [JsonPropertyName("rejected")] public long Rejected { get; set; }
+    [JsonPropertyName("acceptance_rate")] public double AcceptanceRate { get; set; }
+    [JsonPropertyName("current_streak")] public long CurrentStreak { get; set; }
+    [JsonPropertyName("best_streak")] public long BestStreak { get; set; }
+}
+
+public sealed class EmailTestResult
+{
+    [JsonPropertyName("ok")] public bool Ok { get; set; }
+    [JsonPropertyName("duration_ms")] public long DurationMs { get; set; }
+    [JsonPropertyName("message")] public string? Message { get; set; }
+}
+
+public sealed class ServerNotificationChannelsResponse
+{
+    [JsonPropertyName("channels")] public List<ServerNotificationChannel> Channels { get; set; } = [];
+}
+
+public sealed class ServerNotificationChannel
+{
+    [JsonPropertyName("id")] public string Id { get; set; } = "";
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("type")] public string Type { get; set; } = "";
+    [JsonPropertyName("url_host")] public string UrlHost { get; set; } = "";
+    [JsonPropertyName("enabled")] public bool Enabled { get; set; }
+    [JsonPropertyName("notify_new_movies")] public bool NotifyNewMovies { get; set; }
+    [JsonPropertyName("notify_new_episodes")] public bool NotifyNewEpisodes { get; set; }
+    [JsonPropertyName("notify_new_audiobooks")] public bool NotifyNewAudiobooks { get; set; }
+    [JsonPropertyName("notify_new_ebooks")] public bool NotifyNewEbooks { get; set; }
+    [JsonPropertyName("notify_request_submitted")] public bool NotifyRequestSubmitted { get; set; }
+    [JsonPropertyName("notify_request_approved")] public bool NotifyRequestApproved { get; set; }
+    [JsonPropertyName("notify_request_declined")] public bool NotifyRequestDeclined { get; set; }
+    [JsonPropertyName("notify_request_fulfilled")] public bool NotifyRequestFulfilled { get; set; }
+    [JsonPropertyName("consecutive_failures")] public int ConsecutiveFailures { get; set; }
+    [JsonPropertyName("disabled_reason")] public string? DisabledReason { get; set; }
+    [JsonPropertyName("last_success_at")] public string? LastSuccessAt { get; set; }
+    [JsonPropertyName("last_failure_at")] public string? LastFailureAt { get; set; }
+    [JsonPropertyName("last_failure_status")] public int? LastFailureStatus { get; set; }
+    [JsonPropertyName("last_failure_message")] public string? LastFailureMessage { get; set; }
+    [JsonPropertyName("created_at")] public string CreatedAt { get; set; } = "";
+    [JsonPropertyName("signing_secret")] public string? SigningSecret { get; set; }
+}
+
+public sealed class ServerNotificationChannelTestResult
+{
+    [JsonPropertyName("ok")] public bool Ok { get; set; }
+    [JsonPropertyName("http_status")] public int? HttpStatus { get; set; }
+    [JsonPropertyName("duration_ms")] public long DurationMs { get; set; }
+    [JsonPropertyName("message")] public string? Message { get; set; }
+}
+
+public sealed class SigningSecretResponse
+{
+    [JsonPropertyName("signing_secret")] public string SigningSecret { get; set; } = "";
+}
+
 public class SettingsResponse
 {
     public List<SettingEntry> Settings { get; set; } = [];
@@ -89,6 +309,79 @@ public class SettingsApi(SiloApiClient client)
 {
     public Task<ServerBrandingResponse> GetServerBrandingAsync(CancellationToken ct = default)
         => client.GetUnauthenticatedAsync<ServerBrandingResponse>("/api/v1/theme/branding", ct);
+
+    public Task<BrandingAssetUploadResponse> UploadBrandingAssetAsync(
+        string kind, string fileName, byte[] fileBytes, string contentType, CancellationToken ct = default)
+        => client.PostMultipartAsync<BrandingAssetUploadResponse>(
+            $"/api/v1/admin/branding/assets/{Uri.EscapeDataString(kind)}",
+            new Dictionary<string, string?>(), "file", fileName, fileBytes, contentType, ct);
+
+    public Task DeleteBrandingAssetAsync(string kind, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/branding/assets/{Uri.EscapeDataString(kind)}", ct);
+
+    public Task<CatalogSearchStatus> GetCatalogSearchStatusAsync(CancellationToken ct = default)
+        => client.GetAsync<CatalogSearchStatus>("/api/v1/admin/catalog/search/status", ct);
+
+    public Task<JellyfinCompatStatus> GetJellyfinCompatStatusAsync(CancellationToken ct = default)
+        => client.GetAsync<JellyfinCompatStatus>("/api/v1/admin/jellyfin-compat/status", ct);
+
+    public Task<JellyfinCompatStatus> PatchJellyfinCompatSettingsAsync(object patch, CancellationToken ct = default)
+        => client.PatchAsync<JellyfinCompatStatus>("/api/v1/admin/jellyfin-compat/settings", patch, ct);
+
+    public Task<JellyfinCompatStatus> InstallJellyfinCompatWebAsync(string? version = null, CancellationToken ct = default)
+        => client.PostAsync<JellyfinCompatStatus>("/api/v1/admin/jellyfin-compat/web/install",
+            string.IsNullOrWhiteSpace(version)
+                ? new Dictionary<string, object?>()
+                : new Dictionary<string, object?> { ["version"] = version.Trim() }, ct);
+
+    public Task<JellyfinCompatStatus> RemoveJellyfinCompatWebAsync(CancellationToken ct = default)
+        => client.PostAsync<JellyfinCompatStatus>("/api/v1/admin/jellyfin-compat/web/remove",
+            new Dictionary<string, object?>(), ct);
+
+    public Task<MarkerProviderListResponse> GetMarkerProvidersAsync(CancellationToken ct = default)
+        => client.GetAsync<MarkerProviderListResponse>("/api/v1/admin/markers/providers", ct);
+
+    public Task<MarkerProviderConfig> UpdateMarkerProviderAsync(string provider, object patch,
+        CancellationToken ct = default)
+        => client.PutAsync<MarkerProviderConfig>(
+            $"/api/v1/admin/markers/providers/{Uri.EscapeDataString(provider)}", patch, ct);
+
+    public Task<MarkerProviderValidationResponse> ValidateMarkerProviderAsync(string provider,
+        CancellationToken ct = default)
+        => client.PostAsync<MarkerProviderValidationResponse>(
+            $"/api/v1/admin/markers/providers/{Uri.EscapeDataString(provider)}/validate",
+            new Dictionary<string, object?>(), ct);
+
+    public Task<EmailTestResult> SendTestEmailAsync(string recipient, CancellationToken ct = default)
+        => client.PostAsync<EmailTestResult>("/api/v1/admin/email/test",
+            new Dictionary<string, object?> { ["to"] = recipient.Trim() }, ct);
+
+    public Task<EmailTestResult> TestDiscordBotAsync(CancellationToken ct = default)
+        => client.PostAsync<EmailTestResult>("/api/v1/admin/notifications/discord/test",
+            new Dictionary<string, object?>(), ct);
+
+    public Task<ServerNotificationChannelsResponse> GetServerNotificationChannelsAsync(CancellationToken ct = default)
+        => client.GetAsync<ServerNotificationChannelsResponse>("/api/v1/admin/notifications/server-channels", ct);
+
+    public Task<ServerNotificationChannel> CreateServerNotificationChannelAsync(object input, CancellationToken ct = default)
+        => client.PostAsync<ServerNotificationChannel>("/api/v1/admin/notifications/server-channels", input, ct);
+
+    public Task<ServerNotificationChannel> UpdateServerNotificationChannelAsync(string id, object input, CancellationToken ct = default)
+        => client.PutAsync<ServerNotificationChannel>(
+            $"/api/v1/admin/notifications/server-channels/{Uri.EscapeDataString(id)}", input, ct);
+
+    public Task DeleteServerNotificationChannelAsync(string id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/notifications/server-channels/{Uri.EscapeDataString(id)}", ct);
+
+    public Task<ServerNotificationChannelTestResult> TestServerNotificationChannelAsync(string id, CancellationToken ct = default)
+        => client.PostAsync<ServerNotificationChannelTestResult>(
+            $"/api/v1/admin/notifications/server-channels/{Uri.EscapeDataString(id)}/test",
+            new Dictionary<string, object?>(), ct);
+
+    public Task<SigningSecretResponse> RotateServerNotificationChannelSecretAsync(string id, CancellationToken ct = default)
+        => client.PostAsync<SigningSecretResponse>(
+            $"/api/v1/admin/notifications/server-channels/{Uri.EscapeDataString(id)}/rotate-secret",
+            new Dictionary<string, object?>(), ct);
 
     public Task<SettingEntry> GetSettingAsync(string key, CancellationToken ct = default)
         => client.GetAsync<SettingEntry>($"/api/v1/settings/{Uri.EscapeDataString(key)}", ct);

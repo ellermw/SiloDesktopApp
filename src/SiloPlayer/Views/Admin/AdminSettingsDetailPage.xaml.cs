@@ -2,6 +2,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using System.Text.Json;
 using Windows.UI;
 using SiloPlayer.Core.Api;
 using SiloPlayer.ViewModels.Admin;
@@ -21,6 +24,8 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     // Lookup for rebuilding fields after discard
     private readonly List<Action> _fieldRebuilders = [];
+    private readonly SettingsApi _settingsApi;
+    private readonly SiloApiClient _apiClient;
 
     // Settings sub-nav — matches web/src/pages/admin-settings/AdminSettingsLayout.tsx
     // order and labeling. Each item is (label, Segoe Fluent icon glyph).
@@ -75,6 +80,8 @@ public sealed partial class AdminSettingsDetailPage : Page
     public AdminSettingsDetailPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminSettingsDetailViewModel>();
+        _settingsApi = App.Services.GetRequiredService<SettingsApi>();
+        _apiClient = App.Services.GetRequiredService<SiloApiClient>();
         this.InitializeComponent();
     }
 
@@ -402,32 +409,265 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void BuildBrandingTab()
     {
-        AddTabHeader("Branding", "Customize server identity, accent color, and the default visual theme.");
-
         AddSectionHeader("Identity");
         var identity = BeginCard();
-        AddTextBlock(identity, "Your server name appears in the browser tab, login page, sidebar, and installed app. Leave blank for defaults.");
+        AddTextBlock(identity, "Your server name appears in the browser tab, on the login page, in the sidebar, and in the installed app. Leave blank for defaults.");
         AddTextField(identity, "Server Name", "branding.server_name", "Silo");
-        AddTextField(identity, "Login Subtitle", "branding.login_subtitle", "Sign in with an existing account.");
+        AddTextField(identity, "Login Page Subtitle", "branding.login_subtitle", "Sign in with an existing account.");
         EndCard(identity);
 
-        AddSectionHeader("Appearance");
-        var appearance = BeginCard();
-        AddTextField(appearance, "Accent Color", "branding.accent_color", "#4f46e5");
-        AddSelectField(appearance, "Default Theme", "branding.default_theme",
-            [("cinema-dark", "Cinema Dark"), ("midnight", "Midnight"), ("graphite", "Graphite"), ("system", "System")],
-            "Applied as the starting theme for users who have not chosen one.");
-        EndCard(appearance);
-
-        AddSectionHeader("Brand Assets");
+        AddSectionHeader("Logos & Icons");
         var assets = BeginCard();
-        AddTextBlock(assets, "Logo, wordmark, background, and favicon uploads remain managed by Silo and update immediately when changed.");
+        AddTextBlock(assets, "Upload custom images to replace the Silo logo, browser favicon, and login background. Each falls back to the Silo default when not set.");
+        var s3Configured = !string.IsNullOrWhiteSpace(ViewModel.GetSetting("s3.public_bucket"));
+        if (!s3Configured)
+            AddBrandingStorageWarning(assets);
+        var assetHost = new StackPanel { Spacing = 8 };
+        assets.Children.Add(assetHost);
+        _ = LoadBrandingAssetsAsync(assetHost, s3Configured);
         EndCard(assets);
+
+        AddSectionHeader("Brand Accent Color");
+        var accent = BeginCard();
+        AddTextBlock(accent, "A quick way to recolor the primary buttons, focus rings, and sidebar accent. For full control, use the Theming tab. Also used as the installed app theme color.");
+        var accentBox = new TextBox
+        {
+            Text = ViewModel.GetSetting("branding.accent_color"),
+            PlaceholderText = "#4f46e5",
+            Width = 118,
+            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"]
+        };
+        accentBox.TextChanged += (_, _) => StageBrandAccent(accentBox.Text);
+        var palette = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        foreach (var hex in new[] { "#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#8b5cf6", "#64748b" })
+        {
+            var swatch = new Button
+            {
+                Width = 32, Height = 32, Padding = new Thickness(0),
+                CornerRadius = new CornerRadius(16),
+                BorderThickness = new Thickness(1),
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                Background = new SolidColorBrush(ParseHexColor(hex)),
+                Tag = hex,
+            };
+            ToolTipService.SetToolTip(swatch, $"Use accent {hex}");
+            swatch.Click += (_, _) => accentBox.Text = hex;
+            palette.Children.Add(swatch);
+        }
+        var customLabel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        customLabel.Children.Add(accentBox);
+        customLabel.Children.Add(new TextBlock { Text = "Custom", FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+        palette.Children.Add(customLabel);
+        var resetAccent = new Button { Content = "Reset", Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0) };
+        resetAccent.Click += (_, _) => accentBox.Text = "";
+        palette.Children.Add(resetAccent);
+        accent.Children.Add(palette);
+        _fieldRebuilders.Add(() => accentBox.Text = ViewModel.GetSetting("branding.accent_color"));
+        EndCard(accent);
+
+        AddSectionHeader("Default Theme");
+        var themes = BeginCard();
+        AddTextBlock(themes, "The base theme new users see until they choose their own. Users can always pick a different theme for themselves.");
+        var themeButtons = new List<ToggleButton>();
+        var themeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        foreach (var (id, label) in new[]
+        {
+            ("", "No default"), ("midnight-cinema", "Cinema Dark"), ("cinema-light", "Cinema Light"),
+            ("cobalt-studio", "Cobalt"), ("oxblood-noir", "Oxblood"), ("evergreen-studio", "Evergreen")
+        })
+        {
+            var button = new ToggleButton { Content = label, Tag = id, Padding = new Thickness(12, 8, 12, 8) };
+            button.IsChecked = string.Equals(ViewModel.GetSetting("branding.default_theme"), id, StringComparison.Ordinal);
+            button.Click += (_, _) =>
+            {
+                foreach (var other in themeButtons) other.IsChecked = ReferenceEquals(other, button);
+                ViewModel.SetSetting("branding.default_theme", id);
+                UpdateDirtyCountText();
+            };
+            themeButtons.Add(button);
+            themeRow.Children.Add(button);
+        }
+        themes.Children.Add(themeRow);
+        _fieldRebuilders.Add(() =>
+        {
+            var value = ViewModel.GetSetting("branding.default_theme");
+            foreach (var button in themeButtons) button.IsChecked = string.Equals(button.Tag?.ToString(), value, StringComparison.Ordinal);
+        });
+        EndCard(themes);
+    }
+
+    private void AddBrandingStorageWarning(StackPanel parent)
+    {
+        var warning = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFB, 0xBF, 0x24)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x33, 0xFB, 0xBF, 0x24)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Padding = new Thickness(12)
+        };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        row.Children.Add(new FontIcon { Glyph = "\uE7BA", FontSize = 15, Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24)) });
+        row.Children.Add(new TextBlock
+        {
+            Text = "Image uploads require S3 object storage. Configure a public bucket in Storage settings to enable custom logos, favicon, and login background.",
+            FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextWrapping = TextWrapping.Wrap
+        });
+        warning.Child = row;
+        parent.Children.Add(warning);
+    }
+
+    private async Task LoadBrandingAssetsAsync(StackPanel host, bool uploadsEnabled)
+    {
+        var progress = new ProgressRing { IsActive = true, Width = 24, Height = 24, HorizontalAlignment = HorizontalAlignment.Center };
+        host.Children.Add(progress);
+        try
+        {
+            var branding = await _settingsApi.GetServerBrandingAsync();
+            host.Children.Clear();
+            AddBrandingAssetRow(host, "Logo (wordmark)", "Wide logo shown in the expanded sidebar.", "wordmark", branding.WordmarkUrl, true, uploadsEnabled);
+            AddBrandingAssetRow(host, "Logo (icon)", "Square mark shown in the collapsed sidebar and installed app.", "mark", branding.MarkUrl, false, uploadsEnabled);
+            AddBrandingAssetRow(host, "Favicon", "Browser tab icon. PNG, ICO, or SVG.", "favicon", branding.FaviconUrl, false, uploadsEnabled);
+            AddBrandingAssetRow(host, "Login Background", "Full-bleed background image for the login and signup pages.", "login_bg", branding.LoginBackgroundUrl, true, uploadsEnabled);
+        }
+        catch (Exception ex)
+        {
+            host.Children.Clear();
+            AddTextBlock(host, $"Brand assets could not be loaded: {ex.Message}");
+        }
+    }
+
+    private void AddBrandingAssetRow(StackPanel host, string label, string description, string kind,
+        string? initialUrl, bool widePreview, bool uploadsEnabled)
+    {
+        string? currentUrl = initialUrl;
+        var row = new Border
+        {
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12), Padding = new Thickness(12)
+        };
+        var grid = new Grid { ColumnSpacing = 12 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(widePreview ? 112 : 52) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var preview = new Border
+        {
+            Width = widePreview ? 104 : 44, Height = 44, CornerRadius = new CornerRadius(8),
+            Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        SetBrandingPreview(preview, currentUrl);
+        grid.Children.Add(preview);
+
+        var copy = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        copy.Children.Add(new TextBlock { Text = label, FontSize = 13, FontWeight = FontWeights.SemiBold });
+        copy.Children.Add(new TextBlock { Text = description, FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextWrapping = TextWrapping.Wrap });
+        Grid.SetColumn(copy, 1);
+        grid.Children.Add(copy);
+
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7, VerticalAlignment = VerticalAlignment.Center };
+        var upload = new Button
+        {
+            Content = string.IsNullOrWhiteSpace(currentUrl) ? "Upload" : "Replace",
+            Style = (Style)Application.Current.Resources["OutlineButtonStyle"], IsEnabled = uploadsEnabled
+        };
+        var remove = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE74D", FontSize = 12 }, Width = 32, Height = 32, Padding = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0),
+            Visibility = string.IsNullOrWhiteSpace(currentUrl) ? Visibility.Collapsed : Visibility.Visible
+        };
+        ToolTipService.SetToolTip(remove, $"Remove {label}");
+
+        upload.Click += async (_, _) =>
+        {
+            var picker = new Windows.Storage.Pickers.FileOpenPicker();
+            picker.FileTypeFilter.Add(".png");
+            picker.FileTypeFilter.Add(".webp");
+            if (kind == "favicon") { picker.FileTypeFilter.Add(".ico"); picker.FileTypeFilter.Add(".svg"); }
+            else { picker.FileTypeFilter.Add(".jpg"); picker.FileTypeFilter.Add(".jpeg"); }
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance!));
+            var file = await picker.PickSingleFileAsync();
+            if (file is null) return;
+            upload.IsEnabled = false;
+            try
+            {
+                var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
+                var bytes = System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(buffer);
+                var contentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType;
+                var result = await _settingsApi.UploadBrandingAssetAsync(kind, file.Name, bytes, contentType);
+                currentUrl = result.Url;
+                SetBrandingPreview(preview, currentUrl);
+                upload.Content = "Replace";
+                remove.Visibility = Visibility.Visible;
+                ShowStatusToast($"{label} uploaded.");
+            }
+            catch (Exception ex) { ShowStatusToast($"Upload failed: {ex.Message}"); }
+            finally { upload.IsEnabled = uploadsEnabled; }
+        };
+
+        remove.Click += async (_, _) =>
+        {
+            remove.IsEnabled = false;
+            try
+            {
+                await _settingsApi.DeleteBrandingAssetAsync(kind);
+                currentUrl = null;
+                SetBrandingPreview(preview, null);
+                upload.Content = "Upload";
+                remove.Visibility = Visibility.Collapsed;
+                ShowStatusToast($"{label} removed.");
+            }
+            catch (Exception ex) { ShowStatusToast($"Remove failed: {ex.Message}"); }
+            finally { remove.IsEnabled = true; }
+        };
+
+        actions.Children.Add(upload);
+        actions.Children.Add(remove);
+        Grid.SetColumn(actions, 2);
+        grid.Children.Add(actions);
+        row.Child = grid;
+        host.Children.Add(row);
+    }
+
+    private void SetBrandingPreview(Border preview, string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            preview.Child = new FontIcon { Glyph = "\uEB9F", FontSize = 18, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"], HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            return;
+        }
+        var absolute = Uri.TryCreate(url, UriKind.Absolute, out var parsed)
+            ? parsed
+            : new Uri(_apiClient.BaseUrl.TrimEnd('/') + "/" + url.TrimStart('/'));
+        preview.Child = new Image { Source = new BitmapImage(absolute), Stretch = Stretch.Uniform };
+    }
+
+    private void StageBrandAccent(string value)
+    {
+        ViewModel.SetSetting("branding.accent_color", value);
+        Dictionary<string, string> variables;
+        try { variables = JsonSerializer.Deserialize<Dictionary<string, string>>(ViewModel.GetSetting("ui.admin_theme_vars")) ?? []; }
+        catch { variables = []; }
+        foreach (var key in new[] { "primary", "ring", "sidebar-primary" })
+        {
+            if (string.IsNullOrWhiteSpace(value)) variables.Remove(key);
+            else variables[key] = value;
+        }
+        ViewModel.SetSetting("ui.admin_theme_vars", JsonSerializer.Serialize(variables));
+        UpdateDirtyCountText();
+    }
+
+    private static Color ParseHexColor(string hex)
+    {
+        var value = hex.TrimStart('#');
+        return value.Length == 6
+            ? Color.FromArgb(0xFF, Convert.ToByte(value[..2], 16), Convert.ToByte(value.Substring(2, 2), 16), Convert.ToByte(value.Substring(4, 2), 16))
+            : Colors.Transparent;
     }
 
     private void BuildSearchTab()
     {
-        AddTabHeader("Search", "Configure catalog search provider selection, Meilisearch connectivity, and index behavior.");
+        AddTabHeader("Search", "Configure catalog search provider selection, Meilisearch connectivity, and index status.");
 
         AddSectionHeader("Provider");
         var provider = BeginCard();
@@ -451,7 +691,198 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddNumberField(meili, "Semantic Ratio", "catalog.search.meilisearch.semantic_ratio", "0.50");
         AddTextField(meili, "Embedder", "catalog.search.meilisearch.embedder", "silo_recommendations");
         AddToggleField(meili, "Binary Quantized Vectors", "catalog.search.meilisearch.binary_quantized", "Reduces vector storage with a small semantic-relevance cost; changing it requires a full index rebuild.");
+        AddConnectionCheckButton(meili, "meilisearch", "Check Connection");
         EndCard(meili);
+
+        AddSectionHeader("Status");
+        var status = BeginCard();
+        var statusHost = new StackPanel { Spacing = 0 };
+        status.Children.Add(statusHost);
+        _ = LoadCatalogSearchStatusAsync(statusHost);
+        EndCard(status);
+    }
+
+    private async Task LoadCatalogSearchStatusAsync(StackPanel host)
+    {
+        host.Children.Clear();
+        host.Children.Add(new ProgressRing
+        {
+            IsActive = true,
+            Width = 24,
+            Height = 24,
+            Margin = new Thickness(0, 16, 0, 16),
+            HorizontalAlignment = HorizontalAlignment.Center
+        });
+
+        try
+        {
+            var status = await _settingsApi.GetCatalogSearchStatusAsync();
+            host.Children.Clear();
+
+            AddSearchStatusRow(host, "Active Provider",
+                status.ActiveProvider == "meilisearch" ? "Meilisearch" : "Postgres FTS",
+                status.ConfiguredProvider);
+            AddSearchStatusRow(host, "Health",
+                status.Meilisearch.Healthy ? "Healthy" : status.Meilisearch.CircuitState,
+                status.Meilisearch.Configured ? "configured" : "not configured");
+            AddSearchStatusRow(host, "Active Index",
+                string.IsNullOrWhiteSpace(status.Index.ActiveIndexUid) ? "Not built" : status.Index.ActiveIndexUid,
+                $"schema {status.Index.SchemaVersion}/{status.Index.ExpectedSchemaVersion}");
+            AddSearchStatusRow(host, "Documents", status.Index.DocumentCount.ToString());
+            AddSearchStatusRow(host, "Indexed Types",
+                status.Meilisearch.IndexTypes.Count == 0 ? "All" : string.Join(", ", status.Meilisearch.IndexTypes));
+            AddSearchStatusRow(host, "Binary Quantized", status.Meilisearch.BinaryQuantized ? "Enabled" : "Disabled");
+            AddSearchStatusRow(host, "Semantic Search", status.Meilisearch.SemanticEnabled ? "Enabled" : "Disabled",
+                status.Meilisearch.Embedder);
+            AddSearchStatusRow(host, "Semantic Ratio",
+                FormattableString.Invariant($"{status.Meilisearch.SemanticRatio:0.00}"));
+            AddSearchStatusRow(host, "Vectorized Documents", status.Index.VectorDocumentCount.ToString());
+
+            if (status.Semantic is { } semantic)
+            {
+                AddSearchStatusRow(host, "Semantic Readiness", semantic.Ready ? "Ready" : "Not ready",
+                    semantic.Ready ? null : semantic.DisabledReason);
+                AddSearchStatusRow(host, "Vector Coverage", FormatSearchPercent(semantic.VectorCoverageRatio));
+                AddSearchStatusRow(host, "Coverage Updated", FormatSearchStatusDate(semantic.CoverageUpdatedAt));
+                AddSearchStatusRow(host, "Embedder Capability",
+                    semantic.Capability.Ok ? "OK" : semantic.Capability.Reason ?? "Unavailable",
+                    semantic.Capability.Embedder);
+
+                if (semantic.PerType.Count > 0)
+                    AddSearchTypeCoverage(host, semantic.PerType);
+            }
+
+            AddSearchStatusRow(host, "Pending Events", status.Index.PendingEvents.ToString());
+            if (status.Index.DeadLetteredEvents > 0)
+                AddSearchStatusRow(host, "Dead-lettered Events", status.Index.DeadLetteredEvents.ToString(), "stale until rebuild");
+            AddSearchStatusRow(host, "Last Sync", FormatSearchStatusDate(status.Index.LastSyncAt));
+            if (!string.IsNullOrWhiteSpace(status.Meilisearch.LastFallback))
+                AddSearchStatusRow(host, "Last Fallback", status.Meilisearch.LastFallback!);
+
+            var actions = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Padding = new Thickness(0, 12, 0, 4)
+            };
+            actions.Children.Add(CreateSearchTaskButton("Rebuild Index", "rebuild_catalog_search_index", false));
+            actions.Children.Add(CreateSearchTaskButton("Sync History", "sync_catalog_search_index", true));
+            host.Children.Add(actions);
+        }
+        catch (Exception ex)
+        {
+            host.Children.Clear();
+            var error = new StackPanel { Spacing = 10, Padding = new Thickness(0, 12, 0, 8) };
+            error.Children.Add(new TextBlock
+            {
+                Text = $"Search status could not be loaded: {ex.Message}",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xF8, 0x71, 0x71))
+            });
+            var retry = new Button { Content = "Retry", HorizontalAlignment = HorizontalAlignment.Left };
+            retry.Click += async (_, _) => await LoadCatalogSearchStatusAsync(host);
+            error.Children.Add(retry);
+            host.Children.Add(error);
+        }
+    }
+
+    private void AddSearchStatusRow(StackPanel host, string label, string value, string? badge = null)
+    {
+        if (host.Children.Count > 0)
+            AddDivider(host);
+
+        var row = new Grid { Padding = new Thickness(0, 12, 0, 12), ColumnSpacing = 16 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        var valuePanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        valuePanel.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(value) ? "Never" : value,
+            FontSize = 14,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 520,
+            TextAlignment = TextAlignment.Right
+        });
+        if (!string.IsNullOrWhiteSpace(badge))
+            valuePanel.Children.Add(CreateSearchStatusBadge(badge));
+        Grid.SetColumn(valuePanel, 1);
+        row.Children.Add(valuePanel);
+        host.Children.Add(row);
+    }
+
+    private static Border CreateSearchStatusBadge(string text) => new()
+    {
+        BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(6),
+        Padding = new Thickness(7, 2, 7, 2),
+        Child = new TextBlock
+        {
+            Text = text,
+            FontSize = 11,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+        }
+    };
+
+    private void AddSearchTypeCoverage(StackPanel host, IReadOnlyList<CatalogSearchTypeCoverage> coverage)
+    {
+        AddDivider(host);
+        var section = new StackPanel { Spacing = 4, Padding = new Thickness(0, 12, 0, 12) };
+        section.Children.Add(new TextBlock { Text = "Per-Type Coverage", FontSize = 14, FontWeight = FontWeights.SemiBold });
+        foreach (var item in coverage)
+        {
+            var row = new Grid { Padding = new Thickness(0, 6, 0, 6), ColumnSpacing = 12 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.Children.Add(new TextBlock
+            {
+                Text = $"{item.Type}: {item.Vectorized}/{item.Eligible} ({FormatSearchPercent(item.VectorCoverageRatio)})",
+                FontSize = 14,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+            var badge = CreateSearchStatusBadge(item.Ready ? "Ready" : "Not ready");
+            Grid.SetColumn(badge, 1);
+            row.Children.Add(badge);
+            section.Children.Add(row);
+        }
+        host.Children.Add(section);
+    }
+
+    private Button CreateSearchTaskButton(string label, string taskKey, bool ghost)
+    {
+        var button = new Button
+        {
+            Content = label,
+            Padding = new Thickness(12, 6, 12, 6),
+            Background = ghost ? new SolidColorBrush(Colors.Transparent) : null,
+            BorderThickness = ghost ? new Thickness(0) : new Thickness(1)
+        };
+        button.Click += (_, _) => Frame.Navigate(typeof(AdminTaskDetailPage), taskKey);
+        return button;
+    }
+
+    private static string FormatSearchPercent(double value) => $"{Math.Round(value * 100):0}%";
+
+    private static string FormatSearchStatusDate(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || !DateTimeOffset.TryParse(value, out var parsed)) return "Never";
+        return parsed.ToLocalTime().ToString("g");
     }
 
     private void BuildThemingTab()
@@ -764,6 +1195,18 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddTextField(qtyCard, "Period Duration", "download.period_duration",
             "Rolling window for the per-period limit (e.g., 24h, 168h, 720h)");
         EndCard(qtyCard);
+
+        AddSectionHeader("Offline Sync (Prepared Downloads)");
+        var offlineCard = BeginCard();
+        AddToggleField(offlineCard, "Transcode-to-File Enabled", "download.transcode_enabled",
+            "Allow server-side transcode of downloads to a device-friendly file. Requires the per-user download-transcode permission. Downloaded files persist on-device until the user deletes them — there is no expiry or revocation of files already downloaded.");
+        AddTextField(offlineCard, "Artifact Directory", "download.artifact_dir",
+            "Where prepared (remux/transcode) download files are written. Empty = a 'downloads' subdirectory under the transcode directory.");
+        AddTextField(offlineCard, "Max Concurrent Prepares", "download.max_concurrent_prepares",
+            "Encode/remux worker-pool size for preparing download files.");
+        AddTextField(offlineCard, "Artifact Storage Budget (bytes)", "download.artifact_max_bytes",
+            "LRU eviction budget for prepared download files. 0 = unlimited.");
+        EndCard(offlineCard);
     }
 
     private void BuildGeneralTab()
@@ -781,6 +1224,37 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddSelectField(logCard, "Log Level", "server.log_level", ["debug", "info", "warn", "error"]);
         AddTextField(logCard, "Quiet Subsystems", "server.log_quiet", "Comma-separated subsystem prefixes to silence");
         EndCard(logCard);
+
+        AddSectionHeader("Network");
+        var networkCard = BeginCard();
+        AddTextField(networkCard, "Trusted Proxies", "clientip.trusted_proxies",
+            "Comma-separated CIDRs of reverse proxies whose X-Forwarded-For is trusted, e.g. 172.16.0.0/12, 203.0.113.7/32. Applies without a restart.");
+        var proxyHelp = new Border
+        {
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 10, 12, 10),
+            Margin = new Thickness(0, 8, 0, 4)
+        };
+        var proxyHelpContent = new StackPanel { Spacing = 6 };
+        proxyHelpContent.Children.Add(new TextBlock { Text = "Choosing trusted proxy ranges", FontSize = 14, FontWeight = FontWeights.SemiBold });
+        foreach (var line in new[]
+                 {
+                     "• Setting this replaces the defaults (private ranges 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 and loopback). Leave it empty to keep them.",
+                     "• Recommended: keep the defaults, and only add your proxy's public address as a /32 if it reaches Silo from outside those ranges.",
+                     "• CDNs such as Cloudflare connect from many published IP ranges — list all of their CIDRs and keep the list current.",
+                     "• Avoid 0.0.0.0/0: any client could spoof its IP with a forged X-Forwarded-For header, affecting rate limits and audit logs."
+                 })
+            proxyHelpContent.Children.Add(new TextBlock
+            {
+                Text = line, FontSize = 12, TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+            });
+        proxyHelp.Child = proxyHelpContent;
+        networkCard.Children.Add(proxyHelp);
+        EndCard(networkCard);
     }
 
     private void BuildPlaybackTab()
@@ -792,7 +1266,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddTextField(tcCard, "FFmpeg Path", "playback.ffmpeg_path");
         AddTextField(tcCard, "Transcode Directory", "playback.transcode_dir");
         AddSelectField(tcCard, "Hardware Acceleration", "playback.hw_accel",
-            [("auto", "Auto (Recommended)"), ("qsv", "Intel Quick Sync (QSV)"), ("vaapi", "VA-API"), ("nvenc", "NVIDIA NVENC"), ("none", "None (CPU only)")]);
+            [("auto", "Auto"), ("qsv", "Intel Quick Sync (QSV)"), ("vaapi", "VA-API"), ("nvenc", "NVIDIA NVENC"), ("none", "Software")]);
 
         // HW-accel resolved indicator (webui: green/amber dot + resolved method + device)
         if (ViewModel.GetSetting("playback.hw_accel") is "auto" or "" or null)
@@ -870,7 +1344,8 @@ public sealed partial class AdminSettingsDetailPage : Page
         }
 
         AddToggleField(tcCard, "Transcoding Enabled", "playback.transcode_enabled");
-        AddToggleField(tcCard, "Allow HEVC Encoding", "playback.allow_hevc_encoding");
+        AddToggleField(tcCard, "Local Transcode Fallback", "playback.local_transcode_fallback",
+            "When no eligible transcode node is available, transcode on this server instead. Disable to keep all transcoding on dedicated nodes — playback that requires transcoding fails while no node is eligible.", true);
         AddToggleField(tcCard, "Allow 4K Transcoding", "allow_4k_transcode");
         AddConditionalToggleWithNumberField(
             tcCard,
@@ -881,17 +1356,15 @@ public sealed partial class AdminSettingsDetailPage : Page
 
         AddSectionHeader("Segments");
         var segCard = BeginCard();
-        AddNumberField(segCard, "Transcode Ahead Segments", "playback.transcode_ahead_segments");
-        AddNumberField(segCard, "Segment Duration", "playback.segment_duration");
         AddNumberField(segCard, "Chapter Thumbnail Workers", "playback.chapter_thumbnail_workers",
             "Global chapter thumbnail dispatcher concurrency. Higher values improve throughput but can drive more local or remote extraction work at once.");
         AddSelectField(segCard, "Chapter Thumbnail Execution", "playback.chapter_thumbnail_execution",
-            ["local", "prefer_transcode_nodes", "transcode_nodes_only"],
+            [("local", "Local only"), ("prefer_transcode_nodes", "Prefer transcode nodes"), ("transcode_nodes_only", "Transcode nodes only")],
             "Controls whether chapter thumbnails run on the API node or are offloaded to available transcode nodes.");
         AddNumberField(segCard, "Chapter Thumbnail Node Capacity", "playback.chapter_thumbnail_node_capacity",
             "Per transcode-node budget for chapter thumbnail jobs when remote execution is enabled.");
         AddSelectField(segCard, "HDR Chapter Thumbnail Policy", "playback.chapter_thumbnail_hdr_policy",
-            ["best_effort", "disabled"],
+            [("best_effort", "Best effort tone mapping"), ("disabled", "Disable HDR/DV thumbnails")],
             "Controls whether chapter thumbnails are generated for HDR or Dolby Vision sources. SDR files are unaffected.");
         EndCard(segCard);
 
@@ -912,7 +1385,6 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddSectionHeader("Scanner");
         var scanCard = BeginCard();
         AddNumberField(scanCard, "Scanner Workers", "scanner.workers");
-        AddDurationField(scanCard, "File Removal Grace", "scanner.file_removal_grace", "e.g. 24h");
         EndCard(scanCard);
 
         AddSectionHeader("Matcher");
@@ -924,20 +1396,8 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddSectionHeader("Metadata");
         var metaCard = BeginCard();
         AddToggleField(metaCard, "Cache Images to S3", "metadata.cache_images",
-            "When enabled, artwork fetched from metadata providers is resized and cached to your S3 storage bucket.");
+            "Download artwork from metadata providers and store resized variants in public asset S3 storage. Private bucket + presigned URLs is fully supported.");
         EndCard(metaCard);
-
-        AddSectionHeader("Markers");
-        var markerCard = BeginCard();
-        AddSelectField(markerCard, "Mode", "markers.mode",
-            [
-                ("off", "Off"),
-                ("local", "Local"),
-                ("both", "Local + Online"),
-                ("online", "Online Only"),
-            ]);
-        AddToggleField(markerCard, "Fetch Markers at Playback if Missing", "markers.lazy_playback");
-        EndCard(markerCard);
     }
 
     private void BuildIntroMarkersTab()
@@ -959,11 +1419,294 @@ public sealed partial class AdminSettingsDetailPage : Page
             "When enabled, playback can ask the server for markers if a file has not been scanned yet.");
         EndCard(markerCard);
 
+        AddSectionHeader("Marker Providers");
+        var providersCard = BeginCard();
+        var providersHost = new StackPanel { Spacing = 12 };
+        providersCard.Children.Add(providersHost);
+        _ = LoadMarkerProvidersAsync(providersHost);
+        EndCard(providersCard);
+
         AddSectionHeader("Tasks");
         var taskCard = BeginCard();
-        AddTextBlock(taskCard,
-            "Run marker detection and contribution jobs from Admin > Scheduled Tasks. Installed marker provider plugins are managed from the server plugin surface.");
+        var tasksHost = new StackPanel { Spacing = 0 };
+        taskCard.Children.Add(tasksHost);
+        _ = LoadIntroTasksAsync(tasksHost);
         EndCard(taskCard);
+    }
+
+    private async Task LoadMarkerProvidersAsync(StackPanel host)
+    {
+        host.Children.Clear();
+        host.Children.Add(new ProgressRing { IsActive = true, Width = 24, Height = 24, HorizontalAlignment = HorizontalAlignment.Center });
+        try
+        {
+            var response = await _settingsApi.GetMarkerProvidersAsync();
+            host.Children.Clear();
+            if (response.Providers.Count == 0)
+            {
+                host.Children.Add(new TextBlock { Text = "Marker Providers", FontSize = 14, FontWeight = FontWeights.SemiBold });
+                host.Children.Add(new TextBlock
+                {
+                    Text = "No marker provider plugins are installed or enabled.",
+                    FontSize = 14,
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+                });
+                return;
+            }
+
+            foreach (var provider in response.Providers)
+                host.Children.Add(BuildMarkerProviderCard(provider));
+        }
+        catch (Exception ex)
+        {
+            host.Children.Clear();
+            host.Children.Add(new TextBlock
+            {
+                Text = $"Marker providers could not be loaded: {ex.Message}", TextWrapping = TextWrapping.Wrap,
+                Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xF8, 0x71, 0x71))
+            });
+        }
+    }
+
+    private Border BuildMarkerProviderCard(MarkerProviderConfig provider)
+    {
+        var panel = new StackPanel { Spacing = 8 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(provider.DisplayName) ? provider.Provider : provider.DisplayName,
+            FontSize = 14, FontWeight = FontWeights.SemiBold
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Controls online marker lookup and whether locally generated markers can be submitted.",
+            FontSize = 12, TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = provider.SourceType == "plugin" && !string.IsNullOrWhiteSpace(provider.PluginId)
+                ? $"Plugin {provider.PluginId} / {provider.CapabilityId ?? provider.Provider}"
+                : provider.Provider,
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+
+        var fetch = new ToggleSwitch { IsOn = provider.FetchEnabled, OnContent = "", OffContent = "" };
+        panel.Children.Add(CreateMarkerProviderToggleRow("Use for Online Marker Lookup", null, fetch));
+        var priority = new NumberBox
+        {
+            Value = provider.FetchPriority, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+            Width = 160, HorizontalAlignment = HorizontalAlignment.Left
+        };
+        panel.Children.Add(CreateMarkerProviderNumberRow("Fetch Priority", "Lower numbers win when providers overlap.", priority));
+        var contribute = new ToggleSwitch
+        {
+            IsOn = provider.ContributeEnabled, IsEnabled = provider.IsSubmitter, OnContent = "", OffContent = ""
+        };
+        panel.Children.Add(CreateMarkerProviderToggleRow("Allow Contributions", null, contribute));
+        var autoLocal = new ToggleSwitch
+        {
+            IsOn = provider.ContributeAutoLocal,
+            IsEnabled = provider.IsSubmitter && provider.ContributeEnabled,
+            OnContent = "", OffContent = ""
+        };
+        panel.Children.Add(CreateMarkerProviderToggleRow("Auto-submit Local Markers",
+            "Scheduled contribution only sends scanner markers that meet the confidence floor.", autoLocal));
+        contribute.Toggled += (_, _) =>
+        {
+            autoLocal.IsEnabled = provider.IsSubmitter && contribute.IsOn;
+            if (!contribute.IsOn) autoLocal.IsOn = false;
+        };
+        var confidence = new NumberBox
+        {
+            Value = provider.ContributeMinConfidence,
+            Minimum = 0, Maximum = 1, SmallChange = 0.01,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+            IsEnabled = provider.IsSubmitter,
+            Width = 160, HorizontalAlignment = HorizontalAlignment.Left
+        };
+        panel.Children.Add(CreateMarkerProviderNumberRow("Minimum Confidence",
+            "Use a decimal from 0 to 1. The default recommendation is 0.95.", confidence));
+
+        var validationHost = new StackPanel { Spacing = 4 };
+        panel.Children.Add(validationHost);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+        if (provider.IsSubmitter)
+        {
+            var validate = new Button { Content = "Validate" };
+            validate.Click += async (_, _) =>
+            {
+                validate.IsEnabled = false;
+                try
+                {
+                    var result = await _settingsApi.ValidateMarkerProviderAsync(provider.Provider);
+                    validationHost.Children.Clear();
+                    if (result.Valid && result.Stats is { } stats)
+                    {
+                        validationHost.Children.Add(new TextBlock
+                        {
+                            Text = $"Total submissions {stats.Total} · Accepted {stats.Accepted} · Pending {stats.Pending} · Rejected {stats.Rejected} · Acceptance rate {Math.Round(stats.AcceptanceRate * 100):0}% · Best streak {stats.BestStreak}",
+                            FontSize = 12, TextWrapping = TextWrapping.Wrap,
+                            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+                        });
+                    }
+                    else
+                        validationHost.Children.Add(new TextBlock
+                        {
+                            Text = result.Error ?? "Validation failed.", FontSize = 12,
+                            Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xF8, 0x71, 0x71))
+                        });
+                }
+                catch (Exception ex) { ShowStatusToast($"Marker provider validation failed: {ex.Message}"); }
+                finally { validate.IsEnabled = true; }
+            };
+            actions.Children.Add(validate);
+        }
+        var save = new Button { Content = "Save Provider Settings" };
+        save.Click += async (_, _) =>
+        {
+            if (double.IsNaN(priority.Value) || priority.Value != Math.Truncate(priority.Value))
+            {
+                ShowStatusToast("Fetch priority must be a whole number.");
+                return;
+            }
+            if (double.IsNaN(confidence.Value) || confidence.Value is < 0 or > 1)
+            {
+                ShowStatusToast("Minimum confidence must be between 0 and 1.");
+                return;
+            }
+            save.IsEnabled = false;
+            try
+            {
+                await _settingsApi.UpdateMarkerProviderAsync(provider.Provider, new Dictionary<string, object?>
+                {
+                    ["fetch_enabled"] = fetch.IsOn,
+                    ["fetch_priority"] = (int)priority.Value,
+                    ["contribute_enabled"] = contribute.IsOn,
+                    ["contribute_auto_local"] = contribute.IsOn && autoLocal.IsOn,
+                    ["contribute_min_confidence"] = confidence.Value
+                });
+                ShowStatusToast("Marker provider settings saved.");
+            }
+            catch (Exception ex) { ShowStatusToast($"Failed to save marker provider settings: {ex.Message}"); }
+            finally { save.IsEnabled = true; }
+        };
+        actions.Children.Add(save);
+        panel.Children.Add(actions);
+
+        return new Border
+        {
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(14, 12, 14, 12), Child = panel
+        };
+    }
+
+    private static Grid CreateMarkerProviderToggleRow(string label, string? hint, ToggleSwitch toggle)
+    {
+        var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(0, 6, 0, 6) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var text = new StackPanel { Spacing = 2 };
+        text.Children.Add(new TextBlock { Text = label, FontSize = 14, FontWeight = FontWeights.Medium });
+        if (!string.IsNullOrWhiteSpace(hint))
+            text.Children.Add(new TextBlock
+            {
+                Text = hint, FontSize = 11, TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+            });
+        Grid.SetColumn(toggle, 1);
+        row.Children.Add(text);
+        row.Children.Add(toggle);
+        return row;
+    }
+
+    private static StackPanel CreateMarkerProviderNumberRow(string label, string hint, NumberBox number)
+    {
+        var row = new StackPanel { Spacing = 4, Padding = new Thickness(0, 6, 0, 6) };
+        row.Children.Add(new TextBlock { Text = label, FontSize = 14, FontWeight = FontWeights.Medium });
+        row.Children.Add(number);
+        row.Children.Add(new TextBlock
+        {
+            Text = hint, FontSize = 11, TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        return row;
+    }
+
+    private async Task LoadIntroTasksAsync(StackPanel host)
+    {
+        host.Children.Clear();
+        host.Children.Add(new ProgressRing { IsActive = true, Width = 24, Height = 24, HorizontalAlignment = HorizontalAlignment.Center });
+        try
+        {
+            var api = App.Services.GetRequiredService<AdminApi>();
+            var tasks = await api.GetTasksAsync();
+            host.Children.Clear();
+            host.Children.Add(BuildIntroTaskRow(api, tasks.FirstOrDefault(task => task.Key == "detect_intro_markers"),
+                "detect_intro_markers", "Populate Markers", "Populates intro and credits markers for opted-in libraries.", host));
+            host.Children.Add(BuildIntroTaskRow(api, tasks.FirstOrDefault(task => task.Key == "contribute_markers"),
+                "contribute_markers", "Contribute Markers", "Submits high-confidence local intro markers to enabled providers.", host));
+        }
+        catch (Exception ex)
+        {
+            host.Children.Clear();
+            host.Children.Add(new TextBlock
+            {
+                Text = $"Marker tasks could not be loaded: {ex.Message}", TextWrapping = TextWrapping.Wrap,
+                Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xF8, 0x71, 0x71))
+            });
+        }
+    }
+
+    private Border BuildIntroTaskRow(AdminApi api, Core.Models.Admin.TaskInfo? task, string key,
+        string fallbackName, string fallbackDescription, StackPanel host)
+    {
+        bool running = task?.State is "running" or "cancelling";
+        var grid = new Grid { ColumnSpacing = 12 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var text = new StackPanel { Spacing = 3 };
+        text.Children.Add(new TextBlock { Text = task?.Name ?? fallbackName, FontSize = 14, FontWeight = FontWeights.SemiBold });
+        text.Children.Add(new TextBlock
+        {
+            Text = task?.Description ?? fallbackDescription, FontSize = 12, TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        text.Children.Add(new TextBlock
+        {
+            Text = $"Last result: {FormatSearchStatusDate(task?.LastExecution?.CompletedAt)}", FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        grid.Children.Add(text);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        var history = new Button { Content = "History", IsEnabled = task != null };
+        history.Click += (_, _) => Frame.Navigate(typeof(AdminTaskDetailPage), key);
+        actions.Children.Add(history);
+        var run = new Button { Content = running ? "Running" : "Run Now", IsEnabled = task != null && !running };
+        run.Click += async (_, _) =>
+        {
+            run.IsEnabled = false;
+            try
+            {
+                await api.RunTaskAsync(key);
+                ShowStatusToast($"{task?.Name ?? fallbackName} started.");
+                await LoadIntroTasksAsync(host);
+            }
+            catch (Exception ex)
+            {
+                ShowStatusToast($"Task could not be started: {ex.Message}");
+                run.IsEnabled = true;
+            }
+        };
+        actions.Children.Add(run);
+        Grid.SetColumn(actions, 1);
+        grid.Children.Add(actions);
+        return new Border
+        {
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(0, 0, 0, 1), Padding = new Thickness(0, 12, 0, 12), Child = grid
+        };
     }
 
     private void BuildSubtitlesTab()
@@ -977,53 +1720,83 @@ public sealed partial class AdminSettingsDetailPage : Page
     private void BuildAIServicesTab()
     {
         AddTabHeader("AI Services",
-            "Configure OpenAI-compatible endpoints for metadata translation, subtitle translation, and transcription.");
+            "Shared AI endpoint and feature toggles for subtitle translation, subtitle generation from audio, and description translation.");
 
         AddSectionHeader("Endpoint");
         var endpointCard = BeginCard();
         AddTextField(endpointCard, "Base URL", "ai.base_url",
-            "https://api.openai.com, a Groq/OpenAI-compatible endpoint, or a local server.");
-        AddTextField(endpointCard, "Chat Model", "ai.chat_model",
-            "Used for subtitle and description translation.");
+            "https://api.openai.com");
+        AddTextField(endpointCard, "Chat model", "ai.chat_model",
+            "Used for subtitle and description translation, e.g. gpt-4o-mini, llama3.1");
         AddPasswordField(endpointCard, "API Key", "ai.api_key",
-            "Leave blank to keep the current value. Empty is fine for keyless local servers.");
-        AddTextField(endpointCard, "Transcription Model", "ai.asr_model",
-            "Whisper-capable model for subtitle generation.");
-        AddTextField(endpointCard, "Transcription Base URL", "ai.asr_base_url",
-            "Optional separate Whisper-compatible endpoint. Blank uses the base URL.");
-        AddPasswordField(endpointCard, "Transcription API Key", "ai.asr_api_key",
-            "Optional. Blank uses the main API key.");
-        AddNumberField(endpointCard, "Max Concurrent Jobs", "ai.max_concurrent_jobs",
+            "Leave blank to keep current. Empty is fine for keyless local servers.");
+        AddDivider(endpointCard);
+        endpointCard.Children.Add(new TextBlock { Text = "Transcription", FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 0) });
+        endpointCard.Children.Add(new TextBlock
+        {
+            Text = "Subtitle generation needs a Whisper endpoint that returns segment timestamps. Pick a preset or configure your own:",
+            FontSize = 12, TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        var asrModel = AddTextField(endpointCard, "Transcription model", "ai.asr_model",
+            "Whisper model for subtitle generation, e.g. whisper-large-v3-turbo");
+        var asrBaseUrl = AddTextField(endpointCard, "Transcription base URL", "ai.asr_base_url",
+            "Whisper-capable endpoint with segment timestamps: a self-hosted faster-whisper/speaches server (recommended), api.groq.com/openai, or api.openai.com. Blank uses the base URL — chat-only gateways such as OpenRouter cannot transcribe.");
+        var presets = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 4, 0, 8) };
+        foreach (var preset in new[]
+                 {
+                     ("Self-hosted · recommended", "http://localhost:8000", "deepdml/faster-whisper-large-v3-turbo-ct2"),
+                     ("Groq · hosted fallback", "https://api.groq.com/openai", "whisper-large-v3-turbo"),
+                     ("Groq · most accurate", "https://api.groq.com/openai", "whisper-large-v3"),
+                     ("OpenAI", "https://api.openai.com", "whisper-1")
+                 })
+        {
+            var button = new Button { Content = preset.Item1, Padding = new Thickness(10, 5, 10, 5), FontSize = 12 };
+            button.Click += (_, _) =>
+            {
+                asrBaseUrl.Text = preset.Item2;
+                asrModel.Text = preset.Item3;
+            };
+            presets.Children.Add(button);
+        }
+        endpointCard.Children.Add(presets);
+        AddPasswordField(endpointCard, "Transcription API key", "ai.asr_api_key",
+            "Optional; blank uses the main API key.");
+        AddNumberField(endpointCard, "Max concurrent jobs", "ai.max_concurrent_jobs",
             "One shared cap across subtitle translation, transcription, and description translation.");
         EndCard(endpointCard);
 
         AddSectionHeader("Features");
         var featuresCard = BeginCard();
-        AddToggleField(featuresCard, "Subtitle Translation", "subtitle_ai.enabled");
-        AddToggleField(featuresCard, "Subtitle Transcription", "subtitle_ai.transcribe_enabled");
-        AddToggleField(featuresCard, "Metadata Translation", "metadata_ai.enabled");
-        AddSelectField(featuresCard, "Translate Metadata On View", "metadata_ai.on_view",
+        AddToggleField(featuresCard, "Subtitle translation", "subtitle_ai.enabled",
+            "Show the “Translate with AI” action in the player.");
+        AddToggleField(featuresCard, "Subtitle generation from audio", "subtitle_ai.transcribe_enabled",
+            "Whisper transcription — generates subtitle tracks for media with no usable text subtitles.");
+        AddToggleField(featuresCard, "Description translation", "metadata_ai.enabled",
+            "Translate overviews and taglines from the metadata editor, plus the per-library auto-translate option.");
+        AddSelectField(featuresCard, "On-view translation", "metadata_ai.on_view",
             [
                 ("off", "Off"),
-                ("missing", "When Missing"),
-                ("always", "Always"),
-            ]);
-        EndCard(featuresCard);
-
-        AddSectionHeader("Subtitle AI");
-        var subtitleCard = BeginCard();
-        AddNumberField(subtitleCard, "Batch Size", "subtitle_ai.batch_size");
-        AddNumberField(subtitleCard, "Context Neighbors", "subtitle_ai.context_neighbors");
-        AddNumberField(subtitleCard, "Transcription Chunk Seconds", "subtitle_ai.asr_chunk_seconds");
-        AddNumberField(subtitleCard, "Transcription Quota Jobs", "subtitle_ai.transcribe_quota_jobs",
-            "Use 0 for no quota.");
-        AddSelectField(subtitleCard, "Transcription Quota Period", "subtitle_ai.transcribe_quota_period",
+                ("button", "Translate button on detail pages"),
+                ("auto", "Automatic on view"),
+            ],
+            "Let viewers get descriptions in their profile's metadata language: a Translate button, or automatic translation when they open a detail page. Requires description translation.");
+        AddNumberField(featuresCard, "Subtitle batch size", "subtitle_ai.batch_size",
+            "Cues per translation request.");
+        AddNumberField(featuresCard, "Subtitle context lines", "subtitle_ai.context_neighbors",
+            "Preceding source cues sent for scene continuity across batches.");
+        AddNumberField(featuresCard, "Transcription chunk length (seconds)", "subtitle_ai.asr_chunk_seconds",
+            "60–600. Shorter chunks keep Whisper timestamps tighter on long files, at the cost of more requests and occasional clipped words at chunk boundaries.");
+        AddNumberField(featuresCard, "Transcription limit per account", "subtitle_ai.transcribe_quota_jobs",
+            "Maximum transcription jobs per user account each period; profiles on an account share the limit. The admin account's primary profile is exempt. 0 = unlimited.");
+        AddSelectField(featuresCard, "Transcription limit period", "subtitle_ai.transcribe_quota_period",
             [
-                ("day", "Day"),
-                ("week", "Week"),
-                ("month", "Month"),
-            ]);
-        EndCard(subtitleCard);
+                ("day", "Per day (rolling 24 hours)"),
+                ("week", "Per week (rolling 7 days)"),
+                ("month", "Per month (rolling 30 days)"),
+            ],
+            "Rolling window the transcription limit counts against.");
+        EndCard(featuresCard);
     }
 
     private void BuildRateLimitTab()
@@ -1571,29 +2344,75 @@ public sealed partial class AdminSettingsDetailPage : Page
     private void BuildEmailTab()
     {
         AddTabHeader("Email",
-            "Configure outbound email through your SMTP server for notifications and account flows.");
+            "Outbound email via your own SMTP server. Used by features that send mail — notification emails and account flows — once they are enabled.");
 
         AddSectionHeader("General");
         var generalCard = BeginCard();
-        AddToggleField(generalCard, "Email Enabled", "email.enabled", "Master switch for all outbound email.");
-        AddTextField(generalCard, "From Address", "email.from_address", "silo@example.com");
-        AddTextField(generalCard, "From Name", "email.from_name", "Silo");
+        AddToggleField(generalCard, "Email Enabled", "email.enabled", "Master switch for all outbound email");
+        AddTextField(generalCard, "From Address", "email.from_address", "The sender address, e.g. silo@example.com");
+        AddTextField(generalCard, "From Name", "email.from_name", "Display name on outgoing mail (default \"Silo\")");
         EndCard(generalCard);
 
         AddSectionHeader("SMTP Server");
         var smtpCard = BeginCard();
-        AddTextField(smtpCard, "Host", "email.smtp_host", "smtp.example.com");
-        AddNumberField(smtpCard, "Port", "email.smtp_port", "587 for STARTTLS, 465 for implicit TLS.");
+        AddTextField(smtpCard, "Host", "email.smtp_host", "SMTP server hostname, e.g. smtp.example.com");
+        AddNumberField(smtpCard, "Port", "email.smtp_port", "587 for STARTTLS (typical), 465 for implicit TLS");
         AddSelectField(smtpCard, "Security", "email.smtp_security",
             [
                 ("starttls", "STARTTLS"),
                 ("tls", "TLS (implicit)"),
-                ("none", "None"),
-            ]);
+                ("none", "None (insecure)"),
+            ],
+            "STARTTLS upgrades a plain connection; TLS connects encrypted from the start");
         AddTextField(smtpCard, "Username", "email.smtp_username",
             "Leave empty when the server requires no authentication.");
         AddPasswordField(smtpCard, "Password", "email.smtp_password", "Leave blank to keep the current value.");
         EndCard(smtpCard);
+
+        AddSectionHeader("Verify");
+        var verifyCard = BeginCard();
+        var verifyRow = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 8, 0, 4) };
+        verifyRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        verifyRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var recipient = new TextBox { PlaceholderText = "you@example.com" };
+        verifyRow.Children.Add(recipient);
+        var send = new Button { Content = "Send test", IsEnabled = false };
+        recipient.TextChanged += (_, _) => send.IsEnabled = !string.IsNullOrWhiteSpace(recipient.Text);
+        Grid.SetColumn(send, 1);
+        verifyRow.Children.Add(send);
+        verifyCard.Children.Add(verifyRow);
+        var result = new TextBlock { FontSize = 12, Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap };
+        verifyCard.Children.Add(result);
+        AddTextBlock(verifyCard, "Save your changes before testing — the test uses the stored settings.");
+        send.Click += async (_, _) =>
+        {
+            send.IsEnabled = false;
+            send.Content = "Sending...";
+            result.Visibility = Visibility.Collapsed;
+            try
+            {
+                var response = await _settingsApi.SendTestEmailAsync(recipient.Text);
+                result.Text = response.Ok
+                    ? $"Delivered to the SMTP server in {response.DurationMs}ms."
+                    : response.Message ?? "Test failed.";
+                result.Foreground = new SolidColorBrush(response.Ok
+                    ? Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80)
+                    : Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24));
+                result.Visibility = Visibility.Visible;
+            }
+            catch (Exception ex)
+            {
+                result.Text = ex.Message;
+                result.Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xF8, 0x71, 0x71));
+                result.Visibility = Visibility.Visible;
+            }
+            finally
+            {
+                send.Content = "Send test";
+                send.IsEnabled = !string.IsNullOrWhiteSpace(recipient.Text);
+            }
+        };
+        EndCard(verifyCard);
     }
 
     private void BuildNotificationsAdminTab()
@@ -1616,16 +2435,22 @@ public sealed partial class AdminSettingsDetailPage : Page
 
         AddSectionHeader("Fanout");
         var fanoutCard = BeginCard();
-        AddNumberField(fanoutCard, "Settle Seconds", "notifications.fanout.settle_seconds");
-        AddNumberField(fanoutCard, "Max Series Burst", "notifications.fanout.max_series_burst");
-        AddNumberField(fanoutCard, "Max Event Age Hours", "notifications.fanout.max_event_age_hours");
+        AddNumberField(fanoutCard, "Settle Delay (seconds)", "notifications.fanout.settle_seconds",
+            "How long an event must sit before fanout claims it, so one scan's episodes batch together (default 30)");
+        AddNumberField(fanoutCard, "Max Series Burst", "notifications.fanout.max_series_burst",
+            "Max notifications per series per batch; the rest are suppressed to avoid floods (default 3)");
+        AddNumberField(fanoutCard, "Max Event Age (hours)", "notifications.fanout.max_event_age_hours",
+            "Events older than this are dropped instead of delivered late, e.g. after extended downtime (default 72)");
         EndCard(fanoutCard);
 
         AddSectionHeader("Webhooks");
         var webhooksCard = BeginCard();
-        AddNumberField(webhooksCard, "Max Per Profile", "notifications.webhooks.max_per_profile");
-        AddToggleField(webhooksCard, "Allow Private Destinations", "notifications.webhooks.allow_private_destinations");
-        AddNumberField(webhooksCard, "Deliveries Per Minute Per Profile", "notifications.webhooks.deliveries_per_minute_per_profile");
+        AddNumberField(webhooksCard, "Max Webhooks Per Profile", "notifications.webhooks.max_per_profile",
+            "How many webhooks a single profile may create (default 10)");
+        AddNumberField(webhooksCard, "Deliveries Per Minute Per Profile", "notifications.webhooks.deliveries_per_minute_per_profile",
+            "Webhook delivery rate limit; over-limit notifications still reach the inbox (default 60)");
+        AddToggleField(webhooksCard, "Allow Private Destinations", "notifications.webhooks.allow_private_destinations",
+            "Disables the SSRF guard so webhooks may target private and LAN addresses. Development only.");
         EndCard(webhooksCard);
 
         AddSectionHeader("Email Delivery");
@@ -1640,34 +2465,308 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddSectionHeader("Discord");
         var discordCard = BeginCard();
         AddToggleField(discordCard, "Discord Notifications", "notifications.discord_enabled");
-        AddToggleField(discordCard, "Allow Per-Episode Discord", "notifications.discord.allow_per_episode");
-        AddNumberField(discordCard, "Digest Hour", "notifications.discord.digest_hour", "0-23, server local time.");
-        AddSelectField(discordCard, "Poster Mode", "notifications.discord.poster_mode",
+        AddTextField(discordCard, "Client ID", "discord.client_id", "The Discord application's OAuth2 client ID (used for account linking)");
+        AddPasswordField(discordCard, "Client Secret", "discord.client_secret", "The Discord application's OAuth2 client secret");
+        AddPasswordField(discordCard, "Bot Token", "discord.bot_token", "The bot user's token (used to send DMs)");
+        var discordTest = new Button { Content = "Test bot token", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 6) };
+        var discordTestResult = new TextBlock { FontSize = 12, Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap };
+        discordTest.Click += async (_, _) =>
+        {
+            discordTest.IsEnabled = false;
+            try
+            {
+                var response = await _settingsApi.TestDiscordBotAsync();
+                discordTestResult.Text = $"{(response.Ok ? "Success" : "Failed")} ({response.DurationMs}ms)" +
+                                         (string.IsNullOrWhiteSpace(response.Message) ? "" : $" — {response.Message}");
+                discordTestResult.Foreground = new SolidColorBrush(response.Ok
+                    ? Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80)
+                    : Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24));
+                discordTestResult.Visibility = Visibility.Visible;
+            }
+            catch (Exception ex) { ShowStatusToast($"Discord test failed: {ex.Message}"); }
+            finally { discordTest.IsEnabled = true; }
+        };
+        discordCard.Children.Add(discordTest);
+        discordCard.Children.Add(discordTestResult);
+        AddToggleField(discordCard, "Allow Per-Episode DMs", "notifications.discord.allow_per_episode",
+            "Let users choose a DM per episode instead of the daily digest. Off coerces those accounts to the digest.");
+        AddNumberField(discordCard, "Digest Hour", "notifications.discord.digest_hour", "Hour of day (0-23, server time) when daily digest DMs go out (default 8)");
+        AddSelectField(discordCard, "Embed Posters", "notifications.discord.poster_mode",
             [
-                ("auto", "Auto"),
-                ("embed", "Embed"),
-                ("link", "Link"),
-                ("none", "None"),
-            ]);
-        AddPasswordField(discordCard, "Discord Client ID", "discord.client_id", "Leave blank to keep the current value.");
-        AddPasswordField(discordCard, "Discord Client Secret", "discord.client_secret", "Leave blank to keep the current value.");
-        AddPasswordField(discordCard, "Discord Bot Token", "discord.bot_token", "Leave blank to keep the current value.");
+                ("provider", "Provider CDNs only (default)"),
+                ("server", "Provider CDNs + server storage"),
+                ("off", "No images"),
+            ],
+            "Artwork in outgoing Discord messages across personal webhooks, bot DMs, and server channels.");
         EndCard(discordCard);
 
         AddSectionHeader("Server Channels");
         var channelCard = BeginCard();
         AddToggleField(channelCard, "Server Channels Enabled", "notifications.server_channels_enabled");
-        AddNumberField(channelCard, "Batch Seconds", "notifications.server_channels.batch_seconds");
-        AddToggleField(channelCard, "Mention Requesters", "notifications.server_channels.mention_requesters",
+        AddNumberField(channelCard, "Batch Window (seconds)", "notifications.server_channels.batch_seconds");
+        AddToggleField(channelCard, "Mention Requesters on Discord", "notifications.server_channels.mention_requesters",
             "Mention linked requesters in request-related server channel posts.");
+        AddDivider(channelCard);
+        var channelsHost = new StackPanel { Spacing = 10, Margin = new Thickness(0, 10, 0, 4) };
+        channelCard.Children.Add(channelsHost);
+        _ = LoadServerNotificationChannelsAsync(channelsHost);
         EndCard(channelCard);
 
         AddSectionHeader("Retention");
         var retentionCard = BeginCard();
-        AddNumberField(retentionCard, "Read Days", "notifications.retention.read_days");
-        AddNumberField(retentionCard, "Unread Days", "notifications.retention.unread_days");
-        AddNumberField(retentionCard, "Event Days", "notifications.retention.event_days");
+        AddNumberField(retentionCard, "Read Notifications (days)", "notifications.retention.read_days");
+        AddNumberField(retentionCard, "Unread Notifications (days)", "notifications.retention.unread_days");
+        AddNumberField(retentionCard, "Processed Events (days)", "notifications.retention.event_days");
         EndCard(retentionCard);
+    }
+
+    private async Task LoadServerNotificationChannelsAsync(StackPanel host)
+    {
+        host.Children.Clear();
+        host.Children.Add(new ProgressRing { IsActive = true, Width = 24, Height = 24, HorizontalAlignment = HorizontalAlignment.Center });
+        try
+        {
+            var response = await _settingsApi.GetServerNotificationChannelsAsync();
+            host.Children.Clear();
+            foreach (var channel in response.Channels)
+                host.Children.Add(BuildServerNotificationChannelCard(channel, host));
+            if (response.Channels.Count == 0)
+                host.Children.Add(new TextBlock
+                {
+                    Text = "No server channels yet. Create one to broadcast new content and request activity.",
+                    FontSize = 14, TextWrapping = TextWrapping.Wrap,
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+                });
+            var add = new Button { Content = "Add server channel", HorizontalAlignment = HorizontalAlignment.Left };
+            add.Click += async (_, _) => await ShowServerNotificationChannelEditorAsync(null, host);
+            host.Children.Add(add);
+        }
+        catch (Exception ex)
+        {
+            host.Children.Clear();
+            host.Children.Add(new TextBlock
+            {
+                Text = $"Server channels could not be loaded: {ex.Message}", TextWrapping = TextWrapping.Wrap,
+                Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xF8, 0x71, 0x71))
+            });
+        }
+    }
+
+    private Border BuildServerNotificationChannelCard(ServerNotificationChannel channel, StackPanel host)
+    {
+        var panel = new StackPanel { Spacing = 8 };
+        var header = new Grid { ColumnSpacing = 10 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var identity = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        identity.Children.Add(new TextBlock { Text = channel.Name, FontSize = 14, FontWeight = FontWeights.SemiBold });
+        identity.Children.Add(CreateSearchStatusBadge(channel.Type));
+        identity.Children.Add(new TextBlock
+        {
+            Text = channel.UrlHost, FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        header.Children.Add(identity);
+        var enabled = new ToggleSwitch
+        {
+            IsOn = channel.Enabled, OnContent = "Enabled", OffContent = "Disabled",
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        enabled.Toggled += async (_, _) =>
+        {
+            enabled.IsEnabled = false;
+            try
+            {
+                await _settingsApi.UpdateServerNotificationChannelAsync(channel.Id,
+                    new Dictionary<string, object?> { ["enabled"] = enabled.IsOn });
+                await LoadServerNotificationChannelsAsync(host);
+            }
+            catch (Exception ex) { ShowStatusToast($"Channel update failed: {ex.Message}"); enabled.IsEnabled = true; }
+        };
+        Grid.SetColumn(enabled, 1);
+        header.Children.Add(enabled);
+        panel.Children.Add(header);
+
+        var events = new List<string>();
+        if (channel.NotifyNewMovies) events.Add("New movies");
+        if (channel.NotifyNewEpisodes) events.Add("New episodes");
+        if (channel.NotifyNewAudiobooks) events.Add("New audiobooks");
+        if (channel.NotifyNewEbooks) events.Add("New ebooks");
+        if (channel.NotifyRequestSubmitted) events.Add("Request submitted");
+        if (channel.NotifyRequestApproved) events.Add("Request approved");
+        if (channel.NotifyRequestDeclined) events.Add("Request declined");
+        if (channel.NotifyRequestFulfilled) events.Add("Request fulfilled");
+        panel.Children.Add(new TextBlock
+        {
+            Text = events.Count == 0 ? "No events selected" : string.Join(" · ", events),
+            FontSize = 12, TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        if (!string.IsNullOrWhiteSpace(channel.DisabledReason) || !string.IsNullOrWhiteSpace(channel.LastFailureMessage))
+            panel.Children.Add(new TextBlock
+            {
+                Text = !string.IsNullOrWhiteSpace(channel.DisabledReason)
+                    ? $"Disabled: {channel.DisabledReason} Re-enable the channel to resume from now."
+                    : $"Last failure: {channel.LastFailureMessage ?? $"HTTP {channel.LastFailureStatus}"}. Check the destination URL.",
+                FontSize = 12, TextWrapping = TextWrapping.Wrap,
+                Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24))
+            });
+        else if (!string.IsNullOrWhiteSpace(channel.LastSuccessAt))
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"Last post: {FormatSearchStatusDate(channel.LastSuccessAt)}", FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+            });
+
+        var result = new TextBlock { FontSize = 12, Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap };
+        panel.Children.Add(result);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var test = new Button { Content = "Test" };
+        test.Click += async (_, _) =>
+        {
+            test.IsEnabled = false;
+            try
+            {
+                var testResult = await _settingsApi.TestServerNotificationChannelAsync(channel.Id);
+                result.Text = $"Test {(testResult.Ok ? "succeeded" : "failed")}" +
+                              (testResult.HttpStatus.HasValue ? $" (HTTP {testResult.HttpStatus}, {testResult.DurationMs}ms)" : $" ({testResult.DurationMs}ms)") +
+                              (string.IsNullOrWhiteSpace(testResult.Message) ? "" : $" — {testResult.Message}");
+                result.Foreground = new SolidColorBrush(testResult.Ok
+                    ? Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80)
+                    : Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24));
+                result.Visibility = Visibility.Visible;
+            }
+            catch (Exception ex) { ShowStatusToast($"Test request failed: {ex.Message}"); }
+            finally { test.IsEnabled = true; }
+        };
+        actions.Children.Add(test);
+        var edit = new Button { Content = "Edit" };
+        edit.Click += async (_, _) => await ShowServerNotificationChannelEditorAsync(channel, host);
+        actions.Children.Add(edit);
+        if (channel.Type == "generic")
+        {
+            var rotate = new Button { Content = "Rotate secret" };
+            rotate.Click += async (_, _) =>
+            {
+                rotate.IsEnabled = false;
+                try
+                {
+                    var secret = await _settingsApi.RotateServerNotificationChannelSecretAsync(channel.Id);
+                    await ShowSigningSecretAsync(secret.SigningSecret);
+                }
+                catch (Exception ex) { ShowStatusToast($"Failed to rotate signing secret: {ex.Message}"); }
+                finally { rotate.IsEnabled = true; }
+            };
+            actions.Children.Add(rotate);
+        }
+        var delete = new Button { Content = "Delete" };
+        delete.Click += async (_, _) =>
+        {
+            var confirm = new ContentDialog
+            {
+                XamlRoot = XamlRoot, Title = $"Delete \"{channel.Name}\"?",
+                Content = "Server events will stop posting to this destination. This cannot be undone.",
+                PrimaryButtonText = "Delete", CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+            try
+            {
+                await _settingsApi.DeleteServerNotificationChannelAsync(channel.Id);
+                await LoadServerNotificationChannelsAsync(host);
+            }
+            catch (Exception ex) { ShowStatusToast($"Failed to delete channel: {ex.Message}"); }
+        };
+        actions.Children.Add(delete);
+        panel.Children.Add(actions);
+
+        return new Border
+        {
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12), Padding = new Thickness(14, 12, 14, 12), Child = panel
+        };
+    }
+
+    private async Task ShowServerNotificationChannelEditorAsync(ServerNotificationChannel? channel, StackPanel host)
+    {
+        var content = new StackPanel { Spacing = 10, MinWidth = 440 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "Server channels broadcast server-wide events — every profile sees the same posts. Discord webhook URLs render as native embeds; any other HTTPS endpoint receives signed JSON.",
+            FontSize = 12, TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        content.Children.Add(new TextBlock { Text = "Name", FontSize = 14, FontWeight = FontWeights.Medium });
+        var name = new TextBox { Text = channel?.Name ?? "", PlaceholderText = "Community #new-content", MaxLength = 64 };
+        content.Children.Add(name);
+        content.Children.Add(new TextBlock { Text = channel is null ? "URL" : "Replace URL (optional)", FontSize = 14, FontWeight = FontWeights.Medium });
+        var url = new TextBox
+        {
+            PlaceholderText = channel is null ? "https://discord.com/api/webhooks/…" : $"Currently pointing at {channel.UrlHost}"
+        };
+        content.Children.Add(url);
+        var toggles = new Dictionary<string, ToggleSwitch>();
+        void AddEvent(string section, string key, string label, bool current)
+        {
+            if (!content.Children.OfType<TextBlock>().Any(block => block.Text == section))
+                content.Children.Add(new TextBlock { Text = section, FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 4, 0, 0) });
+            var toggle = new ToggleSwitch { IsOn = current, OnContent = "", OffContent = "" };
+            toggles[key] = toggle;
+            content.Children.Add(CreateMarkerProviderToggleRow(label, null, toggle));
+        }
+        AddEvent("New content", "notify_new_movies", "New movies", channel?.NotifyNewMovies ?? true);
+        AddEvent("New content", "notify_new_episodes", "New episodes", channel?.NotifyNewEpisodes ?? true);
+        AddEvent("New content", "notify_new_audiobooks", "New audiobooks", channel?.NotifyNewAudiobooks ?? true);
+        AddEvent("New content", "notify_new_ebooks", "New ebooks", channel?.NotifyNewEbooks ?? true);
+        AddEvent("Media requests", "notify_request_submitted", "Request submitted", channel?.NotifyRequestSubmitted ?? false);
+        AddEvent("Media requests", "notify_request_approved", "Request approved", channel?.NotifyRequestApproved ?? false);
+        AddEvent("Media requests", "notify_request_declined", "Request declined", channel?.NotifyRequestDeclined ?? false);
+        AddEvent("Media requests", "notify_request_fulfilled", "Request fulfilled", channel?.NotifyRequestFulfilled ?? false);
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = channel is null ? "Add server channel" : $"Edit \"{channel.Name}\"",
+            Content = new ScrollViewer { Content = content, MaxHeight = 620 },
+            PrimaryButtonText = channel is null ? "Create" : "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (string.IsNullOrWhiteSpace(name.Text) || (channel is null && string.IsNullOrWhiteSpace(url.Text)))
+        {
+            ShowStatusToast(channel is null && string.IsNullOrWhiteSpace(url.Text) ? "A webhook URL is required." : "A channel name is required.");
+            return;
+        }
+        var input = toggles.ToDictionary(pair => pair.Key, pair => (object?)pair.Value.IsOn);
+        input["name"] = name.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(url.Text)) input["url"] = url.Text.Trim();
+        try
+        {
+            var saved = channel is null
+                ? await _settingsApi.CreateServerNotificationChannelAsync(input)
+                : await _settingsApi.UpdateServerNotificationChannelAsync(channel.Id, input);
+            if (!string.IsNullOrWhiteSpace(saved.SigningSecret)) await ShowSigningSecretAsync(saved.SigningSecret);
+            await LoadServerNotificationChannelsAsync(host);
+        }
+        catch (Exception ex) { ShowStatusToast($"Channel could not be saved: {ex.Message}"); }
+    }
+
+    private async Task ShowSigningSecretAsync(string secret)
+    {
+        var box = new TextBox { Text = secret, IsReadOnly = true, IsSpellCheckEnabled = false, MinWidth = 420 };
+        var content = new StackPanel { Spacing = 8 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "Copy this signing secret now. It will not be shown again.",
+            TextWrapping = TextWrapping.Wrap
+        });
+        content.Children.Add(box);
+        await new ContentDialog
+        {
+            XamlRoot = XamlRoot, Title = "Signing secret", Content = content, CloseButtonText = "Done"
+        }.ShowAsync();
     }
 
     private void BuildPushRelayCard()
@@ -1814,21 +2913,258 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void BuildJellyfinTab()
     {
-        AddTabHeader("Jellyfin Compat", "Tune the compatibility layer exposed to Jellyfin-compatible clients.");
+        AddTabHeader("Compatibility Proxies", "Configure protocol-compatible listener surfaces for external client apps.");
 
-        AddSectionHeader("Server Identity");
-        var idCard = BeginCard();
-        AddTextField(idCard, "Public URL", "jellyfin_compat.public_url");
-        AddTextField(idCard, "Server Name", "jellyfin_compat.server_name");
-        AddTextField(idCard, "Server ID", "jellyfin_compat.server_id");
-        AddTextField(idCard, "Emulated Server Version", "jellyfin_compat.emulated_server_version");
-        EndCard(idCard);
+        AddSectionHeader("Jellyfin");
+        var jellyfinCard = BeginCard();
+        AddToggleField(jellyfinCard, "Enable Jellyfin Proxy", "jellyfin_compat.enabled",
+            "Starts the Jellyfin-compatible API listener for external Jellyfin clients.", false,
+            enabled =>
+            {
+                if (!enabled) ViewModel.SetSetting("jellyfin_compat.web_enabled", "false");
+            });
 
-        AddSectionHeader("Session Lifetimes");
-        var sessCard = BeginCard();
-        AddDurationField(sessCard, "Session TTL", "jellyfin_compat.session_ttl", "e.g. 24h");
-        AddDurationField(sessCard, "Playback Session TTL", "jellyfin_compat.playback_session_ttl", "e.g. 6h");
-        EndCard(sessCard);
+        var summaryBadges = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(0, 4, 0, 8)
+        };
+        jellyfinCard.Children.Add(summaryBadges);
+
+        var details = new StackPanel { Spacing = 12, Visibility = Visibility.Collapsed };
+        var detailsToggle = new Button
+        {
+            Content = "Show settings",
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(12, 6, 12, 6),
+            Margin = new Thickness(0, 2, 0, 4)
+        };
+        detailsToggle.Click += (_, _) =>
+        {
+            bool show = details.Visibility != Visibility.Visible;
+            details.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            detailsToggle.Content = show ? "Hide settings" : "Show settings";
+        };
+        jellyfinCard.Children.Add(detailsToggle);
+
+        var layers = new Grid { ColumnSpacing = 12 };
+        layers.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        layers.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var apiLayer = CreateCompatibilityDescription("API Layer",
+            "Provides the Jellyfin-compatible API surface used by most third-party apps for discovery, authentication, browsing, metadata, and playback.");
+        var webLayer = CreateCompatibilityDescription("Web Component Layer",
+            "Provides the Jellyfin Web UI assets required by Jellyfin native apps and some other clients that expect Jellyfin Web to exist at the server's web route.");
+        Grid.SetColumn(webLayer, 1);
+        layers.Children.Add(apiLayer);
+        layers.Children.Add(webLayer);
+        details.Children.Add(layers);
+
+        var statusHost = new StackPanel { Spacing = 0 };
+        details.Children.Add(statusHost);
+
+        AddDivider(details);
+        details.Children.Add(new TextBlock { Text = "Web Component", FontSize = 14, FontWeight = FontWeights.SemiBold });
+        details.Children.Add(new TextBlock
+        {
+            Text = "The Web Component is separate from the API layer. Disabling the Web UI stops Silo from serving the route while keeping installed assets available for later reactivation.",
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        AddTextField(details, "Pinned Web Version (Optional)", "jellyfin_compat.web_version",
+            "Optional. Leave blank to auto-select the latest compatible patch for the emulated API version.");
+        AddTextField(details, "Web Install Directory (Optional)", "jellyfin_compat.web_install_dir",
+            "Optional. Defaults to Silo's managed Jellyfin Web install directory.");
+
+        AddDivider(details);
+        details.Children.Add(new TextBlock { Text = "Server Identity", FontSize = 14, FontWeight = FontWeights.SemiBold });
+        AddTextField(details, "Public URL", "jellyfin_compat.public_url");
+        AddTextField(details, "Server Name", "jellyfin_compat.server_name");
+        AddTextField(details, "Server ID", "jellyfin_compat.server_id");
+        AddTextField(details, "Emulated Server Version", "jellyfin_compat.emulated_server_version");
+        AddDurationField(details, "Session TTL", "jellyfin_compat.session_ttl", "e.g. 24h");
+        AddDurationField(details, "Playback Session TTL", "jellyfin_compat.playback_session_ttl", "e.g. 6h");
+        jellyfinCard.Children.Add(details);
+        _ = LoadJellyfinCompatStatusAsync(summaryBadges, statusHost);
+        EndCard(jellyfinCard);
+
+        AddSectionHeader("Audiobookshelf");
+        var absCard = BeginCard();
+        AddToggleField(absCard, "Enable Audiobookshelf Proxy", "audiobookshelf_compat.enabled",
+            "Starts the ABS-compatible API listener for external Audiobookshelf clients.");
+        EndCard(absCard);
+    }
+
+    private static Border CreateCompatibilityDescription(string title, string description)
+    {
+        var content = new StackPanel { Spacing = 4 };
+        content.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold });
+        content.Children.Add(new TextBlock
+        {
+            Text = description, FontSize = 12, TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+        });
+        return new Border
+        {
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 10, 12, 10),
+            Child = content
+        };
+    }
+
+    private async Task LoadJellyfinCompatStatusAsync(StackPanel summary, StackPanel host)
+    {
+        summary.Children.Clear();
+        host.Children.Clear();
+        host.Children.Add(new ProgressRing { IsActive = true, Width = 22, Height = 22, Margin = new Thickness(0, 12, 0, 12) });
+        try
+        {
+            var status = await _settingsApi.GetJellyfinCompatStatusAsync();
+            summary.Children.Clear();
+            summary.Children.Add(CreateSearchStatusBadge(status.Enabled ? "API enabled" : "API disabled"));
+            summary.Children.Add(CreateSearchStatusBadge(status.Enabled && status.WebEnabled ? "Web UI enabled" : "Web UI disabled"));
+            summary.Children.Add(CreateSearchStatusBadge($"Assets {FormatCompatStatus(status.WebState)}"));
+            if (status.Operation?.State == "running")
+                summary.Children.Add(CreateSearchStatusBadge($"{FormatCompatStatus(status.Operation.Kind)} running"));
+            if (status.RestartRequired) summary.Children.Add(CreateSearchStatusBadge("Restart required"));
+
+            host.Children.Clear();
+            if (!string.IsNullOrWhiteSpace(status.LastError))
+            {
+                host.Children.Add(new TextBlock
+                {
+                    Text = status.LastError, TextWrapping = TextWrapping.Wrap,
+                    Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xF8, 0x71, 0x71)),
+                    Margin = new Thickness(0, 8, 0, 8)
+                });
+            }
+
+            AddCompatStatusLine(host, "API state", FormatCompatStatus(status.ApiState));
+            AddCompatStatusLine(host, "Listen address", status.Listen);
+            AddCompatStatusLine(host, "Public URL", status.PublicUrl);
+            AddCompatStatusLine(host, "Emulated version", status.EmulatedServerVersion);
+            AddCompatStatusLine(host, "Pinned version", status.PinnedVersion);
+            AddCompatStatusLine(host, "Installed version", status.InstalledVersion);
+            AddCompatStatusLine(host, "Installer", status.InstallerReady ? "Ready" : "Missing prerequisites");
+            AddCompatStatusLine(host, "Operation", status.Operation is null
+                ? "Idle"
+                : $"{FormatCompatStatus(status.Operation.Kind)} {FormatCompatStatus(status.Operation.State)}");
+            AddCompatStatusLine(host, "Source", status.SourceUrl);
+            AddCompatStatusLine(host, "Commit", status.CommitSha);
+            AddCompatStatusLine(host, "Checksum", status.Checksum);
+            AddCompatStatusLine(host, "Install path", status.InstallPath);
+            AddCompatStatusLine(host, "License present", status.LicensePresent ? "Yes" : "No");
+            AddCompatStatusLine(host, "Provenance present", status.ProvenancePresent ? "Yes" : "No");
+
+            if (status.Operation?.State == "running")
+            {
+                var operation = new StackPanel { Spacing = 6, Margin = new Thickness(0, 10, 0, 10) };
+                operation.Children.Add(new TextBlock
+                {
+                    Text = status.Operation.Kind == "remove" ? "Removing Jellyfin Web UI" : "Installing Jellyfin Web UI",
+                    FontSize = 14, FontWeight = FontWeights.SemiBold
+                });
+                operation.Children.Add(new TextBlock
+                {
+                    Text = status.Operation.Message ?? FormatCompatStatus(status.Operation.Phase),
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+                });
+                if (status.Operation.ProgressPercent is { } percent)
+                    operation.Children.Add(new ProgressBar { Value = Math.Clamp(percent, 0, 100), Minimum = 0, Maximum = 100 });
+                host.Children.Add(operation);
+            }
+
+            var busy = status.Operation?.State == "running" || status.WebState is "installing" or "removing";
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 12, 0, 8) };
+            var install = new Button
+            {
+                Content = status.WebState == "update_available" ? "Update Web UI" : "Install Web UI",
+                IsEnabled = status.InstallerReady && !busy
+            };
+            install.Click += async (_, _) =>
+            {
+                try
+                {
+                    await _settingsApi.InstallJellyfinCompatWebAsync(ViewModel.GetSetting("jellyfin_compat.web_version"));
+                    ShowStatusToast("Jellyfin Web install started.");
+                    await LoadJellyfinCompatStatusAsync(summary, host);
+                }
+                catch (Exception ex) { ShowStatusToast($"Jellyfin Web install failed: {ex.Message}"); }
+            };
+            actions.Children.Add(install);
+
+            if (!string.IsNullOrWhiteSpace(status.InstalledVersion))
+            {
+                var toggleWeb = new Button
+                {
+                    Content = status.Enabled && status.WebEnabled ? "Disable Web UI" : "Enable Web UI",
+                    IsEnabled = status.Enabled && !busy
+                };
+                toggleWeb.Click += async (_, _) =>
+                {
+                    try
+                    {
+                        await _settingsApi.PatchJellyfinCompatSettingsAsync(
+                            new Dictionary<string, object?> { ["web_enabled"] = !(status.Enabled && status.WebEnabled) });
+                        await LoadJellyfinCompatStatusAsync(summary, host);
+                    }
+                    catch (Exception ex) { ShowStatusToast($"Jellyfin Web update failed: {ex.Message}"); }
+                };
+                actions.Children.Add(toggleWeb);
+            }
+
+            var remove = new Button { Content = "Remove Web UI", IsEnabled = status.WebState != "missing" && !busy };
+            remove.Click += async (_, _) =>
+            {
+                try
+                {
+                    await _settingsApi.RemoveJellyfinCompatWebAsync();
+                    ShowStatusToast("Jellyfin Web removal started.");
+                    await LoadJellyfinCompatStatusAsync(summary, host);
+                }
+                catch (Exception ex) { ShowStatusToast($"Jellyfin Web removal failed: {ex.Message}"); }
+            };
+            actions.Children.Add(remove);
+            host.Children.Add(actions);
+
+            var missing = status.Prerequisites.Where(item => !item.Available).Select(item => item.Command).ToArray();
+            if (missing.Length > 0)
+                host.Children.Add(new TextBlock
+                {
+                    Text = $"Missing installer prerequisites: {string.Join(", ", missing)}",
+                    FontSize = 12, TextWrapping = TextWrapping.Wrap,
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+                });
+        }
+        catch (Exception ex)
+        {
+            summary.Children.Clear();
+            summary.Children.Add(CreateSearchStatusBadge("Status unavailable"));
+            host.Children.Clear();
+            host.Children.Add(new TextBlock
+            {
+                Text = $"Jellyfin compatibility status could not be loaded: {ex.Message}",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xF8, 0x71, 0x71))
+            });
+        }
+    }
+
+    private void AddCompatStatusLine(StackPanel host, string label, string? value)
+    {
+        AddSearchStatusRow(host, label, string.IsNullOrWhiteSpace(value) ? "Not set" : value);
+    }
+
+    private static string FormatCompatStatus(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "Unknown";
+        return string.Join(" ", value.Split('_', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
     }
 
     private void BuildDatabaseTab()
@@ -2289,6 +3625,17 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddNumberField(globalCard, "Max Size (MB)", "opslog.max_size_mb",
             "Uses estimated log row size. Oldest rows are pruned when the budget is exceeded.");
         EndCard(globalCard);
+
+        AddSectionHeader("Policy Decision Logs");
+        var policyCard = BeginCard();
+        AddNumberField(policyCard, "Decision Log Retention Days", "policy.decision_log_retention_days",
+            "Policy decisions older than this are pruned by the cleanup task.");
+        AddSelectField(policyCard, "Decision Log Verbosity", "policy.decision_log_verbosity",
+            [("digest", "Digest"), ("verbose", "Verbose")],
+            "Digest stores hashes only. Verbose stores sampled input and result payloads.");
+        AddNumberField(policyCard, "Scope Sample Rate", "policy.decision_log_scope_sample_rate",
+            "Logs one sampled scope decision per N allowed decisions. Denials and errors always log.");
+        EndCard(policyCard);
 
         // Parse bucket rules from current setting
         string? bucketParseError = null;
@@ -3156,7 +4503,7 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     // ===== Field Builders =====
 
-    private void AddTextField(StackPanel parent, string label, string key, string? hint = null)
+    private TextBox AddTextField(StackPanel parent, string label, string key, string? hint = null)
     {
         if (parent.Children.Count > 0) AddDivider(parent);
 
@@ -3199,6 +4546,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         }
 
         parent.Children.Add(field);
+        return textBox;
     }
 
     private void AddPasswordField(StackPanel parent, string label, string key, string? hint = null)
@@ -3338,7 +4686,8 @@ public sealed partial class AdminSettingsDetailPage : Page
         parent.Children.Add(field);
     }
 
-    private void AddToggleField(StackPanel parent, string label, string key, string? hint = null)
+    private void AddToggleField(StackPanel parent, string label, string key, string? hint = null,
+        bool defaultValue = false, Action<bool>? onChanged = null)
     {
         if (parent.Children.Count > 0) AddDivider(parent);
 
@@ -3369,7 +4718,9 @@ public sealed partial class AdminSettingsDetailPage : Page
         var currentVal = ViewModel.GetSetting(key);
         var toggle = new ToggleSwitch
         {
-            IsOn = currentVal.Equals("true", StringComparison.OrdinalIgnoreCase),
+            IsOn = string.IsNullOrWhiteSpace(currentVal)
+                ? defaultValue
+                : currentVal.Equals("true", StringComparison.OrdinalIgnoreCase),
             OnContent = "",
             OffContent = "",
             VerticalAlignment = VerticalAlignment.Center
@@ -3377,13 +4728,16 @@ public sealed partial class AdminSettingsDetailPage : Page
         toggle.Toggled += (s, e) =>
         {
             ViewModel.SetSetting(key, toggle.IsOn ? "true" : "false");
+            onChanged?.Invoke(toggle.IsOn);
             UpdateDirtyCountText();
         };
 
         _fieldRebuilders.Add(() =>
         {
             var v = ViewModel.GetSetting(key);
-            toggle.IsOn = v.Equals("true", StringComparison.OrdinalIgnoreCase);
+            toggle.IsOn = string.IsNullOrWhiteSpace(v)
+                ? defaultValue
+                : v.Equals("true", StringComparison.OrdinalIgnoreCase);
         });
 
         Grid.SetColumn(labelStack, 0);
