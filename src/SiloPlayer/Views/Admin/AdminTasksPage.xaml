@@ -22,28 +22,29 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <StackPanel Padding="40,24,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Stretch">
 
                 <!-- ===== Header ===== -->
                 <StackPanel Spacing="12">
                     <TextBlock
-                        Text="Scheduled tasks"
-                        FontSize="42"
+                        Text="Scheduled Tasks"
+                        FontSize="48"
                         FontWeight="Bold"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock
-                        Text="View and manage background tasks. You can trigger tasks manually or adjust their schedules."
+                        Text="View and manage background tasks. You can trigger tasks manually or adjust their schedules, including whether a task runs on server startup."
                         FontSize="14"
-                        Foreground="{StaticResource SecondaryTextBrush}" />
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        TextWrapping="Wrap"
+                        MaxWidth="720" />
                 </StackPanel>
 
                 <!-- Inline loading indicator -->
-                <ProgressRing
-                    IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                <TextBlock
+                    Text="Loading tasks..."
                     Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                    HorizontalAlignment="Center"
-                    Margin="0,24"
-                    Width="32" Height="32" />
+                    Foreground="{StaticResource SecondaryTextBrush}"
+                    FontSize="13" />
 
                 <!-- Inline error state -->
                 <StackPanel

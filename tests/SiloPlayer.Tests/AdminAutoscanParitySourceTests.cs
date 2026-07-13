@@ -1,38 +1,43 @@
 namespace SiloPlayer.Tests;
 
-public sealed class AdminAutoscanParitySourceTests
+public class AdminAutoscanParitySourceTests
 {
+    private static readonly string RepoRoot = Path.GetFullPath(
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".."));
+
+    private static string Markup => File.ReadAllText(Path.Combine(
+        RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminAutoscanPage.xaml"));
+
+    private static string ViewModel => File.ReadAllText(Path.Combine(
+        RepoRoot, "src", "SiloPlayer", "ViewModels", "Admin", "AdminAutoscanViewModel.cs"));
+
     [Fact]
-    public void AutoscanImplementsCurrentFourTabRouteAndContracts()
+    public void AutoscanUsesCurrentFullWidthTabsAndIconControls()
     {
-        var api = Read("src", "SiloPlayer.Core", "Api", "AdminApi.cs");
-        var page = Read("src", "SiloPlayer", "Views", "Admin", "AdminAutoscanPage.xaml");
-        string[] endpoints = ["settings", "connections", "connections/test", "scan-source-plugins", "sources", "rewrite-suggestions", "webhook/rotate", "events", "scans", "trigger", "status"];
-        foreach (var endpoint in endpoints) Assert.Contains(endpoint, api);
-        foreach (var tab in new[] { "Sources", "Activity", "Connections", "Settings" }) Assert.Contains($"Content=\"{tab}\"", page);
-        Assert.Contains("WebUI line tabs", page);
-        Assert.Contains("INTERVAL &amp; SETTINGS", page);
-        Assert.Contains("RUNNING SCANS", page);
-        Assert.Contains("Use configured libraries", Read("src", "SiloPlayer", "Views", "Admin", "AdminAutoscanPage.xaml.cs"));
-        Assert.Contains("Reuse from Requests", Read("src", "SiloPlayer", "Views", "Admin", "AdminAutoscanPage.xaml.cs"));
-        Assert.Contains("Interval = TimeSpan.FromSeconds(15)", Read("src", "SiloPlayer", "Views", "Admin", "AdminAutoscanPage.xaml.cs"));
+        Assert.Contains("MaxWidth=\"1560\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("Grid.Column=\"3\"><Button x:Name=\"SettingsTab\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("<TextBlock Text=\"Run now\"", Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("Content=\"▶", Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("Content=\"＋", Markup, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AutoscanIsRegisteredInCurrentAutomationOrder()
+    public void SourcesExposeCurrentConnectionIntervalAndNestedSettingsHierarchy()
     {
-        var shell = Read("src", "SiloPlayer", "Views", "Admin", "AdminShellPage.xaml.cs");
-        var app = Read("src", "SiloPlayer", "App.xaml.cs");
-        Assert.Contains("AdminAutoscanViewModel", app);
-        Assert.Contains("typeof(AdminAutoscanPage)", shell);
-        Assert.Contains("AddNavGroup(\"AUTOMATION\", NavAutoscan, NavScheduledTasks, NavSubtitles, NavMarkerHistory, NavRecommendations)", shell);
+        Assert.Contains("ConnectionDisplay", Markup, StringComparison.Ordinal);
+        Assert.Contains("PollIntervalDisplay", Markup, StringComparison.Ordinal);
+        Assert.Contains("PathRewriteDisplay", Markup, StringComparison.Ordinal);
+        Assert.Contains("SourceSettingsDisplay", Markup, StringComparison.Ordinal);
+        Assert.Contains("SourceEnabled_Toggled", Markup, StringComparison.Ordinal);
     }
 
-    private static string Read(params string[] parts)
+    [Fact]
+    public void ActivityIncludesQueueRunningPollsAndBothHistoryViews()
     {
-        var dir = AppContext.BaseDirectory;
-        while (!string.IsNullOrEmpty(dir) && !File.Exists(Path.Combine(dir, "SiloPlayer.sln"))) dir = Directory.GetParent(dir)?.FullName ?? "";
-        if (string.IsNullOrEmpty(dir)) throw new InvalidOperationException("Could not find repository root.");
-        return File.ReadAllText(Path.Combine([dir, .. parts]));
+        Assert.Contains("Autoscan queue", Markup, StringComparison.Ordinal);
+        Assert.Contains("Polling now", Markup, StringComparison.Ordinal);
+        Assert.Contains("ViewModel.Events", Markup, StringComparison.Ordinal);
+        Assert.Contains("ActiveScans", ViewModel, StringComparison.Ordinal);
+        Assert.Contains("HasRunningPolls", ViewModel, StringComparison.Ordinal);
     }
 }

@@ -307,6 +307,20 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         UpdateResetButton();
     }
 
+    private async void RefreshButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button) button.IsEnabled = false;
+        try
+        {
+            await ViewModel.LoadCommand.ExecuteAsync(null);
+            RebuildAll();
+        }
+        finally
+        {
+            if (sender is Button refreshButton) refreshButton.IsEnabled = true;
+        }
+    }
+
     // ===== History Table =====
 
     private void RebuildHistoryTable()

@@ -454,10 +454,16 @@ public sealed partial class AdminRecommendationsPage : Page
         };
         fieldsPanel.Children.Add(separator);
 
+        if (title == "Embedding Configuration")
+            fieldsPanel.Children.Add(BuildProviderPresets());
+
         foreach (var (key, label, type, hint) in fields)
         {
             fieldsPanel.Children.Add(BuildSettingField(key, label, type, hint));
         }
+
+        if (title == "Embedding Configuration")
+            fieldsPanel.Children.Add(BuildConnectionCheck());
 
         outer.Children.Add(fieldsPanel);
         card.Child = outer;
@@ -472,6 +478,87 @@ public sealed partial class AdminRecommendationsPage : Page
         };
 
         return card;
+    }
+
+    private UIElement BuildProviderPresets()
+    {
+        var panel = new StackPanel { Spacing = 8, Padding = new Thickness(0, 12, 0, 12) };
+        panel.Children.Add(new TextBlock { Text = "Provider Presets", FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Choose a provider to fill the base URL and model.",
+            FontSize = 11,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        buttons.Children.Add(BuildPresetButton("Gemini", "Recommended", "https://generativelanguage.googleapis.com", "gemini-embedding-001"));
+        buttons.Children.Add(BuildPresetButton("Ollama", "Local", "http://ollama:11434", "qwen3-embedding:latest"));
+        buttons.Children.Add(BuildPresetButton("OpenAI", "", "https://api.openai.com", "text-embedding-3-large"));
+        panel.Children.Add(buttons);
+        return panel;
+    }
+
+    private Button BuildPresetButton(string label, string tag, string baseUrl, string model)
+    {
+        var text = new StackPanel { Spacing = 2 };
+        text.Children.Add(new TextBlock { Text = label, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        if (!string.IsNullOrWhiteSpace(tag))
+            text.Children.Add(new TextBlock { Text = tag, FontSize = 11, Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"] });
+
+        var button = new Button { Content = text, MinWidth = 136, HorizontalContentAlignment = HorizontalAlignment.Left };
+        button.Click += async (_, _) =>
+        {
+            button.IsEnabled = false;
+            await ViewModel.UpdateSettingAsync("recommendations.embedding_base_url", baseUrl);
+            await ViewModel.UpdateSettingAsync("recommendations.embedding_model", model);
+            RestartBanner.Visibility = Visibility.Visible;
+            RebuildSettingsSections();
+        };
+        return button;
+    }
+
+    private UIElement BuildConnectionCheck()
+    {
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Padding = new Thickness(0, 12, 0, 0) };
+        var result = new TextBlock { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
+        var button = new Button { Content = "Check Connection" };
+        button.Click += async (_, _) =>
+        {
+            button.IsEnabled = false;
+            button.Content = "Checking...";
+            try
+            {
+                var keys = new[]
+                {
+                    "recommendations.enabled",
+                    "recommendations.embedding_base_url",
+                    "recommendations.embedding_model",
+                    "recommendations.embedding_auth_token",
+                };
+                var request = new AdminSettingsConnectionCheckRequest
+                {
+                    Values = keys.ToDictionary(key => key, ViewModel.GetSetting),
+                };
+                var response = await App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>()
+                    .CheckSettingsConnectionAsync("recommendations_embedding", request);
+                result.Text = response.Message;
+                result.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[response.Success ? "SuccessBrush" : "ErrorBrush"];
+            }
+            catch (Exception ex)
+            {
+                result.Text = ex.Message;
+                result.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ErrorBrush"];
+            }
+            finally
+            {
+                button.Content = "Check Connection";
+                button.IsEnabled = true;
+            }
+        };
+        panel.Children.Add(button);
+        panel.Children.Add(result);
+        return panel;
     }
 
     /// <summary>

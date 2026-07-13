@@ -9,21 +9,22 @@
     Background="{StaticResource AppBackgroundBrush}">
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Padding="32,24,32,32" Spacing="20">
+        <StackPanel Padding="32,24,32,32" Spacing="24" MaxWidth="1560" HorizontalAlignment="Center">
             <StackPanel Spacing="8">
                 <TextBlock
                     Text="Subtitles"
                     Style="{StaticResource TitleTextStyle}"
-                    FontSize="42"
-                    FontWeight="SemiBold" />
+                    FontSize="48"
+                    FontWeight="Bold" />
                 <TextBlock
-                    Text="Manage stored subtitle files across the library - user uploads and provider downloads."
+                    Text="Manage stored subtitle files across the library — user uploads and provider downloads."
                     Foreground="{StaticResource SecondaryTextBrush}"
                     FontSize="14"
                     TextWrapping="Wrap" />
             </StackPanel>
 
-            <Grid ColumnSpacing="12">
+            <Border Style="{StaticResource CardStyle}" Padding="16">
+            <Grid ColumnSpacing="24">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
@@ -31,56 +32,51 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
-                <Border Grid.Column="0" Style="{StaticResource CardStyle}" Padding="16">
-                    <StackPanel Spacing="4">
+                    <StackPanel Grid.Column="0" Spacing="4">
                         <TextBlock Text="TOTAL STORED" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                         <TextBlock x:Name="TotalStoredText" Text="0" FontSize="28" FontWeight="SemiBold" />
                     </StackPanel>
-                </Border>
-                <Border Grid.Column="1" Style="{StaticResource CardStyle}" Padding="16">
-                    <StackPanel Spacing="4">
+                    <StackPanel Grid.Column="1" Spacing="4">
                         <TextBlock Text="USER UPLOADS" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                         <TextBlock x:Name="UploadsText" Text="0" FontSize="28" FontWeight="SemiBold" />
                     </StackPanel>
-                </Border>
-                <Border Grid.Column="2" Style="{StaticResource CardStyle}" Padding="16">
-                    <StackPanel Spacing="4">
+                    <StackPanel Grid.Column="2" Spacing="4">
                         <TextBlock Text="PROVIDER DOWNLOADS" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                         <TextBlock x:Name="ProviderDownloadsText" Text="0" FontSize="28" FontWeight="SemiBold" />
                     </StackPanel>
-                </Border>
-                <Border Grid.Column="3" Style="{StaticResource CardStyle}" Padding="16">
-                    <StackPanel Spacing="4">
+                    <StackPanel Grid.Column="3" Spacing="4">
                         <TextBlock Text="LANGUAGES ON PAGE" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                         <TextBlock x:Name="LanguagesText" Text="0" FontSize="28" FontWeight="SemiBold" />
                     </StackPanel>
-                </Border>
             </Grid>
+            </Border>
 
             <Border Style="{StaticResource CardStyle}" Padding="16">
-                <Grid RowSpacing="12" ColumnSpacing="10">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
+                <Grid ColumnSpacing="10">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="170" />
-                        <ColumnDefinition Width="170" />
-                        <ColumnDefinition Width="220" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="180" />
+                        <ColumnDefinition Width="200" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <ComboBox x:Name="ProviderFilterComboBox" Grid.Row="0" Grid.Column="0" Header="Provider" SelectionChanged="Filter_Changed">
-                        <ComboBoxItem Content="All providers" Tag="" IsSelected="True" />
-                        <ComboBoxItem Content="User uploads" Tag="upload" />
-                        <ComboBoxItem Content="OpenSubtitles" Tag="opensubtitles" />
-                        <ComboBoxItem Content="SubDL" Tag="subdl" />
-                        <ComboBoxItem Content="SubSource" Tag="subsource" />
-                    </ComboBox>
+                    <TextBox
+                        x:Name="SearchBox"
+                        Grid.Column="0"
+                        PlaceholderText="Search release name…"
+                        FontFamily="Consolas"
+                        TextChanged="SearchBox_TextChanged" />
 
-                    <ComboBox x:Name="LanguageFilterComboBox" Grid.Row="0" Grid.Column="1" Header="Language" SelectionChanged="Filter_Changed">
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                        <Button x:Name="ProviderAllButton" Content="All" Tag="" Click="ProviderFilter_Click" />
+                        <Button x:Name="ProviderUploadButton" Content="Upload" Tag="upload" Click="ProviderFilter_Click" />
+                        <Button x:Name="ProviderOpenSubtitlesButton" Content="OpenSubtitles" Tag="opensubtitles" Click="ProviderFilter_Click" />
+                        <Button x:Name="ProviderSubDlButton" Content="SubDL" Tag="subdl" Click="ProviderFilter_Click" />
+                        <Button x:Name="ProviderSubSourceButton" Content="SubSource" Tag="subsource" Click="ProviderFilter_Click" />
+                    </StackPanel>
+
+                    <ComboBox x:Name="LanguageFilterComboBox" Grid.Column="2" SelectionChanged="Filter_Changed">
                         <ComboBoxItem Content="All languages" Tag="" IsSelected="True" />
                         <ComboBoxItem Content="English" Tag="en" />
                         <ComboBoxItem Content="Spanish" Tag="es" />
@@ -93,41 +89,37 @@
                         <ComboBoxItem Content="Japanese" Tag="ja" />
                     </ComboBox>
 
-                    <ComboBox x:Name="UserFilterComboBox" Grid.Row="0" Grid.Column="2" Header="Uploader" SelectionChanged="Filter_Changed" />
-
-                    <TextBox
-                        x:Name="SearchBox"
-                        Grid.Row="0"
-                        Grid.Column="3"
-                        Header="Search"
-                        PlaceholderText="Title, file path, or release"
-                        TextChanged="SearchBox_TextChanged" />
+                    <ComboBox x:Name="UserFilterComboBox" Grid.Column="3" SelectionChanged="Filter_Changed" />
 
                     <Button
-                        Grid.Row="0"
                         Grid.Column="4"
-                        Content="Reset"
-                        VerticalAlignment="Bottom"
+                        Content="Reset filters"
+                        VerticalAlignment="Center"
                         Click="ResetFilters_Click" />
-                    <Button
-                        Grid.Row="0"
-                        Grid.Column="5"
-                        Content="Refresh"
-                        VerticalAlignment="Bottom"
-                        Click="Refresh_Click" />
-
-                    <TextBlock
-                        x:Name="StatusText"
-                        Grid.Row="1"
-                        Grid.ColumnSpan="6"
-                        FontSize="12"
-                        Foreground="{StaticResource SecondaryTextBrush}" />
                 </Grid>
             </Border>
 
             <Border Style="{StaticResource CardStyle}" Padding="0">
-                <Grid>
+                <Grid RowSpacing="0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid Padding="16,12" ColumnSpacing="14" Background="{StaticResource SidebarAccentBrush}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.25*"/><ColumnDefinition Width="1.15*"/><ColumnDefinition Width="0.8*"/>
+                            <ColumnDefinition Width="0.8*"/><ColumnDefinition Width="1.2*"/><ColumnDefinition Width="0.55*"/>
+                            <ColumnDefinition Width="0.35*"/><ColumnDefinition Width="0.65*"/><ColumnDefinition Width="0.65*"/>
+                            <ColumnDefinition Width="120"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Media" FontWeight="SemiBold"/><TextBlock Grid.Column="1" Text="File" FontWeight="SemiBold"/>
+                        <TextBlock Grid.Column="2" Text="Language" FontWeight="SemiBold"/><TextBlock Grid.Column="3" Text="Provider" FontWeight="SemiBold"/>
+                        <TextBlock Grid.Column="4" Text="Release" FontWeight="SemiBold"/><TextBlock Grid.Column="5" Text="Format" FontWeight="SemiBold"/>
+                        <TextBlock Grid.Column="6" Text="HI" FontWeight="SemiBold"/><TextBlock Grid.Column="7" Text="Uploader" FontWeight="SemiBold"/>
+                        <TextBlock Grid.Column="8" Text="Added" FontWeight="SemiBold"/><TextBlock Grid.Column="9" Text="Actions" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+                    </Grid>
                     <ProgressRing
+                        Grid.Row="1"
                         x:Name="LoadingRing"
                         IsActive="False"
                         Width="32"
@@ -136,11 +128,14 @@
                         VerticalAlignment="Center"
                         Visibility="Collapsed" />
                     <ListView
+                        Grid.Row="1"
                         x:Name="SubtitlesListView"
                         SelectionMode="None"
                         IsItemClickEnabled="False" />
                 </Grid>
             </Border>
+
+            <TextBlock x:Name="StatusText" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
 
             <Grid ColumnSpacing="12">
                 <Grid.ColumnDefinitions>

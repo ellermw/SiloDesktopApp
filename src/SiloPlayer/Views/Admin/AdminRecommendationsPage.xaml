@@ -20,14 +20,16 @@
         <!-- Main content. Webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
         <ScrollViewer IsScrollInertiaEnabled="True">
             <StackPanel
-                Padding="40,28,40,40"
-                Spacing="24">
+                Padding="32,24,32,40"
+                Spacing="24"
+                MaxWidth="1400"
+                HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
                 <StackPanel Spacing="12">
                     <TextBlock
                         Text="Recommendations"
-                        FontSize="42"
+                        FontSize="48"
                         FontWeight="Bold"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock

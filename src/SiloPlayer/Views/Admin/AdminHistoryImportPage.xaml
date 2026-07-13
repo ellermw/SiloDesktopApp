@@ -19,15 +19,17 @@
         <ScrollViewer VerticalScrollBarVisibility="Auto" IsScrollInertiaEnabled="True">
             <!-- webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
             <StackPanel
-                Padding="40,28,40,40"
-                Spacing="24">
+                Padding="32,24,32,40"
+                Spacing="24"
+                MaxWidth="1400"
+                HorizontalAlignment="Center">
 
                 <!-- Header -->
                 <StackPanel Spacing="12">
                     <TextBlock Text="History Import"
-                               FontSize="42" FontWeight="Bold"
+                               FontSize="48" FontWeight="Bold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="Import watch history from external Plex, Emby, or Jellyfin servers into Silo user profiles."
+                    <TextBlock Text="Import watch history from external servers into Silo user profiles."
                                FontSize="14"
                                Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
@@ -47,32 +49,26 @@
                 <!-- ===== Source Bar ===== -->
                 <Border Background="{StaticResource CardBackgroundBrush}"
                         CornerRadius="{StaticResource RadiusLG}" Padding="16">
-                    <Grid ColumnSpacing="12">
+                    <Grid ColumnSpacing="12" RowSpacing="10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
 
                         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                             <ComboBox x:Name="SourceComboBox"
                                       MinWidth="220" FontSize="13"
                                       PlaceholderText="Select a source..."
                                       SelectionChanged="SourceComboBox_SelectionChanged" />
-                            <!-- Token status badge -->
-                            <Border x:Name="TokenBadge" Visibility="Collapsed"
-                                    CornerRadius="6" Padding="8,3,8,3" VerticalAlignment="Center">
-                                <TextBlock x:Name="TokenBadgeText" FontSize="11" FontWeight="SemiBold" />
-                            </Border>
+                            <TextBlock x:Name="SourceUrlText" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
                         </StackPanel>
 
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Button x:Name="BtnDiscoverUsers" Content="Discover Users"
-                                    Style="{StaticResource OutlineButtonStyle}" FontSize="13"
-                                    Click="BtnDiscoverUsers_Click" />
-                            <Button x:Name="BtnSetToken" Content="Set Token"
+                            <Button x:Name="BtnSetToken" Content="Set API key"
                                     Style="{StaticResource OutlineButtonStyle}" FontSize="13"
                                     Click="BtnSetToken_Click" />
-                            <Button x:Name="BtnEditSource" Content="Edit"
+                            <Button x:Name="BtnEditSource" Content="Edit server"
                                     Style="{StaticResource OutlineButtonStyle}" FontSize="13"
                                     Click="BtnEditSource_Click" />
                             <Button x:Name="BtnDeleteSource" FontSize="13"
@@ -80,9 +76,13 @@
                                     Click="BtnDeleteSource_Click">
                                 <FontIcon Glyph="&#xE74D;" FontSize="12" />
                             </Button>
-                            <Button x:Name="BtnNewSource" Content="New Source"
+                            <Button x:Name="BtnNewSource" Content="Add"
                                     Style="{StaticResource AccentButtonStyle}" FontSize="13"
                                     Click="BtnNewSource_Click" />
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="7">
+                            <Ellipse x:Name="TokenStatusDot" Width="7" Height="7" Fill="{StaticResource SuccessBrush}" VerticalAlignment="Center" />
+                            <TextBlock x:Name="TokenBadgeText" Text="API key not configured" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
                     </Grid>
                 </Border>
@@ -94,9 +94,12 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="User Mappings" FontSize="18" FontWeight="Medium"
+                        <TextBlock Text="User mappings" FontSize="18" FontWeight="Medium"
                                    Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="BtnDiscoverUsers" Content="Discover users"
+                                    Style="{StaticResource AccentButtonStyle}" FontSize="13"
+                                    Click="BtnDiscoverUsers_Click" />
                             <Button x:Name="BtnBulkRun" Content="Run All"
                                     Style="{StaticResource OutlineButtonStyle}" FontSize="13"
                                     Click="BtnBulkRun_Click" />
@@ -126,10 +129,10 @@
                             </Grid>
                             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
                             <StackPanel x:Name="MappingsRowsPanel" Spacing="0" />
-                            <TextBlock x:Name="NoMappingsText" Text="No user mappings configured. Click 'Add Mapping' or 'Discover Users' to get started."
-                                       FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
-                                       HorizontalAlignment="Center" Padding="0,24"
-                                       Visibility="Collapsed" />
+                            <StackPanel x:Name="NoMappingsText" Spacing="12" HorizontalAlignment="Center" Padding="0,36" Visibility="Collapsed">
+                                <TextBlock Text="No user mappings yet. Discover users on the server to create mappings." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <Button Content="Discover users" HorizontalAlignment="Center" Click="BtnDiscoverUsers_Click" />
+                            </StackPanel>
                         </StackPanel>
                     </Border>
                 </StackPanel>

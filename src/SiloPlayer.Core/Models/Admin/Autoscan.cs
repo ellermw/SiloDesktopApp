@@ -49,6 +49,16 @@ public sealed class AutoscanSource
     public DateTimeOffset? WebhookLastReceivedAt { get; set; }
     public DateTimeOffset? WebhookLastErrorAt { get; set; }
     public string? WebhookLastErrorMessage { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string ConnectionDisplay => string.IsNullOrWhiteSpace(ConnectionId) ? "— No connection —" : ConnectionId;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string PollIntervalDisplay => PollIntervalSeconds is > 0 ? $"{PollIntervalSeconds} sec" : "Default";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string PathRewriteDisplay => $"Path rewrites{(PathRewrites.Count > 0 ? $" ({PathRewrites.Count})" : "")}";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string SourceSettingsDisplay => $"{(string.IsNullOrWhiteSpace(Label) ? "Source" : Label)} paths & ignores";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string LastRunDisplay => LastError != null ? "Error" : LastRunAt.HasValue ? LastRunAt.Value.LocalDateTime.ToString("g") : "Never";
 }
 
 public class AutoscanSourceInput

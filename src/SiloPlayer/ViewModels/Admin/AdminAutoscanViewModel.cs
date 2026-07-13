@@ -15,6 +15,7 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
     public ObservableCollection<AutoscanAvailableSource> AvailableSources { get; } = [];
     public ObservableCollection<AutoscanEvent> Events { get; } = [];
     public ObservableCollection<AutoscanScan> Scans { get; } = [];
+    public ObservableCollection<AutoscanScan> ActiveScans { get; } = [];
     public ObservableCollection<AutoscanRunningPoll> RunningPolls { get; } = [];
     public ObservableCollection<RequestIntegration> RequestIntegrations { get; } = [];
     public ObservableCollection<Library> Libraries { get; } = [];
@@ -40,6 +41,8 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
     public bool HasSources => Sources.Count > 0;
     public bool ShowScans => ActivityView == "Scans";
     public bool ShowPolls => !ShowScans;
+    public bool HasActiveScans => ActiveScans.Count > 0;
+    public bool HasRunningPolls => RunningPolls.Count > 0;
     partial void OnActivityViewChanged(string value) { ActivityStatus = "All statuses"; ActivityPage = 0; OnPropertyChanged(nameof(ShowScans)); OnPropertyChanged(nameof(ShowPolls)); }
 
     public async Task LoadAsync()
@@ -70,9 +73,9 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
             Replace(Connections, connectionsTask.Result);
             Replace(AvailableSources, pluginsTask.Result);
             Status = statusTask.Result;
-            Replace(RunningPolls, Status.RunningPolls);
+            Replace(RunningPolls, Status.RunningPolls); OnPropertyChanged(nameof(HasRunningPolls));
             Replace(Events, eventsTask.Result.Events); EventTotal = eventsTask.Result.Total;
-            Replace(Scans, scansTask.Result.Scans); ScanTotal = scansTask.Result.Total;
+            Replace(Scans, scansTask.Result.Scans); ScanTotal = scansTask.Result.Total; UpdateActiveScans();
             Replace(RequestIntegrations, integrationsTask.Result.Integrations.Where(IsArrIntegration));
             Replace(Libraries, librariesTask.Result.Where(library => library.Enabled));
         }
@@ -159,9 +162,9 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
     public async Task RefreshActivityAsync()
         => await RunBusyAsync(async () =>
         {
-            Status = await adminApi.GetAutoscanStatusAsync(); Replace(RunningPolls, Status.RunningPolls);
+            Status = await adminApi.GetAutoscanStatusAsync(); Replace(RunningPolls, Status.RunningPolls); OnPropertyChanged(nameof(HasRunningPolls));
             var query = BuildActivityQuery();
-            if (ActivityView == "Scans") { var scans = await adminApi.GetAutoscanScansAsync(query); Replace(Scans, scans.Scans); ScanTotal = scans.Total; }
+            if (ActivityView == "Scans") { var scans = await adminApi.GetAutoscanScansAsync(query); Replace(Scans, scans.Scans); ScanTotal = scans.Total; UpdateActiveScans(); }
             else { var events = await adminApi.GetAutoscanEventsAsync(query); Replace(Events, events.Events); EventTotal = events.Total; }
             OnPropertyChanged(nameof(CanGoBack)); OnPropertyChanged(nameof(CanGoForward));
         }, clearStatus: false);
@@ -205,5 +208,10 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> values)
     { target.Clear(); foreach (var value in values) target.Add(value); }
+    private void UpdateActiveScans()
+    {
+        Replace(ActiveScans, Scans.Where(scan => scan.Status is "accepted" or "running"));
+        OnPropertyChanged(nameof(HasActiveScans));
+    }
     public void Cancel() => Interlocked.Exchange(ref _cts, null)?.Cancel();
 }

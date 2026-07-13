@@ -9,6 +9,7 @@ public class HistoryImportSource
     public string? SystemId { get; set; }
     public bool Enabled { get; set; }
     public int SortOrder { get; set; }
+    public bool HasAdminToken { get; set; }
     public string CreatedAt { get; set; } = "";
     public string UpdatedAt { get; set; } = "";
 }

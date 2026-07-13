@@ -14,6 +14,7 @@ public sealed partial class AdminSubtitlesPage : Page
     private int _page;
     private int _pageSize = 25;
     private int _total;
+    private string _providerFilter = "";
 
     public AdminSubtitlesPage()
     {
@@ -73,7 +74,7 @@ public sealed partial class AdminSubtitlesPage : Page
         {
             var response = await _adminApi.GetDownloadedSubtitlesAsync(new AdminDownloadedSubtitlesFilters
             {
-                Provider = SelectedTag(ProviderFilterComboBox),
+                Provider = _providerFilter,
                 Language = SelectedTag(LanguageFilterComboBox),
                 UserId = int.TryParse(SelectedTag(UserFilterComboBox), out var userId) ? userId : null,
                 Query = string.IsNullOrWhiteSpace(SearchBox.Text) ? null : SearchBox.Text.Trim(),
@@ -119,57 +120,45 @@ public sealed partial class AdminSubtitlesPage : Page
     {
         var root = new Grid
         {
-            ColumnSpacing = 16,
-            Padding = new Thickness(16, 12, 16, 12),
+            ColumnSpacing = 14,
+            Padding = new Thickness(16, 10, 16, 10),
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
-        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        double[] widths = [1.25, 1.15, .8, .8, 1.2, .55, .35, .65, .65];
+        foreach (var width in widths)
+            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(width, GridUnitType.Star) });
+        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
 
-        var stack = new StackPanel { Spacing = 6 };
-
-        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        titleRow.Children.Add(new TextBlock
+        var mediaTitle = string.IsNullOrWhiteSpace(subtitle.MediaTitle) ? $"Media file {subtitle.MediaFileId}" : subtitle.MediaTitle;
+        FrameworkElement mediaCell;
+        if (!string.IsNullOrWhiteSpace(subtitle.MediaContentId))
         {
-            Text = string.IsNullOrWhiteSpace(subtitle.MediaTitle) ? $"Media file {subtitle.MediaFileId}" : subtitle.MediaTitle,
-            FontSize = 14,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = 520,
-        });
-        titleRow.Children.Add(MakeBadge(ProviderLabel(subtitle.Provider)));
-        titleRow.Children.Add(MakeBadge(Services.PlayerService.LanguageCodeToName(subtitle.Language)));
-        if (!string.IsNullOrWhiteSpace(subtitle.Format))
-            titleRow.Children.Add(MakeBadge(subtitle.Format.ToUpperInvariant()));
-        if (subtitle.HearingImpaired)
-            titleRow.Children.Add(MakeBadge("HI"));
-        stack.Children.Add(titleRow);
-
-        stack.Children.Add(new TextBlock
+            var link = new Button
+            {
+                Content = mediaTitle,
+                Tag = subtitle.MediaContentId,
+                Padding = new Thickness(0),
+                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Left,
+            };
+            link.Click += ItemLink_Click;
+            mediaCell = link;
+        }
+        else
         {
-            Text = string.IsNullOrWhiteSpace(subtitle.ReleaseName) ? "(no release name)" : subtitle.ReleaseName,
-            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
-            FontSize = 12,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis,
-        });
-
-        var meta = new List<string>();
-        if (!string.IsNullOrWhiteSpace(subtitle.UploaderUsername)) meta.Add($"by {subtitle.UploaderUsername}");
-        if (!string.IsNullOrWhiteSpace(subtitle.CreatedAt)) meta.Add(FormatDate(subtitle.CreatedAt));
-        if (subtitle.Score > 0) meta.Add($"score {subtitle.Score:0}");
-        if (!string.IsNullOrWhiteSpace(subtitle.FilePath)) meta.Add(subtitle.FilePath);
-        stack.Children.Add(new TextBlock
-        {
-            Text = string.Join(" - ", meta),
-            FontSize = 11,
-            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis,
-        });
-
-        Grid.SetColumn(stack, 0);
-        root.Children.Add(stack);
+            mediaCell = MakeCell(mediaTitle, semiBold: true);
+        }
+        AddCell(root, mediaCell, 0);
+        AddCell(root, MakeCell(Basename(subtitle.FilePath), fontFamily: "Consolas"), 1);
+        AddCell(root, MakeBadge($"{subtitle.Language.ToUpperInvariant()}  {Services.PlayerService.LanguageCodeToName(subtitle.Language)}"), 2);
+        AddCell(root, MakeBadge(ProviderLabel(subtitle.Provider)), 3);
+        AddCell(root, MakeCell(string.IsNullOrWhiteSpace(subtitle.ReleaseName) ? "—" : subtitle.ReleaseName, fontFamily: "Consolas"), 4);
+        AddCell(root, MakeBadge($".{subtitle.Format.TrimStart('.')}") , 5);
+        AddCell(root, MakeCell(subtitle.HearingImpaired ? "HI" : ""), 6);
+        AddCell(root, MakeCell(string.IsNullOrWhiteSpace(subtitle.UploaderUsername) ? "—" : subtitle.UploaderUsername), 7);
+        AddCell(root, MakeCell(FormatRelativeDate(subtitle.CreatedAt)), 8);
 
         var actions = new StackPanel
         {
@@ -178,20 +167,16 @@ public sealed partial class AdminSubtitlesPage : Page
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        var edit = new Button { Content = "Edit", Tag = subtitle };
+        var edit = MakeIconButton(Symbol.Edit, "Edit subtitle", subtitle);
         edit.Click += EditSubtitle_Click;
         actions.Children.Add(edit);
 
-        var download = new Button { Content = "Download", Tag = subtitle };
+        var download = MakeIconButton(Symbol.Download, "Download subtitle", subtitle);
         download.Click += DownloadSubtitle_Click;
         actions.Children.Add(download);
 
-        var delete = new Button
-        {
-            Content = "Delete",
-            Tag = subtitle,
-            Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
-        };
+        var delete = MakeIconButton(Symbol.Delete, "Delete subtitle", subtitle);
+        delete.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
         delete.Click += DeleteSubtitle_Click;
         actions.Children.Add(delete);
 
@@ -199,6 +184,31 @@ public sealed partial class AdminSubtitlesPage : Page
         root.Children.Add(actions);
 
         return root;
+    }
+
+    private static void AddCell(Grid root, FrameworkElement element, int column)
+    {
+        element.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(element, column);
+        root.Children.Add(element);
+    }
+
+    private static TextBlock MakeCell(string text, bool semiBold = false, string? fontFamily = null) => new()
+    {
+        Text = text,
+        FontSize = 12,
+        FontWeight = semiBold ? FontWeights.SemiBold : FontWeights.Normal,
+        FontFamily = fontFamily == null ? null : new FontFamily(fontFamily),
+        Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        TextTrimming = TextTrimming.CharacterEllipsis,
+        MaxLines = 1,
+    };
+
+    private static Button MakeIconButton(Symbol symbol, string tooltip, AdminDownloadedSubtitle subtitle)
+    {
+        var button = new Button { Content = new SymbolIcon(symbol), Tag = subtitle, Padding = new Thickness(7) };
+        ToolTipService.SetToolTip(button, tooltip);
+        return button;
     }
 
     private static Border MakeBadge(string text) => new()
@@ -336,6 +346,16 @@ public sealed partial class AdminSubtitlesPage : Page
         _ = LoadSubtitlesAsync();
     }
 
+    private async void ProviderFilter_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button) return;
+        _providerFilter = button.Tag?.ToString() ?? "";
+        foreach (var filterButton in new[] { ProviderAllButton, ProviderUploadButton, ProviderOpenSubtitlesButton, ProviderSubDlButton, ProviderSubSourceButton })
+            filterButton.Opacity = ReferenceEquals(filterButton, button) ? 1 : .62;
+        _page = 0;
+        if (_ready) await LoadSubtitlesAsync();
+    }
+
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (!_ready) return;
@@ -345,15 +365,15 @@ public sealed partial class AdminSubtitlesPage : Page
 
     private async void ResetFilters_Click(object sender, RoutedEventArgs e)
     {
-        ProviderFilterComboBox.SelectedIndex = 0;
+        _providerFilter = "";
+        ProviderAllButton.Opacity = 1;
+        ProviderUploadButton.Opacity = ProviderOpenSubtitlesButton.Opacity = ProviderSubDlButton.Opacity = ProviderSubSourceButton.Opacity = .62;
         LanguageFilterComboBox.SelectedIndex = 0;
         UserFilterComboBox.SelectedIndex = 0;
         SearchBox.Text = "";
         _page = 0;
         await LoadSubtitlesAsync();
     }
-
-    private async void Refresh_Click(object sender, RoutedEventArgs e) => await LoadSubtitlesAsync();
 
     private async void PageSize_Changed(object sender, SelectionChangedEventArgs e)
     {
@@ -404,10 +424,30 @@ public sealed partial class AdminSubtitlesPage : Page
         _ => "Unknown",
     };
 
-    private static string FormatDate(string value)
-        => DateTimeOffset.TryParse(value, out var dto)
-            ? dto.LocalDateTime.ToString("g")
-            : value;
+    private static string FormatRelativeDate(string value)
+    {
+        if (!DateTimeOffset.TryParse(value, out var date)) return value;
+        var elapsed = DateTimeOffset.Now - date.ToLocalTime();
+        if (elapsed.TotalMinutes < 1) return "just now";
+        if (elapsed.TotalHours < 1) return $"{(int)elapsed.TotalMinutes}m ago";
+        if (elapsed.TotalDays < 1) return $"{(int)elapsed.TotalHours}h ago";
+        if (elapsed.TotalDays < 30) return $"{(int)elapsed.TotalDays}d ago";
+        return date.ToLocalTime().ToString("M/d/yyyy");
+    }
+
+    private static string Basename(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "—";
+        var normalized = path.Replace('\\', '/');
+        return normalized[(normalized.LastIndexOf('/') + 1)..];
+    }
+
+    private void ItemLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string itemId } || string.IsNullOrWhiteSpace(itemId)) return;
+        App.MainWindowInstance?.RestoreMainPane();
+        App.Services.GetRequiredService<Helpers.NavigationService>().Navigate<ItemDetailPage>(itemId);
+    }
 
     private static string BuildDownloadFileName(AdminDownloadedSubtitle subtitle, string ext)
     {

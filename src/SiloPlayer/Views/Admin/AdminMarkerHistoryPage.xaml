@@ -19,7 +19,7 @@
     </Page.Resources>
 
     <ScrollViewer IsScrollInertiaEnabled="True">
-        <StackPanel Padding="40,28,40,40" Spacing="24">
+        <StackPanel Padding="32,24,32,40" Spacing="24" MaxWidth="1560" HorizontalAlignment="Center">
             <Grid ColumnSpacing="24">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -28,7 +28,7 @@
                 <StackPanel Spacing="10">
                     <TextBlock
                         Text="Marker History"
-                        FontSize="42"
+                        FontSize="48"
                         FontWeight="Bold"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock
@@ -48,10 +48,12 @@
                         <ComboBoxItem Content="50 rows" Tag="50" />
                         <ComboBoxItem Content="100 rows" Tag="100" />
                     </ComboBox>
-                    <Button
-                        Content="Refresh"
-                        Style="{StaticResource SecondaryButtonStyle}"
-                        Command="{x:Bind ViewModel.LoadCommand}" />
+                    <Button Style="{StaticResource SecondaryButtonStyle}" Command="{x:Bind ViewModel.LoadCommand}">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <SymbolIcon Symbol="Refresh" />
+                            <TextBlock Text="Refresh" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
             </Grid>
 
@@ -109,12 +111,12 @@
                                 <ColumnDefinition Width="160" />
                                 <ColumnDefinition Width="190" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="WHEN" Style="{StaticResource CaptionTextStyle}" />
-                            <TextBlock Grid.Column="1" Text="ITEM" Style="{StaticResource CaptionTextStyle}" />
-                            <TextBlock Grid.Column="2" Text="SEGMENT" Style="{StaticResource CaptionTextStyle}" />
-                            <TextBlock Grid.Column="3" Text="CHANGE" Style="{StaticResource CaptionTextStyle}" />
-                            <TextBlock Grid.Column="4" Text="ACTOR" Style="{StaticResource CaptionTextStyle}" />
-                            <TextBlock Grid.Column="5" Text="REQUEST" Style="{StaticResource CaptionTextStyle}" />
+                            <TextBlock Grid.Column="0" Text="When" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="1" Text="Item" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="2" Text="Segment" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="3" Text="Change" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="4" Text="Actor" FontWeight="SemiBold" />
+                            <TextBlock Grid.Column="5" Text="Request" FontWeight="SemiBold" />
                         </Grid>
 
                         <ListView

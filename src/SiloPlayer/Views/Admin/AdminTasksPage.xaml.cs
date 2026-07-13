@@ -36,6 +36,7 @@ public sealed partial class AdminTasksPage : Page
                 _refreshMetrics = await adminApi.GetTaskMetricsAsync("refresh_metadata");
             }
             catch { _refreshMetrics = null; }
+            RebuildTaskGroups();
         }
         catch (Exception ex)
         {
@@ -204,7 +205,12 @@ public sealed partial class AdminTasksPage : Page
                 parts.Add("No schedule");
 
             if (task.LastExecution != null && !string.IsNullOrEmpty(task.LastExecution.CompletedAt))
+            {
                 parts.Add($"Last run: {FormatRelativeTime(task.LastExecution.CompletedAt)}");
+                parts.Add($"Duration: {FormatDuration(task.LastExecution.DurationMs)}");
+                var resultSummary = FormatTaskResultSummary(task);
+                if (!string.IsNullOrWhiteSpace(resultSummary)) parts.Add($"Result: {resultSummary}");
+            }
             else if (string.IsNullOrEmpty(scheduleDesc))
                 parts.Add("Never run");
 
@@ -342,7 +348,7 @@ public sealed partial class AdminTasksPage : Page
             Glyph = isRunning ? "\uE71A" : "\uE768"  // Stop : Play
         };
 
-        string label = isCancelling ? "Cancelling..." : isRunning ? "Cancel" : "Run Now";
+        string label = isCancelling ? "Stopping..." : isRunning ? "Stop" : "Run Now";
 
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         content.Children.Add(icon);
@@ -395,6 +401,34 @@ public sealed partial class AdminTasksPage : Page
         if (hours < 24) return $"in {hours}h";
         int days = (int)diff.TotalDays;
         return $"in {days}d";
+    }
+
+    private static string FormatDuration(long milliseconds)
+    {
+        if (milliseconds < 1000) return $"{milliseconds}ms";
+        var totalSeconds = milliseconds / 1000;
+        if (totalSeconds < 60) return $"{totalSeconds}s";
+        var minutes = totalSeconds / 60;
+        var seconds = totalSeconds % 60;
+        if (minutes < 60) return $"{minutes}m {seconds}s";
+        return $"{minutes / 60}h {minutes % 60}m";
+    }
+
+    private static string? FormatTaskResultSummary(TaskInfo task)
+    {
+        if (task.Key != "refresh_trending_discover" || task.LastExecution?.ResultData is not { } data) return null;
+        static int? Number(IReadOnlyDictionary<string, object> values, string key)
+        {
+            if (!values.TryGetValue(key, out var raw) || raw == null) return null;
+            if (raw is int value) return value;
+            if (raw is long longValue) return (int)longValue;
+            if (raw is System.Text.Json.JsonElement element && element.TryGetInt32(out var jsonValue)) return jsonValue;
+            return int.TryParse(raw.ToString(), out var parsed) ? parsed : null;
+        }
+        var combos = Number(data, "combos"); var refreshed = Number(data, "refreshed");
+        var empty = Number(data, "empty"); var failed = Number(data, "failed");
+        if (combos == null || refreshed == null || empty == null || failed == null) return null;
+        return combos == 0 ? "No enabled Trending Discover sections" : $"{refreshed} refreshed, {empty} empty, {failed} failed";
     }
 
     // Matches web AdminTasks describeTrigger / describeSchedule.

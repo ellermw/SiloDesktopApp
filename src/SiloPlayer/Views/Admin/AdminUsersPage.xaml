@@ -21,7 +21,7 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <StackPanel Padding="32,24,32,40" Spacing="24" MaxWidth="1560" HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -33,7 +33,7 @@
                     <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
                         <TextBlock
                             Text="Users"
-                            FontSize="42"
+                            FontSize="48"
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
@@ -44,12 +44,12 @@
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <Button
-                            x:Name="UserDefaultsButton"
+                            x:Name="AccessGroupsButton"
                             Style="{StaticResource SecondaryButtonStyle}"
-                            Click="UserDefaultsButton_Click">
+                            Click="AccessGroupsButton_Click">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <FontIcon Glyph="&#xE713;" FontSize="14" />
-                                <TextBlock Text="User Defaults" />
+                                <TextBlock Text="Access Groups" />
                             </StackPanel>
                         </Button>
                         <Button
@@ -147,13 +147,15 @@
                                     <ColumnDefinition Width="80" />
                                     <ColumnDefinition Width="120" />
                                     <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="120" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="USERNAME" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="EMAIL" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="2" Text="ROLE" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="3" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="4" Text="Last Active" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="5" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <Button Grid.Column="0" Content="Username" Tag="username" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" />
+                                <Button Grid.Column="1" Content="Email" Tag="email" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" />
+                                <Button Grid.Column="2" Content="Role" Tag="role" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" />
+                                <Button Grid.Column="3" Content="Status" Tag="status" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" />
+                                <Button Grid.Column="4" Content="Created" Tag="created" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" />
+                                <Button Grid.Column="5" Content="Last Active" Tag="last_active" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" />
+                                <TextBlock Grid.Column="6" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             </Grid>
 
                             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />

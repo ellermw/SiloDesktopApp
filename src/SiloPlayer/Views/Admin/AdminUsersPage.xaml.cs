@@ -112,6 +112,8 @@ public sealed partial class AdminUsersPage : Page
 
     private int _userPageSize = 25;
     private int _userPage;
+    private string _sortColumn = "username";
+    private bool _sortAscending = true;
 
     private void BuildUserRows()
     {
@@ -126,6 +128,21 @@ public sealed partial class AdminUsersPage : Page
                 (!string.IsNullOrEmpty(u.Username) && u.Username.ToLowerInvariant().Contains(q)) ||
                 (!string.IsNullOrEmpty(u.Email) && u.Email.ToLowerInvariant().Contains(q)));
         }
+        filtered = (_sortColumn, _sortAscending) switch
+        {
+            ("email", true) => filtered.OrderBy(u => u.Email, StringComparer.OrdinalIgnoreCase),
+            ("email", false) => filtered.OrderByDescending(u => u.Email, StringComparer.OrdinalIgnoreCase),
+            ("role", true) => filtered.OrderBy(u => u.Role, StringComparer.OrdinalIgnoreCase),
+            ("role", false) => filtered.OrderByDescending(u => u.Role, StringComparer.OrdinalIgnoreCase),
+            ("status", true) => filtered.OrderByDescending(u => u.Enabled),
+            ("status", false) => filtered.OrderBy(u => u.Enabled),
+            ("created", true) => filtered.OrderBy(u => ParseDate(u.CreatedAt)),
+            ("created", false) => filtered.OrderByDescending(u => ParseDate(u.CreatedAt)),
+            ("last_active", true) => filtered.OrderBy(u => ParseDate(u.LastActiveAt)),
+            ("last_active", false) => filtered.OrderByDescending(u => ParseDate(u.LastActiveAt)),
+            (_, true) => filtered.OrderBy(u => u.Username, StringComparer.OrdinalIgnoreCase),
+            _ => filtered.OrderByDescending(u => u.Username, StringComparer.OrdinalIgnoreCase),
+        };
         var list = filtered.ToList();
 
         if (list.Count == 0)
@@ -196,6 +213,23 @@ public sealed partial class AdminUsersPage : Page
         }
     }
 
+    private void UserSort_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button || button.Tag is not string column) return;
+        if (_sortColumn == column)
+            _sortAscending = !_sortAscending;
+        else
+        {
+            _sortColumn = column;
+            _sortAscending = true;
+        }
+        _userPage = 0;
+        BuildUserRows();
+    }
+
+    private static DateTimeOffset ParseDate(string? value)
+        => DateTimeOffset.TryParse(value, out var date) ? date : DateTimeOffset.MinValue;
+
     private FrameworkElement BuildUserRow(AdminUser user)
     {
         var row = new Grid
@@ -207,6 +241,7 @@ public sealed partial class AdminUsersPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
 
@@ -308,6 +343,15 @@ public sealed partial class AdminUsersPage : Page
             };
         }
 
+        var createdBlock = new TextBlock
+        {
+            Text = FormatCreated(user.CreatedAt),
+            FontSize = 12,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+
         // ---- Last active ----
         var lastActiveBlock = new TextBlock
         {
@@ -343,18 +387,23 @@ public sealed partial class AdminUsersPage : Page
         Grid.SetColumn(emailBlock, 1);
         Grid.SetColumn(roleBadge, 2);
         Grid.SetColumn(statusBadge, 3);
-        Grid.SetColumn(lastActiveBlock, 4);
-        Grid.SetColumn(actionsPanel, 5);
+        Grid.SetColumn(createdBlock, 4);
+        Grid.SetColumn(lastActiveBlock, 5);
+        Grid.SetColumn(actionsPanel, 6);
 
         row.Children.Add(userCell);
         row.Children.Add(emailBlock);
         row.Children.Add(roleBadge);
         row.Children.Add(statusBadge);
+        row.Children.Add(createdBlock);
         row.Children.Add(lastActiveBlock);
         row.Children.Add(actionsPanel);
 
         return row;
     }
+
+    private void AccessGroupsButton_Click(object sender, RoutedEventArgs e)
+        => Frame.Navigate(typeof(AdminAccessGroupsPage));
 
     /// <summary>
     /// Creates a 28x28 ghost-style icon button (transparent bg, no border).
@@ -1422,5 +1471,10 @@ public sealed partial class AdminUsersPage : Page
     private static string FormatLastActive(string? value)
         => string.IsNullOrWhiteSpace(value)
             ? "Never"
-            : Core.Helpers.TimeAgo.FormatShort(value);
+              : Core.Helpers.TimeAgo.FormatShort(value);
+
+    private static string FormatCreated(string? value)
+        => DateTimeOffset.TryParse(value, out var created)
+            ? created.ToLocalTime().ToString("MMM d, yyyy, h:mm tt")
+            : value ?? "—";
 }

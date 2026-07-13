@@ -19,6 +19,12 @@ public sealed partial class AdminAutoscanPage : Page
     private async void Page_Loaded(object sender, RoutedEventArgs e) { await ViewModel.LoadAsync(); _loaded = true; UpdateTabVisuals(); UpdateEnabledBadge(); _refreshTimer.Start(); }
     protected override void OnNavigatedFrom(NavigationEventArgs e) { _refreshTimer.Stop(); ViewModel.Cancel(); base.OnNavigatedFrom(e); }
     private async void Enabled_Toggled(object sender, RoutedEventArgs e) { if (_loaded) { await ViewModel.SaveSettingsAsync(((ToggleSwitch)sender).IsOn); UpdateEnabledBadge(); } }
+    private async void SourceEnabled_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (!_loaded || sender is not ToggleSwitch { Tag: AutoscanSource source } toggle || source.Enabled == toggle.IsOn) return;
+        source.Enabled = toggle.IsOn;
+        await ViewModel.SaveSourceAsync(source);
+    }
     private async void RunNow_Click(object sender, RoutedEventArgs e) => await ViewModel.TriggerAsync();
     private async void SaveSettings_Click(object sender, RoutedEventArgs e) => await ViewModel.SaveSettingsAsync();
     private async void RefreshActivity_Click(object sender, RoutedEventArgs e) => await ViewModel.RefreshActivityAsync();

@@ -122,14 +122,14 @@ public sealed partial class AdminHistoryImportPage : Page
         // so we'll just show the source type
         if (hasSrc)
         {
-            TokenBadge.Visibility = Visibility.Visible;
-            TokenBadge.Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"];
-            TokenBadgeText.Text = _selectedSource!.SourceType.ToUpperInvariant();
-            TokenBadgeText.Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
+            SourceUrlText.Text = _selectedSource!.BaseUrl ?? "";
+            TokenBadgeText.Text = _selectedSource.HasAdminToken ? "API key configured" : "API key not configured";
+            TokenStatusDot.Fill = (SolidColorBrush)Application.Current.Resources[_selectedSource.HasAdminToken ? "SuccessBrush" : "SecondaryTextBrush"];
         }
         else
         {
-            TokenBadge.Visibility = Visibility.Collapsed;
+            SourceUrlText.Text = "";
+            TokenBadgeText.Text = "API key not configured";
         }
     }
 

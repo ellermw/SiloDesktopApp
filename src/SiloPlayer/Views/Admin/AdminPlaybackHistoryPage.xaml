@@ -37,7 +37,7 @@
             IsScrollInertiaEnabled="True">
 
             <!-- webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <StackPanel Padding="32,24,32,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -50,7 +50,7 @@
                         <TextBlock
                             x:Name="PageTitle"
                             Text="Playback History"
-                            FontSize="42"
+                            FontSize="48"
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
@@ -98,6 +98,12 @@
                             Style="{StaticResource SecondaryButtonStyle}"
                             IsEnabled="False"
                             Click="ResetButton_Click" />
+                        <Button Style="{StaticResource SecondaryButtonStyle}" Click="RefreshButton_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="7">
+                                <SymbolIcon Symbol="Refresh" />
+                                <TextBlock Text="Refresh" />
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
                 </Grid>
 

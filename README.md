@@ -36,12 +36,23 @@ Status meanings:
 | Admin: Collections | Functional; visual parity incomplete | The list follows the current WebUI's all-library sections and scoped group boards, including artwork, counts, visibility/featured/source badges, template entry, source selection, sync, edit, delete, and reorder actions. Create/edit now uses a dedicated full-page workspace; exact source-specific import layouts and live screenshot comparison remain incomplete. |
 | Admin: Sections | Functional; visual parity incomplete | Live WebUI comparison now drives this page. The list has current recipe labels, drag-and-drop ordering, gallery creation, Home/Library scopes, badges, and the WebUI-style editor drawer with recipe-specific Continue Type controls. A final installed-build side-by-side pass is still required. |
 | Admin: Requests | Functional; visual parity incomplete | The current Queue, Settings, Integrations, and User Overrides tabs are implemented. Queue rows include requester/library context, per-target quality/router status and errors, detail links, decline reasons, and action states. Global settings, plugin-backed router selection/configuration, and user limits call the current APIs; plugin-schema-specific form rendering and final visual tuning remain. |
-| Remaining admin pages | Partial | Users, tasks, history, maintenance, providers, plugins, nodes, API keys, invites, subtitles, recommendations, autoscan, devices, policy, access groups, marker history, and settings have foundations of varying depth. Each still needs a fresh current-WebUI page audit. |
+| Admin: Automation | Functional; visual parity incomplete | Autoscan, Scheduled Tasks, Subtitles, Marker History, and Recommendations were re-audited against the current WebUI. Current source/activity structure, task metadata/actions, ten-column subtitle management, marker audit table, recommendation job controls, embedding presets, and connection checks are implemented. Fine responsive and installed-build visual verification remain. |
+| Admin: Users and History | Functional; visual parity incomplete | Users now has the current Access Groups action, sortable seven-column table, invite-code workflow, and user actions. Playback History includes current filters, stats, polling/manual refresh, table and log links. History Import uses real API-key status, current source controls, discovery/mappings, runs, and current empty states. Fine visual tuning remains. |
+| Remaining admin pages | Partial | Maintenance, providers, plugins, nodes, API keys, devices, policy, access groups, and settings have foundations of varying depth. Each still needs a fresh current-WebUI page audit. |
 | Player on-screen controls | Substantial | Current visual control foundation, play/pause, seek, volume, fullscreen state sync, quality/audio/subtitle menus, intro/credits actions, next episode, keyboard shortcuts, and stats are present. Chapter thumbnails, subtitle actions, playing-next/postroll, PiP/mini-player details, and final state polish remain. |
 | Native playback engine | Hardening | Direct play, remux, HLS fallback, D3D11VA, HEVC/AV1/VP9/H.264, HDR paths, subtitle rendering, track switching, progress reporting, and stall recovery foundations exist. High-bitrate 4K, Dolby Vision, HDR/tone mapping, TrueHD/Atmos/DTS passthrough, fastest startup/seek, and long-session reliability remain active work. |
 | Watch Party | Partial | Join/create, room membership, suggestions, and realtime foundations exist. Content search, series drill-down, spotlight/now-playing UI, auto-start, and complete synchronization remain. |
 
 ## Recent release work
+
+### 1.1.41
+
+- Re-audited Autoscan, Scheduled Tasks, Subtitles, Marker History, Recommendations, Users, Playback History, and History Import against public Silo Server commit `28c6ddc237b9a3ef0102a9ec7514e5654865a3fe` and the signed-in live WebUI.
+- Rebuilt Subtitles from stacked desktop cards into the current ten-column management table with provider filters, language/uploader filters, relative dates, item links, and edit/download/delete actions.
+- Added the missing recommendation provider presets and live embedding connection check, plus current job, lock, schedule, and advanced configuration geometry.
+- Corrected Users with the current Access Groups entry point, Created column, sortable headers, and retained user/history/invite actions.
+- Added Playback History manual refresh alongside safe polling and updated History Import to display the real server URL and `has_admin_token` state with current discovery/mapping controls.
+- Expanded parity regression coverage; the release passes 258 tests and a zero-warning x64 build.
 
 ### 1.1.40
 
@@ -197,4 +208,4 @@ powershell -ExecutionPolicy Bypass -File installer/build.ps1
 
 ## Reference source
 
-Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Release 1.1.40 was compared against Silo Server commit `28c6ddc237b9a3ef0102a9ec7514e5654865a3fe` from July 11, 2026.
+Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Release 1.1.41 was compared against Silo Server commit `28c6ddc237b9a3ef0102a9ec7514e5654865a3fe` from July 11, 2026.
