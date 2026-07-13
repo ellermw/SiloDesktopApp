@@ -17,7 +17,9 @@ public partial class AdminAccessGroupsViewModel(AdminApi adminApi) : ObservableO
     public ObservableCollection<AccessGroupLibraryOptionViewModel> Libraries { get; } = [];
 
     [ObservableProperty] private bool _isLoading;
-    [ObservableProperty] private bool _isBusy;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SaveButtonText))]
+    private bool _isBusy;
     [ObservableProperty] private bool _isCreating;
     [ObservableProperty] private bool _hasGroups;
     [ObservableProperty] private bool _showEmptyState;
@@ -29,6 +31,7 @@ public partial class AdminAccessGroupsViewModel(AdminApi adminApi) : ObservableO
     [NotifyPropertyChangedFor(nameof(IsListVisible))]
     [NotifyPropertyChangedFor(nameof(IsEditorVisible))]
     [NotifyPropertyChangedFor(nameof(IsDefaultLocked))]
+    [NotifyPropertyChangedFor(nameof(DefaultGroupDescription))]
     [NotifyPropertyChangedFor(nameof(CanChangeDefault))]
     [NotifyPropertyChangedFor(nameof(CanDelete))]
     private AccessGroupCardViewModel? _selectedGroup;
@@ -63,6 +66,10 @@ public partial class AdminAccessGroupsViewModel(AdminApi adminApi) : ObservableO
     public bool IsDefaultLocked => SelectedGroup?.Source.IsDefault == true;
     public bool CanChangeDefault => SelectedGroup is not null && !IsDefaultLocked;
     public bool CanDelete => SelectedGroup is not null && !IsDefaultLocked;
+    public string DefaultGroupDescription => IsDefaultLocked
+        ? "Newly created accounts are placed in this group automatically. To change this, make another group the default."
+        : "Newly created accounts are placed in this group automatically. Existing users are never moved.";
+    public string SaveButtonText => IsBusy ? "Saving..." : "Save changes";
 
     [RelayCommand]
     public async Task LoadAsync()

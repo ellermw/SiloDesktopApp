@@ -66,7 +66,7 @@
                           HorizontalAlignment="Stretch"
                           PlaceholderText="Choose a catalog seed from the bucket" />
                 <TextBlock
-                    Text="Reads any detected catalog-seeds/*.json.gz object in the operational S3 bucket, including exports from other installs."
+                    Text="This reads any detected catalog-seeds/*.json.gz object in the private internal S3 bucket, including exports from other installs."
                     FontSize="11"
                     Foreground="{StaticResource SecondaryTextBrush}"
                     TextWrapping="Wrap" />

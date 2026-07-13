@@ -13,6 +13,7 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
     private readonly List<AdminDeviceSummary> _allDevices = [];
 
     public ObservableCollection<AdminDeviceCardViewModel> Devices { get; } = [];
+    public ObservableCollection<AdminDeviceGroupViewModel> DeviceGroups { get; } = [];
     public ObservableCollection<AdminDeviceProfileOption> Profiles { get; } = [];
     public ObservableCollection<AdminDeviceSettingRow> Settings { get; } = [];
 
@@ -23,6 +24,8 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private string _platformFilter = "All platforms";
     [ObservableProperty] private string _recencyFilter = "Any activity";
+    [ObservableProperty] private string _groupBy = "user";
+    [ObservableProperty] private string? _activeSavedView;
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private string? _statusMessage;
     [ObservableProperty] private AdminDeviceCardViewModel? _selectedDevice;
@@ -30,17 +33,69 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
     [ObservableProperty] private AdminDeviceProfileOption? _selectedProfile;
 
     public int TotalDevices => _allDevices.Count;
+    public int TotalUsers => _allDevices.Select(d => d.UserId).Distinct().Count();
     public int TotalProfiles => _allDevices.Sum(d => d.ProfileCount);
     public int TotalOverrides => _allDevices.Sum(d => d.OverrideCount);
     public bool HasDevices => Devices.Count > 0;
     public bool IsDetailVisible => SelectedDevice is not null;
     public bool IsFleetVisible => SelectedDevice is null;
     public string ResultsLabel => $"{Devices.Count} {(Devices.Count == 1 ? "device" : "devices")}";
+    public int DevicesWithOverrides => _allDevices.Count(d => d.OverrideCount > 0);
+    public int AnomalyCount => _allDevices.Count(IsAnomalous);
+    public int UpdatedWeekCount => _allDevices.Count(d => AgeInDays(d) < 7);
+    public int HdrCapableCount => _allDevices.Count(d => DeviceHints(d).Contains("tv", StringComparison.OrdinalIgnoreCase) ||
+        DeviceHints(d).Contains("appletv", StringComparison.OrdinalIgnoreCase) || DeviceHints(d).Contains("shield", StringComparison.OrdinalIgnoreCase));
+    public int HeavyCustomizerCount => _allDevices.Count(d => d.OverrideCount >= 3);
+    public int DormantCount => _allDevices.Count(d => AgeInDays(d) > 30);
+    public int TvCount => _allDevices.Count(d => PlatformKind(d.DevicePlatform) == "TV");
+    public int MobileCount => _allDevices.Count(d => PlatformKind(d.DevicePlatform) is "Mobile" or "Tablet");
+    public int DesktopCount => _allDevices.Count(d => PlatformKind(d.DevicePlatform) == "Desktop");
+    public int NoOverrideCount => _allDevices.Count(d => d.OverrideCount == 0);
+    public int OneTwoOverrideCount => _allDevices.Count(d => d.OverrideCount is >= 1 and <= 2);
+    public int ThreeFiveOverrideCount => _allDevices.Count(d => d.OverrideCount is >= 3 and <= 5);
+    public int SixPlusOverrideCount => _allDevices.Count(d => d.OverrideCount >= 6);
+    public int DayCount => _allDevices.Count(d => RecencyBucket(d) == "<24h");
+    public int WeekCount => _allDevices.Count(d => RecencyBucket(d) == "<7d");
+    public int MonthCount => _allDevices.Count(d => RecencyBucket(d) == "<30d");
+    public int OlderCount => _allDevices.Count(d => RecencyBucket(d) == ">30d");
+
+    private readonly HashSet<string> _platformFilters = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _overrideFilters = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _recencyFilters = new(StringComparer.OrdinalIgnoreCase);
 
     partial void OnSearchTextChanged(string value) => ApplyFilters();
     partial void OnPlatformFilterChanged(string value) => ApplyFilters();
     partial void OnRecencyFilterChanged(string value) => ApplyFilters();
     partial void OnOverridesOnlyChanged(bool value) => ApplyFilters();
+    partial void OnGroupByChanged(string value) => ApplyFilters();
+    partial void OnActiveSavedViewChanged(string? value) => ApplyFilters();
+
+    public void SetGroupBy(string value) => GroupBy = value;
+    public void SetSavedView(string? value) => ActiveSavedView = ActiveSavedView == value ? null : value;
+    public void SetFacet(string category, string value, bool enabled)
+    {
+        var target = category switch
+        {
+            "platform" => _platformFilters,
+            "override" => _overrideFilters,
+            "recency" => _recencyFilters,
+            _ => null,
+        };
+        if (target is null) return;
+        if (enabled) target.Add(value); else target.Remove(value);
+        ApplyFilters();
+    }
+
+    public void ClearFilters()
+    {
+        _platformFilters.Clear();
+        _overrideFilters.Clear();
+        _recencyFilters.Clear();
+        ActiveSavedView = null;
+        OverridesOnly = false;
+        SearchText = "";
+        ApplyFilters();
+    }
 
     [RelayCommand]
     public async Task LoadAsync()
@@ -184,6 +239,17 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
     {
         IEnumerable<AdminDeviceSummary> query = _allDevices;
         if (OverridesOnly) query = query.Where(d => d.OverrideCount > 0);
+        query = ActiveSavedView switch
+        {
+            "anomalies" => query.Where(IsAnomalous),
+            "recent" => query.Where(d => AgeInDays(d) < 7),
+            "hdr" => query.Where(d => DeviceHints(d).Contains("tv", StringComparison.OrdinalIgnoreCase) ||
+                                      DeviceHints(d).Contains("appletv", StringComparison.OrdinalIgnoreCase) ||
+                                      DeviceHints(d).Contains("shield", StringComparison.OrdinalIgnoreCase)),
+            "subtitle" => query.Where(d => d.OverrideCount >= 3),
+            "dormant" => query.Where(d => AgeInDays(d) > 30),
+            _ => query,
+        };
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
             var term = SearchText.Trim();
@@ -191,10 +257,19 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
                 d.DevicePlatform.Contains(term, StringComparison.CurrentCultureIgnoreCase) ||
                 d.Username.Contains(term, StringComparison.CurrentCultureIgnoreCase) ||
                 d.Email.Contains(term, StringComparison.CurrentCultureIgnoreCase) ||
-                d.DeviceId.Contains(term, StringComparison.OrdinalIgnoreCase));
+                d.DeviceId.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                d.Profiles.Any(p => p.ProfileName.Contains(term, StringComparison.CurrentCultureIgnoreCase) ||
+                                    p.ProfileId.Contains(term, StringComparison.OrdinalIgnoreCase)));
         }
         if (PlatformFilter != "All platforms")
             query = query.Where(d => PlatformKind(d.DevicePlatform) == PlatformFilter);
+        if (_platformFilters.Count > 0)
+            query = query.Where(d => _platformFilters.Contains(PlatformKind(d.DevicePlatform)) ||
+                                     (_platformFilters.Contains("Mobile") && PlatformKind(d.DevicePlatform) == "Tablet"));
+        if (_overrideFilters.Count > 0)
+            query = query.Where(d => _overrideFilters.Contains(OverrideBucket(d.OverrideCount)));
+        if (_recencyFilters.Count > 0)
+            query = query.Where(d => _recencyFilters.Contains(RecencyBucket(d)));
         if (RecencyFilter != "Any activity")
         {
             var days = RecencyFilter switch { "Last 24 hours" => 1, "Last 7 days" => 7, "Last 30 days" => 30, _ => int.MaxValue };
@@ -202,12 +277,84 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
         }
         Devices.Clear();
         foreach (var device in query.OrderByDescending(d => d.LastUpdated)) Devices.Add(new(device));
+        RebuildGroups();
         OnPropertyChanged(nameof(HasDevices));
         OnPropertyChanged(nameof(ResultsLabel));
         OnPropertyChanged(nameof(TotalDevices));
+        OnPropertyChanged(nameof(TotalUsers));
         OnPropertyChanged(nameof(TotalProfiles));
         OnPropertyChanged(nameof(TotalOverrides));
+        OnPropertyChanged(nameof(DevicesWithOverrides));
+        OnPropertyChanged(nameof(AnomalyCount));
+        OnPropertyChanged(nameof(UpdatedWeekCount));
+        OnPropertyChanged(nameof(HdrCapableCount));
+        OnPropertyChanged(nameof(HeavyCustomizerCount));
+        OnPropertyChanged(nameof(DormantCount));
+        OnPropertyChanged(nameof(TvCount));
+        OnPropertyChanged(nameof(MobileCount));
+        OnPropertyChanged(nameof(DesktopCount));
+        OnPropertyChanged(nameof(NoOverrideCount));
+        OnPropertyChanged(nameof(OneTwoOverrideCount));
+        OnPropertyChanged(nameof(ThreeFiveOverrideCount));
+        OnPropertyChanged(nameof(SixPlusOverrideCount));
+        OnPropertyChanged(nameof(DayCount));
+        OnPropertyChanged(nameof(WeekCount));
+        OnPropertyChanged(nameof(MonthCount));
+        OnPropertyChanged(nameof(OlderCount));
     }
+
+    private void RebuildGroups()
+    {
+        var grouped = Devices.GroupBy(device => GroupBy switch
+        {
+            "platform" => device.PlatformKind,
+            "activity" => RecencyBucket(device.Source) switch
+            {
+                "<24h" => "Last 24 hours",
+                "<7d" => "This week",
+                "<30d" => "This month",
+                _ => "Older than 30 days",
+            },
+            _ => string.IsNullOrWhiteSpace(device.Source.Username)
+                ? (!string.IsNullOrWhiteSpace(device.Source.Email) ? device.Source.Email : $"User {device.Source.UserId}")
+                : device.Source.Username,
+        });
+
+        var order = GroupBy == "platform"
+            ? new[] { "TV", "Mobile", "Tablet", "Desktop", "Other" }
+            : GroupBy == "activity"
+                ? new[] { "Last 24 hours", "This week", "This month", "Older than 30 days" }
+                : [];
+
+        var projected = grouped.Select(g => new AdminDeviceGroupViewModel(g.Key, g.ToList()));
+        projected = order.Length == 0
+            ? projected.OrderBy(g => g.Label, StringComparer.CurrentCultureIgnoreCase)
+            : projected.OrderBy(g => Array.IndexOf(order, g.Label));
+
+        DeviceGroups.Clear();
+        foreach (var group in projected) DeviceGroups.Add(group);
+    }
+
+    private static bool IsAnomalous(AdminDeviceSummary device) => device.OverrideCount >= 6 ||
+        (device.OverrideCount > 0 && AgeInDays(device) > 30);
+    private static double AgeInDays(AdminDeviceSummary device) => device.LastUpdated is { } last
+        ? Math.Max(0, (DateTimeOffset.UtcNow - last).TotalDays)
+        : double.PositiveInfinity;
+    private static string RecencyBucket(AdminDeviceSummary device) => AgeInDays(device) switch
+    {
+        < 1 => "<24h",
+        < 7 => "<7d",
+        < 30 => "<30d",
+        _ => ">30d",
+    };
+    private static string OverrideBucket(int count) => count switch
+    {
+        0 => "none",
+        <= 2 => "1-2",
+        <= 5 => "3-5",
+        _ => "6+",
+    };
+    private static string DeviceHints(AdminDeviceSummary device) => $"{device.DeviceName} {device.DevicePlatform} {device.DeviceId}";
 
     private void RebuildSettings()
     {
@@ -238,6 +385,14 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
 public sealed record AdminDeviceProfileOption(string ProfileId, string Name, int OverrideCount)
 {
     public string DisplayName => $"{Name}  ·  {OverrideCount} {(OverrideCount == 1 ? "override" : "overrides")}";
+}
+
+public sealed class AdminDeviceGroupViewModel(string label, IReadOnlyList<AdminDeviceCardViewModel> devices)
+{
+    public string Label { get; } = label;
+    public IReadOnlyList<AdminDeviceCardViewModel> Devices { get; } = devices;
+    public string Meta => $"{Devices.Count}d · {Devices.Sum(d => d.Source.ProfileCount)}p · {Devices.Sum(d => d.Source.OverrideCount)}k";
+    public bool IsExpanded => Devices.Count == 1;
 }
 
 public sealed class AdminDeviceCardViewModel(AdminDeviceSummary source)

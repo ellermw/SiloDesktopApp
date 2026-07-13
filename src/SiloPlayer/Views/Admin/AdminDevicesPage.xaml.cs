@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.ViewModels.Admin;
@@ -32,6 +33,57 @@ public sealed partial class AdminDevicesPage : Page
     }
 
     private void Back_Click(object sender, RoutedEventArgs e) => ViewModel.CloseDetail();
+
+    private void GroupBy_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleButton selected || selected.Tag is not string groupBy) return;
+        GroupUserButton.IsChecked = ReferenceEquals(selected, GroupUserButton);
+        GroupPlatformButton.IsChecked = ReferenceEquals(selected, GroupPlatformButton);
+        GroupActivityButton.IsChecked = ReferenceEquals(selected, GroupActivityButton);
+        ViewModel.SetGroupBy(groupBy);
+    }
+
+    private void DeviceScope_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleButton selected || selected.Tag is not string scope) return;
+        AllDevicesButton.IsChecked = scope == "all";
+        OverridesButton.IsChecked = scope == "overrides";
+        ViewModel.OverridesOnly = scope == "overrides";
+    }
+
+    private void SavedView_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string view })
+            ViewModel.SetSavedView(view);
+    }
+
+    private void Facet_Changed(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { Tag: string tag } checkBox) return;
+        var separator = tag.IndexOf(':');
+        if (separator <= 0) return;
+        ViewModel.SetFacet(tag[..separator], tag[(separator + 1)..], checkBox.IsChecked == true);
+    }
+
+    private void ClearFilters_Click(object sender, RoutedEventArgs e)
+    {
+        ClearFacetChecks(this);
+        AllDevicesButton.IsChecked = true;
+        OverridesButton.IsChecked = false;
+        ViewModel.ClearFilters();
+    }
+
+    private static void ClearFacetChecks(DependencyObject root)
+    {
+        var count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < count; index++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, index);
+            if (child is CheckBox checkBox && checkBox.Tag is string)
+                checkBox.IsChecked = false;
+            ClearFacetChecks(child);
+        }
+    }
 
     private async void ResetProfile_Click(object sender, RoutedEventArgs e)
     {

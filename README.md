@@ -38,12 +38,21 @@ Status meanings:
 | Admin: Requests | Functional; visual parity incomplete | The current Queue, Settings, Integrations, and User Overrides tabs are implemented. Queue rows include requester/library context, per-target quality/router status and errors, detail links, decline reasons, and action states. Global settings, plugin-backed router selection/configuration, and user limits call the current APIs; plugin-schema-specific form rendering and final visual tuning remain. |
 | Admin: Automation | Functional; visual parity incomplete | Autoscan, Scheduled Tasks, Subtitles, Marker History, and Recommendations were re-audited against the current WebUI. Current source/activity structure, task metadata/actions, ten-column subtitle management, marker audit table, recommendation job controls, embedding presets, and connection checks are implemented. Fine responsive and installed-build visual verification remain. |
 | Admin: Users and History | Functional; visual parity incomplete | Users now has the current Access Groups action, sortable seven-column table, invite-code workflow, and user actions. Playback History includes current filters, stats, polling/manual refresh, table and log links. History Import uses real API-key status, current source controls, discovery/mappings, runs, and current empty states. Fine visual tuning remains. |
-| Remaining admin pages | Partial | Maintenance, providers, plugins, nodes, API keys, devices, policy, access groups, and settings have foundations of varying depth. Each still needs a fresh current-WebUI page audit. |
+| Admin: System | Functional; visual parity incomplete | Settings, Plugins, Nodes, API Keys, and Maintenance were re-audited against the current WebUI. Current grouped settings navigation, plugin configuration/update policy, node capacity/load columns, API-key tier/create/copy/revoke flows, and catalog import/export job surfaces are implemented. Branding asset uploads, Search connection/status diagnostics, external plugin links, and installed-build visual verification remain. |
+| Admin: Access Groups and Devices | Functional; visual parity incomplete | Access Groups now follows the current responsive cards and in-place editor sections. Devices now uses the current 1920px fleet console with pulse totals, grouping pivots, saved views, platform/override/recency facets, grouped device rows, and an in-place per-profile override editor. Installed-build side-by-side tuning and remaining keyboard/link refinements are still required. |
+| Remaining admin work | Partial | Provider/policy edge cases and final installed-build visual verification remain across the admin suite. Dashboard, Libraries, Activity, Collections, Sections, Requests, and other pages retain explicit visual-parity-incomplete status until those checks pass. |
 | Player on-screen controls | Substantial | Current visual control foundation, play/pause, seek, volume, fullscreen state sync, quality/audio/subtitle menus, intro/credits actions, next episode, keyboard shortcuts, and stats are present. Chapter thumbnails, subtitle actions, playing-next/postroll, PiP/mini-player details, and final state polish remain. |
 | Native playback engine | Hardening | Direct play, remux, HLS fallback, D3D11VA, HEVC/AV1/VP9/H.264, HDR paths, subtitle rendering, track switching, progress reporting, and stall recovery foundations exist. High-bitrate 4K, Dolby Vision, HDR/tone mapping, TrueHD/Atmos/DTS passthrough, fastest startup/seek, and long-session reliability remain active work. |
 | Watch Party | Partial | Join/create, room membership, suggestions, and realtime foundations exist. Content search, series drill-down, spotlight/now-playing UI, auto-start, and complete synchronization remain. |
 
 ## Recent release work
+
+### Unreleased main branch
+
+- Re-audited Settings, Plugins, Nodes, API Keys, Maintenance, Access Groups, and Devices against public Silo Server commit `28c6ddc237b9a3ef0102a9ec7514e5654865a3fe` and the signed-in live WebUI.
+- Replaced the obsolete Devices card list with the current fleet console, including saved views, facet filters, grouping pivots, grouped rows, and an in-place detail editor.
+- Aligned Access Group cards and editor toggle rows, API-key page geometry and pagination, and Maintenance job counts/result formatting with their current WebUI counterparts.
+- Expanded parity regression coverage; current main passes 268 tests and a zero-warning x64 build.
 
 ### 1.1.41
 

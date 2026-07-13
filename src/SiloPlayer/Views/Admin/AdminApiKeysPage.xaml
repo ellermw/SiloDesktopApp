@@ -22,7 +22,8 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,28,40,40" Spacing="32">
+            <!-- WebUI .page-shell: centered, bounded content with responsive page padding. -->
+            <StackPanel Padding="32,24,32,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -33,8 +34,8 @@
 
                     <StackPanel Grid.Column="0" Spacing="12">
                         <TextBlock
-                            Text="API keys"
-                            FontSize="42"
+                            Text="API Keys"
+                            FontSize="48"
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
@@ -130,12 +131,9 @@
                         <StackPanel x:Name="KeysPanel" Spacing="0" />
 
                         <!-- Pagination bar -->
-                        <StackPanel
+                        <Grid
                             x:Name="PaginationBar"
-                            Orientation="Horizontal"
-                            Spacing="12"
-                            Padding="20,10"
-                            HorizontalAlignment="Right"
+                            Padding="20,16"
                             Visibility="Collapsed" />
 
                         <!-- Empty state — matches web: "No API keys yet. Create one to get started." -->

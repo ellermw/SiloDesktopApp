@@ -47,8 +47,13 @@ public sealed class AdminDevicesParitySourceTests
         ];
         foreach (var key in keys) Assert.Contains(key, viewModel);
 
-        Assert.Contains("Search device, user, platform, or ID", page);
-        Assert.Contains("Overrides only", page);
+        Assert.Contains("Search devices, users, IDs, profiles", page);
+        Assert.Contains("Devices with Overrides", page);
+        Assert.Contains("SAVED VIEWS", page);
+        Assert.Contains("OVERRIDE COUNT", page);
+        Assert.Contains("LAST SEEN", page);
+        Assert.Contains("MaxWidth=\"1920\"", page);
+        Assert.Contains("DeviceGroups", page);
         Assert.Contains("Reset profile", page);
         Assert.Contains("SaveSettingAsync", code);
         Assert.Contains("ResetSettingAsync", code);

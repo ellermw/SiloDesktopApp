@@ -21,13 +21,13 @@
             IsScrollInertiaEnabled="True">
 
             <!-- webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <StackPanel Padding="32,24,32,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
 
                 <!-- ===== Page header ===== -->
                 <StackPanel Spacing="6">
                     <TextBlock
                         Text="Maintenance"
-                        FontSize="{StaticResource FontSizeDisplayLarge}"
+                        FontSize="48"
                         FontWeight="Bold"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock
@@ -109,7 +109,7 @@
                                     VerticalAlignment="Center">
                             <Button
                                 x:Name="StartExportButton"
-                                Style="{StaticResource AccentButtonStyle}"
+                                Style="{StaticResource OutlineButtonStyle}"
                                 Padding="12,6"
                                 Click="StartExport_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
@@ -154,11 +154,11 @@
                                     FontSize="11"
                                     Foreground="{StaticResource SecondaryTextBrush}" />
                             </StackPanel>
-                            <Button Grid.Column="1" Click="RefreshImports_Click"
-                                    Background="Transparent" BorderThickness="0" Padding="8">
-                                <FontIcon Glyph="&#xE72C;" FontSize="14"
-                                          Foreground="{StaticResource SecondaryTextBrush}" />
-                            </Button>
+                            <Border Grid.Column="1" Background="{StaticResource SurfaceRaisedBrush}"
+                                    CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                <TextBlock x:Name="ImportJobsCountText" Text="0" FontSize="11"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Border>
                         </Grid>
                         <Border Height="1" Background="{StaticResource BorderBrush}" />
                         <StackPanel x:Name="ImportJobsPanel" />
@@ -184,15 +184,15 @@
                                     FontWeight="SemiBold"
                                     Foreground="{StaticResource PrimaryTextBrush}" />
                                 <TextBlock
-                                    Text="Export jobs run in the background and upload finished seeds to the operational S3 bucket."
+                                    Text="Export jobs run in the background and upload finished seeds to the private internal S3 bucket."
                                     FontSize="11"
                                     Foreground="{StaticResource SecondaryTextBrush}" />
                             </StackPanel>
-                            <Button Grid.Column="1" Click="RefreshExports_Click"
-                                    Background="Transparent" BorderThickness="0" Padding="8">
-                                <FontIcon Glyph="&#xE72C;" FontSize="14"
-                                          Foreground="{StaticResource SecondaryTextBrush}" />
-                            </Button>
+                            <Border Grid.Column="1" Background="{StaticResource SurfaceRaisedBrush}"
+                                    CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                <TextBlock x:Name="ExportJobsCountText" Text="0" FontSize="11"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Border>
                         </Grid>
                         <Border Height="1" Background="{StaticResource BorderBrush}" />
                         <StackPanel x:Name="ExportJobsPanel" />
@@ -222,11 +222,18 @@
                                     FontSize="11"
                                     Foreground="{StaticResource SecondaryTextBrush}" />
                             </StackPanel>
-                            <Button Grid.Column="1" Click="RefreshAllJobs_Click"
-                                    Background="Transparent" BorderThickness="0" Padding="8">
-                                <FontIcon Glyph="&#xE72C;" FontSize="14"
-                                          Foreground="{StaticResource SecondaryTextBrush}" />
-                            </Button>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Border Background="{StaticResource SurfaceRaisedBrush}"
+                                        CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                    <TextBlock x:Name="AllJobsCountText" Text="0" FontSize="11"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                </Border>
+                                <Button Click="RefreshAllJobs_Click" Background="Transparent" BorderThickness="0"
+                                        Padding="8" ToolTipService.ToolTip="Refresh job history">
+                                    <FontIcon Glyph="&#xE72C;" FontSize="14"
+                                              Foreground="{StaticResource SecondaryTextBrush}" />
+                                </Button>
+                            </StackPanel>
                         </Grid>
                         <Border Height="1" Background="{StaticResource BorderBrush}" />
                         <StackPanel x:Name="AllJobsPanel" />

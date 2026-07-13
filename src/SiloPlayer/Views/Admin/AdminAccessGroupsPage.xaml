@@ -19,7 +19,7 @@
     </Page.Resources>
 
     <ScrollViewer IsScrollInertiaEnabled="True">
-        <StackPanel Padding="40,28,40,48" Spacing="20">
+        <StackPanel Padding="32,24,32,48" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
             <StackPanel
                 Spacing="12"
                 Visibility="{x:Bind ViewModel.IsListVisible, Mode=OneWay, Converter={StaticResource BoolToVis}}">
@@ -29,7 +29,7 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Spacing="10">
-                        <TextBlock Text="Access Groups" FontSize="42" FontWeight="Bold" />
+                        <TextBlock Text="Access Groups" FontSize="48" FontWeight="Bold" />
                         <TextBlock
                             Text="Shared access defaults for a set of users. A member's own restrictions still apply on top — a group grants the most a member can do, never more."
                             FontSize="14"
@@ -39,11 +39,15 @@
                     </StackPanel>
                     <Button
                         Grid.Column="1"
-                        Content="＋  New group"
                         Style="{StaticResource AccentButtonStyle}"
                         VerticalAlignment="Center"
                         Click="NewGroup_Click"
-                        Visibility="{x:Bind ViewModel.IsCreating, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}" />
+                        Visibility="{x:Bind ViewModel.IsCreating, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE710;" FontSize="14" />
+                            <TextBlock Text="New group" />
+                        </StackPanel>
+                    </Button>
                 </Grid>
 
                 <Border
@@ -110,11 +114,11 @@
                     <GridView.ItemTemplate>
                         <DataTemplate x:DataType="vm:AccessGroupCardViewModel">
                             <Border
-                                Width="340"
-                                MinHeight="150"
+                                Width="420"
+                                MinHeight="140"
                                 Padding="20"
-                                Background="{StaticResource SurfaceBrush}"
-                                BorderBrush="{StaticResource BorderBrush}"
+                                Background="{StaticResource CardBackgroundBrush}"
+                                BorderBrush="Transparent"
                                 BorderThickness="1"
                                 CornerRadius="16">
                                 <StackPanel Spacing="14">
@@ -135,17 +139,15 @@
                                                     <TextBlock Text="DEFAULT" FontSize="9" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                                                 </Border>
                                             </StackPanel>
-                                            <TextBlock Text="{x:Bind Description}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" MaxLines="2" />
+                                            <TextBlock Text="{x:Bind Description}" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" MaxLines="2" />
                                         </StackPanel>
                                         <Border Grid.Column="1" Padding="9,3" CornerRadius="10" Background="{StaticResource SurfaceHoverBrush}" VerticalAlignment="Top">
-                                            <TextBlock Text="{x:Bind MemberLabel}" FontSize="11" FontWeight="Medium" />
+                                            <TextBlock Text="{x:Bind MemberLabel}" FontSize="12" FontWeight="Medium" />
                                         </Border>
                                     </Grid>
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <Border Padding="7,3" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="6"><TextBlock Text="{x:Bind LibraryLabel}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></Border>
                                         <Border Padding="7,3" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="6"><TextBlock Text="{x:Bind DownloadLabel}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></Border>
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
                                         <Border Padding="7,3" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="6"><TextBlock Text="{x:Bind StreamLabel}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></Border>
                                         <Border Padding="7,3" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="6"><TextBlock Text="{x:Bind RequestLabel}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></Border>
                                     </StackPanel>
@@ -159,11 +161,15 @@
             <StackPanel
                 Spacing="18"
                 Visibility="{x:Bind ViewModel.IsEditorVisible, Mode=OneWay, Converter={StaticResource BoolToVis}}">
-                <Button Content="←  All groups" Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Left" Click="AllGroups_Click" />
+                <Button Background="Transparent" BorderThickness="0" HorizontalAlignment="Left" Click="AllGroups_Click" Padding="8,6">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE72B;" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBlock Text="All groups" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                </Button>
 
-                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="20">
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20">
                     <StackPanel Spacing="16">
-                        <TextBlock Text="Group details" FontSize="18" FontWeight="SemiBold" />
                         <Grid ColumnSpacing="16">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                             <StackPanel Spacing="6">
@@ -179,17 +185,24 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Default for new users" FontWeight="SemiBold" FontSize="13" />
-                                <TextBlock Text="Newly created accounts are placed in this group automatically. Existing users are never moved." FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                <TextBlock Text="{x:Bind ViewModel.DefaultGroupDescription, Mode=OneWay}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                             </StackPanel>
                             <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ViewModel.IsDefault, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanChangeDefault, Mode=OneWay}" />
                         </Grid>
                     </StackPanel>
                 </Border>
 
-                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="20">
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20">
                     <StackPanel Spacing="14">
-                        <TextBlock Text="Libraries &amp; playback" FontSize="18" FontWeight="SemiBold" />
-                        <ToggleSwitch Header="All libraries" IsOn="{x:Bind ViewModel.AllLibraries, Mode=TwoWay}" />
+                        <TextBlock Text="Libraries &amp; playback" FontSize="14" FontWeight="SemiBold" />
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="Library Access" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <TextBlock Text="All libraries" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                                <ToggleSwitch IsOn="{x:Bind ViewModel.AllLibraries, Mode=TwoWay}" />
+                            </StackPanel>
+                        </Grid>
                         <ItemsControl
                             ItemsSource="{x:Bind ViewModel.Libraries, Mode=OneWay}"
                             Visibility="{x:Bind ViewModel.SelectSpecificLibraries, Mode=OneWay, Converter={StaticResource BoolToVis}}">
@@ -201,7 +214,7 @@
                         </ItemsControl>
                         <StackPanel Spacing="6">
                             <TextBlock Text="Maximum playback quality" FontWeight="SemiBold" FontSize="13" />
-                            <ComboBox Width="360" HorizontalAlignment="Left" SelectedValuePath="Tag" SelectedValue="{x:Bind ViewModel.QualityPreset, Mode=TwoWay}">
+                            <ComboBox Width="288" HorizontalAlignment="Left" SelectedValuePath="Tag" SelectedValue="{x:Bind ViewModel.QualityPreset, Mode=TwoWay}">
                                 <ComboBoxItem Content="Any — Allow all resolutions" Tag="any" />
                                 <ComboBoxItem Content="Standard — Hide 4K and higher versions" Tag="standard" />
                                 <ComboBoxItem Content="4K — Allow 4K and lower versions" Tag="4k" />
@@ -210,45 +223,73 @@
                     </StackPanel>
                 </Border>
 
-                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="20">
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20">
                     <StackPanel Spacing="12">
-                        <TextBlock Text="Downloads &amp; requests" FontSize="18" FontWeight="SemiBold" />
-                        <ToggleSwitch Header="Allow downloads" OffContent="Members cannot download items" OnContent="Members may download items" IsOn="{x:Bind ViewModel.DownloadAllowed, Mode=TwoWay}" />
-                        <ToggleSwitch Header="Allow transcoded downloads" OffContent="Original files only" OnContent="Converted versions may be downloaded" IsOn="{x:Bind ViewModel.DownloadTranscodeAllowed, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.DownloadAllowed, Mode=OneWay}" />
-                        <ToggleSwitch Header="Allow media requests" OffContent="Requests disabled" OnContent="Members may request missing titles" IsOn="{x:Bind ViewModel.RequestsAllowed, Mode=TwoWay}" />
+                        <TextBlock Text="Downloads &amp; requests" FontSize="14" FontWeight="SemiBold" />
+                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10">
+                            <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2"><TextBlock Text="Allow downloads" FontSize="13" FontWeight="SemiBold" /><TextBlock Text="Members may download items to their devices." FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+                                <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ViewModel.DownloadAllowed, Mode=TwoWay}" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10">
+                            <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2"><TextBlock Text="Allow transcoded downloads" FontSize="13" FontWeight="SemiBold" /><TextBlock Text="Members may download converted versions, not just the original file." FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+                                <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ViewModel.DownloadTranscodeAllowed, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.DownloadAllowed, Mode=OneWay}" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10">
+                            <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2"><TextBlock Text="Allow media requests" FontSize="13" FontWeight="SemiBold" /><TextBlock Text="Members may request titles that aren't in the library yet." FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+                                <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ViewModel.RequestsAllowed, Mode=TwoWay}" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
                     </StackPanel>
                 </Border>
 
-                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="20">
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20">
                     <StackPanel Spacing="14">
-                        <TextBlock Text="Concurrent streams" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock Text="Concurrent streams" FontSize="14" FontWeight="SemiBold" />
                         <Grid ColumnSpacing="16">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                             <StackPanel Spacing="5">
-                                <TextBlock Text="Max streams (0 = unlimited)" FontWeight="SemiBold" FontSize="13" />
+                                <Grid><TextBlock Text="Max streams" FontWeight="SemiBold" FontSize="13" /><TextBlock Text="0 = unlimited" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Right" /></Grid>
                                 <NumberBox Minimum="0" SpinButtonPlacementMode="Compact" Value="{x:Bind ViewModel.MaxStreams, Mode=TwoWay}" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Spacing="5">
-                                <TextBlock Text="Max transcodes (0 = unlimited)" FontWeight="SemiBold" FontSize="13" />
+                                <Grid><TextBlock Text="Max transcodes" FontWeight="SemiBold" FontSize="13" /><TextBlock Text="0 = unlimited" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Right" /></Grid>
                                 <NumberBox Minimum="0" SpinButtonPlacementMode="Compact" Value="{x:Bind ViewModel.MaxTranscodes, Mode=TwoWay}" />
                             </StackPanel>
                         </Grid>
                     </StackPanel>
                 </Border>
 
-                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="20">
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20">
                     <StackPanel Spacing="12">
                         <Grid ColumnSpacing="16">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel Spacing="3">
-                                <TextBlock Text="Permissions" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="Permissions" FontSize="14" FontWeight="SemiBold" />
                                 <TextBlock Text="A member also needs the permission granted on their own account." FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" />
                             </StackPanel>
-                            <ToggleSwitch Grid.Column="1" Header="Allow all" IsOn="{x:Bind ViewModel.AllPermissions, Mode=TwoWay}" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <TextBlock Text="Allow all" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                                <ToggleSwitch IsOn="{x:Bind ViewModel.AllPermissions, Mode=TwoWay}" />
+                            </StackPanel>
                         </Grid>
                         <StackPanel Spacing="10" Visibility="{x:Bind ViewModel.SelectSpecificPermissions, Mode=OneWay, Converter={StaticResource BoolToVis}}">
-                            <ToggleSwitch Header="Metadata curation" OffContent="Not granted" OnContent="Edit metadata for items in member libraries" IsOn="{x:Bind ViewModel.MetadataCurationAllowed, Mode=TwoWay}" />
-                            <ToggleSwitch Header="Marker editing" OffContent="Not granted" OnContent="Create and adjust intro / credit markers" IsOn="{x:Bind ViewModel.MarkerEditingAllowed, Mode=TwoWay}" />
+                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10">
+                                <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2"><TextBlock Text="Metadata curation" FontSize="13" FontWeight="SemiBold" /><TextBlock Text="Edit metadata for items in the member's libraries." FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+                                    <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ViewModel.MetadataCurationAllowed, Mode=TwoWay}" VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10">
+                                <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2"><TextBlock Text="Marker editing" FontSize="13" FontWeight="SemiBold" /><TextBlock Text="Create and adjust intro / credit markers." FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+                                    <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ViewModel.MarkerEditingAllowed, Mode=TwoWay}" VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -259,7 +300,7 @@
                         <Button Content="Delete group" Style="{StaticResource DestructiveButtonStyle}" HorizontalAlignment="Left" IsEnabled="{x:Bind ViewModel.CanDelete, Mode=OneWay}" Click="DeleteGroup_Click" />
                         <TextBlock Text="The default group can't be deleted. Make another group the default first." FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" Visibility="{x:Bind ViewModel.IsDefaultLocked, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
                     </StackPanel>
-                    <Button Grid.Column="1" Content="Save changes" Style="{StaticResource AccentButtonStyle}" Command="{x:Bind ViewModel.SaveCommand}" />
+                    <Button Grid.Column="1" Content="{x:Bind ViewModel.SaveButtonText, Mode=OneWay}" Style="{StaticResource AccentButtonStyle}" Command="{x:Bind ViewModel.SaveCommand}" />
                 </Grid>
             </StackPanel>
 

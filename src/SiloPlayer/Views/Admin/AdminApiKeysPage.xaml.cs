@@ -82,6 +82,10 @@ public sealed partial class AdminApiKeysPage : Page
         PaginationBar.Visibility = allKeys.Count > _pageSize ? Visibility.Visible : Visibility.Collapsed;
         PaginationBar.Children.Clear();
 
+        PaginationBar.ColumnDefinitions.Clear();
+        PaginationBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        PaginationBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
         var rangeText = new TextBlock
         {
             Text = $"Showing {start + 1}-{end} of {allKeys.Count}",
@@ -90,10 +94,10 @@ public sealed partial class AdminApiKeysPage : Page
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        var pageSizeCombo = new ComboBox { Width = 70, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+        var pageSizeCombo = new ComboBox { Width = 100, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
         foreach (var ps in new[] { 25, 50, 100 })
         {
-            var item = new ComboBoxItem { Content = ps.ToString(), Tag = ps };
+            var item = new ComboBoxItem { Content = $"{ps} rows", Tag = ps };
             if (ps == _pageSize) item.IsSelected = true;
             pageSizeCombo.Items.Add(item);
         }
@@ -109,28 +113,43 @@ public sealed partial class AdminApiKeysPage : Page
 
         var prevBtn = new Button
         {
-            Content = new FontIcon { Glyph = "\uE76B", FontSize = 12 },
-            Background = new SolidColorBrush(Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(6),
+            Content = "Previous",
+            Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
+            Padding = new Thickness(12, 6, 12, 6),
             IsEnabled = _currentPage > 0,
         };
         prevBtn.Click += (_, _) => { _currentPage--; RebuildRows(); };
 
         var nextBtn = new Button
         {
-            Content = new FontIcon { Glyph = "\uE76C", FontSize = 12 },
-            Background = new SolidColorBrush(Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(6),
+            Content = "Next",
+            Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
+            Padding = new Thickness(12, 6, 12, 6),
             IsEnabled = _currentPage < totalPages - 1,
         };
         nextBtn.Click += (_, _) => { _currentPage++; RebuildRows(); };
 
-        PaginationBar.Children.Add(rangeText);
-        PaginationBar.Children.Add(pageSizeCombo);
-        PaginationBar.Children.Add(prevBtn);
-        PaginationBar.Children.Add(nextBtn);
+        var paginationSummary = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 16,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        paginationSummary.Children.Add(rangeText);
+        paginationSummary.Children.Add(pageSizeCombo);
+
+        var paginationActions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        paginationActions.Children.Add(prevBtn);
+        paginationActions.Children.Add(nextBtn);
+        Grid.SetColumn(paginationActions, 1);
+
+        PaginationBar.Children.Add(paginationSummary);
+        PaginationBar.Children.Add(paginationActions);
     }
 
     private FrameworkElement BuildKeyRow(AdminAPIKey key)

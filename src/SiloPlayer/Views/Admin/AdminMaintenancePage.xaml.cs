@@ -139,6 +139,7 @@ public sealed partial class AdminMaintenancePage : Page
     private void RebuildImportJobs()
     {
         ImportJobsPanel.Children.Clear();
+        ImportJobsCountText.Text = ViewModel.ImportJobs.Count.ToString();
         if (ViewModel.ImportJobs.Count == 0)
         {
             ImportJobsPanel.Children.Add(EmptyRow("No catalog import jobs yet."));
@@ -151,6 +152,7 @@ public sealed partial class AdminMaintenancePage : Page
     private void RebuildExportJobs()
     {
         ExportJobsPanel.Children.Clear();
+        ExportJobsCountText.Text = ViewModel.ExportJobs.Count.ToString();
         if (ViewModel.ExportJobs.Count == 0)
         {
             ExportJobsPanel.Children.Add(EmptyRow("No catalog export jobs yet."));
@@ -163,6 +165,7 @@ public sealed partial class AdminMaintenancePage : Page
     private void RebuildAllJobs()
     {
         AllJobsPanel.Children.Clear();
+        AllJobsCountText.Text = ViewModel.AllJobs.Count.ToString();
         if (ViewModel.AllJobs.Count == 0)
         {
             AllJobsPanel.Children.Add(EmptyRow("No jobs yet."));
@@ -435,9 +438,6 @@ public sealed partial class AdminMaintenancePage : Page
         if (metaRow.Children.Count > 0)
             container.Children.Add(metaRow);
 
-        // Progress bar (consistent across all job types)
-        container.Children.Add(BuildProgressBar(AdminMaintenanceViewModel.GetJobProgressPercent(job)));
-
         if (!string.IsNullOrEmpty(job.ErrorMessage))
         {
             container.Children.Add(new TextBlock
@@ -601,6 +601,7 @@ public sealed partial class AdminMaintenancePage : Page
     private static string JobTypeLabel(string jobType) => jobType switch
     {
         "delete_library"   => "Library Delete",
+        "image_cache_cleanup" => "Image Cache Cleanup",
         "catalog_export"   => "Catalog Export",
         "catalog_import"   => "Catalog Import",
         "item_refresh"     => "Item Refresh",
@@ -614,6 +615,7 @@ public sealed partial class AdminMaintenancePage : Page
         switch (job.JobType)
         {
             case "delete_library":
+            case "image_cache_cleanup":
                 if (job.RequestPayload.TryGetValue("library_name", out var ln) && ln is string lns && !string.IsNullOrEmpty(lns))
                     return $"\"{lns}\"";
                 if (job.RequestPayload.TryGetValue("library_id", out var li) && li != null)
@@ -648,7 +650,9 @@ public sealed partial class AdminMaintenancePage : Page
                     var without = ExtractInt(job.ResultPayload, "items_without_ids");
                     var refOk = ExtractInt(job.ResultPayload, "refreshed_ok");
                     var refFail = ExtractInt(job.ResultPayload, "refreshed_failed");
-                    return $"Total {total}, {withIds} direct, {without} unmatched, direct {refOk} ok/{refFail} failed";
+                    var pipelineOk = ExtractInt(job.ResultPayload, "pipeline_ok");
+                    var pipelineFail = ExtractInt(job.ResultPayload, "pipeline_failed");
+                    return $"Total {total}, {withIds} direct, {without} unmatched, direct {refOk} ok/{refFail} failed, pipeline {pipelineOk} ok/{pipelineFail} failed";
                 }
             case "delete_library":
                 {
@@ -657,7 +661,19 @@ public sealed partial class AdminMaintenancePage : Page
                     var parts = new List<string>();
                     if (files > 0) parts.Add($"{files} files");
                     if (items > 0) parts.Add($"{items} items");
+                    if (ExtractBool(job.ResultPayload, "image_cleanup_queued"))
+                    {
+                        var directories = ExtractInt(job.ResultPayload, "image_cleanup_dirs");
+                        if (directories > 0)
+                            parts.Add($"queued cache cleanup for {directories} director{(directories == 1 ? "y" : "ies")}");
+                    }
                     return parts.Count > 0 ? $"Deleted {string.Join(", ", parts)}" : "Deleted (empty)";
+                }
+            case "image_cache_cleanup":
+                {
+                    var prefixes = ExtractInt(job.ResultPayload, "deleted_prefixes");
+                    var objects = ExtractInt(job.ResultPayload, "deleted_s3_objects");
+                    return $"Deleted {objects} cached object{(objects == 1 ? "" : "s")} across {prefixes} prefix{(prefixes == 1 ? "" : "es")}";
                 }
             case "catalog_export":
                 {
@@ -690,6 +706,16 @@ public sealed partial class AdminMaintenancePage : Page
         }
         if (int.TryParse(raw.ToString(), out var parsed)) return parsed;
         return 0;
+    }
+
+    private static bool ExtractBool(Dictionary<string, object> dict, string key)
+    {
+        if (!dict.TryGetValue(key, out var raw) || raw == null) return false;
+        if (raw is bool value) return value;
+        if (raw is System.Text.Json.JsonElement element &&
+            element.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
+            return element.GetBoolean();
+        return bool.TryParse(raw.ToString(), out var parsed) && parsed;
     }
 
     private static int CountJsonArray(object raw)
