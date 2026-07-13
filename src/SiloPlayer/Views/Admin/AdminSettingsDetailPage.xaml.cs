@@ -27,9 +27,11 @@ public sealed partial class AdminSettingsDetailPage : Page
     private static readonly (string Label, string Glyph)[] SettingsTabs =
     [
         ("General",               "\uE713"),
+        ("Branding",              "\uEB9F"),
         ("Theming",               "\uE790"),
         ("Card Overlays",         "\uE81E"),
         ("Scanner & Matcher",     "\uE721"),
+        ("Search",                "\uE721"),
         ("Intro Markers",         "\uED1E"),
         ("Subtitles",             "\uED1E"),
         ("AI Services",           "\uE945"),
@@ -49,9 +51,11 @@ public sealed partial class AdminSettingsDetailPage : Page
     private static readonly Dictionary<string, string[]> SettingsSearchKeywords = new(StringComparer.OrdinalIgnoreCase)
     {
         ["General"] = ["auth", "token", "logging", "server"],
-        ["Theming"] = ["theme", "branding", "css", "catalog"],
+        ["Branding"] = ["identity", "server name", "login", "accent", "default theme", "logo", "favicon"],
+        ["Theming"] = ["theme", "css", "catalog", "tokens"],
         ["Card Overlays"] = ["poster", "badges", "overlay"],
         ["Scanner & Matcher"] = ["scan", "matcher", "metadata", "workers", "image cache"],
+        ["Search"] = ["catalog", "postgres", "meilisearch", "semantic", "index"],
         ["Intro Markers"] = ["intro", "recap", "credits", "chapters", "markers"],
         ["Subtitles"] = ["opensubtitles", "subdl", "subsource", "caption", "providers"],
         ["AI Services"] = ["openai", "ollama", "translation", "transcription", "quota"],
@@ -98,12 +102,30 @@ public sealed partial class AdminSettingsDetailPage : Page
         _tabButtons.Clear();
 
         var tabs = FilterSettingsTabs().ToArray();
-        foreach (var (label, glyph) in tabs)
+        var groups = new (string Name, string[] Tabs)[]
         {
-            var btn = BuildSidebarNavButton(label, glyph);
-            btn.Click += TabButton_Click;
-            _tabButtons.Add((btn, label));
-            TabBar.Children.Add(btn);
+            ("Server", ["General", "Branding", "Theming", "Card Overlays"]),
+            ("Media", ["Scanner & Matcher", "Search", "Intro Markers", "Subtitles", "AI Services", "Playback", "Downloads"]),
+            ("Connections", ["Watch Providers", "Integrations", "Email", "Notifications", "Compatibility Proxies", "Rate Limiting"]),
+            ("Data", ["Database", "Storage", "Log Retention"]),
+        };
+        foreach (var group in groups)
+        {
+            var groupTabs = tabs.Where(tab => group.Tabs.Contains(tab.Label)).ToArray();
+            if (groupTabs.Length == 0) continue;
+            TabBar.Children.Add(new TextBlock
+            {
+                Text = group.Name.ToUpperInvariant(), FontSize = 10, CharacterSpacing = 180,
+                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+                Margin = new Thickness(10, 10, 10, 4),
+            });
+            foreach (var (label, glyph) in groupTabs)
+            {
+                var btn = BuildSidebarNavButton(label, glyph);
+                btn.Click += TabButton_Click;
+                _tabButtons.Add((btn, label));
+                TabBar.Children.Add(btn);
+            }
         }
 
         if (_tabButtons.Count == 0)
@@ -281,10 +303,12 @@ public sealed partial class AdminSettingsDetailPage : Page
         switch (tabName)
         {
             case "General": BuildGeneralTab(); break;
+            case "Branding": BuildBrandingTab(); break;
             case "Theming": BuildThemingTab(); break;
             case "Card Overlays": BuildOverlaysTab(); break;
             case "Playback": BuildPlaybackTab(); break;
             case "Scanner & Matcher": BuildScannerTab(); break;
+            case "Search": BuildSearchTab(); break;
             case "Intro Markers": BuildIntroMarkersTab(); break;
             case "Subtitles": BuildSubtitlesTab(); break;
             case "AI Services": BuildAIServicesTab(); break;
@@ -376,6 +400,60 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     // ===== Tab Builders =====
 
+    private void BuildBrandingTab()
+    {
+        AddTabHeader("Branding", "Customize server identity, accent color, and the default visual theme.");
+
+        AddSectionHeader("Identity");
+        var identity = BeginCard();
+        AddTextBlock(identity, "Your server name appears in the browser tab, login page, sidebar, and installed app. Leave blank for defaults.");
+        AddTextField(identity, "Server Name", "branding.server_name", "Silo");
+        AddTextField(identity, "Login Subtitle", "branding.login_subtitle", "Sign in with an existing account.");
+        EndCard(identity);
+
+        AddSectionHeader("Appearance");
+        var appearance = BeginCard();
+        AddTextField(appearance, "Accent Color", "branding.accent_color", "#4f46e5");
+        AddSelectField(appearance, "Default Theme", "branding.default_theme",
+            [("cinema-dark", "Cinema Dark"), ("midnight", "Midnight"), ("graphite", "Graphite"), ("system", "System")],
+            "Applied as the starting theme for users who have not chosen one.");
+        EndCard(appearance);
+
+        AddSectionHeader("Brand Assets");
+        var assets = BeginCard();
+        AddTextBlock(assets, "Logo, wordmark, background, and favicon uploads remain managed by Silo and update immediately when changed.");
+        EndCard(assets);
+    }
+
+    private void BuildSearchTab()
+    {
+        AddTabHeader("Search", "Configure catalog search provider selection, Meilisearch connectivity, and index behavior.");
+
+        AddSectionHeader("Provider");
+        var provider = BeginCard();
+        AddSelectField(provider, "Preferred Provider", "catalog.search.provider",
+            [("postgres", "Postgres FTS"), ("meilisearch", "Meilisearch")]);
+        EndCard(provider);
+
+        AddSectionHeader("Meilisearch");
+        var meili = BeginCard();
+        AddTextField(meili, "URL", "catalog.search.meilisearch.url", "http://localhost:7700");
+        AddPasswordField(meili, "API Key", "catalog.search.meilisearch.api_key");
+        AddTextField(meili, "Index Prefix", "catalog.search.meilisearch.index", "silo_media_items");
+        AddNumberField(meili, "Timeout (ms)", "catalog.search.meilisearch.timeout_ms", "800");
+        AddSelectField(meili, "Matching Strategy", "catalog.search.meilisearch.matching_strategy",
+            [("last", "Last"), ("all", "All")]);
+        AddNumberField(meili, "Sync Batch Size", "catalog.search.meilisearch.sync_batch_size", "500");
+        AddNumberField(meili, "Rebuild Batch Size", "catalog.search.meilisearch.rebuild_batch_size", "5000");
+        AddNumberField(meili, "Rebuild Queue Depth", "catalog.search.meilisearch.rebuild_task_queue_depth", "4");
+        AddTextField(meili, "Indexed Types", "catalog.search.meilisearch.index_types", "all, video, or movie,series");
+        AddToggleField(meili, "Semantic Search", "catalog.search.meilisearch.semantic_enabled", "Uses recommendation embeddings for hybrid catalog search.");
+        AddNumberField(meili, "Semantic Ratio", "catalog.search.meilisearch.semantic_ratio", "0.50");
+        AddTextField(meili, "Embedder", "catalog.search.meilisearch.embedder", "silo_recommendations");
+        AddToggleField(meili, "Binary Quantized Vectors", "catalog.search.meilisearch.binary_quantized", "Reduces vector storage with a small semantic-relevance cost; changing it requires a full index rebuild.");
+        EndCard(meili);
+    }
+
     private void BuildThemingTab()
     {
         AddTabHeader("Theming", "Customize server branding, catalog themes, and login page appearance.");
@@ -422,13 +500,6 @@ public sealed partial class AdminSettingsDetailPage : Page
         warnRow.Children.Add(warnText);
         warnBorder.Child = warnRow;
         ContentPanel.Children.Add(warnBorder);
-
-        AddSectionHeader("Branding");
-        var brandCard = BeginCard();
-        AddTextBlock(brandCard, "Customize the server name and login page text. Leave blank for defaults.");
-        AddTextField(brandCard, "Server Name", "branding.server_name", "Silo");
-        AddTextField(brandCard, "Login Subtitle", "branding.login_subtitle", "Sign in with an existing account.");
-        EndCard(brandCard);
 
         AddSectionHeader("Theme Catalog");
         var catalogCard = BeginCard();

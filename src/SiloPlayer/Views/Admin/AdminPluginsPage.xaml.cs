@@ -341,21 +341,34 @@ public sealed partial class AdminPluginsPage : Page
         // Right: action buttons
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
 
-        // Enable/Disable toggle
-        var toggleBtn = new Button
+        if (plugin.GlobalConfigSchema.Count > 0)
         {
-            Content = plugin.Enabled ? "Disable" : "Enable",
-            Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
-            Padding = new Thickness(12, 6, 12, 6),
-            FontSize = 13
-        };
+            var configure = new Button { Content = "Configure", Padding = new Thickness(12, 6, 12, 6) };
+            configure.Click += async (_, _) => await OpenPluginConfigurationAsync(plugin);
+            actions.Children.Add(configure);
+        }
+
+        var updatePolicy = new ComboBox { Width = 78, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var policy in new[] { ("auto", "Auto"), ("manual", "Manual"), ("pinned", "Pinned") })
+            updatePolicy.Items.Add(new ComboBoxItem { Content = policy.Item2, Tag = policy.Item1, IsSelected = string.Equals(plugin.UpdatePolicy, policy.Item1, StringComparison.OrdinalIgnoreCase) });
         var capturedPlugin = plugin;
-        toggleBtn.Click += async (_, _) =>
+        updatePolicy.SelectionChanged += async (_, _) =>
         {
-            toggleBtn.IsEnabled = false;
+            if (updatePolicy.SelectedItem is not ComboBoxItem { Tag: string policy } || string.Equals(policy, capturedPlugin.UpdatePolicy, StringComparison.OrdinalIgnoreCase)) return;
+            updatePolicy.IsEnabled = false;
+            await App.Services.GetRequiredService<SiloPlayer.Core.Api.PluginsApi>().UpdateInstallationAsync(capturedPlugin.Id, new SiloPlayer.Core.Models.Plugins.UpdatePluginInstallationRequest { UpdatePolicy = policy });
+            await ViewModel.LoadCommand.ExecuteAsync(null);
+        };
+        actions.Children.Add(updatePolicy);
+
+        var enabledToggle = new ToggleSwitch { IsOn = plugin.Enabled, OnContent = "", OffContent = "" };
+        enabledToggle.Toggled += async (_, _) =>
+        {
+            if (enabledToggle.IsOn == capturedPlugin.Enabled) return;
+            enabledToggle.IsEnabled = false;
             await ViewModel.TogglePluginCommand.ExecuteAsync(capturedPlugin);
         };
-        actions.Children.Add(toggleBtn);
+        actions.Children.Add(enabledToggle);
 
         // Update button (if update available)
         if (!string.IsNullOrEmpty(plugin.AvailableVersion) && plugin.AvailableVersion != plugin.Version)
@@ -411,6 +424,72 @@ public sealed partial class AdminPluginsPage : Page
 
         card.Child = root;
         return card;
+    }
+
+    private async Task OpenPluginConfigurationAsync(PluginInstallation plugin)
+    {
+        var panel = new StackPanel { Spacing = 18, MinWidth = 520 };
+        var editors = new List<(PluginConfigSchema Schema, Dictionary<string, FrameworkElement> Fields)>();
+        foreach (var schema in plugin.GlobalConfigSchema)
+        {
+            panel.Children.Add(new TextBlock { Text = schema.Title, FontSize = 16, FontWeight = FontWeights.SemiBold });
+            if (!string.IsNullOrWhiteSpace(schema.Description))
+                panel.Children.Add(new TextBlock { Text = schema.Description, FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+
+            var existing = plugin.GlobalConfigs.FirstOrDefault(config => config.Key == schema.Key)?.Value ?? [];
+            var fields = new Dictionary<string, FrameworkElement>();
+            foreach (var field in schema.AdminForm?.Fields ?? [])
+            {
+                var group = new StackPanel { Spacing = 5 };
+                group.Children.Add(new TextBlock { Text = field.Label, FontWeight = FontWeights.SemiBold });
+                var current = existing.TryGetValue(field.Key, out var value) ? value?.ToString() ?? "" : field.DefaultValue?.ToString() ?? "";
+                FrameworkElement editor;
+                if (field.Control.Equals("TOGGLE", StringComparison.OrdinalIgnoreCase))
+                    editor = new ToggleSwitch { IsOn = bool.TryParse(current, out var enabled) && enabled, OnContent = "", OffContent = "" };
+                else if (field.Options is { Count: > 0 })
+                {
+                    var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                    foreach (var option in field.Options)
+                        combo.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Value, IsSelected = string.Equals(option.Value, current, StringComparison.Ordinal) });
+                    editor = combo;
+                }
+                else if (field.Secret)
+                    editor = new PasswordBox { PlaceholderText = string.IsNullOrWhiteSpace(current) ? field.Placeholder ?? "" : "configured" };
+                else
+                    editor = new TextBox { Text = current, PlaceholderText = field.Placeholder ?? "", AcceptsReturn = field.Multiline, MinHeight = field.Multiline ? 90 : 0, TextWrapping = field.Multiline ? TextWrapping.Wrap : TextWrapping.NoWrap };
+                group.Children.Add(editor);
+                if (!string.IsNullOrWhiteSpace(field.Description))
+                    group.Children.Add(new TextBlock { Text = field.Description, FontSize = 11, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"] });
+                panel.Children.Add(group);
+                fields[field.Key] = editor;
+            }
+            editors.Add((schema, fields));
+        }
+
+        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = $"Configure {PluginDisplayName(plugin.PluginId, plugin.Presentation)}", PrimaryButtonText = "Save", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, Content = new ScrollViewer { Content = panel, MaxHeight = 620 } };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var api = App.Services.GetRequiredService<SiloPlayer.Core.Api.PluginsApi>();
+        foreach (var (schema, fields) in editors)
+        {
+            var values = new Dictionary<string, object>();
+            foreach (var (key, editor) in fields)
+            {
+                object? value = editor switch
+                {
+                    ToggleSwitch toggle => toggle.IsOn,
+                    ComboBox combo when combo.SelectedItem is ComboBoxItem selected => selected.Tag?.ToString() ?? "",
+                    PasswordBox password => password.Password,
+                    TextBox text => text.Text,
+                    _ => "",
+                };
+                if (editor is PasswordBox && string.IsNullOrEmpty((string)value)) continue;
+                values[key] = value;
+            }
+            await api.SaveGlobalConfigAsync(plugin.Id, new SavePluginConfigRequest { Key = schema.Key, Value = values });
+        }
+        ShowStatus("Plugin configuration saved.");
+        await ViewModel.LoadCommand.ExecuteAsync(null);
     }
 
     // ===== Available Card =====

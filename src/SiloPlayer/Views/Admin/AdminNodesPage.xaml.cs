@@ -132,6 +132,7 @@ public sealed partial class AdminNodesPage : Page
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.8, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(130) });
@@ -142,7 +143,10 @@ public sealed partial class AdminNodesPage : Page
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.8, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(130) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
         }
@@ -173,6 +177,10 @@ public sealed partial class AdminNodesPage : Page
         Grid.SetColumn(urlBlock, 1);
         row.Children.Add(urlBlock);
 
+        var groupBadge = new TextBlock { Text = string.IsNullOrWhiteSpace(node.Group) ? "—" : node.Group, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(groupBadge, 2);
+        row.Children.Add(groupBadge);
+
         // ---- Status badge (Enabled/Disabled toggle) ----
         var toggleSwitch = new ToggleSwitch
         {
@@ -188,7 +196,7 @@ public sealed partial class AdminNodesPage : Page
             await ViewModel.ToggleNodeCommand.ExecuteAsync(capturedNode.Id);
             if (ViewModel.StatusMessage != null) ShowStatus(ViewModel.StatusMessage);
         };
-        Grid.SetColumn(toggleSwitch, 2);
+        Grid.SetColumn(toggleSwitch, 3);
         row.Children.Add(toggleSwitch);
 
         // ---- Health indicator ----
@@ -230,10 +238,10 @@ public sealed partial class AdminNodesPage : Page
             FontSize = 12,
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
         });
-        Grid.SetColumn(healthPanel, 3);
+        Grid.SetColumn(healthPanel, 4);
         row.Children.Add(healthPanel);
 
-        int col = 4;
+        int col = 5;
 
         // ---- Active Jobs (transcode only) ----
         if (showJobs)
@@ -251,7 +259,7 @@ public sealed partial class AdminNodesPage : Page
                 };
                 jobsBadge.Child = new TextBlock
                 {
-                    Text = node.ActiveJobs.ToString(),
+                    Text = $"{node.ActiveJobs} / {node.MaxJobs ?? 0}",
                     FontSize = 12,
                     FontWeight = FontWeights.SemiBold,
                     Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"]
@@ -262,7 +270,7 @@ public sealed partial class AdminNodesPage : Page
             {
                 jobsEl = new TextBlock
                 {
-                    Text = "0",
+                    Text = $"0 / {node.MaxJobs ?? 0}",
                     FontSize = 12,
                     Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
                     VerticalAlignment = VerticalAlignment.Center
@@ -271,6 +279,17 @@ public sealed partial class AdminNodesPage : Page
             Grid.SetColumn(jobsEl, col);
             row.Children.Add(jobsEl);
             col++;
+        }
+        else
+        {
+            var streams = new TextBlock { Text = node.ActiveJobs.ToString(), FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(streams, col++);
+            row.Children.Add(streams);
+            var maxMbps = (node.MaxBandwidthKbps ?? 0) / 1000d;
+            var egressMbps = node.EgressKbps / 1000d;
+            var egress = new TextBlock { Text = $"{egressMbps:0.#} / {maxMbps:0.#} Mbps", FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(egress, col++);
+            row.Children.Add(egress);
         }
 
         // ---- Last Check ----

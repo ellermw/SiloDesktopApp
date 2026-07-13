@@ -24,8 +24,10 @@
             <!-- webui parity: admin pages sit inside .admin-shell (1560); we cap at 1400 for
                  consistency with sibling admin pages that use .page-shell. -->
             <StackPanel
-                Padding="40,28,40,40"
-                Spacing="24">
+                Padding="32,24,32,40"
+                Spacing="24"
+                MaxWidth="1560"
+                HorizontalAlignment="Center">
 
                 <!-- Header — matches web AdminPlugins: title/subtitle left, Check for updates button right -->
                 <Grid>
@@ -37,7 +39,7 @@
                     <StackPanel Grid.Column="0" Spacing="12">
                         <TextBlock
                             Text="Plugins"
-                            FontSize="42"
+                            FontSize="48"
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
