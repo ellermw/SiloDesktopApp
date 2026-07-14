@@ -6,7 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.42**](https://transfers.taverncdn.com/X6L7vQpwCv/SiloInstaller-1.1.42-Setup.exe) — Windows 10/11 x64 installer.
+[**Download Silo Desktop Player 1.1.42**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.42/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+
+[TavernCDN download mirror](https://transfers.taverncdn.com/X6L7vQpwCv/SiloInstaller-1.1.42-Setup.exe)
 
 SHA-256: `805505547F6ADE2ACC944B2F23C9380789CA49B8DF7D804241263B1F8A2AEA62`
 
