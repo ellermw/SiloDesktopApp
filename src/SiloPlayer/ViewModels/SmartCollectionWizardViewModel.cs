@@ -7,7 +7,10 @@ using SiloPlayer.Core.Models.Collections;
 
 namespace SiloPlayer.ViewModels;
 
-public sealed record SmartCollectionWizardNavigationArgs(bool IsAdmin = false, int? LibraryId = null);
+public sealed record SmartCollectionWizardNavigationArgs(
+    bool IsAdmin = false,
+    int? LibraryId = null,
+    string? CollectionId = null);
 
 public partial class SmartCollectionWizardViewModel : ObservableObject
 {
@@ -16,6 +19,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     private readonly AdminApi _adminApi;
     private readonly CatalogApi _catalogApi;
     private readonly CollectionsApi _collectionsApi;
+    private string? _collectionId;
 
     public SmartCollectionWizardViewModel(AdminApi adminApi, CatalogApi catalogApi, CollectionsApi collectionsApi)
     {
@@ -45,6 +49,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     [ObservableProperty] private bool _isShared;
     [ObservableProperty] private bool _featured;
     [ObservableProperty] private bool _includeInServerCollections = true;
+    [ObservableProperty] private string? _posterSourceUrl;
     [ObservableProperty] private int _previewTotal;
 
     public event Action? Saved;
@@ -55,6 +60,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         ErrorMessage = null;
         StatusMessage = null;
         IsAdmin = args?.IsAdmin == true;
+        _collectionId = args?.CollectionId;
 
         try
         {
@@ -68,6 +74,30 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
             SelectedLibraryIds.Clear();
             if (args?.LibraryId is int libraryId)
                 SelectedLibraryIds.Add(libraryId);
+
+            if (!IsAdmin && !string.IsNullOrWhiteSpace(_collectionId))
+            {
+                var response = await _collectionsApi.GetCollectionsAsync(ct);
+                var collection = response.Collections.FirstOrDefault(item => item.Id == _collectionId);
+                if (collection == null)
+                    throw new InvalidOperationException("The selected collection could not be loaded.");
+
+                Title = collection.Name;
+                Description = collection.Description;
+                MediaScope = collection.QueryDefinition?.MediaScope ?? "movie";
+                MatchMode = collection.QueryDefinition?.Match ?? "all";
+                SortField = collection.QueryDefinition?.Sort?.Field ?? "added_at";
+                SortOrder = collection.QueryDefinition?.Sort?.Order ?? "desc";
+                LimitText = collection.QueryDefinition?.Limit?.ToString() ?? "100";
+                IsShared = collection.IsShared;
+                IncludeInServerCollections = collection.IncludeInServerCollections;
+                SelectedLibraryIds.Clear();
+                foreach (var id in collection.QueryDefinition?.LibraryIds ?? [])
+                    SelectedLibraryIds.Add(id);
+                Rules.Clear();
+                foreach (var rule in collection.QueryDefinition?.Groups.SelectMany(group => group.Rules) ?? [])
+                    Rules.Add(new QueryRule { Field = rule.Field, Op = rule.Op, Value = rule.Value });
+            }
 
             if (Rules.Count == 0)
                 Rules.Add(new QueryRule { Field = "genre", Op = "contains", Value = "" });
@@ -165,15 +195,32 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
             }
             else
             {
-                await _collectionsApi.CreateCollectionAsync(new CreateCollectionRequest
+                var request = new CreateCollectionRequest
                 {
                     Name = Title.Trim(),
                     Description = string.IsNullOrWhiteSpace(Description) ? null : Description.Trim(),
                     CollectionType = "smart",
                     IsShared = IsShared,
                     IncludeInServerCollections = IncludeInServerCollections,
+                    PosterSourceUrl = string.IsNullOrWhiteSpace(PosterSourceUrl) ? null : PosterSourceUrl.Trim(),
                     QueryDefinition = query
-                }, ct);
+                };
+                if (string.IsNullOrWhiteSpace(_collectionId))
+                {
+                    await _collectionsApi.CreateCollectionAsync(request, ct);
+                }
+                else
+                {
+                    await _collectionsApi.UpdateCollectionAsync(_collectionId, new UpdateCollectionRequest
+                    {
+                        Name = request.Name,
+                        Description = request.Description,
+                        IsShared = request.IsShared,
+                        IncludeInServerCollections = request.IncludeInServerCollections,
+                        PosterSourceUrl = request.PosterSourceUrl,
+                        QueryDefinition = request.QueryDefinition
+                    }, ct);
+                }
             }
 
             StatusMessage = "Smart collection saved.";

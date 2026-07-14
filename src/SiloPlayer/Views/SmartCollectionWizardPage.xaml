@@ -49,18 +49,30 @@
 
                     <StackPanel Grid.Column="1" Spacing="6">
                         <TextBlock
-                            Text="Smart Collection Wizard"
+                            x:Name="WizardTitle"
+                            Text="New Collection"
                             FontSize="{StaticResource FontSizeDisplayLarge}"
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
-                            Text="Build a dynamic collection from filters, preview the matching items, then save it."
+                            x:Name="WizardSubtitle"
+                            Text="Tune the filters until the cards below show the collection you want."
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}"
                             TextWrapping="Wrap"
                             MaxWidth="720" />
                     </StackPanel>
                 </Grid>
+
+                <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Left">
+                    <Border x:Name="FiltersStepBadge" CornerRadius="14" Padding="12,6" Background="{StaticResource AccentBackgroundBrush}">
+                        <TextBlock Text="1  Filters" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" />
+                    </Border>
+                    <FontIcon Glyph="&#xE76C;" FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
+                    <Border x:Name="DetailsStepBadge" CornerRadius="14" Padding="12,6" Background="{StaticResource SurfaceBrush}">
+                        <TextBlock Text="2  Details" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </Border>
+                </StackPanel>
 
                 <Border
                     Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
@@ -82,6 +94,8 @@
 
                     <StackPanel Grid.Column="0" Spacing="18">
                         <Border
+                            x:Name="DetailsStepPanel"
+                            Visibility="Collapsed"
                             Background="{StaticResource CardBackgroundBrush}"
                             BorderBrush="{StaticResource BorderBrush}"
                             BorderThickness="1"
@@ -161,10 +175,19 @@
                                     IsOn="{x:Bind ViewModel.Featured, Mode=TwoWay}"
                                     OnContent="Featured in library"
                                     OffContent="Not featured" />
+
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="Poster URL" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBox
+                                        Style="{StaticResource DarkTextBoxStyle}"
+                                        PlaceholderText="Optional poster image URL"
+                                        Text="{x:Bind ViewModel.PosterSourceUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
                             </StackPanel>
                         </Border>
 
                         <Border
+                            x:Name="FiltersStepRulesPanel"
                             Background="{StaticResource CardBackgroundBrush}"
                             BorderBrush="{StaticResource BorderBrush}"
                             BorderThickness="1"
@@ -198,7 +221,7 @@
                         </Border>
                     </StackPanel>
 
-                    <StackPanel Grid.Column="1" Spacing="18">
+                    <StackPanel x:Name="FiltersStepPreviewPanel" Grid.Column="1" Spacing="18">
                         <Border
                             Background="{StaticResource CardBackgroundBrush}"
                             BorderBrush="{StaticResource BorderBrush}"
@@ -267,10 +290,24 @@
 
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
                     <Button
+                        x:Name="CancelButton"
                         Style="{StaticResource GhostButtonStyle}"
                         Content="Cancel"
                         Click="BackButton_Click" />
                     <Button
+                        x:Name="BackToFiltersButton"
+                        Visibility="Collapsed"
+                        Style="{StaticResource GhostButtonStyle}"
+                        Content="Back to Filters"
+                        Click="BackToFilters_Click" />
+                    <Button
+                        x:Name="ContinueButton"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Content="Continue to Details"
+                        Click="ContinueToDetails_Click" />
+                    <Button
+                        x:Name="SaveButton"
+                        Visibility="Collapsed"
                         Style="{StaticResource AccentButtonStyle}"
                         IsEnabled="{x:Bind CanSave, Mode=OneWay}"
                         Click="Save_Click">
@@ -280,7 +317,7 @@
                                 Visibility="{x:Bind ViewModel.IsSaving, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                                 Width="14"
                                 Height="14" />
-                            <TextBlock Text="Save Smart Collection" />
+                            <TextBlock x:Name="SaveButtonText" Text="Create Collection" />
                         </StackPanel>
                     </Button>
                 </StackPanel>

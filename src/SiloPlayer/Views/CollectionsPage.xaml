@@ -89,16 +89,6 @@
                         </Button>
 
                         <Button
-                            x:Name="SmartWizardButton"
-                            Style="{StaticResource GhostButtonStyle}"
-                            Click="SmartWizard_Click">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon Glyph="&#xE9D9;" FontSize="14" />
-                                <TextBlock Text="Smart Wizard" />
-                            </StackPanel>
-                        </Button>
-
-                        <Button
                             x:Name="CreateButton"
                             Style="{StaticResource AccentButtonStyle}"
                             Click="CreateCollection_Click">
@@ -109,6 +99,12 @@
                         </Button>
                     </StackPanel>
                 </Grid>
+
+                <TextBlock
+                    Text="Your collections"
+                    FontSize="28"
+                    FontWeight="SemiBold"
+                    Foreground="{StaticResource PrimaryTextBrush}" />
 
                 <!-- ===== Empty State ===== -->
                 <Border
@@ -131,7 +127,7 @@
                             Foreground="{StaticResource PrimaryTextBrush}"
                             HorizontalAlignment="Center" />
                         <TextBlock
-                            Text="Create your first collection to organize movies and shows into custom lists."
+                            Text="Start from a curated TMDB, Trakt, or MDBList template — or build your own from scratch."
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}"
                             HorizontalAlignment="Center"
@@ -149,14 +145,6 @@
                             </Button>
                             <Button
                                 Style="{StaticResource GhostButtonStyle}"
-                                Click="SmartWizard_Click">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <FontIcon Glyph="&#xE9D9;" FontSize="14" />
-                                    <TextBlock Text="Smart Wizard" />
-                                </StackPanel>
-                            </Button>
-                            <Button
-                                Style="{StaticResource GhostButtonStyle}"
                                 Click="CreateCollection_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon Glyph="&#xE710;" FontSize="14" />
@@ -169,6 +157,32 @@
 
                 <!-- ===== Collections Grid ===== -->
                 <StackPanel x:Name="CollectionsGrid" Spacing="0" />
+
+                <Button
+                    x:Name="AddGroupButton"
+                    Style="{StaticResource GhostButtonStyle}"
+                    HorizontalAlignment="Left"
+                    Click="AddGroup_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE710;" FontSize="14" />
+                        <TextBlock Text="Add group" />
+                    </StackPanel>
+                </Button>
+
+                <StackPanel x:Name="ServerCollectionsSection" Spacing="22" Visibility="Collapsed" Margin="0,8,0,0">
+                    <StackPanel Spacing="4">
+                        <TextBlock
+                            Text="Server collections"
+                            FontSize="28"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock
+                            Text="Curated shelves from across every library on this server."
+                            FontSize="14"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                    <StackPanel x:Name="ServerCollectionsRows" Spacing="30" />
+                </StackPanel>
 
             </StackPanel>
         </ScrollViewer>

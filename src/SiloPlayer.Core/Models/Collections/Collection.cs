@@ -45,6 +45,41 @@ public class CollectionGroup
     public int SortOrder { get; set; }
 }
 
+public class ServerCollectionsResponse
+{
+    public List<ServerCollectionsLibrary> Libraries { get; set; } = [];
+}
+
+public class ServerCollectionsLibrary
+{
+    public int LibraryId { get; set; }
+    public string LibraryName { get; set; } = "";
+    public int TotalCount { get; set; }
+    public List<ServerCollectionSummary> Collections { get; set; } = [];
+}
+
+public class ServerCollectionSummary
+{
+    public string Id { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string? PosterUrl { get; set; }
+    public string? PosterThumbhash { get; set; }
+    public int ItemCount { get; set; }
+    public bool Featured { get; set; }
+    public string? CreatorProfileId { get; set; }
+}
+
+public class ReorderCollectionsRequest
+{
+    public List<string> OrderedIds { get; set; } = [];
+    public string? GroupId { get; set; }
+}
+
+public class ReorderCollectionGroupsRequest
+{
+    public List<string> OrderedIds { get; set; } = [];
+}
+
 public class QueryDefinition
 {
     public List<int> LibraryIds { get; set; } = [];

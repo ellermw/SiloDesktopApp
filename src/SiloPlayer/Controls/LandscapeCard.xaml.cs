@@ -12,14 +12,6 @@ namespace SiloPlayer.Controls;
 public sealed partial class LandscapeCard : UserControl
 {
     private CancellationTokenSource? _loadCts;
-
-    /// <summary>
-    /// Fired when the user clicks the X dismiss button on a Continue
-    /// Watching / Next Up card. The consumer (HomePage) handles the
-    /// actual dismissal via HomeViewModel.DismissItemCommand.
-    /// </summary>
-    public event EventHandler<MediaItem>? DismissRequested;
-
     public static readonly DependencyProperty MediaItemProperty =
         DependencyProperty.Register(
             nameof(MediaItem),
@@ -72,8 +64,7 @@ public sealed partial class LandscapeCard : UserControl
 
         // Show dismiss X button for CW/NU cards — enables quick-dismiss
         // from the home screen without opening a context menu.
-        bool canDismiss = item.ItemSource is "continue_watching" or "next_up";
-        DismissButton.Visibility = canDismiss ? Visibility.Visible : Visibility.Collapsed;
+        UpdateDismissVisibility();
         DismissButton.Opacity = 0; // starts invisible, fades in on hover
 
         // B31: Match the webui ContinueWatchingCard hierarchy. For episodes,
@@ -86,7 +77,7 @@ public sealed partial class LandscapeCard : UserControl
             TitleText.Text = item.SeriesTitle!;
             string epLine = $"Season {item.SeasonNumber} Episode {item.EpisodeNumber}";
             if (!string.IsNullOrEmpty(item.Title) && item.Title != item.SeriesTitle)
-                epLine += $" \u00B7 {item.Title}";
+                epLine += $" \u2022 {item.Title}";
             SubtitleText.Text = epLine;
             SubtitleText.Visibility = Visibility.Visible;
         }
@@ -109,48 +100,99 @@ public sealed partial class LandscapeCard : UserControl
             BadgePill.Visibility = Visibility.Collapsed;
         }
 
-        // Progress bar
-        if (item.PositionSeconds.HasValue && item.DurationSeconds.HasValue && item.DurationSeconds.Value > 0)
+        var isNextUp = item.ItemSource == "next_up";
+        if (isNextUp)
+        {
+            TimeLeftText.Text = badgeLabel == null ? "Next Episode" : "";
+            TimeLeftText.Visibility = badgeLabel == null ? Visibility.Visible : Visibility.Collapsed;
+        }
+        else if (item.PositionSeconds.HasValue && item.DurationSeconds.HasValue && item.DurationSeconds.Value > 0)
+        {
+            var remainingMinutes = Math.Max(0, (int)Math.Round(
+                (item.DurationSeconds.Value - item.PositionSeconds.Value) / 60));
+            TimeLeftText.Text = item.Type == "ebook"
+                ? $"{Math.Round(Math.Clamp(item.PositionSeconds.Value / item.DurationSeconds.Value, 0, 1) * 100)}% read"
+                : $"{remainingMinutes} min left";
+            TimeLeftText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            TimeLeftText.Visibility = Visibility.Collapsed;
+        }
+
+        // Progress bar (Next Up never renders resume progress).
+        if (!isNextUp && item.PositionSeconds.HasValue && item.DurationSeconds.HasValue && item.DurationSeconds.Value > 0)
         {
             double progress = item.PositionSeconds.Value / item.DurationSeconds.Value;
             progress = Math.Clamp(progress, 0, 1);
 
             ProgressContainer.Visibility = Visibility.Visible;
-            ProgressFill.Width = 280 * progress;
-
-            // Remaining time
-            double remainingSeconds = item.DurationSeconds.Value - item.PositionSeconds.Value;
-            if (remainingSeconds > 0)
-            {
-                var remaining = TimeSpan.FromSeconds(remainingSeconds);
-                RemainingText.Text = remaining.TotalHours >= 1
-                    ? $"{(int)remaining.TotalHours}h {remaining.Minutes}m left"
-                    : $"{remaining.Minutes}m left";
-                RemainingBadge.Visibility = Visibility.Visible;
-            }
-            else
-            {
-                RemainingBadge.Visibility = Visibility.Collapsed;
-            }
+            ProgressFill.Width = 315 * progress;
         }
         else
         {
             ProgressContainer.Visibility = Visibility.Collapsed;
-            RemainingBadge.Visibility = Visibility.Collapsed;
         }
+        RemainingBadge.Visibility = Visibility.Collapsed;
+
+        UpdateBadges(item);
+        _ = EnsureBadgesLoadedAsync(item, ct);
 
         BackdropImage.Opacity = 0;
 
         _ = LoadImageAsync(item, ct);
     }
 
+    private async Task EnsureBadgesLoadedAsync(MediaItem item, CancellationToken ct)
+    {
+        try
+        {
+            var service = App.Services.GetRequiredService<Services.CardOverlayService>();
+            await service.EnsureLoadedAsync();
+            if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
+                UpdateBadges(item);
+        }
+        catch { }
+    }
+
+    private void UpdateBadges(MediaItem item)
+    {
+        OverlayTopLeft.Children.Clear();
+        OverlayTopRight.Children.Clear();
+        OverlayBottomLeft.Children.Clear();
+        OverlayBottomRight.Children.Clear();
+
+        var service = App.Services.GetRequiredService<Services.CardOverlayService>();
+        var prefs = service.GetPrefs();
+        if (prefs == null) return;
+
+        var data = Services.OverlayData.FromMediaItem(item);
+        foreach (var definition in Services.OverlayRegistry.All)
+        {
+            if (!prefs.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
+            if (Services.OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, prefs)) continue;
+            var value = definition.GetValue(data);
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            var badge = PosterCard.BuildBadge(value, definition.Id, config, service.Preset);
+            var host = config.Position switch
+            {
+                Services.OverlayPosition.TopLeft => OverlayTopLeft,
+                Services.OverlayPosition.TopRight => OverlayTopRight,
+                Services.OverlayPosition.BottomLeft => OverlayBottomLeft,
+                Services.OverlayPosition.BottomRight => OverlayBottomRight,
+                _ => OverlayTopLeft,
+            };
+            host.Children.Add(badge);
+        }
+    }
+
     private async Task LoadImageAsync(MediaItem item, CancellationToken ct)
     {
-        // Match webui ContinueWatchingCard: poster first, backdrop fallback.
-        // For episodes the server populates poster_url with the per-episode
-        // still (correct 16:9 aspect); using backdrop_url instead gives a
-        // generic series backdrop that often looks miscropped here.
-        var imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
+        // Current WebUI wide cards use backdrop_url first. Section episode
+        // payloads now reserve poster_url for vertical series/season artwork
+        // and backdrop_url for the episode still.
+        var usesBackdrop = !string.IsNullOrEmpty(item.BackdropUrl);
+        var imageUrl = usesBackdrop ? item.BackdropUrl : item.PosterUrl;
         if (string.IsNullOrEmpty(imageUrl)) return;
 
         try
@@ -161,7 +203,7 @@ public sealed partial class LandscapeCard : UserControl
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
-            var imageType = !string.IsNullOrEmpty(item.PosterUrl) ? "poster" : "backdrop";
+            var imageType = usesBackdrop ? "backdrop" : "poster";
 
             var diskPath = await imageService.GetImageDiskPathAsync(
                 item.ContentId, imageType, imageUrl, httpClient, ct);
@@ -175,7 +217,7 @@ public sealed partial class LandscapeCard : UserControl
             // the rendering pipeline ever scales it up.
             var bitmapImage = new BitmapImage
             {
-                DecodePixelWidth = 560,
+                DecodePixelWidth = 630,
                 DecodePixelType = DecodePixelType.Logical,
                 UriSource = new Uri(diskPath),
             };
@@ -244,7 +286,13 @@ public sealed partial class LandscapeCard : UserControl
 
     private void DismissButton_Click(object sender, RoutedEventArgs e)
     {
-        if (MediaItem != null) DismissRequested?.Invoke(this, MediaItem);
+        ContextFlyout?.ShowAt(DismissButton);
+    }
+
+    private void UpdateDismissVisibility()
+    {
+        if (DismissButton == null) return;
+        DismissButton.Visibility = MediaItem != null ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>

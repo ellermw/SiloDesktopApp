@@ -109,24 +109,38 @@ public static class VersionRanking
     public static FileVersion? SelectDefaultVersion(
         IReadOnlyList<FileVersion> versions,
         WatchUserData? userData,
-        string? qualityPreference)
+        string? qualityPreference,
+        string? preferredEditionKey = null)
     {
         if (versions.Count == 0) return null;
+
+        var effectiveEditionKey = preferredEditionKey ?? userData?.LastEditionKey;
 
         // 1. Last-watched file wins (so "Play" picks the version the user left off in).
         if (userData?.LastFileId != null)
         {
             var match = versions.FirstOrDefault(v => v.FileId == userData.LastFileId.Value);
-            if (match != null) return match;
+            if (match != null && (string.IsNullOrEmpty(effectiveEditionKey)
+                                  || string.Equals(match.EditionKey, effectiveEditionKey, StringComparison.OrdinalIgnoreCase)))
+                return match;
         }
 
-        if (versions.Count == 1) return versions[0];
+        IReadOnlyList<FileVersion> candidates = versions;
+        if (!string.IsNullOrEmpty(effectiveEditionKey)
+            && versions.Any(v => string.Equals(v.EditionKey, effectiveEditionKey, StringComparison.OrdinalIgnoreCase)))
+        {
+            candidates = versions
+                .Where(v => string.Equals(v.EditionKey, effectiveEditionKey, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        if (candidates.Count == 1) return candidates[0];
 
         // 2. Pick version matching best (resolution, HDR, audio) combo.
-        var best = PickBestAttributes(versions, qualityPreference);
+        var best = PickBestAttributes(candidates, qualityPreference);
         if (best != null)
         {
-            var match = versions.FirstOrDefault(v =>
+            var match = candidates.FirstOrDefault(v =>
                 string.Equals(v.Resolution, best.Resolution, StringComparison.OrdinalIgnoreCase) &&
                 v.Hdr == best.Hdr &&
                 (best.AudioLabel.Length == 0 ||
@@ -135,6 +149,91 @@ public static class VersionRanking
         }
 
         // 3. Fallback: highest resolution.
-        return versions.OrderByDescending(v => ResolutionScore(v.Resolution)).First();
+        return candidates.OrderByDescending(v => ResolutionScore(v.Resolution)).First();
+    }
+
+    public static FileVersion? SelectDefaultPlaybackVariantVersion(
+        IReadOnlyList<FileVersion> versions,
+        IReadOnlyList<PlaybackVariant>? playbackVariants,
+        WatchUserData? userData,
+        string? qualityPreference,
+        string? preferredEditionKey = null)
+    {
+        if (playbackVariants == null || playbackVariants.Count == 0)
+            return SelectDefaultVersion(versions, userData, qualityPreference, preferredEditionKey);
+
+        var effectiveEditionKey = preferredEditionKey ?? userData?.LastEditionKey;
+        var ranked = playbackVariants
+            .Select((variant, index) => new { variant, index })
+            .OrderBy(entry => PlaybackVariantEditionPreference(entry.variant))
+            .ThenBy(entry => entry.index)
+            .Select(entry => entry.variant)
+            .ToList();
+
+        IReadOnlyList<PlaybackVariant> candidates;
+        if (!string.IsNullOrEmpty(effectiveEditionKey)
+            && ranked.Any(variant => string.Equals(variant.EditionKey, effectiveEditionKey, StringComparison.OrdinalIgnoreCase)))
+        {
+            candidates = ranked
+                .Where(variant => string.Equals(variant.EditionKey, effectiveEditionKey, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+        else if (ranked.Count > 0)
+        {
+            var preferredRank = PlaybackVariantEditionPreference(ranked[0]);
+            candidates = ranked.Where(variant => PlaybackVariantEditionPreference(variant) == preferredRank).ToList();
+        }
+        else
+        {
+            return SelectDefaultVersion(versions, userData, qualityPreference, preferredEditionKey);
+        }
+
+        if (userData?.LastFileId != null)
+        {
+            foreach (var variant in candidates)
+            foreach (var part in variant.Parts)
+            {
+                var prior = part.Versions.FirstOrDefault(version => version.FileId == userData.LastFileId.Value);
+                if (prior != null) return prior;
+            }
+        }
+
+        foreach (var variant in candidates)
+        {
+            var firstPart = variant.Parts.OrderBy(part => part.PartIndex).FirstOrDefault();
+            if (firstPart == null) continue;
+
+            if (firstPart.DefaultFileId is int defaultFileId)
+            {
+                var defaultVersion = versions.FirstOrDefault(version => version.FileId == defaultFileId)
+                                     ?? firstPart.Versions.FirstOrDefault(version => version.FileId == defaultFileId);
+                if (defaultVersion != null) return defaultVersion;
+            }
+
+            var fallback = SelectDefaultVersion(
+                firstPart.Versions.Count > 0 ? firstPart.Versions : versions,
+                userData,
+                qualityPreference,
+                variant.EditionKey ?? effectiveEditionKey);
+            if (fallback != null) return fallback;
+        }
+
+        return SelectDefaultVersion(versions, userData, qualityPreference, preferredEditionKey);
+    }
+
+    public static int PlaybackVariantEditionPreference(PlaybackVariant variant)
+    {
+        var values = new[] { variant.EditionKey, variant.EditionRaw }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!.Trim().ToLowerInvariant())
+            .ToList();
+        if (values.Count == 0) return 0;
+        if (values.Any(value => value == "standard" || value == "default"
+                                || value.StartsWith("standard ", StringComparison.Ordinal)
+                                || value.EndsWith(" standard", StringComparison.Ordinal)))
+            return 0;
+        if (values.Any(value => value.Contains("theatrical", StringComparison.Ordinal)))
+            return 1;
+        return 2;
     }
 }

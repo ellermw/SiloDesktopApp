@@ -8,7 +8,8 @@
     xmlns:converters="using:SiloPlayer.Converters"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}"
-    Loaded="Page_Loaded">
+    Loaded="Page_Loaded"
+    Unloaded="Page_Unloaded">
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
@@ -31,8 +32,8 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
-            <!-- AdminSections inherits the centered 1560px admin shell from AdminLayout. -->
-            <StackPanel Padding="32,24,32,40" Spacing="24" MaxWidth="1560" HorizontalAlignment="Stretch">
+            <!-- WebUI AdminLayout: 1560px content inside the shell's 40px desktop gutter. -->
+            <StackPanel Padding="40,32,40,40" Spacing="24" MaxWidth="1640" HorizontalAlignment="Stretch">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -226,6 +227,21 @@
                 FontWeight="SemiBold"
                 Foreground="White" />
         </Border>
+
+        <!-- Centered recipe gallery. A page-owned overlay avoids the WinUI ContentDialog
+             presenter forcing wide custom content against the left edge on ultrawide displays. -->
+        <Grid x:Name="GalleryOverlay" Visibility="Collapsed">
+            <Button Background="#B3000000" BorderThickness="0" CornerRadius="0"
+                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                    Click="GalleryOverlayDismiss_Click" />
+            <Border x:Name="GalleryOverlayPanel" Width="800" MaxHeight="820"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="{StaticResource CardBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                    CornerRadius="12" Padding="24">
+                <ContentControl x:Name="GalleryOverlayContent" />
+            </Border>
+        </Grid>
 
         <!-- WebUI-style right-side section editor drawer. -->
         <Grid x:Name="SectionEditorOverlay" Visibility="Collapsed">

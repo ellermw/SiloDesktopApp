@@ -9,6 +9,9 @@ public sealed partial class AdminRecommendationsPage : Page
     public AdminRecommendationsViewModel ViewModel { get; }
 
     private DispatcherTimer? _pollTimer;
+    private readonly Dictionary<string, string> _localValues = [];
+    private readonly HashSet<string> _dirtyKeys = [];
+    private bool _pageActive;
 
     public AdminRecommendationsPage()
     {
@@ -18,10 +21,19 @@ public sealed partial class AdminRecommendationsPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        _pageActive = true;
         await ViewModel.LoadAsync();
+        if (!_pageActive) return;
         ApplyStatus(ViewModel.Status);
         UpdatePollTimer();
         RebuildSettingsSections();
+    }
+
+    private void Page_Unloaded(object sender, RoutedEventArgs e)
+    {
+        _pageActive = false;
+        _pollTimer?.Stop();
+        ViewModel.CancelLoad();
     }
 
     // ===== Status rendering =====
@@ -143,6 +155,7 @@ public sealed partial class AdminRecommendationsPage : Page
     private async void PollTimer_Tick(object? sender, object e)
     {
         await ViewModel.RefreshStatusAsync();
+        if (!_pageActive) return;
         ApplyStatus(ViewModel.Status);
         if (!ViewModel.AnyJobRunning)
             _pollTimer?.Stop();
@@ -217,29 +230,29 @@ public sealed partial class AdminRecommendationsPage : Page
             SettingsSectionsPanel.Children.Add(lockCard);
 
         // Collapsible sections
-        var sections = new (string Title, (string Key, string Label, SettingFieldType Type, string? Hint)[] Fields)[]
+        var sections = new (string Title, (string Key, string Label, SettingFieldType Type, string? Hint, string? DefaultValue)[] Fields)[]
         {
             ("General", new[]
             {
-                ("recommendations.enabled", "Enable Recommendations", SettingFieldType.Toggle, (string?)null),
+                ("recommendations.enabled", "Enable Recommendations", SettingFieldType.Toggle, (string?)null, (string?)null),
             }),
-            ("Embedding Configuration", new (string, string, SettingFieldType, string?)[]
+            ("Embedding Configuration", new (string, string, SettingFieldType, string?, string?)[]
             {
-                ("recommendations.embedding_base_url", "Base URL", SettingFieldType.Text, "e.g. http://ollama:11434"),
-                ("recommendations.embedding_model", "Model", SettingFieldType.Text, "e.g. text-embedding-3-large"),
-                ("recommendations.embedding_auth_token", "Auth Token", SettingFieldType.Password, "Optional bearer token"),
+                ("recommendations.embedding_base_url", "Base URL", SettingFieldType.Text, "e.g. http://ollama:11434", null),
+                ("recommendations.embedding_model", "Model", SettingFieldType.Text, "e.g. text-embedding-3-large", null),
+                ("recommendations.embedding_auth_token", "Auth Token", SettingFieldType.Password, "Optional bearer token", null),
             }),
-            ("Schedule", new (string, string, SettingFieldType, string?)[]
+            ("Schedule", new (string, string, SettingFieldType, string?, string?)[]
             {
-                ("recommendations.embeddings_cron", "Embeddings Cron", SettingFieldType.Text, "Cron expression, e.g. 0 3 * * *"),
-                ("recommendations.taste_profiles_cron", "Taste Profiles Cron", SettingFieldType.Text, "e.g. 0 4 * * *"),
-                ("recommendations.cowatch_cron", "Co-Watch Cron", SettingFieldType.Text, "e.g. 30 4 * * *"),
-                ("recommendations.recommendations_cron", "Recommendations Cron", SettingFieldType.Text, "e.g. 0 5 * * *"),
+                ("recommendations.embeddings_cron", "Embeddings Cron", SettingFieldType.Text, "Cron expression", "0 3 * * *"),
+                ("recommendations.taste_profiles_cron", "Taste Profiles Cron", SettingFieldType.Text, "Cron expression", "0 4 * * *"),
+                ("recommendations.cowatch_cron", "Co-Watch Cron", SettingFieldType.Text, "Cron expression", "30 4 * * *"),
+                ("recommendations.recommendations_cron", "Recommendations Cron", SettingFieldType.Text, "Cron expression", "0 5 * * *"),
             }),
-            ("Advanced", new (string, string, SettingFieldType, string?)[]
+            ("Advanced", new (string, string, SettingFieldType, string?, string?)[]
             {
-                ("recommendations.taste_decay_half_life_days", "Time Decay Half-Life (days)", SettingFieldType.Number, "How fast old signals lose weight. Default: 180"),
-                ("recommendations.diversity_lambda", "Diversity Lambda", SettingFieldType.Text, "0 = max diversity, 1 = max relevance. Default: 0.7"),
+                ("recommendations.taste_decay_half_life_days", "Time Decay Half-Life (days)", SettingFieldType.Number, "How fast old signals lose weight", "180"),
+                ("recommendations.diversity_lambda", "Diversity Lambda", SettingFieldType.Text, "0 = max diversity, 1 = max relevance", "0.7"),
             }),
         };
 
@@ -389,7 +402,7 @@ public sealed partial class AdminRecommendationsPage : Page
     /// </summary>
     private Border BuildCollapsibleSection(
         string title,
-        (string Key, string Label, SettingFieldType Type, string? Hint)[] fields)
+        (string Key, string Label, SettingFieldType Type, string? Hint, string? DefaultValue)[] fields)
     {
         // Width + left-alignment come from SettingsSectionsPanel (MaxWidth=768, Left).
         var card = new Border
@@ -457,9 +470,9 @@ public sealed partial class AdminRecommendationsPage : Page
         if (title == "Embedding Configuration")
             fieldsPanel.Children.Add(BuildProviderPresets());
 
-        foreach (var (key, label, type, hint) in fields)
+        foreach (var (key, label, type, hint, defaultValue) in fields)
         {
-            fieldsPanel.Children.Add(BuildSettingField(key, label, type, hint));
+            fieldsPanel.Children.Add(BuildSettingField(key, label, type, hint, defaultValue));
         }
 
         if (title == "Embedding Configuration")
@@ -506,12 +519,41 @@ public sealed partial class AdminRecommendationsPage : Page
         if (!string.IsNullOrWhiteSpace(tag))
             text.Children.Add(new TextBlock { Text = tag, FontSize = 11, Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"] });
 
-        var button = new Button { Content = text, MinWidth = 136, HorizontalContentAlignment = HorizontalAlignment.Left };
+        var selected = string.Equals(
+                ViewModel.GetSetting("recommendations.embedding_base_url").Trim().TrimEnd('/'),
+                baseUrl.TrimEnd('/'),
+                StringComparison.OrdinalIgnoreCase)
+            && string.Equals(
+                ViewModel.GetSetting("recommendations.embedding_model").Trim(),
+                model,
+                StringComparison.Ordinal);
+        var button = new Button
+        {
+            Content = text,
+            MinWidth = 136,
+            MinHeight = 52,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Background = selected
+                ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceHoverBrush"]
+                : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"],
+        };
         button.Click += async (_, _) =>
         {
             button.IsEnabled = false;
-            await ViewModel.UpdateSettingAsync("recommendations.embedding_base_url", baseUrl);
-            await ViewModel.UpdateSettingAsync("recommendations.embedding_model", model);
+            if (!await ViewModel.UpdateSettingAsync("recommendations.embedding_base_url", baseUrl))
+            {
+                button.IsEnabled = true;
+                return;
+            }
+            if (!await ViewModel.UpdateSettingAsync("recommendations.embedding_model", model))
+            {
+                button.IsEnabled = true;
+                return;
+            }
+            _localValues["recommendations.embedding_base_url"] = baseUrl;
+            _localValues["recommendations.embedding_model"] = model;
+            _dirtyKeys.Remove("recommendations.embedding_base_url");
+            _dirtyKeys.Remove("recommendations.embedding_model");
             RestartBanner.Visibility = Visibility.Visible;
             RebuildSettingsSections();
         };
@@ -538,7 +580,10 @@ public sealed partial class AdminRecommendationsPage : Page
                 };
                 var request = new AdminSettingsConnectionCheckRequest
                 {
-                    Values = keys.ToDictionary(key => key, ViewModel.GetSetting),
+                    Values = keys.ToDictionary(
+                        key => key,
+                        key => _localValues.TryGetValue(key, out var value) ? value : ViewModel.GetSetting(key)),
+                    DirtyKeys = keys.Where(_dirtyKeys.Contains).ToList(),
                 };
                 var response = await App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>()
                     .CheckSettingsConnectionAsync("recommendations_embedding", request);
@@ -568,7 +613,7 @@ public sealed partial class AdminRecommendationsPage : Page
     /// Number: label + narrow TextBox.
     /// Text: label + TextBox.
     /// </summary>
-    private UIElement BuildSettingField(string key, string label, SettingFieldType type, string? hint)
+    private UIElement BuildSettingField(string key, string label, SettingFieldType type, string? hint, string? defaultValue)
     {
         var container = new StackPanel
         {
@@ -634,8 +679,14 @@ public sealed partial class AdminRecommendationsPage : Page
             {
                 Style = (Microsoft.UI.Xaml.Style)Application.Current.Resources["DarkPasswordBoxStyle"],
                 PlaceholderText = isConfigured ? "configured" : (hint ?? "Not configured"),
-                MaxWidth = 448,
+                Width = 448,
                 HorizontalAlignment = HorizontalAlignment.Left,
+            };
+            pb.PasswordChanged += (_, _) =>
+            {
+                _localValues[key] = pb.Password;
+                if (!string.IsNullOrEmpty(pb.Password)) _dirtyKeys.Add(key);
+                else _dirtyKeys.Remove(key);
             };
             pb.LostFocus += (_, _) =>
             {
@@ -643,17 +694,35 @@ public sealed partial class AdminRecommendationsPage : Page
                     CommitSetting(key, pb.Password);
             };
             container.Children.Add(pb);
+            if (!string.IsNullOrEmpty(hint))
+            {
+                container.Children.Add(new TextBlock
+                {
+                    Text = hint,
+                    FontSize = 11,
+                    Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
+                    Margin = new Thickness(0, 2, 0, 0),
+                });
+            }
         }
         else if (type == SettingFieldType.Number)
         {
+            var serverVal = ViewModel.GetSetting(key);
+            if (string.IsNullOrEmpty(serverVal)) serverVal = defaultValue ?? "";
             var tb = new TextBox
             {
                 Style = (Microsoft.UI.Xaml.Style)Application.Current.Resources["DarkTextBoxStyle"],
-                Text = ViewModel.GetSetting(key),
+                Text = serverVal,
                 Width = 160,
                 HorizontalAlignment = HorizontalAlignment.Left,
             };
-            string serverVal = ViewModel.GetSetting(key);
+            _localValues.TryAdd(key, serverVal);
+            tb.TextChanged += (_, _) =>
+            {
+                _localValues[key] = tb.Text;
+                if (tb.Text != serverVal) _dirtyKeys.Add(key);
+                else _dirtyKeys.Remove(key);
+            };
             tb.LostFocus += (_, _) =>
             {
                 if (tb.Text != serverVal)
@@ -675,13 +744,21 @@ public sealed partial class AdminRecommendationsPage : Page
         else // Text / Duration
         {
             string serverVal = ViewModel.GetSetting(key);
+            if (string.IsNullOrEmpty(serverVal)) serverVal = defaultValue ?? "";
             var tb = new TextBox
             {
                 Style = (Microsoft.UI.Xaml.Style)Application.Current.Resources["DarkTextBoxStyle"],
                 Text = serverVal,
                 PlaceholderText = hint ?? "",
-                MaxWidth = 448,
+                Width = 448,
                 HorizontalAlignment = HorizontalAlignment.Left,
+            };
+            _localValues.TryAdd(key, serverVal);
+            tb.TextChanged += (_, _) =>
+            {
+                _localValues[key] = tb.Text;
+                if (tb.Text != serverVal) _dirtyKeys.Add(key);
+                else _dirtyKeys.Remove(key);
             };
             tb.LostFocus += (_, _) =>
             {
@@ -689,17 +766,6 @@ public sealed partial class AdminRecommendationsPage : Page
                     CommitSetting(key, tb.Text);
             };
             container.Children.Add(tb);
-            if (!string.IsNullOrEmpty(hint))
-            {
-                container.Children.Add(new TextBlock
-                {
-                    Text = hint,
-                    FontSize = 11,
-                    Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
-                    Margin = new Thickness(0, 2, 0, 0),
-                    TextWrapping = TextWrapping.Wrap,
-                });
-            }
         }
 
         return container;
@@ -707,7 +773,9 @@ public sealed partial class AdminRecommendationsPage : Page
 
     private async void CommitSetting(string key, string value)
     {
-        await ViewModel.UpdateSettingAsync(key, value);
+        if (!await ViewModel.UpdateSettingAsync(key, value)) return;
+        _localValues[key] = value;
+        _dirtyKeys.Remove(key);
         RestartBanner.Visibility = Visibility.Visible;
     }
 }

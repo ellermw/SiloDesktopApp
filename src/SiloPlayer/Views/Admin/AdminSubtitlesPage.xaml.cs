@@ -15,6 +15,19 @@ public sealed partial class AdminSubtitlesPage : Page
     private int _pageSize = 25;
     private int _total;
     private string _providerFilter = "";
+    private static readonly (string Code, string Label)[] LanguageOptions =
+    [
+        ("ar", "Arabic"), ("eu", "Basque"), ("bn", "Bengali"), ("bg", "Bulgarian"),
+        ("ca", "Catalan"), ("zh", "Chinese"), ("hr", "Croatian"), ("cs", "Czech"),
+        ("da", "Danish"), ("nl", "Dutch"), ("en", "English"), ("fa", "Persian"),
+        ("fi", "Finnish"), ("fr", "French"), ("gl", "Galician"), ("de", "German"),
+        ("el", "Greek"), ("he", "Hebrew"), ("hi", "Hindi"), ("hu", "Hungarian"),
+        ("id", "Indonesian"), ("it", "Italian"), ("ja", "Japanese"), ("ko", "Korean"),
+        ("ms", "Malay"), ("no", "Norwegian"), ("pl", "Polish"), ("pt", "Portuguese"),
+        ("ro", "Romanian"), ("ru", "Russian"), ("sk", "Slovak"), ("sl", "Slovenian"),
+        ("es", "Spanish"), ("sv", "Swedish"), ("ta", "Tamil"), ("te", "Telugu"),
+        ("th", "Thai"), ("tr", "Turkish"), ("uk", "Ukrainian"), ("vi", "Vietnamese"),
+    ];
 
     public AdminSubtitlesPage()
     {
@@ -34,6 +47,7 @@ public sealed partial class AdminSubtitlesPage : Page
     private async void AdminSubtitlesPage_Loaded(object sender, RoutedEventArgs e)
     {
         if (_ready) return;
+        PopulateLanguageFilter();
         await LoadUsersAsync();
         _ready = true;
         await LoadSubtitlesAsync();
@@ -86,7 +100,9 @@ public sealed partial class AdminSubtitlesPage : Page
             TotalStoredText.Text = response.Total.ToString("N0");
             UploadsText.Text = response.Uploads.ToString("N0");
             ProviderDownloadsText.Text = response.ProviderDownloads.ToString("N0");
-            LanguagesText.Text = response.Subtitles.Select(s => s.Language).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.OrdinalIgnoreCase).Count().ToString("N0");
+            // Match the WebUI Set semantics: a row with a missing language is
+            // still one distinct value on the current page.
+            LanguagesText.Text = response.Subtitles.Select(s => s.Language ?? "").Distinct(StringComparer.Ordinal).Count().ToString("N0");
 
             SubtitlesListView.Items.Clear();
             foreach (var subtitle in response.Subtitles)
@@ -103,7 +119,7 @@ public sealed partial class AdminSubtitlesPage : Page
             }
 
             UpdatePagination(response.Subtitles.Count);
-            StatusText.Text = $"{response.Subtitles.Count:N0} subtitle(s) loaded.";
+            StatusText.Text = "";
         }
         catch (Exception ex)
         {
@@ -114,6 +130,15 @@ public sealed partial class AdminSubtitlesPage : Page
             LoadingRing.IsActive = false;
             LoadingRing.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private void PopulateLanguageFilter()
+    {
+        LanguageFilterComboBox.Items.Clear();
+        LanguageFilterComboBox.Items.Add(new ComboBoxItem { Content = "All languages", Tag = "" });
+        foreach (var language in LanguageOptions.OrderBy(language => language.Label, StringComparer.CurrentCulture))
+            LanguageFilterComboBox.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
+        LanguageFilterComboBox.SelectedIndex = 0;
     }
 
     private FrameworkElement BuildSubtitleRow(AdminDownloadedSubtitle subtitle)
@@ -165,6 +190,7 @@ public sealed partial class AdminSubtitlesPage : Page
             Orientation = Orientation.Horizontal,
             Spacing = 8,
             VerticalAlignment = VerticalAlignment.Center,
+            Opacity = 0,
         };
 
         var edit = MakeIconButton(Symbol.Edit, "Edit subtitle", subtitle);
@@ -180,8 +206,29 @@ public sealed partial class AdminSubtitlesPage : Page
         delete.Click += DeleteSubtitle_Click;
         actions.Children.Add(delete);
 
-        Grid.SetColumn(actions, 1);
+        Grid.SetColumn(actions, 9);
         root.Children.Add(actions);
+        var pointerOver = false;
+        root.PointerEntered += (_, _) =>
+        {
+            pointerOver = true;
+            actions.Opacity = 1;
+        };
+        root.PointerExited += (_, _) =>
+        {
+            pointerOver = false;
+            if (!actions.Children.OfType<Control>().Any(control => control.FocusState != FocusState.Unfocused))
+                actions.Opacity = 0;
+        };
+        foreach (var control in actions.Children.OfType<Control>())
+        {
+            control.GettingFocus += (_, _) => actions.Opacity = 1;
+            control.LostFocus += (_, _) =>
+            {
+                if (!pointerOver)
+                    actions.Opacity = 0;
+            };
+        }
 
         return root;
     }
@@ -193,20 +240,36 @@ public sealed partial class AdminSubtitlesPage : Page
         root.Children.Add(element);
     }
 
-    private static TextBlock MakeCell(string text, bool semiBold = false, string? fontFamily = null) => new()
+    private static TextBlock MakeCell(string text, bool semiBold = false, string? fontFamily = null)
     {
-        Text = text,
-        FontSize = 12,
-        FontWeight = semiBold ? FontWeights.SemiBold : FontWeights.Normal,
-        FontFamily = fontFamily == null ? null : new FontFamily(fontFamily),
-        Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-        TextTrimming = TextTrimming.CharacterEllipsis,
-        MaxLines = 1,
-    };
+        var cell = new TextBlock
+        {
+            Text = text,
+            FontSize = 12,
+            FontWeight = semiBold ? FontWeights.SemiBold : FontWeights.Normal,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 1,
+        };
+
+        // WinUI's projected FontFamily setter does not accept null reliably and
+        // can surface the default family as the invalid string "Unknown".
+        if (!string.IsNullOrWhiteSpace(fontFamily))
+            cell.FontFamily = new FontFamily(fontFamily);
+
+        return cell;
+    }
 
     private static Button MakeIconButton(Symbol symbol, string tooltip, AdminDownloadedSubtitle subtitle)
     {
-        var button = new Button { Content = new SymbolIcon(symbol), Tag = subtitle, Padding = new Thickness(7) };
+        var button = new Button
+        {
+            Content = new SymbolIcon(symbol),
+            Tag = subtitle,
+            Padding = new Thickness(7),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+        };
         ToolTipService.SetToolTip(button, tooltip);
         return button;
     }
@@ -229,38 +292,53 @@ public sealed partial class AdminSubtitlesPage : Page
     {
         if (sender is not Button { Tag: AdminDownloadedSubtitle subtitle }) return;
 
-        var languageBox = new TextBox
+        var languageBox = new ComboBox { Header = "Language", HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (var language in LanguageOptions.OrderBy(language => language.Label, StringComparer.CurrentCulture))
+            languageBox.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
+        var selectedLanguage = languageBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => string.Equals(item.Tag?.ToString(), subtitle.Language, StringComparison.OrdinalIgnoreCase));
+        if (selectedLanguage is null)
         {
-            Header = "Language",
-            Text = subtitle.Language,
-            PlaceholderText = "en",
-        };
+            selectedLanguage = new ComboBoxItem { Content = Services.PlayerService.LanguageCodeToName(subtitle.Language), Tag = subtitle.Language };
+            languageBox.Items.Insert(0, selectedLanguage);
+        }
+        languageBox.SelectedItem = selectedLanguage;
         var releaseBox = new TextBox
         {
             Header = "Release name",
             Text = subtitle.ReleaseName,
             TextWrapping = TextWrapping.Wrap,
-            AcceptsReturn = true,
-            MinHeight = 90,
+            AcceptsReturn = false,
         };
-        var hiToggle = new ToggleSwitch
-        {
-            Header = "Hearing impaired (HI)",
-            IsOn = subtitle.HearingImpaired,
-        };
+        var hiToggle = new ToggleSwitch { IsOn = subtitle.HearingImpaired, OnContent = "", OffContent = "", MinWidth = 44 };
+        var hiRow = new Grid { ColumnSpacing = 14 };
+        hiRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        hiRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var hiText = new StackPanel { Spacing = 2 };
+        hiText.Children.Add(new TextBlock { Text = "Hearing impaired", FontWeight = FontWeights.SemiBold });
+        hiText.Children.Add(new TextBlock { Text = "Marks this track as SDH/CC.", FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        hiRow.Children.Add(hiText); Grid.SetColumn(hiToggle, 1); hiRow.Children.Add(hiToggle);
+        var summary = new Border { Padding = new Thickness(12), CornerRadius = new CornerRadius(8), Background = (Brush)Application.Current.Resources["SurfaceBrush"] };
+        var summaryContent = new StackPanel { Spacing = 6 };
+        summaryContent.Children.Add(new TextBlock { Text = string.IsNullOrWhiteSpace(subtitle.MediaTitle) ? $"Media file {subtitle.MediaFileId}" : subtitle.MediaTitle, FontWeight = FontWeights.SemiBold });
+        summaryContent.Children.Add(new TextBlock { Text = $"{subtitle.Language.ToUpperInvariant()} · {Services.PlayerService.LanguageCodeToName(subtitle.Language)}    {ProviderLabel(subtitle.Provider)}", FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        summary.Child = summaryContent;
 
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = "Edit Subtitle",
-            PrimaryButtonText = "Save",
+            Title = "Edit subtitle",
+            PrimaryButtonText = "Save changes",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
             Content = new StackPanel
             {
-                Spacing = 12,
+                Spacing = 14,
                 MinWidth = 420,
-                Children = { languageBox, releaseBox, hiToggle },
+                Children =
+                {
+                    new TextBlock { Text = "Update stored metadata for this subtitle record. File content is not replaced.", TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] },
+                    summary, languageBox, releaseBox, hiRow,
+                },
             },
         };
 
@@ -270,7 +348,7 @@ public sealed partial class AdminSubtitlesPage : Page
         {
             await _adminApi.UpdateDownloadedSubtitleAsync(subtitle.Id, new AdminUpdateDownloadedSubtitleRequest
             {
-                Language = languageBox.Text.Trim(),
+                Language = (languageBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? subtitle.Language,
                 ReleaseName = releaseBox.Text.Trim(),
                 HearingImpaired = hiToggle.IsOn,
             });

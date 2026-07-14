@@ -33,4 +33,37 @@ public class AdminCollectionsParitySourceTests
         Assert.Contains("Interlocked.Increment(ref _loadVersion)", ViewModelSource, StringComparison.Ordinal);
         Assert.Contains("if (loadVersion != _loadVersion) return;", ViewModelSource, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void ScopedBoardMatchesCurrentWebUiGroupingAndSortControls()
+    {
+        Assert.Contains("User Collections", PageSource, StringComparison.Ordinal);
+        Assert.Contains("Default sort (end-user view)", PageSource, StringComparison.Ordinal);
+        Assert.Contains("Recently Updated", PageSource, StringComparison.Ordinal);
+        Assert.Contains("Most Items", PageSource, StringComparison.Ordinal);
+        Assert.Contains("Reserved slot for user-published collections", PageSource, StringComparison.Ordinal);
+        Assert.Contains("Drop collections here to remove them from any group", PageSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ScopedBoardUsesNativeDragDropForGroupsAndCollections()
+    {
+        Assert.Contains("args.Data.SetText($\"section:", PageSource, StringComparison.Ordinal);
+        Assert.Contains("$\"collection:{draggedIds[0]}\"", PageSource, StringComparison.Ordinal);
+        Assert.Contains("MoveGroupSectionToAsync", PageSource, StringComparison.Ordinal);
+        Assert.Contains("MoveCollectionsToAsync", PageSource, StringComparison.Ordinal);
+        Assert.Contains("_selectedCollectionIds", PageSource, StringComparison.Ordinal);
+        Assert.Contains("collections:", PageSource, StringComparison.Ordinal);
+        Assert.Contains("collectionDragEnabled", PageSource, StringComparison.Ordinal);
+        Assert.Contains("ReorderCollectionGroupsAsync", ViewModelSource, StringComparison.Ordinal);
+        Assert.Contains("ReorderCollectionsInGroupAsync", ViewModelSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ScopedRowsShowCurrentSyncStatusAndGroupEditorProtectsUserGroup()
+    {
+        Assert.Contains("col.LastSyncStatus", PageSource, StringComparison.Ordinal);
+        Assert.Contains("user_collections", PageSource, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SecondaryButtonText = canDelete ? \"Delete group\"", PageSource, StringComparison.Ordinal);
+    }
 }

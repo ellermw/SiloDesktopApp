@@ -1,5 +1,6 @@
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Playback;
 
@@ -7,6 +8,17 @@ namespace SiloPlayer.Core.Api;
 
 public class CatalogApi(SiloApiClient client)
 {
+    public Task<MetadataAiStatus> GetMetadataAiStatusAsync(CancellationToken ct = default)
+        => client.GetAsync<MetadataAiStatus>("/api/v1/metadata/ai/status", ct);
+
+    public Task TranslateItemDescriptionAsync(
+        string contentId,
+        string targetLanguage,
+        CancellationToken ct = default)
+        => client.PostNoContentAsync(
+            $"/api/v1/items/{Uri.EscapeDataString(contentId)}/translate-description",
+            new Dictionary<string, object?> { ["target_language"] = targetLanguage },
+            ct);
     private List<Library>? _librariesCache;
     private DateTime _librariesCachedAt = DateTime.MinValue;
     private static readonly TimeSpan LibraryCacheDuration = TimeSpan.FromMinutes(5);
@@ -30,6 +42,9 @@ public class CatalogApi(SiloApiClient client)
     public Task<HomeSectionsResponse> GetLibrarySectionsAsync(int libraryId, CancellationToken ct = default)
         => client.GetAsync<HomeSectionsResponse>($"/api/v1/library/{libraryId}/sections", ct);
 
+    public Task<HomeLayoutResponse> GetLibraryLayoutAsync(int libraryId, CancellationToken ct = default)
+        => client.GetAsync<HomeLayoutResponse>($"/api/v1/library/{libraryId}/layout", ct);
+
     public Task<CatalogResponse> GetCatalogAsync(
         int? libraryId,
         string? sort = null, string? order = null,
@@ -38,11 +53,17 @@ public class CatalogApi(SiloApiClient client)
         string? yearMin = null, string? yearMax = null,
         string? q = null, string? type = null, int limit = 40, int offset = 0,
         bool includeTotal = true, string? snapshot = null,
-        string? source = null,
+        string? source = null, string? scope = null, string? sectionId = null,
+        IReadOnlyList<QueryRule>? extraRules = null,
+        string extraRulesMatch = "all",
+        IReadOnlyList<QueryGroup>? queryGroups = null,
+        string queryGroupsMatch = "all",
         CancellationToken ct = default)
     {
         var query = $"/api/v1/catalog?limit={limit}&offset={offset}";
         if (!string.IsNullOrWhiteSpace(source)) query += $"&source={Uri.EscapeDataString(source)}";
+        if (!string.IsNullOrWhiteSpace(scope)) query += $"&scope={Uri.EscapeDataString(scope)}";
+        if (!string.IsNullOrWhiteSpace(sectionId)) query += $"&section_id={Uri.EscapeDataString(sectionId)}";
         if (libraryId is > 0) query += $"&library_id={libraryId.Value}";
         if (sort != null) query += $"&sort={Uri.EscapeDataString(sort)}";
         if (order != null) query += $"&order={Uri.EscapeDataString(order)}";
@@ -62,32 +83,90 @@ public class CatalogApi(SiloApiClient client)
         // The current catalog API represents these facets as query-definition
         // rules. Keep the legacy scalar parameters above for older servers,
         // and also send the authoritative rule form used by the WebUI.
-        var rules = new List<(string Field, string Value)>();
-        if (!string.IsNullOrWhiteSpace(studio)) rules.Add(("studio", studio));
-        if (!string.IsNullOrWhiteSpace(country)) rules.Add(("country", country));
-        if (!string.IsNullOrWhiteSpace(resolution)) rules.Add(("resolution", resolution));
-        if (!string.IsNullOrWhiteSpace(audioLanguage)) rules.Add(("audio_language", audioLanguage));
-        if (rules.Count > 0)
+        var groups = new List<QueryGroup>();
+        if (queryGroups != null)
         {
-            query += "&groups%5B0%5D%5Bmatch%5D=all";
-            for (var i = 0; i < rules.Count; i++)
+            groups.AddRange(queryGroups.Where(group => group.Rules.Count > 0));
+            query += $"&match={Uri.EscapeDataString(queryGroupsMatch == "any" ? "any" : "all")}";
+        }
+        else
+        {
+            var rules = new List<QueryRule>();
+            if (!string.IsNullOrWhiteSpace(studio)) rules.Add(new QueryRule { Field = "studio", Op = "is", Value = studio });
+            if (!string.IsNullOrWhiteSpace(country)) rules.Add(new QueryRule { Field = "country", Op = "is", Value = country });
+            if (!string.IsNullOrWhiteSpace(resolution)) rules.Add(new QueryRule { Field = "resolution", Op = "is", Value = resolution });
+            if (!string.IsNullOrWhiteSpace(audioLanguage)) rules.Add(new QueryRule { Field = "audio_language", Op = "is", Value = audioLanguage });
+            if (extraRules != null) rules.AddRange(extraRules);
+            if (rules.Count > 0)
+                groups.Add(new QueryGroup { Match = extraRulesMatch == "any" ? "any" : "all", Rules = rules });
+        }
+
+        for (var groupIndex = 0; groupIndex < groups.Count; groupIndex++)
+        {
+            var group = groups[groupIndex];
+            query += $"&groups%5B{groupIndex}%5D%5Bmatch%5D={Uri.EscapeDataString(group.Match == "any" ? "any" : "all")}";
+            for (var ruleIndex = 0; ruleIndex < group.Rules.Count; ruleIndex++)
             {
-                var prefix = $"groups%5B0%5D%5Brules%5D%5B{i}%5D";
-                query += $"&{prefix}%5Bfield%5D={Uri.EscapeDataString(rules[i].Field)}";
-                query += $"&{prefix}%5Bop%5D=is";
-                query += $"&{prefix}%5Bvalue%5D={Uri.EscapeDataString(rules[i].Value)}";
+                var rule = group.Rules[ruleIndex];
+                var prefix = $"groups%5B{groupIndex}%5D%5Brules%5D%5B{ruleIndex}%5D";
+                query += $"&{prefix}%5Bfield%5D={Uri.EscapeDataString(rule.Field)}";
+                query += $"&{prefix}%5Bop%5D={Uri.EscapeDataString(rule.Op)}";
+                if (rule.Value is System.Collections.IEnumerable values and not string)
+                {
+                    var valueIndex = 0;
+                    foreach (var value in values)
+                        query += $"&{prefix}%5Bvalue%5D%5B{valueIndex++}%5D={Uri.EscapeDataString(FormatRuleValue(value))}";
+                }
+                else
+                {
+                    query += $"&{prefix}%5Bvalue%5D={Uri.EscapeDataString(FormatRuleValue(rule.Value))}";
+                }
             }
         }
         return client.GetAsync<CatalogResponse>(query, ct);
     }
 
-    public Task<CatalogFiltersResponse> GetFiltersAsync(int? libraryId = null, CancellationToken ct = default, string? source = null)
+    private static string FormatRuleValue(object? value) => value switch
+    {
+        null => "",
+        bool boolean => boolean ? "true" : "false",
+        IFormattable formattable => formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
+        _ => value.ToString() ?? "",
+    };
+
+    public Task<CatalogFiltersResponse> GetFiltersAsync(
+        int? libraryId = null,
+        CancellationToken ct = default,
+        string? source = null,
+        string? scope = null,
+        string? sectionId = null)
     {
         var parameters = new List<string>();
         if (libraryId is > 0) parameters.Add($"library_id={libraryId.Value}");
         if (!string.IsNullOrWhiteSpace(source)) parameters.Add($"source={Uri.EscapeDataString(source)}");
+        if (!string.IsNullOrWhiteSpace(scope)) parameters.Add($"scope={Uri.EscapeDataString(scope)}");
+        if (!string.IsNullOrWhiteSpace(sectionId)) parameters.Add($"section_id={Uri.EscapeDataString(sectionId)}");
         var query = "/api/v1/catalog/filters" + (parameters.Count > 0 ? "?" + string.Join("&", parameters) : "");
         return client.GetAsync<CatalogFiltersResponse>(query, ct);
+    }
+
+    public Task<AudiobookGroupsResponse> GetAudiobookGroupsAsync(
+        int libraryId,
+        string groupBy,
+        string sort = "name",
+        string? search = null,
+        int limit = 60,
+        int offset = 0,
+        bool includeTotal = true,
+        CancellationToken ct = default)
+    {
+        var query = $"/api/v1/catalog/audiobook-groups?library_id={libraryId}" +
+            $"&group_by={Uri.EscapeDataString(groupBy)}" +
+            $"&sort={Uri.EscapeDataString(sort)}&limit={limit}&offset={offset}" +
+            $"&include_total={includeTotal.ToString().ToLowerInvariant()}";
+        if (!string.IsNullOrWhiteSpace(search))
+            query += $"&q={Uri.EscapeDataString(search.Trim())}";
+        return client.GetAsync<AudiobookGroupsResponse>(query, ct);
     }
 
     public Task<CatalogResponse> SearchAsync(string query, int limit = 40, string? type = null, CancellationToken ct = default)
@@ -170,6 +249,9 @@ public class CatalogApi(SiloApiClient client)
     public Task<List<FileVersion>> GetItemVersionsAsync(string contentId, CancellationToken ct = default)
         => client.GetAsync<List<FileVersion>>($"/api/v1/catalog/items/{Uri.EscapeDataString(contentId)}/versions", ct);
 
+    public Task<MangaSeriesFiles> GetMangaSeriesFilesAsync(string contentId, CancellationToken ct = default)
+        => client.GetAsync<MangaSeriesFiles>($"/api/v1/catalog/items/{Uri.EscapeDataString(contentId)}/manga-files", ct);
+
     // ===== Library Collections =====
 
     public Task<LibraryTabResponse> GetLibraryCollectionsAsync(int libraryId, CancellationToken ct = default)
@@ -180,8 +262,8 @@ public class CatalogApi(SiloApiClient client)
 
     // ===== Library Sections =====
 
-    public Task<HomeSectionsResponse> GetLibrarySectionItemsAsync(int libraryId, string sectionId, CancellationToken ct = default)
-        => client.GetAsync<HomeSectionsResponse>($"/api/v1/library/{libraryId}/sections/{Uri.EscapeDataString(sectionId)}/items", ct);
+    public Task<HomeSectionItemsResponse> GetLibrarySectionItemsAsync(int libraryId, string sectionId, CancellationToken ct = default)
+        => client.GetAsync<HomeSectionItemsResponse>($"/api/v1/library/{libraryId}/sections/{Uri.EscapeDataString(sectionId)}/items", ct);
 
     // ===== History =====
 

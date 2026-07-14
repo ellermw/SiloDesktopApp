@@ -375,7 +375,7 @@ public partial class SetupWizardViewModel : ObservableObject
         try
         {
             var profile = await _authApi.CreateProfileAsync(ProfileName.Trim());
-            _authService.SelectProfile(profile.Id);
+            _authService.SelectProfile(profile.Id, profile: profile);
             return true;
         }
         catch (ApiException ex)

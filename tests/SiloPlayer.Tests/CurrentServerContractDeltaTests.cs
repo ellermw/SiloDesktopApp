@@ -28,7 +28,7 @@ public sealed class CurrentServerContractDeltaTests
         Assert.Contains("UpdatesPaused", installation);
         Assert.Contains("/api/v1/admin/plugins/catalog-settings", api);
         var page = Read("src", "SiloPlayer", "Views", "Admin", "AdminPluginsPage.xaml.cs");
-        Assert.Contains("Approved community catalog", Read("src", "SiloPlayer", "Views", "Admin", "AdminPluginsPage.xaml"));
+        Assert.Contains("Include approved community plugins", Read("src", "SiloPlayer", "Views", "Admin", "AdminPluginsPage.xaml"));
         Assert.Contains("Managed by Silo", page);
         Assert.Contains("Updates paused", page);
         Assert.Contains("SourceLabel", page);
@@ -74,6 +74,9 @@ public sealed class CurrentServerContractDeltaTests
         Assert.Contains("Audio transcodes", detail);
         Assert.Contains("transcoding_disabled", player);
         Assert.Contains("audio_transcoding_disabled", player);
+        Assert.Contains("if (!transportReplaced)", player);
+        Assert.Contains("DescribePlaybackError(ex)", player);
+        Assert.Contains("ShowNotice(title, detail, \"error\")", player);
     }
 
     [Fact]
@@ -151,6 +154,15 @@ public sealed class CurrentServerContractDeltaTests
         Assert.Contains("FormatTranscodeMode", viewModel);
         Assert.Contains("BuildPlaybackDetailsPanel", page);
         Assert.Contains("RunIpLookupAsync", page);
+    }
+
+    [Fact]
+    public void AutoQualityUsesTheServerResolverInsteadOfAliasingOriginal()
+    {
+        var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
+        Assert.Contains("if (tierId == \"original\")", player);
+        Assert.Contains("\"auto\"       => (\"\", 0)", player);
+        Assert.DoesNotContain("tierId is \"auto\" or \"original\"", player);
     }
 
     private static string Read(params string[] parts)

@@ -41,6 +41,9 @@ public sealed partial class AdminLogsPage : Page
         this.InitializeComponent();
     }
 
+    private void ContentScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+        => AdminPageContent.Width = Math.Min(1640, Math.Max(0, e.NewSize.Width));
+
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);

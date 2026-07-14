@@ -26,6 +26,9 @@ public class LibraryCollection
     public string? LastSyncAt { get; set; }
     public string? SyncSchedule { get; set; }
     public string? NextSyncAt { get; set; }
+    public string? ManagementMode { get; set; }
+    public string? ManagementSource { get; set; }
+    public string? ManagementKey { get; set; }
     public int ItemCount { get; set; }
     public string CreatedAt { get; set; } = "";
     public string UpdatedAt { get; set; } = "";
@@ -134,6 +137,32 @@ public class AdminCollectionsResponse
 {
     public List<LibraryCollection> Collections { get; set; } = [];
     public List<LibraryCollectionGroup> Groups { get; set; } = [];
+}
+
+public class ImportTraktCollectionRequest
+{
+    public int LibraryId { get; set; }
+    public List<int>? LibraryIds { get; set; }
+    public string Title { get; set; } = "";
+    public string Description { get; set; } = "";
+    public string Preset { get; set; } = "";
+    public string MediaType { get; set; } = "";
+    public int? Limit { get; set; }
+    public bool Featured { get; set; }
+    public string? ManagementMode { get; set; }
+    public string? ManagementSource { get; set; }
+    public string? ManagementKey { get; set; }
+}
+
+public class ImportTraktCollectionResponse
+{
+    public LibraryCollection Collection { get; set; } = new();
+    public LibraryCollectionSyncRun? SyncRun { get; set; }
+}
+
+public class BulkCreateSectionsResponse
+{
+    public int Created { get; set; }
 }
 
 public class LibraryCollectionGroup

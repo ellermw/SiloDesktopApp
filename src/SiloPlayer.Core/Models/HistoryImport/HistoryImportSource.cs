@@ -22,6 +22,18 @@ public class CreateHistoryImportSourceRequest
     public string? SystemId { get; set; }
     public bool Enabled { get; set; }
     public int SortOrder { get; set; }
+    public string? AdminToken { get; set; }
+}
+
+public class PlexAdminLoginRequest
+{
+    public string Username { get; set; } = "";
+    public string Password { get; set; } = "";
+}
+
+public class PlexAdminLoginResponse
+{
+    public string Token { get; set; } = "";
 }
 
 public class UpdateHistoryImportSourceRequest

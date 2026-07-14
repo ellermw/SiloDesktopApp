@@ -8,7 +8,8 @@
     xmlns:converters="using:SiloPlayer.Converters"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}"
-    Loaded="Page_Loaded">
+    Loaded="Page_Loaded"
+    Unloaded="Page_Unloaded">
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
@@ -20,7 +21,7 @@
         <!-- Main content. Webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
         <ScrollViewer IsScrollInertiaEnabled="True">
             <StackPanel
-                Padding="32,24,32,40"
+                Padding="40,32,40,40"
                 Spacing="24"
                 MaxWidth="1400"
                 HorizontalAlignment="Center">
@@ -42,6 +43,7 @@
                 <!-- ===== Restart-required banner ===== -->
                 <Border
                     x:Name="RestartBanner"
+                    Width="768"
                     MaxWidth="768"
                     HorizontalAlignment="Left"
                     Background="#1AF59E0B"
@@ -302,6 +304,7 @@
                      Webui: each card is max-w-3xl (768) and flush-left within page-shell. -->
                 <StackPanel
                     x:Name="SettingsSectionsPanel"
+                    Width="768"
                     MaxWidth="768"
                     HorizontalAlignment="Left"
                     Spacing="12" />

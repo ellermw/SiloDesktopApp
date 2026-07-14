@@ -9,7 +9,7 @@
     Background="{StaticResource AppBackgroundBrush}">
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Padding="32,24,32,32" Spacing="24" MaxWidth="1560" HorizontalAlignment="Center">
+        <StackPanel Padding="40,32,40,40" Spacing="24" MaxWidth="1640" HorizontalAlignment="Center">
             <StackPanel Spacing="8">
                 <TextBlock
                     Text="Subtitles"
@@ -76,18 +76,7 @@
                         <Button x:Name="ProviderSubSourceButton" Content="SubSource" Tag="subsource" Click="ProviderFilter_Click" />
                     </StackPanel>
 
-                    <ComboBox x:Name="LanguageFilterComboBox" Grid.Column="2" SelectionChanged="Filter_Changed">
-                        <ComboBoxItem Content="All languages" Tag="" IsSelected="True" />
-                        <ComboBoxItem Content="English" Tag="en" />
-                        <ComboBoxItem Content="Spanish" Tag="es" />
-                        <ComboBoxItem Content="French" Tag="fr" />
-                        <ComboBoxItem Content="German" Tag="de" />
-                        <ComboBoxItem Content="Italian" Tag="it" />
-                        <ComboBoxItem Content="Portuguese" Tag="pt" />
-                        <ComboBoxItem Content="Dutch" Tag="nl" />
-                        <ComboBoxItem Content="Polish" Tag="pl" />
-                        <ComboBoxItem Content="Japanese" Tag="ja" />
-                    </ComboBox>
+                    <ComboBox x:Name="LanguageFilterComboBox" Grid.Column="2" SelectionChanged="Filter_Changed" />
 
                     <ComboBox x:Name="UserFilterComboBox" Grid.Column="3" SelectionChanged="Filter_Changed" />
 

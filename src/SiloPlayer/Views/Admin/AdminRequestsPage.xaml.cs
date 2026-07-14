@@ -136,13 +136,40 @@ public sealed partial class AdminRequestsPage : Page
         titleLine.Children.Add(titleLink);
         titleLine.Children.Add(MakeBadge(FormatMediaType(request.MediaType), BadgeKind.Secondary));
         title.Children.Add(titleLine);
-        var metaParts = new List<string>();
-        if (request.Year is > 0) metaParts.Add(request.Year.Value.ToString());
-        metaParts.Add($"TMDB {request.TmdbId}");
-        if (request.RequestedByUserId.HasValue)
-            metaParts.Add(_users.FirstOrDefault(user => user.Id == request.RequestedByUserId.Value)?.Username ?? $"User {request.RequestedByUserId}");
-        if (!string.IsNullOrWhiteSpace(request.LibraryContentId)) metaParts.Add(" Library");
-        title.Children.Add(new TextBlock { Text = string.Join("   ", metaParts), FontSize = 11, Foreground = Brush("TertiaryTextBrush") });
+        var meta = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        if (request.Year is > 0) meta.Children.Add(Cell(request.Year.Value.ToString(), 11));
+        meta.Children.Add(Cell($"TMDB {request.TmdbId}", 11));
+        if (request.RequestedByUserId is int userId)
+        {
+            var username = _users.FirstOrDefault(user => user.Id == userId)?.Username ?? $"User {userId}";
+            var userLink = new HyperlinkButton
+            {
+                Content = username,
+                Padding = new Thickness(0),
+                FontSize = 11,
+                Foreground = Brush("TertiaryTextBrush"),
+            };
+            userLink.Click += (_, _) => Frame.Navigate(typeof(AdminUserDetailPage), userId);
+            meta.Children.Add(userLink);
+        }
+        if (!string.IsNullOrWhiteSpace(request.LibraryContentId))
+        {
+            var contentId = request.LibraryContentId;
+            var libraryLink = new HyperlinkButton
+            {
+                Padding = new Thickness(0),
+                Foreground = Brush("TertiaryTextBrush"),
+                Content = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 4,
+                    Children = { new FontIcon { Glyph = "\uE8F1", FontSize = 10 }, new TextBlock { Text = "Library", FontSize = 11 } },
+                },
+            };
+            libraryLink.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(contentId);
+            meta.Children.Add(libraryLink);
+        }
+        title.Children.Add(meta);
         if (!string.IsNullOrWhiteSpace(request.LastError)) title.Children.Add(new TextBlock { Text = request.LastError, FontSize = 11, Foreground = Brush("ErrorBrush"), TextWrapping = TextWrapping.Wrap, MaxWidth = 430 });
 
         var requested = Cell(FormatDate(request.CreatedAt), 11);
@@ -174,13 +201,19 @@ public sealed partial class AdminRequestsPage : Page
 
     private FrameworkElement BuildActions(MediaRequest request)
     {
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        var actions = new Grid { ColumnSpacing = 6, RowSpacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        actions.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        actions.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var approve = ActionButton("", "Approve", request.Status == "pending" && request.Outcome == "active");
         var decline = ActionButton("", "Decline", request.Status != "completed" && request.Outcome == "active");
         var retry = ActionButton("", "Retry", request.Outcome == "failed");
         approve.Click += async (_, _) => { await ViewModel.ApproveCommand.ExecuteAsync(request); RenderQueue(); };
         decline.Click += async (_, _) => await DeclineAsync(request);
         retry.Click += async (_, _) => { await ViewModel.RetryCommand.ExecuteAsync(request); RenderQueue(); };
+        Grid.SetColumn(decline, 1);
+        Grid.SetRow(retry, 1);
         actions.Children.Add(approve); actions.Children.Add(decline); actions.Children.Add(retry);
         return actions;
     }
@@ -224,69 +257,578 @@ public sealed partial class AdminRequestsPage : Page
             var pluginsTask = _pluginsApi.GetInstallationsAsync();
             await Task.WhenAll(integrationsTask, pluginsTask);
             _integrations = (await integrationsTask).Integrations; _pluginInstallations = await pluginsTask;
-            RenderIntegrations();
+            RenderIntegrationEditors();
         }
         catch (Exception ex) { ShowError($"Request integrations could not be loaded: {ex.Message}"); }
     }
 
-    private void RenderIntegrations()
-    {
-        IntegrationRows.Children.Clear();
-        if (_integrations.Count == 0) { IntegrationRows.Children.Add(Cell("No request integrations configured.", 13)); return; }
-        foreach (var integration in _integrations)
-        {
-            var card = new Grid { ColumnSpacing = 12, Padding = new Thickness(16), Background = Brush("CardBackgroundBrush") };
-            card.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); card.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var info = new StackPanel { Spacing = 5 };
-            var heading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            heading.Children.Add(new TextBlock { Text = integration.Name, FontSize = 15, FontWeight = FontWeights.SemiBold }); heading.Children.Add(MakeBadge(integration.Enabled ? "Enabled" : "Disabled", integration.Enabled ? BadgeKind.Primary : BadgeKind.Secondary));
-            info.Children.Add(heading); info.Children.Add(Cell(integration.BaseUrl, 12));
-            info.Children.Add(Cell($"Router: {integration.InstallationId?.ToString() ?? "Not selected"}  ·  {integration.CapabilityId ?? "No capability"}", 11));
-            if (!string.IsNullOrWhiteSpace(integration.LastCheckStatus)) info.Children.Add(Cell($"Last check: {integration.LastCheckStatus}", 11));
-            var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            var edit = ActionButton("", "Edit", true); edit.Click += async (_, _) => await EditIntegrationAsync(integration);
-            var delete = ActionButton("", "Delete", true); delete.Foreground = Brush("ErrorBrush"); delete.Click += async (_, _) => await DeleteIntegrationAsync(integration);
-            actions.Children.Add(edit); actions.Children.Add(delete); Grid.SetColumn(actions, 1); card.Children.Add(info); card.Children.Add(actions);
-            IntegrationRows.Children.Add(new Border { BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Child = card });
-        }
-    }
-
-    private async void AddIntegration_Click(object sender, RoutedEventArgs e) => await EditIntegrationAsync(null);
-
-    private async Task EditIntegrationAsync(RequestIntegration? existing)
-    {
-        var name = new TextBox { Header = "Name", Text = existing?.Name ?? "", Style = (Style)Resources["RequestFieldStyle"] };
-        var url = new TextBox { Header = "Base URL", Text = existing?.BaseUrl ?? "", Style = (Style)Resources["RequestFieldStyle"] };
-        var key = new PasswordBox { Header = existing?.HasApiKey == true ? "API key (leave blank to keep existing)" : "API key", PasswordRevealMode = PasswordRevealMode.Peek };
-        var enabled = new ToggleSwitch { Header = "Enabled", IsOn = existing?.Enabled ?? true, OnContent = "", OffContent = "" };
-        var router = new ComboBox { Header = "Request router plugin", MinWidth = 420 };
-        foreach (var installation in _pluginInstallations)
-            foreach (var capability in installation.Capabilities.Where(c => c.Type == "request_router.v1" || c.Id == "request_router.v1"))
-                router.Items.Add(new ComboBoxItem { Content = $"{(string.IsNullOrWhiteSpace(capability.DisplayName) ? installation.PluginId : capability.DisplayName)} ({capability.Id})", Tag = new RouterChoice(installation.Id, capability.Id) });
-        if (existing?.InstallationId is int installationId)
-            router.SelectedItem = router.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag is RouterChoice choice && choice.InstallationId == installationId && choice.CapabilityId == existing.CapabilityId);
-        var config = new TextBox { Header = "Plugin configuration (JSON)", Text = existing?.PluginConfig == null ? "{}" : JsonSerializer.Serialize(existing.PluginConfig, new JsonSerializerOptions { WriteIndented = true }), AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap, MinHeight = 120, FontFamily = new FontFamily("Consolas") };
-        var panel = new StackPanel { Width = 520, Spacing = 12, Children = { name, enabled, router, url, key, config } };
-        var dialog = new ContentDialog { Title = existing == null ? "Add Integration" : "Edit Integration", Content = panel, PrimaryButtonText = existing == null ? "Add Integration" : "Save Integration", CloseButtonText = "Cancel", XamlRoot = XamlRoot };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        try
-        {
-            if (router.SelectedItem is not ComboBoxItem { Tag: RouterChoice choice }) throw new InvalidOperationException("Select a request router plugin.");
-            var pluginConfig = JsonSerializer.Deserialize<Dictionary<string, object?>>(config.Text) ?? new();
-            var payload = existing ?? new RequestIntegration(); payload.Name = name.Text.Trim(); payload.Enabled = enabled.IsOn; payload.BaseUrl = url.Text.Trim(); payload.ApiKeyRef = key.Password.Trim(); payload.InstallationId = choice.InstallationId; payload.CapabilityId = choice.CapabilityId; payload.PluginConfig = pluginConfig;
-            if (existing == null) await _requestsApi.CreateRequestIntegrationAsync(payload); else await _requestsApi.UpdateRequestIntegrationAsync(existing.Id, payload);
-            await LoadIntegrationsAsync(); _toasts.Success(existing == null ? "Integration added" : "Integration saved");
-        }
-        catch (Exception ex) { ShowError(ex.Message); }
-    }
+    private void AddIntegration_Click(object sender, RoutedEventArgs e) => AddIntegrationEditor();
 
     private async Task DeleteIntegrationAsync(RequestIntegration integration)
     {
-        var dialog = new ContentDialog { Title = "Delete integration", Content = $"Delete \"{integration.Name}\"?", PrimaryButtonText = "Delete", CloseButtonText = "Cancel", XamlRoot = XamlRoot };
+        var dialog = new ContentDialog { Title = "Delete connection", Content = $"\"{integration.Name}\" will be permanently removed. New requests will no longer route to this connection.", PrimaryButtonText = "Delete", CloseButtonText = "Cancel", XamlRoot = XamlRoot };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         try { await _requestsApi.DeleteRequestIntegrationAsync(integration.Id); await LoadIntegrationsAsync(); _toasts.Success("Integration deleted"); }
         catch (Exception ex) { ShowError(ex.Message); }
     }
+
+    // WebUI-parity inline connection editor. Request integrations are plugin-
+    // schema driven; a raw JSON dialog cannot represent dynamic root-folder,
+    // quality-profile, tag, conditional, or exclusive controls.
+    private void RenderIntegrationEditors()
+    {
+        IntegrationRows.Children.Clear();
+        var routers = GetRequestRouterChoices();
+        if (routers.Count == 0)
+        {
+            IntegrationRows.Children.Add(BuildEmptyPanel(
+                "No request-router plugin installed",
+                "Install a plugin that exposes the request_router.v1 capability before adding connections."));
+            return;
+        }
+        if (_integrations.Count == 0)
+        {
+            IntegrationRows.Children.Add(BuildEmptyPanel(
+                "No connections",
+                "Add a connection and pick a plugin to route requests."));
+            return;
+        }
+
+        var grid = new Grid { ColumnSpacing = 16, RowSpacing = 16 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        for (var index = 0; index < _integrations.Count; index++)
+        {
+            if (index % 2 == 0) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var card = BuildIntegrationEditor(_integrations[index], routers);
+            Grid.SetColumn(card, index % 2);
+            Grid.SetRow(card, index / 2);
+            grid.Children.Add(card);
+        }
+        IntegrationRows.Children.Add(grid);
+    }
+
+    private void AddIntegrationEditor()
+    {
+        var routers = GetRequestRouterChoices();
+        if (routers.Count == 0) return;
+        var first = routers[0];
+        _integrations.Add(new RequestIntegration
+        {
+            Enabled = true,
+            InstallationId = first.Installation.Id,
+            CapabilityId = first.Capability.Id,
+            PluginConfig = [],
+        });
+        RenderIntegrationEditors();
+    }
+
+    private List<RequestRouterChoice> GetRequestRouterChoices()
+    {
+        var result = new List<RequestRouterChoice>();
+        foreach (var installation in _pluginInstallations)
+            foreach (var capability in installation.Capabilities.Where(capability =>
+                         capability.Type == "request_router.v1" || capability.Id == "request_router.v1"))
+                result.Add(new RequestRouterChoice(installation, capability));
+        return result;
+    }
+
+    private FrameworkElement BuildIntegrationEditor(RequestIntegration integration, List<RequestRouterChoice> routers)
+    {
+        integration.PluginConfig ??= [];
+        var selected = routers.FirstOrDefault(choice =>
+            choice.Installation.Id == integration.InstallationId &&
+            choice.Capability.Id == integration.CapabilityId)
+            ?? routers.FirstOrDefault(choice => choice.Installation.Id == integration.InstallationId)
+            ?? (routers.Count == 1 ? routers[0] : null);
+        if (selected is not null && integration.InstallationId is null)
+        {
+            integration.InstallationId = selected.Installation.Id;
+            integration.CapabilityId = selected.Capability.Id;
+        }
+
+        var root = new StackPanel { Spacing = 16 };
+        var header = new Grid { ColumnSpacing = 12 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        titleRow.Children.Add(new FontIcon { Glyph = "\uEBC5", FontSize = 15, Foreground = Brush("AccentBrush") });
+        titleRow.Children.Add(new TextBlock
+        {
+            Text = selected?.Capability.DisplayName ?? selected?.Installation.PluginId ?? "Connection",
+            FontSize = 18,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        if (integration.HasApiKey == true) titleRow.Children.Add(MakeBadge("Key saved", BadgeKind.Secondary));
+        if (string.IsNullOrEmpty(integration.Id)) titleRow.Children.Add(MakeBadge("New", BadgeKind.Outline));
+        header.Children.Add(titleRow);
+
+        var enabledRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        var enabledLabel = Cell(integration.Enabled ? "Enabled" : "Disabled", 12);
+        var enabled = new ToggleSwitch { IsOn = integration.Enabled, OnContent = "", OffContent = "" };
+        enabled.Toggled += (_, _) =>
+        {
+            integration.Enabled = enabled.IsOn;
+            enabledLabel.Text = enabled.IsOn ? "Enabled" : "Disabled";
+        };
+        enabledRow.Children.Add(enabledLabel);
+        enabledRow.Children.Add(enabled);
+        Grid.SetColumn(enabledRow, 1);
+        header.Children.Add(enabledRow);
+        root.Children.Add(header);
+
+        var name = new TextBox { Text = integration.Name, PlaceholderText = "Connection name", Style = (Style)Resources["RequestFieldStyle"] };
+        name.TextChanged += (_, _) => integration.Name = name.Text;
+        var key = new PasswordBox
+        {
+            PlaceholderText = integration.HasApiKey == true ? "Leave blank to keep saved key" : "API key",
+            PasswordRevealMode = PasswordRevealMode.Peek,
+        };
+        key.PasswordChanged += (_, _) => integration.ApiKeyRef = key.Password;
+        var nameKeyGrid = new Grid { ColumnSpacing = 16 };
+        nameKeyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        nameKeyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var nameField = BuildField("Name", name);
+        var keyField = BuildField("API key or setting key", key);
+        Grid.SetColumn(keyField, 1);
+        nameKeyGrid.Children.Add(nameField);
+        nameKeyGrid.Children.Add(keyField);
+        root.Children.Add(nameKeyGrid);
+
+        var url = new TextBox { Text = integration.BaseUrl, PlaceholderText = "http://localhost:7878", Style = (Style)Resources["RequestFieldStyle"] };
+        url.TextChanged += (_, _) => integration.BaseUrl = url.Text;
+        root.Children.Add(BuildField("Base URL", url));
+
+        var pluginPicker = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (var choice in routers)
+        {
+            var label = $"{(string.IsNullOrWhiteSpace(choice.Capability.DisplayName) ? choice.Installation.PluginId : choice.Capability.DisplayName)} ({choice.Installation.PluginId})";
+            pluginPicker.Items.Add(new ComboBoxItem { Content = label, Tag = choice });
+        }
+        pluginPicker.SelectedItem = pluginPicker.Items.OfType<ComboBoxItem>().FirstOrDefault(item =>
+            item.Tag is RequestRouterChoice choice && choice.Installation.Id == selected?.Installation.Id && choice.Capability.Id == selected?.Capability.Id);
+        var suppressPluginChange = true;
+        pluginPicker.SelectionChanged += (_, _) =>
+        {
+            if (suppressPluginChange || pluginPicker.SelectedItem is not ComboBoxItem { Tag: RequestRouterChoice choice }) return;
+            integration.InstallationId = choice.Installation.Id;
+            integration.CapabilityId = choice.Capability.Id;
+            integration.PluginConfig = [];
+            RenderIntegrationEditors();
+        };
+        suppressPluginChange = false;
+        root.Children.Add(BuildField("Plugin", pluginPicker));
+
+        var schema = selected?.Capability.ConfigSchema?.FirstOrDefault();
+        var descriptor = schema?.AdminForm;
+        if (descriptor is not null)
+        {
+            var schemaHost = new ContentControl();
+            var sectionOpen = new Dictionary<string, bool>();
+            Dictionary<string, List<RequestSchemaOption>> options = [];
+            string? optionsError = null;
+
+            void RefreshSchema() => schemaHost.Content = BuildIntegrationSchema(
+                integration, descriptor, options, optionsError, sectionOpen, RefreshSchema);
+
+            RefreshSchema();
+            root.Children.Add(schemaHost);
+            _ = LoadIntegrationOptionsAsync(integration, options, message =>
+            {
+                optionsError = message;
+                RefreshSchema();
+            });
+        }
+        else if (selected is not null)
+        {
+            root.Children.Add(Cell("This plugin does not expose a connection configuration form.", 13));
+        }
+        else
+        {
+            root.Children.Add(Cell("Select a plugin to configure this connection.", 13));
+        }
+
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var isNew = string.IsNullOrEmpty(integration.Id);
+        var save = new Button { Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+        save.Content = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Children = { new FontIcon { Glyph = "\uE74E", FontSize = 14 }, new TextBlock { Text = isNew ? "Create connection" : "Save" } },
+        };
+        save.Click += async (_, _) => await SaveIntegrationAsync(integration, save, isNew);
+        actions.Children.Add(save);
+        var remove = new Button
+        {
+            Style = (Style)Application.Current.Resources["SecondaryButtonStyle"],
+            Foreground = isNew ? Brush("SecondaryTextBrush") : Brush("ErrorBrush"),
+            BorderThickness = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent),
+        };
+        remove.Content = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Children = { new FontIcon { Glyph = isNew ? "\uE711" : "\uE74D", FontSize = 14 }, new TextBlock { Text = isNew ? "Discard" : "Delete" } },
+        };
+        remove.Click += async (_, _) =>
+        {
+            if (isNew)
+            {
+                _integrations.Remove(integration);
+                RenderIntegrationEditors();
+            }
+            else
+            {
+                await DeleteIntegrationAsync(integration);
+            }
+        };
+        actions.Children.Add(remove);
+        root.Children.Add(actions);
+
+        return new Border
+        {
+            Background = Brush("CardBackgroundBrush"),
+            BorderBrush = Brush("BorderBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(20),
+            Child = root,
+        };
+    }
+
+    private async Task LoadIntegrationOptionsAsync(
+        RequestIntegration integration,
+        Dictionary<string, List<RequestSchemaOption>> options,
+        Action<string?> completed)
+    {
+        if (string.IsNullOrWhiteSpace(integration.BaseUrl) || integration.InstallationId is null ||
+            string.IsNullOrWhiteSpace(integration.CapabilityId) ||
+            (integration.HasApiKey != true && string.IsNullOrWhiteSpace(integration.ApiKeyRef)))
+            return;
+        try
+        {
+            var loaded = await _requestsApi.LoadRequestIntegrationOptionsAsync(
+                string.IsNullOrEmpty(integration.Id) ? "new" : integration.Id,
+                new LoadRequestIntegrationOptionsRequest
+                {
+                    BaseUrl = integration.BaseUrl,
+                    ApiKeyRef = string.IsNullOrWhiteSpace(integration.ApiKeyRef) ? null : integration.ApiKeyRef,
+                    CapabilityId = integration.CapabilityId,
+                    InstallationId = integration.InstallationId,
+                    PluginConfig = integration.PluginConfig,
+                });
+            options.Clear();
+            foreach (var (key, values) in loaded) options[key] = values;
+            completed(null);
+        }
+        catch
+        {
+            options.Clear();
+            completed("Couldn't load options from the service — check the base URL and API key, then edit a field to retry.");
+        }
+    }
+
+    private FrameworkElement BuildIntegrationSchema(
+        RequestIntegration integration,
+        PluginAdminForm descriptor,
+        Dictionary<string, List<RequestSchemaOption>> dynamicOptions,
+        string? optionsError,
+        Dictionary<string, bool> sectionOpen,
+        Action refresh)
+    {
+        integration.PluginConfig ??= [];
+        var root = new StackPanel { Spacing = 16 };
+        var fieldsByKey = descriptor.Fields.ToDictionary(field => field.Key, StringComparer.Ordinal);
+        var sectionKeys = new HashSet<string>(descriptor.Sections?.SelectMany(section => section.FieldKeys) ?? []);
+
+        foreach (var field in descriptor.Fields.Where(field => !sectionKeys.Contains(field.Key)))
+            if (ConditionsMatch(field.ShowWhen, integration.PluginConfig))
+                root.Children.Add(BuildIntegrationSchemaField(integration, field, dynamicOptions, refresh));
+
+        foreach (var section in descriptor.Sections ?? [])
+        {
+            if (!ConditionsMatch(section.ShowWhen, integration.PluginConfig)) continue;
+            if (!sectionOpen.ContainsKey(section.Key)) sectionOpen[section.Key] = !section.CollapsedDefault;
+            var sectionRoot = new StackPanel { Spacing = 12 };
+            var sectionHeader = new Grid { ColumnSpacing = 8 };
+            sectionHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            sectionHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var labels = new StackPanel { Spacing = 2 };
+            labels.Children.Add(new TextBlock { Text = section.Title, FontSize = 13, FontWeight = FontWeights.SemiBold });
+            if (!string.IsNullOrWhiteSpace(section.Description)) labels.Children.Add(Cell(section.Description, 11));
+            sectionHeader.Children.Add(labels);
+            if (section.Collapsible)
+            {
+                var toggle = new Button
+                {
+                    Content = sectionOpen[section.Key] ? "Hide" : "Show",
+                    Style = (Style)Application.Current.Resources["SecondaryButtonStyle"],
+                    BorderThickness = new Thickness(0),
+                    Background = new SolidColorBrush(Colors.Transparent),
+                    Padding = new Thickness(8, 3, 8, 3),
+                    FontSize = 11,
+                };
+                toggle.Click += (_, _) => { sectionOpen[section.Key] = !sectionOpen[section.Key]; refresh(); };
+                Grid.SetColumn(toggle, 1);
+                sectionHeader.Children.Add(toggle);
+            }
+            sectionRoot.Children.Add(sectionHeader);
+            if (!section.Collapsible || sectionOpen[section.Key])
+            {
+                foreach (var key in section.FieldKeys)
+                    if (fieldsByKey.TryGetValue(key, out var field) && ConditionsMatch(field.ShowWhen, integration.PluginConfig))
+                        sectionRoot.Children.Add(BuildIntegrationSchemaField(integration, field, dynamicOptions, refresh));
+            }
+            root.Children.Add(new Border
+            {
+                Background = Brush("SurfaceBrush"),
+                BorderBrush = Brush("BorderBrush"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(14),
+                Child = sectionRoot,
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(optionsError))
+        {
+            root.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(24, 239, 68, 68)),
+                BorderBrush = Brush("ErrorBrush"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(10),
+                Child = new TextBlock { Text = $"⚠ {optionsError}", FontSize = 11, Foreground = Brush("ErrorBrush"), TextWrapping = TextWrapping.Wrap },
+            });
+        }
+        return root;
+    }
+
+    private FrameworkElement BuildIntegrationSchemaField(
+        RequestIntegration integration,
+        PluginAdminFormField field,
+        Dictionary<string, List<RequestSchemaOption>> dynamicOptions,
+        Action refresh)
+    {
+        integration.PluginConfig ??= [];
+        var value = ConfigValue(integration.PluginConfig, field.Key) ?? field.DefaultValue;
+        if (field.Control.Equals("SWITCH", StringComparison.OrdinalIgnoreCase))
+        {
+            var toggle = new ToggleSwitch { IsOn = AsBool(value), OnContent = "", OffContent = "", Width = 44, MinWidth = 44, VerticalAlignment = VerticalAlignment.Top };
+            toggle.Toggled += (_, _) =>
+            {
+                integration.PluginConfig[field.Key] = toggle.IsOn;
+                if (toggle.IsOn && !string.IsNullOrWhiteSpace(field.ExclusiveGroupField))
+                    ApplyIntegrationExclusivity(integration, field);
+                refresh();
+            };
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+            row.Children.Add(toggle);
+            var label = new StackPanel { Spacing = 2 };
+            label.Children.Add(new TextBlock { Text = field.Label, FontSize = 13, FontWeight = FontWeights.Medium });
+            if (!string.IsNullOrWhiteSpace(field.Description)) label.Children.Add(new TextBlock { Text = field.Description, FontSize = 11, Foreground = Brush("TertiaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+            row.Children.Add(label);
+            return new Border { BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(7), Padding = new Thickness(12), Child = row };
+        }
+
+        FrameworkElement editor;
+        if (field.Control.Equals("SELECT", StringComparison.OrdinalIgnoreCase))
+        {
+            var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+            var options = field.DynamicOptions && dynamicOptions.TryGetValue(field.Key, out var loaded)
+                ? loaded.Select(option => new PluginAdminFormFieldOption { Label = option.Label, Value = option.Value }).ToList()
+                : field.Options ?? [];
+            foreach (var option in options) combo.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Value });
+            var current = ConfigString(value);
+            combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, current));
+            if (combo.SelectedItem is null && combo.Items.Count > 0)
+            {
+                combo.SelectedIndex = 0;
+                if (combo.SelectedItem is ComboBoxItem { Tag: string first }) integration.PluginConfig[field.Key] = first;
+            }
+            var suppress = true;
+            combo.SelectionChanged += (_, _) =>
+            {
+                if (suppress || combo.SelectedItem is not ComboBoxItem { Tag: string selected }) return;
+                integration.PluginConfig[field.Key] = selected;
+                refresh();
+            };
+            suppress = false;
+            editor = combo;
+        }
+        else if (field.Control.Equals("MULTI_SELECT", StringComparison.OrdinalIgnoreCase))
+        {
+            var options = field.DynamicOptions && dynamicOptions.TryGetValue(field.Key, out var loaded)
+                ? loaded.Select(option => new PluginAdminFormFieldOption { Label = option.Label, Value = option.Value }).ToList()
+                : field.Options ?? [];
+            var selected = ConfigStringList(value);
+            var chips = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            foreach (var option in options)
+            {
+                var button = new Button
+                {
+                    Content = option.Label,
+                    Style = (Style)Application.Current.Resources[selected.Contains(option.Value) ? "AccentButtonStyle" : "SecondaryButtonStyle"],
+                    Padding = new Thickness(8, 3, 8, 3),
+                    FontSize = 11,
+                };
+                button.Click += (_, _) =>
+                {
+                    var next = ConfigStringList(ConfigValue(integration.PluginConfig, field.Key));
+                    if (!next.Remove(option.Value)) next.Add(option.Value);
+                    integration.PluginConfig[field.Key] = next;
+                    refresh();
+                };
+                chips.Children.Add(button);
+            }
+            editor = chips;
+        }
+        else if (field.Control.Equals("NUMBER", StringComparison.OrdinalIgnoreCase))
+        {
+            var number = new NumberBox { Value = double.TryParse(ConfigString(value), out var parsed) ? parsed : double.NaN, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
+            if (field.Validation?.HasMin == true && field.Validation.Min.HasValue) number.Minimum = field.Validation.Min.Value;
+            if (field.Validation?.HasMax == true && field.Validation.Max.HasValue) number.Maximum = field.Validation.Max.Value;
+            number.ValueChanged += (_, _) => integration.PluginConfig[field.Key] = number.Value;
+            editor = number;
+        }
+        else if (field.Secret || field.Control.Equals("PASSWORD", StringComparison.OrdinalIgnoreCase))
+        {
+            var password = new PasswordBox { PlaceholderText = field.Placeholder ?? "", PasswordRevealMode = PasswordRevealMode.Peek };
+            password.PasswordChanged += (_, _) => integration.PluginConfig[field.Key] = password.Password;
+            editor = password;
+        }
+        else
+        {
+            var multiline = field.Multiline || field.Control.Equals("TEXTAREA", StringComparison.OrdinalIgnoreCase);
+            var text = new TextBox
+            {
+                Text = ConfigString(value),
+                PlaceholderText = field.Placeholder ?? "",
+                AcceptsReturn = multiline,
+                TextWrapping = multiline ? TextWrapping.Wrap : TextWrapping.NoWrap,
+                MinHeight = multiline ? Math.Max(96, (field.Rows ?? 4) * 22) : 0,
+                Style = (Style)Resources["RequestFieldStyle"],
+            };
+            text.TextChanged += (_, _) => integration.PluginConfig[field.Key] = text.Text;
+            editor = text;
+        }
+        return BuildField(field.Label, editor, field.Description);
+    }
+
+    private async Task SaveIntegrationAsync(RequestIntegration integration, Button saveButton, bool isNew)
+    {
+        if (string.IsNullOrWhiteSpace(integration.Name) || string.IsNullOrWhiteSpace(integration.BaseUrl) ||
+            integration.InstallationId is null || string.IsNullOrWhiteSpace(integration.CapabilityId) ||
+            (integration.HasApiKey != true && string.IsNullOrWhiteSpace(integration.ApiKeyRef)))
+        {
+            ShowError("Name, Base URL, API key, and Plugin are required.");
+            return;
+        }
+        saveButton.IsEnabled = false;
+        try
+        {
+            var serviceKind = ConfigString(ConfigValue(integration.PluginConfig, "service_kind")).Trim().ToLowerInvariant();
+            integration.SupportedMediaTypes = serviceKind switch
+            {
+                "radarr" => ["movie"],
+                "sonarr" => ["series"],
+                _ => integration.SupportedMediaTypes ?? [],
+            };
+            if (isNew) await _requestsApi.CreateRequestIntegrationAsync(integration);
+            else await _requestsApi.UpdateRequestIntegrationAsync(integration.Id, integration);
+            await LoadIntegrationsAsync();
+            _toasts.Success(isNew ? "Connection created" : "Connection saved");
+        }
+        catch (Exception ex) { ShowError(ex.Message); }
+        finally { saveButton.IsEnabled = true; }
+    }
+
+    private void ApplyIntegrationExclusivity(RequestIntegration changed, PluginAdminFormField field)
+    {
+        if (string.IsNullOrWhiteSpace(field.ExclusiveGroupField) || changed.PluginConfig is null) return;
+        var groupValue = ConfigString(ConfigValue(changed.PluginConfig, field.ExclusiveGroupField));
+        foreach (var sibling in _integrations.Where(item => !ReferenceEquals(item, changed) && item.InstallationId == changed.InstallationId))
+        {
+            if (sibling.PluginConfig is null ||
+                ConfigString(ConfigValue(sibling.PluginConfig, field.ExclusiveGroupField)) != groupValue ||
+                !AsBool(ConfigValue(sibling.PluginConfig, field.Key))) continue;
+            sibling.PluginConfig[field.Key] = false;
+        }
+    }
+
+    private static bool ConditionsMatch(List<PluginAdminFormCondition>? conditions, Dictionary<string, object?> values)
+    {
+        if (conditions is null || conditions.Count == 0) return true;
+        return conditions.All(condition => condition.Equals.Any(expected =>
+            string.Equals(ConfigString(ConfigValue(values, condition.Field)), expected, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static object? ConfigValue(Dictionary<string, object?>? values, string key)
+    {
+        if (values is null || !values.TryGetValue(key, out var value)) return null;
+        return value is JsonElement element ? JsonElementValue(element) : value;
+    }
+
+    private static object? JsonElementValue(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.String => element.GetString(),
+        JsonValueKind.True => true,
+        JsonValueKind.False => false,
+        JsonValueKind.Number when element.TryGetInt64(out var integer) => integer,
+        JsonValueKind.Number when element.TryGetDouble(out var number) => number,
+        JsonValueKind.Array => element.EnumerateArray().Select(item => item.ToString()).ToList(),
+        JsonValueKind.Null => null,
+        _ => element.ToString(),
+    };
+
+    private static string ConfigString(object? value) => value switch
+    {
+        null => "",
+        bool flag => flag ? "true" : "false",
+        _ => value.ToString() ?? "",
+    };
+
+    private static bool AsBool(object? value) => value is bool flag ? flag :
+        bool.TryParse(ConfigString(value), out var parsed) && parsed;
+
+    private static List<string> ConfigStringList(object? value) => value switch
+    {
+        IEnumerable<string> strings => strings.ToList(),
+        JsonElement { ValueKind: JsonValueKind.Array } element => element.EnumerateArray().Select(item => item.ToString()).ToList(),
+        _ => [],
+    };
+
+    private FrameworkElement BuildField(string label, FrameworkElement editor, string? description = null)
+    {
+        var stack = new StackPanel { Spacing = 6 };
+        stack.Children.Add(new TextBlock { Text = label, FontSize = 13, FontWeight = FontWeights.Medium });
+        if (!string.IsNullOrWhiteSpace(description))
+            stack.Children.Add(new TextBlock { Text = description, FontSize = 11, Foreground = Brush("TertiaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+        stack.Children.Add(editor);
+        return stack;
+    }
+
+    private FrameworkElement BuildEmptyPanel(string title, string detail) => new Border
+    {
+        BorderBrush = Brush("BorderBrush"),
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(8),
+        Padding = new Thickness(24),
+        Child = new StackPanel
+        {
+            Spacing = 6,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Children =
+            {
+                new TextBlock { Text = title, FontSize = 15, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center },
+                new TextBlock { Text = detail, FontSize = 12, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap, HorizontalAlignment = HorizontalAlignment.Center },
+            },
+        },
+    };
 
     private async Task LoadUsersAsync()
     {
@@ -351,5 +893,5 @@ public sealed partial class AdminRequestsPage : Page
     private static Brush Brush(string key) => (Brush)Application.Current.Resources[key];
     private void ClearError() { ErrorText.Text = ""; ErrorText.Visibility = Visibility.Collapsed; }
     private void ShowError(string? error) { ErrorText.Text = error ?? ""; ErrorText.Visibility = string.IsNullOrWhiteSpace(error) ? Visibility.Collapsed : Visibility.Visible; }
-    private sealed record RouterChoice(int InstallationId, string CapabilityId);
+    private sealed record RequestRouterChoice(PluginInstallation Installation, PluginCapability Capability);
 }

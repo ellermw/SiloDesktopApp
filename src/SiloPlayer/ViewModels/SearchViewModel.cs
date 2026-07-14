@@ -43,19 +43,52 @@ public partial class SearchViewModel : ObservableObject
     [ObservableProperty]
     private string _mediaScope = "video";
 
+    [ObservableProperty]
+    private string? _mediaType = "video";
+
+    [ObservableProperty] private string _sortField = "added_at";
+    [ObservableProperty] private string _sortOrder = "desc";
+    [ObservableProperty] private string? _genre;
+    [ObservableProperty] private string? _contentRating;
+    [ObservableProperty] private string? _resolution;
+    [ObservableProperty] private string? _country;
+
+    public CatalogFiltersResponse? AvailableFilters { get; private set; }
+
+    public async Task LoadFiltersAsync()
+    {
+        try { AvailableFilters = await _catalogApi.GetFiltersAsync(source: "query"); }
+        catch { AvailableFilters = new CatalogFiltersResponse(); }
+    }
+
     public async Task LoadMediaScopeAsync()
     {
         try
         {
             var value = (await _settingsApi.GetSettingAsync("search.media_scope")).Value;
             MediaScope = value is "all" or "video" or "audiobook" ? value : "video";
+            MediaType = MediaScope == "all" ? null : MediaScope;
         }
-        catch { MediaScope = "video"; }
+        catch { MediaScope = "video"; MediaType = "video"; }
     }
 
     public async Task SetMediaScopeAsync(string scope)
     {
         MediaScope = scope is "all" or "video" or "audiobook" ? scope : "video";
+        MediaType = MediaScope == "all" ? null : MediaScope;
+        try { await _settingsApi.PutSettingAsync("search.media_scope", MediaScope); } catch { }
+        if (!string.IsNullOrWhiteSpace(Query)) await SearchAsync();
+    }
+
+    public async Task SetMediaTypeAsync(string? type)
+    {
+        MediaType = type is "video" or "movie" or "series" or "audiobook" ? type : null;
+        MediaScope = MediaType switch
+        {
+            "audiobook" => "audiobook",
+            "video" or "movie" or "series" => "video",
+            _ => "all"
+        };
         try { await _settingsApi.PutSettingAsync("search.media_scope", MediaScope); } catch { }
         if (!string.IsNullOrWhiteSpace(Query)) await SearchAsync();
     }
@@ -88,9 +121,23 @@ public partial class SearchViewModel : ObservableObject
             if (ct.IsCancellationRequested) return;
 
             // Search catalog and people in parallel
-            var catalogTask = _catalogApi.SearchAsync(Query, 40, MediaScope, ct);
+            var catalogTask = _catalogApi.GetCatalogAsync(
+                null,
+                sort: SortField,
+                order: SortOrder,
+                genre: Genre,
+                contentRating: ContentRating,
+                resolution: Resolution,
+                country: Country,
+                q: Query,
+                type: MediaType,
+                limit: 60,
+                source: "query",
+                ct: ct);
             var includeVideoDiscovery = MediaScope is "all" or "video";
-            var peopleTask = includeVideoDiscovery ? SearchPeopleAsync(Query, ct) : Task.FromResult(new List<Person>());
+            // The dedicated Catalog page does not render people; global search
+            // owns that surface. Avoid an invisible extra network request.
+            var peopleTask = Task.FromResult(new List<Person>());
             var outsideTask = includeVideoDiscovery ? SearchOutsideLibraryAsync(Query, ct) : Task.FromResult(new List<RequestMediaResult>());
 
             await Task.WhenAll(catalogTask, peopleTask, outsideTask);
@@ -113,7 +160,7 @@ public partial class SearchViewModel : ObservableObject
             Results.Clear();
             foreach (var item in response.Items)
                 Results.Add(item);
-            TotalCount = response.Items.Count;
+            TotalCount = response.Total > 0 ? response.Total : response.Items.Count;
         }
         catch (OperationCanceledException)
         {

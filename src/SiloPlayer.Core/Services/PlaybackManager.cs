@@ -58,6 +58,21 @@ public class PlaybackManager : IDisposable
         return VersionRanking.SelectDefaultVersion(versions, userData, qualityPreference);
     }
 
+    public FileVersion? SelectBestVariantVersion(
+        List<FileVersion> versions,
+        List<PlaybackVariant>? playbackVariants,
+        string? qualityPreference = null,
+        WatchUserData? userData = null,
+        string? preferredEditionKey = null)
+    {
+        return VersionRanking.SelectDefaultPlaybackVariantVersion(
+            versions,
+            playbackVariants,
+            userData,
+            qualityPreference,
+            preferredEditionKey);
+    }
+
     public async Task<PlaybackStartResponse> StartSessionAsync(
         int fileId,
         double startPosition = 0,
@@ -116,6 +131,78 @@ public class PlaybackManager : IDisposable
         StreamUrl = url;
         StartProgressReporting();
         return response;
+    }
+
+    /// <summary>
+    /// Starts a replacement session before retiring the active one. This mirrors
+    /// the current WebUI handoff: the old stream remains usable until the server
+    /// has accepted the new session, so version and quality switches do not sit
+    /// behind synchronous history/scrobble cleanup on DELETE.
+    /// </summary>
+    public async Task<PlaybackStartResponse> StartReplacementSessionAsync(
+        int fileId,
+        double startPosition,
+        bool forceStartPosition = true,
+        int? audioTrackIndex = null,
+        bool forceDirectAudioSelection = false,
+        double? previousFinalPosition = null,
+        CancellationToken ct = default)
+    {
+        var previousSessionId = _sessionId;
+        var response = await StartSessionAsync(
+            fileId,
+            startPosition,
+            forceStartPosition,
+            audioTrackIndex,
+            forceDirectAudioSelection,
+            ct).ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(previousSessionId) &&
+            !string.Equals(previousSessionId, response.SessionId, StringComparison.Ordinal))
+        {
+            _ = RetireSupersededSessionAsync(
+                previousSessionId,
+                Math.Max(0, previousFinalPosition ?? startPosition));
+        }
+
+        return response;
+    }
+
+    private async Task RetireSupersededSessionAsync(string sessionId, double finalPosition)
+    {
+        if (finalPosition > 0)
+        {
+            try
+            {
+                using var progressCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                await _playbackApi.ReportProgressAsync(
+                    sessionId,
+                    finalPosition,
+                    false,
+                    progressCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LocalLog.AppendLine(
+                    "progress_error.txt",
+                    $"Superseded session final progress failed: {ex.Message}");
+            }
+        }
+
+        try
+        {
+            // Server stop finalization includes database history, session sync,
+            // and provider scrobbling. It can legitimately outlive the visual
+            // handoff, so keep it off the playback-start critical path.
+            using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await _playbackApi.StopPlaybackAsync(sessionId, stopCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine(
+                "progress_error.txt",
+                $"Superseded playback session cleanup failed: {ex.Message}");
+        }
     }
 
     public void UpdatePosition(double position, bool isPaused)

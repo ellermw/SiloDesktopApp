@@ -33,3 +33,12 @@ public sealed class SubtitleAiJob
     public int? ResultSubtitleId { get; set; }
     public string? ErrorMessage { get; set; }
 }
+
+public sealed class SubtitleAiQuota
+{
+    public bool Limited { get; set; }
+    public int Limit { get; set; }
+    public int Used { get; set; }
+    public int Remaining { get; set; }
+    public string Period { get; set; } = "";
+}

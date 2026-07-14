@@ -30,6 +30,8 @@ public sealed class EventChannelClient : IDisposable
     // decrements. The live subscription set is `keys where count > 0`.
     private readonly Dictionary<string, int> _channelRefs = new(StringComparer.OrdinalIgnoreCase);
     private string? _connectionId;
+    private readonly object _snapshotLock = new();
+    private readonly Dictionary<string, JsonElement> _latestSnapshots = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Fired after the server accepts a subscribe and sends the snapshot frame.
     /// <c>data</c> is the raw JSON element — deserialize it in the subscriber based on
@@ -50,6 +52,27 @@ public sealed class EventChannelClient : IDisposable
     /// <summary>Current transport state for controls that subscribe after the
     /// shared channel has already connected.</summary>
     public WebSocketState CurrentState => _ws?.State ?? WebSocketState.Closed;
+
+    /// <summary>
+    /// Returns the most recent channel snapshot, including scan events applied
+    /// after that snapshot arrived. This lets a page that attaches after the
+    /// shared socket connected hydrate immediately instead of waiting for the
+    /// next reconnect.
+    /// </summary>
+    public bool TryGetLatestSnapshot(string channel, out JsonElement snapshot)
+    {
+        lock (_snapshotLock)
+        {
+            if (_latestSnapshots.TryGetValue(channel, out var cached))
+            {
+                snapshot = cached.Clone();
+                return true;
+            }
+        }
+
+        snapshot = default;
+        return false;
+    }
 
     public EventChannelClient(SiloApiClient apiClient, AuthService authService)
     {
@@ -406,7 +429,9 @@ public sealed class EventChannelClient : IDisposable
                     if (root.TryGetProperty("channel", out var snChEl) && root.TryGetProperty("data", out var snDataEl))
                     {
                         var ch = snChEl.GetString() ?? "";
-                        SnapshotReceived?.Invoke(ch, snDataEl.Clone());
+                        var snapshot = snDataEl.Clone();
+                        lock (_snapshotLock) _latestSnapshots[ch] = snapshot;
+                        SnapshotReceived?.Invoke(ch, snapshot);
                     }
                     break;
                 case "event":
@@ -416,7 +441,9 @@ public sealed class EventChannelClient : IDisposable
                     {
                         var ch = evChEl.GetString() ?? "";
                         var evName = evNameEl.GetString() ?? "";
-                        EventReceived?.Invoke(ch, evName, evDataEl.Clone());
+                        var eventData = evDataEl.Clone();
+                        ApplyEventToCachedSnapshot(ch, eventData);
+                        EventReceived?.Invoke(ch, evName, eventData);
                     }
                     break;
                 case "error":
@@ -434,6 +461,49 @@ public sealed class EventChannelClient : IDisposable
         finally
         {
             doc?.Dispose();
+        }
+    }
+
+    private void ApplyEventToCachedSnapshot(string channel, JsonElement eventData)
+    {
+        // Scans have no REST list endpoint. The WebUI therefore keeps the
+        // websocket snapshot as its source of truth and folds subsequent scan
+        // events into it. Mirror that behavior so late subscribers see the
+        // complete current queue.
+        if (!string.Equals(channel, "scans", StringComparison.OrdinalIgnoreCase)
+            || eventData.ValueKind != JsonValueKind.Object
+            || !eventData.TryGetProperty("id", out var idElement)
+            || idElement.ValueKind != JsonValueKind.String)
+            return;
+
+        var id = idElement.GetString();
+        if (string.IsNullOrWhiteSpace(id)) return;
+
+        var active = eventData.TryGetProperty("status", out var statusElement)
+            && statusElement.ValueKind == JsonValueKind.String
+            && statusElement.GetString() is "accepted" or "queued" or "running";
+
+        lock (_snapshotLock)
+        {
+            if (!_latestSnapshots.TryGetValue(channel, out var cached)
+                || cached.ValueKind != JsonValueKind.Array)
+                return;
+
+            var items = cached.EnumerateArray().Select(item => item.Clone()).ToList();
+            var index = items.FindIndex(item =>
+                item.ValueKind == JsonValueKind.Object
+                && item.TryGetProperty("id", out var itemId)
+                && itemId.ValueKind == JsonValueKind.String
+                && string.Equals(itemId.GetString(), id, StringComparison.Ordinal));
+
+            if (index >= 0 && active)
+                items[index] = eventData.Clone();
+            else if (index >= 0)
+                items.RemoveAt(index);
+            else if (active)
+                items.Add(eventData.Clone());
+
+            _latestSnapshots[channel] = JsonSerializer.SerializeToElement(items);
         }
     }
 

@@ -7,6 +7,9 @@ public class CollectionsApi(SiloApiClient client)
     public Task<CollectionsResponse> GetCollectionsAsync(CancellationToken ct = default)
         => client.GetAsync<CollectionsResponse>("/api/v1/collections", ct);
 
+    public Task<ServerCollectionsResponse> GetServerCollectionsAsync(CancellationToken ct = default)
+        => client.GetAsync<ServerCollectionsResponse>("/api/v1/collections/server", ct);
+
     public Task<CollectionTemplateCatalog> GetCollectionTemplatesAsync(CancellationToken ct = default)
         => client.GetAsync<CollectionTemplateCatalog>("/api/v1/collections/templates", ct);
 
@@ -53,6 +56,39 @@ public class CollectionsApi(SiloApiClient client)
     public Task DeleteCollectionAsync(string id, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/collections/{Uri.EscapeDataString(id)}", ct);
 
+    public Task<CollectionGroup> CreateCollectionGroupAsync(string name, string slug, CancellationToken ct = default)
+        => client.PostAsync<CollectionGroup>(
+            "/api/v1/collections/groups",
+            new Dictionary<string, object?> { ["name"] = name, ["slug"] = slug },
+            ct);
+
+    public Task<CollectionGroup> UpdateCollectionGroupAsync(string id, string name, CancellationToken ct = default)
+        => client.PutAsync<CollectionGroup>(
+            $"/api/v1/collections/groups/{Uri.EscapeDataString(id)}",
+            new Dictionary<string, object?> { ["name"] = name },
+            ct);
+
+    public Task<Collection> MoveCollectionToGroupAsync(string id, string? groupId, CancellationToken ct = default)
+        => client.PutAsync<Collection>(
+            $"/api/v1/collections/{Uri.EscapeDataString(id)}",
+            new Dictionary<string, object?> { ["group_id"] = groupId },
+            ct);
+
+    public Task DeleteCollectionGroupAsync(string id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/collections/groups/{Uri.EscapeDataString(id)}", ct);
+
+    public Task ReorderCollectionsAsync(IReadOnlyList<string> orderedIds, string? groupId, CancellationToken ct = default)
+        => client.PutNoContentAsync(
+            "/api/v1/collections/order",
+            new ReorderCollectionsRequest { OrderedIds = [.. orderedIds], GroupId = groupId },
+            ct);
+
+    public Task ReorderCollectionGroupsAsync(IReadOnlyList<string> orderedIds, CancellationToken ct = default)
+        => client.PutNoContentAsync(
+            "/api/v1/collections/groups/order",
+            new ReorderCollectionGroupsRequest { OrderedIds = [.. orderedIds] },
+            ct);
+
     public Task DeleteCollectionImageAsync(string id, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/collections/{Uri.EscapeDataString(id)}/image?type=poster", ct);
 
@@ -70,4 +106,10 @@ public class CollectionsApi(SiloApiClient client)
 
     public Task RemoveCollectionItemAsync(string collectionId, string itemId, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/collections/{Uri.EscapeDataString(collectionId)}/items/{Uri.EscapeDataString(itemId)}", ct);
+
+    public Task ReorderCollectionItemsAsync(string collectionId, IReadOnlyList<string> orderedIds, CancellationToken ct = default)
+        => client.PutNoContentAsync(
+            $"/api/v1/collections/{Uri.EscapeDataString(collectionId)}/items/order",
+            new ReorderCollectionsRequest { OrderedIds = [.. orderedIds] },
+            ct);
 }

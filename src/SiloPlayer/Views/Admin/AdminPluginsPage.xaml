@@ -21,10 +21,10 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
-            <!-- webui parity: admin pages sit inside .admin-shell (1560); we cap at 1400 for
-                 consistency with sibling admin pages that use .page-shell. -->
+            <!-- The web AdminLayout owns the 1560px shell. Keep horizontal padding out of
+                 the page itself so the title, toolbar and cards share that exact edge. -->
             <StackPanel
-                Padding="32,24,32,40"
+                Padding="0,24,0,40"
                 Spacing="24"
                 MaxWidth="1560"
                 HorizontalAlignment="Center">
@@ -102,39 +102,55 @@
                         Command="{x:Bind ViewModel.LoadCommand}" />
                 </StackPanel>
 
-                <!-- Tab bar -->
+                <!-- Line tabs used by the WebUI (not filled/pill buttons). -->
                 <StackPanel Orientation="Horizontal" Spacing="4">
                     <Button
                         x:Name="TabInstalled"
                         Click="TabInstalled_Click"
-                        Style="{StaticResource SecondaryButtonStyle}"
-                        Padding="16,8"
-                        CornerRadius="8">
-                        <TextBlock x:Name="TabInstalledText" Text="Installed" />
+                        Background="Transparent"
+                        BorderThickness="0,0,0,2"
+                        Padding="10,7,10,9"
+                        CornerRadius="0">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="Installed" />
+                            <Border x:Name="InstalledCountBadge" Background="{StaticResource SurfaceRaisedBrush}" CornerRadius="10" Padding="7,1">
+                                <TextBlock x:Name="InstalledCountText" FontSize="10" />
+                            </Border>
+                        </StackPanel>
                     </Button>
                     <Button
                         x:Name="TabAvailable"
                         Click="TabAvailable_Click"
-                        Style="{StaticResource SecondaryButtonStyle}"
-                        Padding="16,8"
-                        CornerRadius="8">
-                        <TextBlock x:Name="TabCatalogText" Text="Catalog" />
+                        Background="Transparent"
+                        BorderThickness="0,0,0,2"
+                        Padding="10,7,10,9"
+                        CornerRadius="0">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="Catalog" />
+                            <Border x:Name="CatalogCountBadge" Background="{StaticResource SurfaceRaisedBrush}" CornerRadius="10" Padding="7,1">
+                                <TextBlock x:Name="CatalogCountText" FontSize="10" />
+                            </Border>
+                        </StackPanel>
                     </Button>
                 </StackPanel>
 
                 <!-- Installed plugins -->
                 <StackPanel x:Name="InstalledPanel" Spacing="12">
-                    <Grid ColumnSpacing="12">
+                    <Grid ColumnSpacing="12" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="0,0,0,12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="360" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBox x:Name="InstalledSearchBox"
-                                 Grid.Column="0"
-                                 PlaceholderText="Search installed plugins"
-                                 TextChanged="InstalledSearchBox_TextChanged"
-                                 Style="{StaticResource DarkTextBoxStyle}" />
+                        <Grid Grid.Column="0">
+                            <TextBox x:Name="InstalledSearchBox"
+                                     PlaceholderText="Search installed plugins"
+                                     TextChanged="InstalledSearchBox_TextChanged"
+                                     Style="{StaticResource DarkTextBoxStyle}"
+                                     Padding="36,8,10,8" />
+                            <FontIcon Glyph="&#xE721;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                                      HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0" IsHitTestVisible="False" />
+                        </Grid>
                         <TextBlock x:Name="InstalledMatchText" Grid.Column="2"
                                    VerticalAlignment="Center"
                                    Foreground="{StaticResource SecondaryTextBrush}"
@@ -159,17 +175,23 @@
                 <!-- Available plugins tab content — matches web: Catalog section, then Repositories section -->
                 <StackPanel x:Name="AvailablePanel" Spacing="24" Visibility="Collapsed">
 
-                    <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="12" Padding="20,16">
+                    <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="0,0,0,20">
                         <Grid ColumnSpacing="16">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="Approved community catalog" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock x:Name="CommunityCatalogDescription" Text="Include plugins reviewed and approved by the Silo project." FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <StackPanel Spacing="5">
+                                <StackPanel Orientation="Horizontal" Spacing="7">
+                                    <FontIcon Glyph="&#xEA18;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock Text="Include approved community plugins" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+                                </StackPanel>
+                                <TextBlock Text="Reviewed by Silo maintainers to work as described and be safe for their documented use. These plugins remain maintained and supported by community contributors."
+                                           FontSize="12" TextWrapping="Wrap" MaxWidth="720" HorizontalAlignment="Left" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock x:Name="CommunityCatalogDescription" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
                             </StackPanel>
-                            <ToggleSwitch x:Name="CommunityCatalogToggle" Grid.Column="1" VerticalAlignment="Center" Toggled="CommunityCatalogToggle_Toggled" />
+                            <ToggleSwitch x:Name="CommunityCatalogToggle" Grid.Column="1" VerticalAlignment="Center"
+                                          OnContent="" OffContent="" Toggled="CommunityCatalogToggle_Toggled" />
                         </Grid>
                     </Border>
 
@@ -180,19 +202,24 @@
                             FontSize="13"
                             FontWeight="SemiBold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
-                        <Grid ColumnSpacing="12">
+                        <Grid ColumnSpacing="12" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="0,0,0,12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="360" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBox x:Name="CatalogSearchBox" Grid.Column="0"
-                                     PlaceholderText="Search the plugin catalog"
-                                     TextChanged="CatalogSearchBox_TextChanged"
-                                     Style="{StaticResource DarkTextBoxStyle}" />
+                            <Grid Grid.Column="0">
+                                <TextBox x:Name="CatalogSearchBox"
+                                         PlaceholderText="Search the plugin catalog"
+                                         TextChanged="CatalogSearchBox_TextChanged"
+                                         Style="{StaticResource DarkTextBoxStyle}"
+                                         Padding="36,8,10,8" />
+                                <FontIcon Glyph="&#xE721;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                                          HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0" IsHitTestVisible="False" />
+                            </Grid>
                             <TextBlock x:Name="CatalogMatchText" Grid.Column="2" VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                         </Grid>
-                        <StackPanel x:Name="AvailableCards" Spacing="8" />
+                        <Grid x:Name="AvailableCards" ColumnSpacing="12" RowSpacing="12" SizeChanged="AvailableCards_SizeChanged" />
                         <Border x:Name="AvailableEmpty" Padding="20,40" Visibility="Collapsed">
                             <TextBlock
                                 Text="No plugins available. Add a repository to browse available plugins."
@@ -207,6 +234,36 @@
                             <TextBlock x:Name="CatalogPageText" VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                             <Button Content="Next" Click="CatalogNext_Click" Style="{StaticResource OutlineButtonStyle}" />
                         </StackPanel>
+                    </StackPanel>
+
+                    <!-- Manual plugin upload is a first-class WebUI catalog function. -->
+                    <StackPanel Spacing="12">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Manual Install" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock Text="Upload a plugin binary directly." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                        </StackPanel>
+                        <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="12" Padding="20">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="ChoosePluginFileButton" Grid.Column="0" Style="{StaticResource OutlineButtonStyle}"
+                                        HorizontalContentAlignment="Left" Click="ChoosePluginFileButton_Click">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon Glyph="&#xE898;" FontSize="14" />
+                                        <TextBlock x:Name="ChosenPluginFileText" Text="Choose plugin file..." Foreground="{StaticResource SecondaryTextBrush}" />
+                                    </StackPanel>
+                                </Button>
+                                <Button x:Name="UploadPluginButton" Grid.Column="1" Style="{StaticResource OutlineButtonStyle}"
+                                        IsEnabled="False" Click="UploadPluginButton_Click">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE898;" FontSize="13" />
+                                        <TextBlock x:Name="UploadPluginButtonText" Text="Upload" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </Border>
                     </StackPanel>
 
                     <!-- Repositories section -->
@@ -234,11 +291,25 @@
                                 Style="{StaticResource SecondaryButtonStyle}"
                                 Padding="12,6">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <FontIcon Glyph="&#xE710;" FontSize="12" />
-                                    <TextBlock Text="Add" FontSize="13" />
+                                    <FontIcon x:Name="AddRepoButtonIcon" Glyph="&#xE710;" FontSize="12" />
+                                    <TextBlock x:Name="AddRepoButtonText" Text="Add" FontSize="13" />
                                 </StackPanel>
                             </Button>
                         </Grid>
+
+                        <Border x:Name="RepoForm" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                CornerRadius="8" Padding="16" Visibility="Collapsed">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="RepoNameBox" Grid.Column="0" PlaceholderText="Repository name" Style="{StaticResource DarkTextBoxStyle}" />
+                                <TextBox x:Name="RepoUrlBox" Grid.Column="1" PlaceholderText="https://plugins.example.test/index.json" Style="{StaticResource DarkTextBoxStyle}" />
+                                <Button Grid.Column="2" Content="Add" Style="{StaticResource AccentButtonStyle}" Click="SubmitRepoButton_Click" />
+                            </Grid>
+                        </Border>
 
                         <Border
                             Background="{StaticResource CardBackgroundBrush}"

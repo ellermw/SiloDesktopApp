@@ -25,9 +25,9 @@
     </Page.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Padding="32,24,32,40" Spacing="20" MaxWidth="1560" HorizontalAlignment="Stretch">
+            <StackPanel Padding="40,32,40,40" Spacing="20" MaxWidth="1640" HorizontalAlignment="Stretch">
             <StackPanel Spacing="8">
-                <TextBlock Text="Requests" FontSize="48" FontWeight="Bold" Foreground="{StaticResource PrimaryTextBrush}" />
+                <TextBlock Text="Requests" FontSize="36" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
                 <TextBlock Text="Review media requests, set limits, and manage Radarr or Sonarr routing."
                            Foreground="{StaticResource SecondaryTextBrush}" FontSize="14" />
             </StackPanel>
@@ -79,48 +79,67 @@
                 </Border>
             </StackPanel>
 
-            <StackPanel x:Name="SettingsPanel" Visibility="Collapsed" MaxWidth="768" HorizontalAlignment="Left">
+            <StackPanel x:Name="SettingsPanel" Visibility="Collapsed" Width="768" HorizontalAlignment="Left">
                 <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="20">
                     <StackPanel Spacing="18">
                         <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE713;" Foreground="{StaticResource AccentBrush}" /><TextBlock Text="Global Settings" FontSize="18" FontWeight="SemiBold" /></StackPanel>
                         <Grid ColumnSpacing="18" RowSpacing="14">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                            <ToggleSwitch x:Name="RequestsEnabledSwitch" Grid.Row="0" Grid.Column="0" Header="Requests enabled" OnContent="" OffContent="" />
-                            <ToggleSwitch x:Name="AutoApprovalSwitch" Grid.Row="0" Grid.Column="1" Header="Auto approval" OnContent="" OffContent="" />
+                            <Border Grid.Row="0" Grid.Column="0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12">
+                                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="Requests enabled" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
+                                    <ToggleSwitch x:Name="RequestsEnabledSwitch" Grid.Column="1" OnContent="" OffContent="" />
+                                </Grid>
+                            </Border>
+                            <Border Grid.Row="0" Grid.Column="1" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12">
+                                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="Auto approval" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
+                                    <ToggleSwitch x:Name="AutoApprovalSwitch" Grid.Column="1" OnContent="" OffContent="" />
+                                </Grid>
+                            </Border>
                             <NumberBox x:Name="MaxRequestsBox" Grid.Row="1" Grid.Column="0" Header="Max requests" Minimum="0" SpinButtonPlacementMode="Compact" />
                             <NumberBox x:Name="WindowDaysBox" Grid.Row="1" Grid.Column="1" Header="Window days" Minimum="1" SpinButtonPlacementMode="Compact" />
                         </Grid>
-                        <ToggleSwitch x:Name="ForceDualQualitySwitch" Header="Always fulfill in both 1080p and 4K" OnContent="" OffContent="" />
-                        <TextBlock Text="Applies to all requests when both a Default HD and Default 4K instance exist, regardless of user role." FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
+                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12">
+                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="Always fulfill in both 1080p and 4K" FontSize="13" FontWeight="Medium" />
+                                    <TextBlock Text="Applies to all requests when both a Default HD and Default 4K instance exist, regardless of user role." FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <ToggleSwitch x:Name="ForceDualQualitySwitch" Grid.Column="1" OnContent="" OffContent="" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
                         <Button Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Left" Click="SaveSettings_Click"><StackPanel Orientation="Horizontal" Spacing="6"><FontIcon Glyph="&#xE74E;" /><TextBlock Text="Save Settings" /></StackPanel></Button>
                     </StackPanel>
                 </Border>
             </StackPanel>
 
             <StackPanel x:Name="IntegrationsPanel" Visibility="Collapsed" Spacing="14">
-                <Grid><TextBlock Text="Request Integrations" FontSize="18" FontWeight="SemiBold" /><Button HorizontalAlignment="Right" Style="{StaticResource AccentButtonStyle}" Click="AddIntegration_Click" Content="+ Add Integration" /></Grid>
+                <Grid><TextBlock Text="Connections" FontSize="18" FontWeight="SemiBold" /><Button HorizontalAlignment="Right" Style="{StaticResource SecondaryButtonStyle}" Click="AddIntegration_Click" Content="＋ Add connection" /></Grid>
                 <StackPanel x:Name="IntegrationRows" Spacing="12" />
             </StackPanel>
 
-            <StackPanel x:Name="OverridesPanel" Visibility="Collapsed" MaxWidth="768" HorizontalAlignment="Left">
+            <StackPanel x:Name="OverridesPanel" Visibility="Collapsed" Width="768" HorizontalAlignment="Left">
                 <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="20">
                     <StackPanel Spacing="16">
-                        <TextBlock Text="User Overrides" FontSize="18" FontWeight="SemiBold" />
-                        <ComboBox x:Name="OverrideUserPicker" Header="User" SelectionChanged="OverrideUserPicker_SelectionChanged" />
+                        <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE713;" Foreground="{StaticResource AccentBrush}"/><TextBlock Text="User Overrides" FontSize="18" FontWeight="SemiBold" /></StackPanel>
+                        <ComboBox x:Name="OverrideUserPicker" Header="User" HorizontalAlignment="Stretch" SelectionChanged="OverrideUserPicker_SelectionChanged" />
                         <Grid ColumnSpacing="16" RowSpacing="14">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                            <ComboBox x:Name="LimitModePicker" Grid.Row="0" Grid.Column="0" Header="Limit mode" SelectionChanged="LimitModePicker_SelectionChanged">
+                            <ComboBox x:Name="LimitModePicker" Grid.Row="0" Grid.Column="0" Header="Limit mode" HorizontalAlignment="Stretch" SelectionChanged="LimitModePicker_SelectionChanged">
                                 <ComboBoxItem Content="Inherit" Tag="inherit" /><ComboBoxItem Content="Custom" Tag="custom" /><ComboBoxItem Content="Unlimited" Tag="unlimited" /><ComboBoxItem Content="Blocked" Tag="blocked" />
                             </ComboBox>
-                            <ComboBox x:Name="ApprovalModePicker" Grid.Row="0" Grid.Column="1" Header="Approval mode">
+                            <ComboBox x:Name="ApprovalModePicker" Grid.Row="0" Grid.Column="1" Header="Approval mode" HorizontalAlignment="Stretch">
                                 <ComboBoxItem Content="Inherit" Tag="inherit" /><ComboBoxItem Content="Manual" Tag="manual" /><ComboBoxItem Content="Auto" Tag="auto" /><ComboBoxItem Content="Blocked" Tag="blocked" />
                             </ComboBox>
                             <NumberBox x:Name="OverrideMaxRequestsBox" Grid.Row="1" Grid.Column="0" Header="Max requests" Minimum="0" />
                             <NumberBox x:Name="OverrideWindowDaysBox" Grid.Row="1" Grid.Column="1" Header="Window days" Minimum="1" />
                         </Grid>
-                        <Button Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Left" Click="SaveOverride_Click" Content="Save Override" />
+                        <Button Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Left" Click="SaveOverride_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="6"><FontIcon Glyph="&#xE74E;" FontSize="14"/><TextBlock Text="Save Override"/></StackPanel>
+                        </Button>
                     </StackPanel>
                 </Border>
             </StackPanel>

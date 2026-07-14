@@ -179,13 +179,16 @@ public sealed partial class AdminMaintenancePage : Page
 
     private FrameworkElement BuildImportJobRow(AdminJob job)
     {
-        var container = new StackPanel
+        var container = new Grid
         {
-            Spacing = 6,
             Padding = new Thickness(20, 14, 20, 14),
+            ColumnSpacing = 12,
             BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
             BorderThickness = new Thickness(0, 1, 0, 0),
         };
+        container.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        container.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var info = new StackPanel { Spacing = 6 };
 
         // Badge row: status + description + requested timestamp
         var headRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
@@ -205,12 +208,12 @@ public sealed partial class AdminMaintenancePage : Page
             Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
         });
-        container.Children.Add(headRow);
+        info.Children.Add(headRow);
 
         // Message line
         if (!string.IsNullOrEmpty(job.Message))
         {
-            container.Children.Add(new TextBlock
+            info.Children.Add(new TextBlock
             {
                 Text = job.Message,
                 FontSize = 12,
@@ -220,7 +223,7 @@ public sealed partial class AdminMaintenancePage : Page
         }
 
         // Progress bar
-        container.Children.Add(BuildProgressBar(AdminMaintenanceViewModel.GetJobProgressPercent(job)));
+        info.Children.Add(BuildProgressBar(AdminMaintenanceViewModel.GetJobProgressPercent(job)));
 
         // Meta line: progress + finished + counts
         var metaRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
@@ -233,11 +236,11 @@ public sealed partial class AdminMaintenancePage : Page
             var files = ExtractInt(job.ResultPayload, "files_created");
             metaRow.Children.Add(MetaText($"Imported {items} items and {files} files"));
         }
-        container.Children.Add(metaRow);
+        info.Children.Add(metaRow);
 
         if (!string.IsNullOrEmpty(job.ErrorMessage))
         {
-            container.Children.Add(new TextBlock
+            info.Children.Add(new TextBlock
             {
                 Text = job.ErrorMessage,
                 FontSize = 11,
@@ -246,6 +249,29 @@ public sealed partial class AdminMaintenancePage : Page
             });
         }
 
+        Grid.SetColumn(info, 0);
+        container.Children.Add(info);
+
+        var refresh = new Button
+        {
+            Height = 28,
+            Padding = new Thickness(8, 4, 8, 4),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                Children =
+                {
+                    new FontIcon { Glyph = "\uE72C", FontSize = 12 },
+                    new TextBlock { Text = "Refresh" }
+                }
+            }
+        };
+        refresh.Click += async (_, _) => await ViewModel.RefreshImportJobsAsync();
+        Grid.SetColumn(refresh, 1);
+        container.Children.Add(refresh);
         return container;
     }
 
@@ -307,9 +333,6 @@ public sealed partial class AdminMaintenancePage : Page
         }
         info.Children.Add(metaRow);
 
-        // Progress bar (matching import row pattern)
-        info.Children.Add(BuildProgressBar(AdminMaintenanceViewModel.GetJobProgressPercent(job)));
-
         if (!string.IsNullOrEmpty(job.ErrorMessage))
         {
             info.Children.Add(new TextBlock
@@ -331,6 +354,20 @@ public sealed partial class AdminMaintenancePage : Page
             Spacing = 6,
             VerticalAlignment = VerticalAlignment.Center,
         };
+
+        var refreshBtn = new Button { Padding = new Thickness(8, 4, 8, 4), Height = 28, FontSize = 12 };
+        refreshBtn.Content = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Children =
+            {
+                new FontIcon { Glyph = "\uE72C", FontSize = 12 },
+                new TextBlock { Text = "Refresh" }
+            }
+        };
+        refreshBtn.Click += async (_, _) => await ViewModel.RefreshExportJobsAsync();
+        actions.Children.Add(refreshBtn);
 
         if (!string.IsNullOrEmpty(job.DownloadUrl))
         {
@@ -381,40 +418,14 @@ public sealed partial class AdminMaintenancePage : Page
         var desc = JobDescription(job);
         if (!string.IsNullOrEmpty(desc))
         {
-            // Try to make description a clickable link to the library if library_id is present
-            int? jobLibraryId = null;
-            if (job.RequestPayload != null && job.RequestPayload.TryGetValue("library_id", out var libIdObj))
+            headRow.Children.Add(new TextBlock
             {
-                if (libIdObj is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Number)
-                    jobLibraryId = je.GetInt32();
-                else if (libIdObj is int intId) jobLibraryId = intId;
-            }
-
-            if (jobLibraryId.HasValue)
-            {
-                var capturedLibId = jobLibraryId.Value;
-                var descLink = new HyperlinkButton
-                {
-                    Content = desc,
-                    Padding = new Thickness(0),
-                    FontSize = 12,
-                    FontWeight = FontWeights.Medium,
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                descLink.Click += (_, _) => Frame.Navigate(typeof(AdminLibrariesPage));
-                headRow.Children.Add(descLink);
-            }
-            else
-            {
-                headRow.Children.Add(new TextBlock
-                {
-                    Text = desc,
-                    FontSize = 12,
-                    FontWeight = FontWeights.Medium,
-                    Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-                    VerticalAlignment = VerticalAlignment.Center,
-                });
-            }
+                Text = desc,
+                FontSize = 12,
+                FontWeight = FontWeights.Medium,
+                Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+            });
         }
         headRow.Children.Add(new TextBlock
         {
@@ -579,10 +590,10 @@ public sealed partial class AdminMaintenancePage : Page
     private static string DescribeImportJob(AdminJob job)
     {
         if (job.RequestPayload == null) return "Catalog seed";
-        if (job.RequestPayload.TryGetValue("source_label", out var label) && label is string s1 && !string.IsNullOrEmpty(s1))
-            return s1;
-        if (job.RequestPayload.TryGetValue("source_key", out var key) && key is string s2 && !string.IsNullOrEmpty(s2))
-            return s2;
+        var label = ExtractString(job.RequestPayload, "source_label");
+        if (!string.IsNullOrEmpty(label)) return label;
+        var key = ExtractString(job.RequestPayload, "source_key");
+        if (!string.IsNullOrEmpty(key)) return key;
         return "Catalog seed";
     }
 
@@ -616,15 +627,15 @@ public sealed partial class AdminMaintenancePage : Page
         {
             case "delete_library":
             case "image_cache_cleanup":
-                if (job.RequestPayload.TryGetValue("library_name", out var ln) && ln is string lns && !string.IsNullOrEmpty(lns))
-                    return $"\"{lns}\"";
+                var libraryName = ExtractString(job.RequestPayload, "library_name");
+                if (!string.IsNullOrEmpty(libraryName)) return $"\"{libraryName}\"";
                 if (job.RequestPayload.TryGetValue("library_id", out var li) && li != null)
                     return $"Library #{li}";
                 return "";
             case "item_refresh":
             case "library_refresh":
-                if (job.RequestPayload.TryGetValue("library_name", out var rn) && rn is string rns && !string.IsNullOrEmpty(rns))
-                    return $"\"{rns}\"";
+                var refreshLibraryName = ExtractString(job.RequestPayload, "library_name");
+                if (!string.IsNullOrEmpty(refreshLibraryName)) return $"\"{refreshLibraryName}\"";
                 if (job.RequestPayload.TryGetValue("library_id", out var ri) && ri != null)
                     return $"Library #{ri}";
                 return "All libraries";
@@ -706,6 +717,15 @@ public sealed partial class AdminMaintenancePage : Page
         }
         if (int.TryParse(raw.ToString(), out var parsed)) return parsed;
         return 0;
+    }
+
+    private static string? ExtractString(Dictionary<string, object> dict, string key)
+    {
+        if (!dict.TryGetValue(key, out var raw) || raw is null) return null;
+        if (raw is string value) return value;
+        if (raw is System.Text.Json.JsonElement element && element.ValueKind == System.Text.Json.JsonValueKind.String)
+            return element.GetString();
+        return raw.ToString();
     }
 
     private static bool ExtractBool(Dictionary<string, object> dict, string key)

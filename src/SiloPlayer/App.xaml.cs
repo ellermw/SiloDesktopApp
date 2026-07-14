@@ -238,7 +238,9 @@ public partial class App : Application
         services.AddTransient<SettingsViewModel>();
         services.AddTransient<WatchTogetherJoinViewModel>();
         services.AddTransient<WatchTogetherRoomViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminDashboardViewModel>();
+        // Retain the last successful dashboard snapshot so returning from another
+        // admin page paints immediately while a fresh snapshot loads in place.
+        services.AddSingleton<SiloPlayer.ViewModels.Admin.AdminDashboardViewModel>();
         services.AddTransient<SiloPlayer.ViewModels.Admin.AdminActivityViewModel>();
         services.AddTransient<SiloPlayer.ViewModels.Admin.AdminUsersViewModel>();
         services.AddTransient<SiloPlayer.ViewModels.Admin.AdminUserDetailViewModel>();

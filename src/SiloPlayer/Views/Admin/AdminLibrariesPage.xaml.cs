@@ -33,6 +33,7 @@ public sealed partial class AdminLibrariesPage : Page
     // Pagination
     private const int UNMATCHED_PAGE_SIZE = 10;
     private const int STALE_PAGE_SIZE = 10;
+    private const int SKIPPED_ROOTS_PAGE_SIZE = 10;
     private const int ScanUiRefreshMs = 300;
     private const int ScanLibraryRowsRefreshMs = 1500;
     private const int ScanLibraryReloadMs = 10000;
@@ -41,6 +42,7 @@ public sealed partial class AdminLibrariesPage : Page
     private string _unmatchedFilter = "";
     private string _staleFilter = "";
     private string _ambiguousFilter = "";
+    private int _skippedRootsCurrentPage;
 
     public AdminLibrariesPage()
     {
@@ -55,6 +57,9 @@ public sealed partial class AdminLibrariesPage : Page
         };
         ScanQueueFlyout.Closed += (_, _) => _scanQueueFlyoutOpen = false;
     }
+
+    private void ContentScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+        => AdminPageContent.Width = Math.Min(1640, Math.Max(0, e.NewSize.Width));
 
     // Event channel subscription for realtime refresh
     private IDisposable? _eventSubscription;
@@ -90,6 +95,7 @@ public sealed partial class AdminLibrariesPage : Page
             ? Visibility.Collapsed
             : Visibility.Visible;
         UpdateSkippedDiagnosticsHeader();
+        BuildSkippedRootsRows();
     }
 
     private void UpdateSkippedDiagnosticsHeader()
@@ -168,6 +174,8 @@ public sealed partial class AdminLibrariesPage : Page
             _eventChannel.SnapshotReceived += OnSnapshotReceived;
             _eventChannel.EventReceived += OnEventReceived;
             _eventSubscription = _eventChannel.Subscribe("scans");
+            if (_eventChannel.TryGetLatestSnapshot("scans", out var cachedScans))
+                OnSnapshotReceived("scans", cachedScans);
         }
         catch { }
 
@@ -308,7 +316,11 @@ public sealed partial class AdminLibrariesPage : Page
     }
 
     private static bool IsActiveScan(AdminScanRun scan)
-        => scan.Status is "accepted" or "running";
+        // The current scans snapshot uses "queued" for work waiting on scanner
+        // capacity.  Those entries are active work in the WebUI: they contribute
+        // to the page-level count, the per-library queued badge, and the inline
+        // queue rows.  Keep "accepted" for compatibility with older servers.
+        => scan.Status is "accepted" or "queued" or "running";
 
     private void RebuildAll()
     {
@@ -327,6 +339,12 @@ public sealed partial class AdminLibrariesPage : Page
     private void BuildLibraryRows()
     {
         LibrariesPanel.Children.Clear();
+
+        if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+        {
+            EmptyState.Visibility = Visibility.Collapsed;
+            return;
+        }
 
         if (ViewModel.Libraries.Count == 0)
         {
@@ -713,42 +731,84 @@ public sealed partial class AdminLibrariesPage : Page
 
         foreach (var scan in scans)
         {
-            var scanRow = new Grid { ColumnSpacing = 10 };
-            scanRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            // WebUI LibraryScanTaskRow: stop control, scan glyph, then the
+            // status/detail/progress copy.  Keeping this hierarchy also makes
+            // queued and running work visually distinguishable at a glance.
+            var scanRow = new Grid { ColumnSpacing = 6 };
             scanRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            scanRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            scanRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            var copy = new StackPanel { Spacing = 2 };
-            var progress = FormatActiveScanProgress(scan);
-            copy.Children.Add(new TextBlock
-            {
-                Text = scan.Status == "running"
-                    ? $"Scanning: {(string.IsNullOrWhiteSpace(progress) ? FormatActiveScanMode(scan) : progress)}"
-                    : $"Queued: {(string.IsNullOrWhiteSpace(progress) ? "Waiting for capacity" : progress)}",
-                FontSize = 12,
-                FontWeight = FontWeights.Medium,
-                Foreground = _primaryText,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            });
-            var detail = FormatActiveScanMode(scan);
-            if (!string.IsNullOrWhiteSpace(scan.Path)) detail += $" \u00b7 {scan.Path}";
-            copy.Children.Add(new TextBlock
-            {
-                Text = detail,
-                FontSize = 11,
-                Foreground = _tertiaryText,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            });
-            scanRow.Children.Add(copy);
-
-            var stopScan = MakeSymbolButton28(Symbol.Stop, "Stop Scan", DestructiveColor);
+            var stopScan = MakeSymbolButton28(Symbol.Stop, "Cancel library scans", DestructiveColor);
+            stopScan.Width = 20;
+            stopScan.Height = 20;
+            stopScan.MinWidth = 20;
+            stopScan.MinHeight = 20;
+            stopScan.Padding = new Thickness(0);
+            stopScan.VerticalAlignment = VerticalAlignment.Top;
             stopScan.Click += async (_, _) =>
             {
                 stopScan.IsEnabled = false;
                 await ViewModel.CancelLibraryScansCommand.ExecuteAsync(lib.Id);
                 ShowStatus(ViewModel.StatusMessage ?? "Scan cancellation requested.");
             };
-            Grid.SetColumn(stopScan, 1);
             scanRow.Children.Add(stopScan);
+
+            var scanGlyph = new SymbolIcon(Symbol.Refresh)
+            {
+                Width = 14,
+                Height = 14,
+                Foreground = _secondaryText,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 3, 0, 0),
+            };
+            Grid.SetColumn(scanGlyph, 1);
+            scanRow.Children.Add(scanGlyph);
+
+            var copy = new StackPanel { Spacing = 2 };
+            var progress = FormatActiveScanProgress(scan);
+            var headline = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+            };
+            headline.Children.Add(new TextBlock
+            {
+                Text = "Scan",
+                FontSize = 12,
+                FontWeight = FontWeights.Medium,
+                Foreground = _primaryText,
+            });
+            headline.Children.Add(new TextBlock
+            {
+                Text = scan.Status == "running" ? "Running" : "Queued",
+                FontSize = 12,
+                Foreground = _secondaryText,
+            });
+            copy.Children.Add(headline);
+
+            var detail = FormatActiveScanMode(scan);
+            detail += !string.IsNullOrWhiteSpace(scan.Path) ? $" \u00b7 {scan.Path}" : " \u00b7 Entire library";
+            copy.Children.Add(new TextBlock
+            {
+                Text = detail,
+                FontSize = 10,
+                Foreground = _tertiaryText,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+            if (!string.IsNullOrWhiteSpace(progress))
+            {
+                copy.Children.Add(new TextBlock
+                {
+                    Text = progress,
+                    FontSize = 10,
+                    Foreground = _tertiaryText,
+                    Opacity = 0.8,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                });
+            }
+            Grid.SetColumn(copy, 2);
+            scanRow.Children.Add(copy);
             workPanel.Children.Add(scanRow);
         }
 
@@ -2094,14 +2154,17 @@ public sealed partial class AdminLibrariesPage : Page
     private void SkippedRootsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         _skippedRootsSearch = SkippedRootsSearchBox.Text?.Trim() ?? "";
+        _skippedRootsCurrentPage = 0;
         BuildSkippedRootsRows();
     }
 
     private void BuildSkippedRootsRows()
     {
         SkippedRootsPanel.Children.Clear();
+        SkippedRootsPaginationPanel.Children.Clear();
+        SkippedRootsPaginationPanel.Visibility = Visibility.Collapsed;
 
-        if (ViewModel.SkippedRoots.Count == 0)
+        if (ViewModel.SkippedRoots.Count == 0 && string.IsNullOrWhiteSpace(ViewModel.SkippedRootsError))
         {
             SkippedRootsSection.Visibility = Visibility.Collapsed;
             return;
@@ -2110,6 +2173,24 @@ public sealed partial class AdminLibrariesPage : Page
         SkippedRootsSection.Visibility = Visibility.Visible;
         UpdateSkippedDiagnosticsHeader();
 
+        // The WebUI keeps this section collapsed by default. More importantly, do
+        // not create thousands of WinUI controls for data the user cannot see.
+        if (SkippedContent.Visibility != Visibility.Visible)
+            return;
+
+        if (!string.IsNullOrWhiteSpace(ViewModel.SkippedRootsError))
+        {
+            SkippedRootsPanel.Children.Add(new TextBlock
+            {
+                Text = $"Unable to load troubleshooting roots: {ViewModel.SkippedRootsError}",
+                FontSize = 12,
+                Foreground = new SolidColorBrush(DestructiveColor),
+                Margin = new Thickness(4, 8, 4, 8),
+                TextWrapping = TextWrapping.Wrap,
+            });
+            return;
+        }
+
         // Apply search filter
         var filtered = ViewModel.SkippedRoots.AsEnumerable();
         if (!string.IsNullOrWhiteSpace(_skippedRootsSearch))
@@ -2117,12 +2198,23 @@ public sealed partial class AdminLibrariesPage : Page
             var q = _skippedRootsSearch.ToLowerInvariant();
             filtered = filtered.Where(r =>
                 (r.RootPath?.ToLowerInvariant().Contains(q) == true) ||
+                (r.LibraryName?.ToLowerInvariant().Contains(q) == true) ||
                 (r.Reason?.ToLowerInvariant().Contains(q) == true) ||
                 (r.SampleFilePath?.ToLowerInvariant().Contains(q) == true));
         }
 
+        // Match the WebUI's default last-seen descending order.
+        var rows = filtered
+            .OrderByDescending(r => r.LastSeenAt, StringComparer.Ordinal)
+            .ToList();
+        var total = rows.Count;
+        var totalPages = Math.Max(1, (int)Math.Ceiling((double)total / SKIPPED_ROOTS_PAGE_SIZE));
+        _skippedRootsCurrentPage = Math.Clamp(_skippedRootsCurrentPage, 0, totalPages - 1);
+
         bool isFirst = true;
-        foreach (var root in filtered)
+        foreach (var root in rows
+            .Skip(_skippedRootsCurrentPage * SKIPPED_ROOTS_PAGE_SIZE)
+            .Take(SKIPPED_ROOTS_PAGE_SIZE))
         {
             if (!isFirst)
             {
@@ -2135,6 +2227,56 @@ public sealed partial class AdminLibrariesPage : Page
             isFirst = false;
             SkippedRootsPanel.Children.Add(BuildSkippedRootRow(root));
         }
+
+        BuildSkippedRootsPagination(total, totalPages);
+    }
+
+    private void BuildSkippedRootsPagination(int total, int totalPages)
+    {
+        SkippedRootsPaginationPanel.Children.Clear();
+        if (total <= SKIPPED_ROOTS_PAGE_SIZE)
+        {
+            SkippedRootsPaginationPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        SkippedRootsPaginationPanel.Visibility = Visibility.Visible;
+        var page = _skippedRootsCurrentPage;
+        var rangeStart = total == 0 ? 0 : page * SKIPPED_ROOTS_PAGE_SIZE + 1;
+        var rangeEnd = Math.Min((page + 1) * SKIPPED_ROOTS_PAGE_SIZE, total);
+        SkippedRootsPaginationPanel.Children.Add(new TextBlock
+        {
+            Text = $"{rangeStart}\u2013{rangeEnd} of {total:N0}",
+            FontSize = 12,
+            Foreground = _tertiaryText,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+        });
+
+        SkippedRootsPaginationPanel.Children.Add(MakePaginationButton("\uE892", page > 0, () =>
+        {
+            _skippedRootsCurrentPage = 0;
+            BuildSkippedRootsRows();
+            return Task.CompletedTask;
+        }));
+        SkippedRootsPaginationPanel.Children.Add(MakePaginationButton("\uE76B", page > 0, () =>
+        {
+            _skippedRootsCurrentPage = Math.Max(0, page - 1);
+            BuildSkippedRootsRows();
+            return Task.CompletedTask;
+        }));
+        SkippedRootsPaginationPanel.Children.Add(MakePaginationButton("\uE76C", page < totalPages - 1, () =>
+        {
+            _skippedRootsCurrentPage = Math.Min(totalPages - 1, page + 1);
+            BuildSkippedRootsRows();
+            return Task.CompletedTask;
+        }));
+        SkippedRootsPaginationPanel.Children.Add(MakePaginationButton("\uE893", page < totalPages - 1, () =>
+        {
+            _skippedRootsCurrentPage = totalPages - 1;
+            BuildSkippedRootsRows();
+            return Task.CompletedTask;
+        }));
     }
 
     private FrameworkElement BuildSkippedRootRow(LibrarySkippedRoot root)
@@ -2146,16 +2288,16 @@ public sealed partial class AdminLibrariesPage : Page
         };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
 
         var pathBlock = new TextBlock
         {
-            Text = root.RootPath,
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 12,
+            Text = GetPathLeaf(root.RootPath),
+            FontSize = 13,
+            FontWeight = FontWeights.Medium,
             Foreground = _primaryText,
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center
@@ -2171,13 +2313,12 @@ public sealed partial class AdminLibrariesPage : Page
 
         var reasonBadge = MakeBadge(root.Reason, "outline");
 
-        var sampleBlock = new TextBlock
+        var fileCountBlock = new TextBlock
         {
-            Text = root.SampleFilePath,
+            Text = root.FileCount.ToString("N0"),
             FontSize = 12,
             Foreground = _tertiaryText,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = 400,
+            HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center
         };
 
@@ -2206,18 +2347,97 @@ public sealed partial class AdminLibrariesPage : Page
         Grid.SetColumn(pathBlock, 0);
         Grid.SetColumn(libNameBlock, 1);
         Grid.SetColumn(reasonBadge, 2);
-        Grid.SetColumn(sampleBlock, 3);
+        Grid.SetColumn(fileCountBlock, 3);
         Grid.SetColumn(firstSeenBlock, 4);
         Grid.SetColumn(lastSeenBlock, 5);
 
         row.Children.Add(pathBlock);
         row.Children.Add(libNameBlock);
         row.Children.Add(reasonBadge);
-        row.Children.Add(sampleBlock);
+        row.Children.Add(fileCountBlock);
         row.Children.Add(firstSeenBlock);
         row.Children.Add(lastSeenBlock);
 
-        return row;
+        var chevron = new FontIcon
+        {
+            Glyph = "\uE76C",
+            FontSize = 11,
+            Foreground = _tertiaryText,
+            Margin = new Thickness(0, 0, 7, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var itemCell = new StackPanel { Orientation = Orientation.Horizontal };
+        row.Children.Remove(pathBlock);
+        itemCell.Children.Add(chevron);
+        itemCell.Children.Add(pathBlock);
+        Grid.SetColumn(itemCell, 0);
+        row.Children.Add(itemCell);
+
+        var detail = BuildSkippedRootDetails(root);
+        var container = new StackPanel();
+        container.Children.Add(row);
+        container.Children.Add(detail);
+        row.Tapped += (_, _) =>
+        {
+            var expanded = detail.Visibility != Visibility.Visible;
+            detail.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+            chevron.Glyph = expanded ? "\uE70D" : "\uE76C";
+        };
+        return container;
+    }
+
+    private FrameworkElement BuildSkippedRootDetails(LibrarySkippedRoot root)
+    {
+        var grid = new Grid
+        {
+            Visibility = Visibility.Collapsed,
+            Background = new SolidColorBrush(Color.FromArgb(24, 144, 160, 181)),
+            Padding = new Thickness(16, 12, 16, 12),
+            ColumnSpacing = 16,
+            RowSpacing = 8,
+        };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        AddSkippedDetailRow(grid, 0, "Root path", root.RootPath, true);
+        var row = 1;
+        if (!string.IsNullOrWhiteSpace(root.SampleFilePath))
+            AddSkippedDetailRow(grid, row++, "Sample file", root.SampleFilePath, true);
+        AddSkippedDetailRow(grid, row, "Files affected", root.FileCount.ToString("N0"), false);
+        return grid;
+    }
+
+    private void AddSkippedDetailRow(Grid grid, int row, string label, string value, bool monospace)
+    {
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var labelBlock = new TextBlock
+        {
+            Text = label,
+            FontSize = 12,
+            FontWeight = FontWeights.Medium,
+            Foreground = _tertiaryText,
+        };
+        var valueBlock = new TextBlock
+        {
+            Text = value,
+            FontSize = 12,
+            Foreground = _primaryText,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        if (monospace)
+            valueBlock.FontFamily = new FontFamily("Consolas");
+        Grid.SetRow(labelBlock, row);
+        Grid.SetRow(valueBlock, row);
+        Grid.SetColumn(valueBlock, 1);
+        grid.Children.Add(labelBlock);
+        grid.Children.Add(valueBlock);
+    }
+
+    private static string GetPathLeaf(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        var trimmed = path.TrimEnd('/', '\\');
+        var separator = Math.Max(trimmed.LastIndexOf('/'), trimmed.LastIndexOf('\\'));
+        return separator >= 0 ? trimmed[(separator + 1)..] : trimmed;
     }
 
     // ===================================================================

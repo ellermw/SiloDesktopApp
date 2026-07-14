@@ -41,23 +41,26 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
     public bool IsFleetVisible => SelectedDevice is null;
     public string ResultsLabel => $"{Devices.Count} {(Devices.Count == 1 ? "device" : "devices")}";
     public int DevicesWithOverrides => _allDevices.Count(d => d.OverrideCount > 0);
-    public int AnomalyCount => _allDevices.Count(IsAnomalous);
-    public int UpdatedWeekCount => _allDevices.Count(d => AgeInDays(d) < 7);
-    public int HdrCapableCount => _allDevices.Count(d => DeviceHints(d).Contains("tv", StringComparison.OrdinalIgnoreCase) ||
+    private IEnumerable<AdminDeviceSummary> ScopedDevices => OverridesOnly
+        ? _allDevices.Where(device => device.OverrideCount > 0)
+        : _allDevices;
+    public int AnomalyCount => ScopedDevices.Count(IsAnomalous);
+    public int UpdatedWeekCount => ScopedDevices.Count(d => AgeInDays(d) < 7);
+    public int HdrCapableCount => ScopedDevices.Count(d => DeviceHints(d).Contains("tv", StringComparison.OrdinalIgnoreCase) ||
         DeviceHints(d).Contains("appletv", StringComparison.OrdinalIgnoreCase) || DeviceHints(d).Contains("shield", StringComparison.OrdinalIgnoreCase));
-    public int HeavyCustomizerCount => _allDevices.Count(d => d.OverrideCount >= 3);
-    public int DormantCount => _allDevices.Count(d => AgeInDays(d) > 30);
-    public int TvCount => _allDevices.Count(d => PlatformKind(d.DevicePlatform) == "TV");
-    public int MobileCount => _allDevices.Count(d => PlatformKind(d.DevicePlatform) is "Mobile" or "Tablet");
-    public int DesktopCount => _allDevices.Count(d => PlatformKind(d.DevicePlatform) == "Desktop");
-    public int NoOverrideCount => _allDevices.Count(d => d.OverrideCount == 0);
-    public int OneTwoOverrideCount => _allDevices.Count(d => d.OverrideCount is >= 1 and <= 2);
-    public int ThreeFiveOverrideCount => _allDevices.Count(d => d.OverrideCount is >= 3 and <= 5);
-    public int SixPlusOverrideCount => _allDevices.Count(d => d.OverrideCount >= 6);
-    public int DayCount => _allDevices.Count(d => RecencyBucket(d) == "<24h");
-    public int WeekCount => _allDevices.Count(d => RecencyBucket(d) == "<7d");
-    public int MonthCount => _allDevices.Count(d => RecencyBucket(d) == "<30d");
-    public int OlderCount => _allDevices.Count(d => RecencyBucket(d) == ">30d");
+    public int HeavyCustomizerCount => ScopedDevices.Count(d => d.OverrideCount >= 3);
+    public int DormantCount => ScopedDevices.Count(d => AgeInDays(d) > 30);
+    public int TvCount => ScopedDevices.Count(d => PlatformKind(d.DevicePlatform) == "TV");
+    public int MobileCount => ScopedDevices.Count(d => PlatformKind(d.DevicePlatform) is "Mobile" or "Tablet");
+    public int DesktopCount => ScopedDevices.Count(d => PlatformKind(d.DevicePlatform) == "Desktop");
+    public int NoOverrideCount => ScopedDevices.Count(d => d.OverrideCount == 0);
+    public int OneTwoOverrideCount => ScopedDevices.Count(d => d.OverrideCount is >= 1 and <= 2);
+    public int ThreeFiveOverrideCount => ScopedDevices.Count(d => d.OverrideCount is >= 3 and <= 5);
+    public int SixPlusOverrideCount => ScopedDevices.Count(d => d.OverrideCount >= 6);
+    public int DayCount => ScopedDevices.Count(d => RecencyBucket(d) == "<24h");
+    public int WeekCount => ScopedDevices.Count(d => RecencyBucket(d) == "<7d");
+    public int MonthCount => ScopedDevices.Count(d => RecencyBucket(d) == "<30d");
+    public int OlderCount => ScopedDevices.Count(d => RecencyBucket(d) == ">30d");
 
     private readonly HashSet<string> _platformFilters = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _overrideFilters = new(StringComparer.OrdinalIgnoreCase);
@@ -276,7 +279,8 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
             query = query.Where(d => d.LastUpdated is { } when && DateTimeOffset.UtcNow - when < TimeSpan.FromDays(days));
         }
         Devices.Clear();
-        foreach (var device in query.OrderByDescending(d => d.LastUpdated)) Devices.Add(new(device));
+        foreach (var device in query.OrderByDescending(d => d.LastUpdated))
+            Devices.Add(new(device, IsAnomalous(device)));
         RebuildGroups();
         OnPropertyChanged(nameof(HasDevices));
         OnPropertyChanged(nameof(ResultsLabel));
@@ -335,8 +339,20 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
         foreach (var group in projected) DeviceGroups.Add(group);
     }
 
-    private static bool IsAnomalous(AdminDeviceSummary device) => device.OverrideCount >= 6 ||
-        (device.OverrideCount > 0 && AgeInDays(device) > 30);
+    private bool IsAnomalous(AdminDeviceSummary device)
+    {
+        var platform = PlatformKind(device.DevicePlatform);
+        var peerCounts = _allDevices
+            .Where(candidate => PlatformKind(candidate.DevicePlatform) == platform)
+            .Select(candidate => candidate.OverrideCount)
+            .Order()
+            .ToArray();
+        var median = peerCounts.Length == 0 ? 0 : peerCounts[peerCounts.Length / 2];
+        var outlier = device.OverrideCount >= 6 ||
+                      (median > 0 && device.OverrideCount >= median * 2 && device.OverrideCount >= 4);
+        var stale = device.OverrideCount > 0 && AgeInDays(device) > 30;
+        return outlier || stale;
+    }
     private static double AgeInDays(AdminDeviceSummary device) => device.LastUpdated is { } last
         ? Math.Max(0, (DateTimeOffset.UtcNow - last).TotalDays)
         : double.PositiveInfinity;
@@ -374,7 +390,8 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
     public static string PlatformKind(string raw)
     {
         var p = raw.ToLowerInvariant();
-        if (new[] { "tvos", "apple tv", "androidtv", "roku", "firetv", "webos", "tizen" }.Any(p.Contains)) return "TV";
+        if (new[] { "tvos", "apple tv", "androidtv", "android tv", "roku", "firetv", "fire tv", "webos", "tizen" }.Any(p.Contains) ||
+            System.Text.RegularExpressions.Regex.IsMatch(p, @"\btv\b")) return "TV";
         if (p.Contains("ipad") || p.Contains("tablet")) return "Tablet";
         if (new[] { "ios", "iphone", "android", "mobile", "phone" }.Any(p.Contains)) return "Mobile";
         if (new[] { "mac", "win", "linux", "desktop", "chrome", "safari", "firefox", "edge", "web" }.Any(p.Contains)) return "Desktop";
@@ -392,10 +409,11 @@ public sealed class AdminDeviceGroupViewModel(string label, IReadOnlyList<AdminD
     public string Label { get; } = label;
     public IReadOnlyList<AdminDeviceCardViewModel> Devices { get; } = devices;
     public string Meta => $"{Devices.Count}d · {Devices.Sum(d => d.Source.ProfileCount)}p · {Devices.Sum(d => d.Source.OverrideCount)}k";
-    public bool IsExpanded => Devices.Count == 1;
+    // Current WebUI starts every group collapsed, including one-device users.
+    public bool IsExpanded => false;
 }
 
-public sealed class AdminDeviceCardViewModel(AdminDeviceSummary source)
+public sealed class AdminDeviceCardViewModel(AdminDeviceSummary source, bool isAnomalous = false)
 {
     public AdminDeviceSummary Source { get; } = source;
     public string Name => string.IsNullOrWhiteSpace(Source.DeviceName) ? "Unknown device" : Source.DeviceName;
@@ -406,8 +424,7 @@ public sealed class AdminDeviceCardViewModel(AdminDeviceSummary source)
     public string Activity => Source.LastUpdated is { } value ? TimeAgo.FormatShort(value.ToString("O")) : "Never";
     public string Overrides => $"{Source.OverrideCount} {(Source.OverrideCount == 1 ? "override" : "overrides")}";
     public string Profiles => $"{Source.ProfileCount} {(Source.ProfileCount == 1 ? "profile" : "profiles")}";
-    public bool IsAnomalous => Source.OverrideCount >= 6 ||
-        (Source.OverrideCount > 0 && Source.LastUpdated is { } last && DateTimeOffset.UtcNow - last > TimeSpan.FromDays(30));
+    public bool IsAnomalous { get; } = isAnomalous;
 }
 
 public sealed class AdminDeviceSettingRow(AdminDeviceSettingDefinition definition, AdminDeviceSetting? setting)

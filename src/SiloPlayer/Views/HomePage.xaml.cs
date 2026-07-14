@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 
@@ -16,6 +17,7 @@ public sealed partial class HomePage : Page
     // data. When the user navigates away and back, skip rebuilding so we
     // don't spike the UI thread tearing down and rebuilding ~60 PosterCards.
     private bool _contentBuilt;
+    private string? _failedHeroSectionId;
 
     public HomePage()
     {
@@ -46,6 +48,8 @@ public sealed partial class HomePage : Page
                 ViewModel.Sections.CollectionChanged += OnSectionsChanged;
                 ViewModel.PropertyChanged += OnViewModelPropertyChanged;
             }
+
+            await UpdateTasteSeedBannerAsync();
         }
         catch (Exception ex)
         {
@@ -58,66 +62,39 @@ public sealed partial class HomePage : Page
         // Web parity (Home.tsx renderHeroSlot): the hero banner renders the FIRST
         // featured section only, capped to that section's item_limit. It does NOT
         // merge items from multiple featured sections.
-        var heroSection = ViewModel.FeaturedSections.FirstOrDefault(s => s.Items.Count > 0);
-        if (heroSection != null)
-        {
-            var limit = heroSection.ItemLimit > 0 ? heroSection.ItemLimit : heroSection.Items.Count;
-            var heroItems = heroSection.Items.Take(limit).ToList();
-            HeroCarouselControl.ItemsSource = heroItems;
-            HeroCarouselControl.Visibility = Visibility.Visible;
-        }
-        else
-        {
-            HeroCarouselControl.Visibility = Visibility.Collapsed;
-        }
+        RefreshHero();
 
         // Non-featured sections as rows
         SectionsPanel.Children.Clear();
-        var mainVm = App.Services.GetRequiredService<MainViewModel>();
         foreach (var section in ViewModel.Sections)
         {
             // F12: sections with empty Items are still loading (skeleton shown
             // by SectionRow). Include them so skeletons render.
             var row = new SectionRow { Section = section };
+            row.OnRetry = failed => _ = ViewModel.RetrySectionAsync(failed.Id);
 
-            // Wire "Explore all" for library-backed section types.
-            var library = TryResolveLibrary(section, mainVm);
-            if (library != null)
+            // Browse the exact stored home recipe. Opening an inferred library
+            // would silently lose custom filters and section ordering.
+            if (SectionRow.IsBrowseSupported(section.SectionType)
+                && section.TotalCount > section.ItemLimit)
             {
-                var lib = library; // capture for closure
                 row.OnViewAll = () =>
                 {
                     var nav = App.Services.GetRequiredService<NavigationService>();
-                    nav.Navigate<LibraryPage>(lib);
+                    nav.Navigate<CatalogPage>(new CatalogNavigation(
+                        Source: "section",
+                        Title: section.Title,
+                        Scope: "home",
+                        SectionId: section.Id));
                 };
-                row.Section = section; // re-set so UpdateSection picks up OnViewAll visibility
             }
 
             SectionsPanel.Children.Add(row);
         }
 
-        // Empty state when the server returned zero sections. Message text
-        // depends on whether this profile has ANY visible libraries: if zero,
-        // the real issue is library-access permissions; otherwise it's a
-        // home-sections admin config issue.
+        // Empty state matches the current WebUI and links to the per-profile
+        // Home Screen editor.
         bool hasSections = ViewModel.FeaturedSections.Count > 0 || ViewModel.Sections.Count > 0;
-        if (!hasSections)
-        {
-            bool hasLibraries = mainVm.Libraries.Count > 0;
-            if (hasLibraries)
-            {
-                EmptyHomeTitle.Text = "No sections configured";
-                EmptyHomeDescription.Text =
-                    "Ask your administrator to set up the homepage in Admin \u2192 Home Sections.";
-            }
-            else
-            {
-                EmptyHomeTitle.Text = "No libraries available";
-                EmptyHomeDescription.Text =
-                    "Your profile has no libraries assigned. Ask your administrator to grant access, "
-                    + "or check Settings \u2192 Libraries if you have admin privileges.";
-            }
-        }
         EmptyHomeState.Visibility = hasSections ? Visibility.Collapsed : Visibility.Visible;
     }
 
@@ -141,18 +118,51 @@ public sealed partial class HomePage : Page
         BuildContent();
     }
 
-    private async void WatchTonightButton_Click(object sender, RoutedEventArgs e)
+    private async Task UpdateTasteSeedBannerAsync()
     {
+        TasteSeedBanner.Visibility = Visibility.Collapsed;
+        var auth = App.Services.GetRequiredService<AuthService>();
+        var profileId = auth.SelectedProfileId;
+        if (string.IsNullOrWhiteSpace(profileId)) return;
+
+        var settingsService = App.Services.GetRequiredService<SettingsService>();
+        var settings = settingsService.Load();
+        if (!settings.TasteSeedDismissedProfileIds.Contains(profileId, StringComparer.Ordinal)
+            || settings.TasteSeedBannerDismissedProfileIds.Contains(profileId, StringComparer.Ordinal))
+            return;
+
         try
         {
-            var dialog = new WatchTonightDialog { XamlRoot = this.XamlRoot };
-            await dialog.ShowAsync();
+            var favorites = await App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>()
+                .GetFavoritesAsync();
+            TasteSeedBanner.Visibility = favorites.Items.Count == 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
-        catch (Exception ex)
+        catch
         {
-            ViewModel.ErrorMessage = $"Could not open Watch Tonight: {ex.Message}";
+            // The prompt is optional. A temporary favorites failure must not
+            // interfere with loading the home surface.
         }
     }
+
+    private void PersonalizeHome_Click(object sender, RoutedEventArgs e)
+        => Frame.Navigate(typeof(TasteSeedPage), true);
+
+    private void DismissTasteSeed_Click(object sender, RoutedEventArgs e)
+    {
+        var auth = App.Services.GetRequiredService<AuthService>();
+        if (string.IsNullOrWhiteSpace(auth.SelectedProfileId)) return;
+        var service = App.Services.GetRequiredService<SettingsService>();
+        var settings = service.Load();
+        if (!settings.TasteSeedBannerDismissedProfileIds.Contains(auth.SelectedProfileId, StringComparer.Ordinal))
+            settings.TasteSeedBannerDismissedProfileIds.Add(auth.SelectedProfileId);
+        service.Save(settings);
+        TasteSeedBanner.Visibility = Visibility.Collapsed;
+    }
+
+    private void CustomizeHome_Click(object sender, RoutedEventArgs e)
+        => Frame.Navigate(typeof(SettingsPage), "Home");
 
     private void OnSectionsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
@@ -220,8 +230,24 @@ public sealed partial class HomePage : Page
 
     private void RefreshHero()
     {
-        var heroSection = ViewModel.FeaturedSections.FirstOrDefault(s => s.Items.Count > 0);
-        if (heroSection != null)
+        HeroCarouselControl.Visibility = Visibility.Collapsed;
+        HeroLoadingSkeleton.Visibility = Visibility.Collapsed;
+        HeroErrorPanel.Visibility = Visibility.Collapsed;
+        _failedHeroSectionId = null;
+
+        var heroSection = ViewModel.FeaturedSections.FirstOrDefault();
+        ContentPanel.Padding = heroSection == null
+            ? new Thickness(0, 24, 0, 8)
+            : new Thickness(0, 8, 0, 8);
+        if (heroSection == null) return;
+
+        if (heroSection.LoadFailed)
+        {
+            _failedHeroSectionId = heroSection.Id;
+            HeroErrorTitle.Text = heroSection.Title;
+            HeroErrorPanel.Visibility = Visibility.Visible;
+        }
+        else if (heroSection.Items.Count > 0)
         {
             var limit = heroSection.ItemLimit > 0 ? heroSection.ItemLimit : heroSection.Items.Count;
             HeroCarouselControl.ItemsSource = heroSection.Items.Take(limit).ToList();
@@ -229,9 +255,14 @@ public sealed partial class HomePage : Page
         }
         else
         {
-            HeroCarouselControl.ItemsSource = null;
-            HeroCarouselControl.Visibility = Visibility.Collapsed;
+            HeroLoadingSkeleton.Visibility = Visibility.Visible;
         }
+    }
+
+    private void RetryHero_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(_failedHeroSectionId))
+            _ = ViewModel.RetrySectionAsync(_failedHeroSectionId);
     }
 
     private void UpdateSectionRow(HomeSectionWithItems updated)
@@ -250,18 +281,20 @@ public sealed partial class HomePage : Page
 
     private void AddSectionRow(HomeSectionWithItems section)
     {
-        var mainVm = App.Services.GetRequiredService<MainViewModel>();
         var row = new SectionRow { Section = section };
-        var library = TryResolveLibrary(section, mainVm);
-        if (library != null)
+        row.OnRetry = failed => _ = ViewModel.RetrySectionAsync(failed.Id);
+        if (SectionRow.IsBrowseSupported(section.SectionType)
+            && section.TotalCount > section.ItemLimit)
         {
-            var lib = library;
             row.OnViewAll = () =>
             {
                 var nav = App.Services.GetRequiredService<NavigationService>();
-                nav.Navigate<LibraryPage>(lib);
+                nav.Navigate<CatalogPage>(new CatalogNavigation(
+                    Source: "section",
+                    Title: section.Title,
+                    Scope: "home",
+                    SectionId: section.Id));
             };
-            row.Section = section;
         }
         SectionsPanel.Children.Add(row);
     }
@@ -284,51 +317,6 @@ public sealed partial class HomePage : Page
         {
             DispatcherQueue.TryEnqueue(UpdateUndoBanner);
         }
-    }
-
-    // Section types that represent browseable library content. These are the
-    // server-generated home sections that are scoped to a specific library and
-    // make sense to "Explore all" by navigating to the full library page.
-    private static readonly HashSet<string> BrowseableSectionTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "recently_added",
-        "popular",
-        "genre",
-        "collection",
-    };
-
-    /// <summary>
-    /// Attempt to resolve the <see cref="Library"/> that a home section belongs
-    /// to. The server section ID typically follows the format
-    /// <c>{section_type}_{library_id}</c> (e.g. "recently_added_1"). Returns
-    /// null when the section type is not library-browseable or no matching
-    /// library is found.
-    /// </summary>
-    private static Library? TryResolveLibrary(HomeSectionWithItems section, MainViewModel mainVm)
-    {
-        if (!BrowseableSectionTypes.Contains(section.SectionType))
-            return null;
-
-        // Try to extract a trailing numeric library ID from the section ID.
-        // Expected format: "{type}_{library_id}" or "{type}:{library_id}".
-        var id = section.Id;
-        if (string.IsNullOrEmpty(id))
-            return null;
-
-        int lastSep = id.LastIndexOfAny(['_', ':']);
-        if (lastSep < 0 || lastSep >= id.Length - 1)
-            return null;
-
-        if (!int.TryParse(id.AsSpan(lastSep + 1), out int libraryId))
-            return null;
-
-        foreach (var lib in mainVm.Libraries)
-        {
-            if (lib.Id == libraryId)
-                return lib;
-        }
-
-        return null;
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)

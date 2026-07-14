@@ -14,7 +14,7 @@ public class AdminSubtitlesParitySourceTests
     [Fact]
     public void PageMatchesCurrentHeadingStatsAndFilterHierarchy()
     {
-        Assert.Contains("MaxWidth=\"1560\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("MaxWidth=\"1640\"", Markup, StringComparison.Ordinal);
         Assert.Contains("FontSize=\"48\"", Markup, StringComparison.Ordinal);
         Assert.Contains("Search release name…", Markup, StringComparison.Ordinal);
         Assert.Contains("Content=\"Reset filters\"", Markup, StringComparison.Ordinal);
@@ -30,6 +30,9 @@ public class AdminSubtitlesParitySourceTests
         Assert.Contains("MakeIconButton(Symbol.Edit", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("MakeIconButton(Symbol.Download", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("MakeIconButton(Symbol.Delete", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("Grid.SetColumn(actions, 9)", CodeBehind, StringComparison.Ordinal);
+        Assert.DoesNotContain("FontFamily = fontFamily == null ? null", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("root.PointerEntered", CodeBehind, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -14,12 +14,24 @@ public sealed class MainWindowSourceTests
         Assert.Contains("PlayingNextCountdownPanel", xaml);
         Assert.Contains("PlayingNextAutoplayToggle", xaml);
         Assert.Contains("PlayingNextCountdownText", xaml);
-        Assert.Contains("PlayingNextCountdownText.Text = _playingNextRemaining.ToString();", code);
+        Assert.Contains("PlayingNextCountdownText.Text = $\"{_playingNextRemaining}s\";", code);
+        Assert.Contains("PlayingNextCountdownRing.Value = _playingNextRemaining;", code);
         Assert.Contains("PlayingNextPlayNowText.Text = \"Play Now\";", code);
+        Assert.Contains("PlayingNextOnDeckSection", xaml);
+        Assert.Contains("PlayingNextOnDeckRepeater", xaml);
+        Assert.Contains("PlayingNextOnDeckPrev", xaml);
+        Assert.Contains("PlayingNextOnDeckNext", xaml);
+        Assert.Contains("PlayingNextFinishedPanel", xaml);
+        Assert.Contains("There are no more episodes available", xaml);
+        Assert.Contains("LoadPlayingNextOnDeckAsync", code);
+        Assert.Contains("section.SectionType, \"continue_watching\"", code);
+        Assert.Contains("PlayingNextOnDeck_Click", code);
         Assert.Contains("playback.auto_play_next", code);
         Assert.Contains("GetPlayingNextAutoPlayAsync", code);
         Assert.Contains("PutDeviceSettingAsync", code);
-        Assert.Contains("if (_playingNextAutoPlay)", code);
+        Assert.Contains("if (hasNextEpisode && _playingNextAutoPlay)", code);
+        Assert.Contains("PlayingNextFinishedHeading.Text", code);
+        Assert.Contains("PlayingNextOnDeckScroller.ChangeView", code);
     }
 
     [Fact]

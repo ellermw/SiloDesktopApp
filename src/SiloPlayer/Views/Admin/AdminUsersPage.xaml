@@ -8,7 +8,8 @@
     xmlns:converters="using:SiloPlayer.Converters"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}"
-    Loaded="Page_Loaded">
+    Loaded="Page_Loaded"
+    Unloaded="Page_Unloaded">
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
@@ -21,7 +22,7 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="32,24,32,40" Spacing="24" MaxWidth="1560" HorizontalAlignment="Center">
+            <StackPanel Padding="40,32,40,40" Spacing="24" MaxWidth="1640" HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -80,27 +81,37 @@
                 <!-- ===== Line-style Tabs: Users / Invite Codes ===== -->
                 <StackPanel Spacing="0">
                     <!-- Tab bar -->
-                    <StackPanel Orientation="Horizontal" Spacing="0">
-                        <Button x:Name="TabUsersButton" Click="TabUsers_Click"
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="TabUsersButton" Grid.Column="0" Click="TabUsers_Click"
                                 Background="Transparent" BorderThickness="0"
-                                Padding="16,10" CornerRadius="0">
+                                Padding="16,10" CornerRadius="0" HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center">
                             <TextBlock x:Name="TabUsersText" Text="Users" FontSize="14" FontWeight="SemiBold"
                                        Foreground="{StaticResource PrimaryTextBrush}" />
                         </Button>
-                        <Button x:Name="TabInviteCodesButton" Click="TabInviteCodes_Click"
+                        <Button x:Name="TabInviteCodesButton" Grid.Column="1" Click="TabInviteCodes_Click"
                                 Background="Transparent" BorderThickness="0"
-                                Padding="16,10" CornerRadius="0">
+                                Padding="16,10" CornerRadius="0" HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center">
                             <TextBlock x:Name="TabInviteCodesText" Text="Invite Codes" FontSize="14"
                                        Foreground="{StaticResource SecondaryTextBrush}" />
                         </Button>
-                    </StackPanel>
+                    </Grid>
                     <!-- Tab underline track -->
                     <Grid Height="2">
-                        <Border Background="{StaticResource BorderBrush}" VerticalAlignment="Bottom" Height="1" />
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.ColumnSpan="2" Background="{StaticResource BorderBrush}" VerticalAlignment="Bottom" Height="1" />
                         <Border x:Name="TabUsersIndicator" Background="{StaticResource AccentBrush}" Height="2"
-                                HorizontalAlignment="Left" Width="70" VerticalAlignment="Bottom" />
+                                Grid.Column="0" HorizontalAlignment="Stretch" VerticalAlignment="Bottom" />
                         <Border x:Name="TabInviteCodesIndicator" Background="{StaticResource AccentBrush}" Height="2"
-                                HorizontalAlignment="Left" Width="110" Margin="70,0,0,0"
+                                Grid.Column="1" HorizontalAlignment="Stretch"
                                 VerticalAlignment="Bottom" Visibility="Collapsed" />
                     </Grid>
                 </StackPanel>
@@ -118,7 +129,17 @@
                             PlaceholderText="Search by username or email..."
                             CornerRadius="8"
                             FontSize="13"
+                            Padding="34,0,34,0"
                             TextChanged="SearchBox_TextChanged" />
+                        <FontIcon
+                            Grid.Column="0"
+                            Glyph="&#xE721;"
+                            FontSize="14"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Center"
+                            Margin="12,0,0,0"
+                            IsHitTestVisible="False" />
                         <Button
                             x:Name="SearchClearButton"
                             Grid.Column="0"
@@ -149,12 +170,12 @@
                                     <ColumnDefinition Width="120" />
                                     <ColumnDefinition Width="120" />
                                 </Grid.ColumnDefinitions>
-                                <Button Grid.Column="0" Content="Username" Tag="username" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" />
-                                <Button Grid.Column="1" Content="Email" Tag="email" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" />
-                                <Button Grid.Column="2" Content="Role" Tag="role" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" />
-                                <Button Grid.Column="3" Content="Status" Tag="status" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" />
-                                <Button Grid.Column="4" Content="Created" Tag="created" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" />
-                                <Button Grid.Column="5" Content="Last Active" Tag="last_active" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" />
+                                <Button Grid.Column="0" Tag="username" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left"><StackPanel Orientation="Horizontal" Spacing="4"><TextBlock Text="Username"/><FontIcon x:Name="UsernameSortIcon" Glyph="&#xE70E;" FontSize="9"/></StackPanel></Button>
+                                <Button Grid.Column="1" Tag="email" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left"><StackPanel Orientation="Horizontal" Spacing="4"><TextBlock Text="Email"/><FontIcon x:Name="EmailSortIcon" Glyph="&#xE70E;" FontSize="9" Visibility="Collapsed"/></StackPanel></Button>
+                                <Button Grid.Column="2" Tag="role" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left"><StackPanel Orientation="Horizontal" Spacing="4"><TextBlock Text="Role"/><FontIcon x:Name="RoleSortIcon" Glyph="&#xE70E;" FontSize="9" Visibility="Collapsed"/></StackPanel></Button>
+                                <Button Grid.Column="3" Tag="status" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left"><StackPanel Orientation="Horizontal" Spacing="4"><TextBlock Text="Status"/><FontIcon x:Name="StatusSortIcon" Glyph="&#xE70E;" FontSize="9" Visibility="Collapsed"/></StackPanel></Button>
+                                <Button Grid.Column="4" Tag="created" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left"><StackPanel Orientation="Horizontal" Spacing="4"><TextBlock Text="Created"/><FontIcon x:Name="CreatedSortIcon" Glyph="&#xE70E;" FontSize="9" Visibility="Collapsed"/></StackPanel></Button>
+                                <Button Grid.Column="5" Tag="last_active" Click="UserSort_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left"><StackPanel Orientation="Horizontal" Spacing="4"><TextBlock Text="Last Active"/><FontIcon x:Name="LastActiveSortIcon" Glyph="&#xE70E;" FontSize="9" Visibility="Collapsed"/></StackPanel></Button>
                                 <TextBlock Grid.Column="6" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             </Grid>
 
@@ -235,10 +256,40 @@
                             Click="CreateInviteCodeButton_Click">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <FontIcon Glyph="&#xE710;" FontSize="14" />
-                                <TextBlock Text="Create" />
+                                <TextBlock Text="Create Code" />
                             </StackPanel>
                         </Button>
                     </StackPanel>
+
+                    <Border
+                        Background="{StaticResource SurfaceBrush}"
+                        BorderBrush="{StaticResource BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="24">
+                        <StackPanel Spacing="18">
+                            <StackPanel Spacing="5">
+                                <TextBlock Text="Public Signups" FontSize="16" FontWeight="SemiBold" />
+                                <TextBlock
+                                    Text="When enabled, users with a valid invite code can create their own accounts."
+                                    FontSize="13"
+                                    Foreground="{StaticResource SecondaryTextBrush}"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <ToggleSwitch
+                                    x:Name="SignupEnabledToggle"
+                                    OnContent=""
+                                    OffContent=""
+                                    Toggled="SignupEnabledToggle_Toggled" />
+                                <TextBlock
+                                    x:Name="SignupEnabledText"
+                                    Text="Disabled"
+                                    VerticalAlignment="Center"
+                                    FontWeight="Medium" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
 
                     <!-- Loading indicator for invite codes -->
                     <ProgressRing
@@ -257,19 +308,17 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="2*" />
                                     <ColumnDefinition Width="2*" />
-                                    <ColumnDefinition Width="80" />
-                                    <ColumnDefinition Width="80" />
-                                    <ColumnDefinition Width="80" />
+                                    <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="180" />
                                     <ColumnDefinition Width="120" />
                                     <ColumnDefinition Width="120" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Code" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBlock Grid.Column="1" Text="Label" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="2" Text="MAX USES" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="3" Text="USED" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="4" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="5" Text="Created" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Grid.Column="6" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Text="Usage" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="4" Text="Created" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="5" Text="Actions" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             </Grid>
 
                             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
@@ -286,15 +335,9 @@
                                         Foreground="{StaticResource TertiaryTextBrush}"
                                         HorizontalAlignment="Center" />
                                     <TextBlock
-                                        Text="No invite codes"
-                                        FontSize="16"
-                                        FontWeight="SemiBold"
-                                        Foreground="{StaticResource SecondaryTextBrush}"
-                                        HorizontalAlignment="Center" />
-                                    <TextBlock
-                                        Text="Create an invite code to let people sign up."
+                                        Text="No invite codes yet. Create one to get started."
                                         FontSize="13"
-                                        Foreground="{StaticResource TertiaryTextBrush}"
+                                        Foreground="{StaticResource SecondaryTextBrush}"
                                         HorizontalAlignment="Center" />
                                 </StackPanel>
                             </Border>

@@ -39,4 +39,16 @@ public class AdminActivityParitySourceTests
         Assert.Contains("Text = \"View Logs\"", PageSource, StringComparison.Ordinal);
         Assert.Contains("Text = \"FFmpeg Logs\"", PageSource, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void EmptyActivityDoesNotRenderAnEmptyTableShell()
+    {
+        Assert.Contains("x:Name=\"StreamsTable\"", PageMarkup, StringComparison.Ordinal);
+        Assert.Contains("StreamsTable.Visibility = Visibility.Collapsed;", PageSource, StringComparison.Ordinal);
+        Assert.Contains("StreamsTable.Visibility = Visibility.Visible;", PageSource, StringComparison.Ordinal);
+
+        var tableEnd = PageMarkup.IndexOf("WebUI renders the empty state", StringComparison.Ordinal);
+        var emptyState = PageMarkup.IndexOf("x:Name=\"EmptyState\"", StringComparison.Ordinal);
+        Assert.True(tableEnd >= 0 && emptyState > tableEnd);
+    }
 }

@@ -722,6 +722,15 @@ public sealed class MpvPlayer : IDisposable
         Command(args.ToArray());
     }
 
+    /// <summary>Reloads an already-added subtitle track after its local file
+    /// changes. Used by live AI translation as cue batches arrive.</summary>
+    public void ReloadSubtitle(int sid)
+    {
+        ThrowIfNotInitialized();
+        if (sid > 0) Command("sub-reload", sid.ToString());
+        else Command("sub-reload");
+    }
+
     /// <summary>
     /// Removes a subtitle track by mpv's sid (1-based). Used by the sliding-
     /// window embedded-subtitle fetch to drop a stale window before loading

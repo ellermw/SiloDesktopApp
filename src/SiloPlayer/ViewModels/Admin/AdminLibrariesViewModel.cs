@@ -19,7 +19,8 @@ public partial class AdminLibrariesViewModel : ObservableObject
     }
 
     public ObservableCollection<Library> Libraries { get; } = [];
-    public ObservableCollection<LibrarySkippedRoot> SkippedRoots { get; } = [];
+    public List<LibrarySkippedRoot> SkippedRoots { get; private set; } = [];
+    public string? SkippedRootsError { get; private set; }
 
     /// <summary>Per-library mount check results, keyed by library ID.</summary>
     public Dictionary<int, LibraryMountCheckResponse> MountCheckResults { get; } = new();
@@ -103,11 +104,17 @@ public partial class AdminLibrariesViewModel : ObservableObject
     {
         try
         {
-            var skipped = await _adminApi.GetSkippedRootsAsync();
-            SkippedRoots.Clear();
-            foreach (var s in skipped) SkippedRoots.Add(s);
+            SkippedRootsError = null;
+            SkippedRoots = await _adminApi.GetSkippedRootsAsync();
         }
-        catch { /* Non-critical */ }
+        catch (Exception ex)
+        {
+            SkippedRoots = [];
+            SkippedRootsError = ex.Message;
+        }
+
+        OnPropertyChanged(nameof(SkippedRoots));
+        OnPropertyChanged(nameof(SkippedRootsError));
     }
 
     public async Task LoadUnmatchedItemsAsync(string? search = null)

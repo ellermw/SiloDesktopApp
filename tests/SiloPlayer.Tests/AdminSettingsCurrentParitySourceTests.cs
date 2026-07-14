@@ -6,16 +6,95 @@ public class AdminSettingsCurrentParitySourceTests
     private static string Markup => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminSettingsDetailPage.xaml"));
     private static string CodeBehind => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminSettingsDetailPage.xaml.cs"));
     private static string SettingsApi => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer.Core", "Api", "SettingsApi.cs"));
+    private static string AdminApi => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer.Core", "Api", "AdminApi.cs"));
+
+    [Fact]
+    public void ThemingUsesCurrentPreviewFirstAutosaveAndSiloCatalogContract()
+    {
+        Assert.Contains("case \"Theming\": BuildThemingTabCurrent()", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("tabName is not (\"Theming\"", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("AddSectionHeader(\"Preview\")", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("AddSectionHeader(\"Token Overrides\")", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("AddSectionHeader(\"Custom CSS\")", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("AddSectionHeader(\"Theme Catalog URL\")", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("ScheduleAdminThemeSave(\"ui.admin_theme_vars\", 500)", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("ScheduleAdminThemeSave(\"ui.admin_custom_css\", 1000)", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("SanitizeAdminThemeCss", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("Silo-Server/silo-themes", CodeBehind, StringComparison.Ordinal);
+        Assert.DoesNotContain("ContinuumApp/continuum-themes", CodeBehind, StringComparison.Ordinal);
+    }
 
     [Fact]
     public void SettingsUsesCurrentTwentySectionGroupedRail()
     {
         Assert.Contains("MaxWidth=\"1400\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("Padding=\"40,32,40,40\"", Markup, StringComparison.Ordinal);
         Assert.Contains("FontSize=\"48\"", Markup, StringComparison.Ordinal);
         foreach (var group in new[] { "Server", "Media", "Connections", "Data" })
             Assert.Contains($"(\"{group}\",", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("(\"Branding\"", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("(\"Search\"", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("ContentPanel.ClearValue(FrameworkElement.MaxWidthProperty)", CodeBehind, StringComparison.Ordinal);
+        Assert.DoesNotContain("ContentPanel.MaxWidth = 768", CodeBehind, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SettingsSearchIndexesCurrentIndividualFieldLabels()
+    {
+        Assert.Contains("SettingsSearchFields", CodeBehind, StringComparison.Ordinal);
+        foreach (var label in new[]
+                 {
+                     "Trusted Proxies", "Vector Coverage", "Transcription limit per account",
+                     "Silo Push Relay", "Compatibility Proxies", "Decision Log Verbosity"
+                 })
+            Assert.Contains($"\"{label}\"", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("fields.Any(field => field.Contains(query", CodeBehind, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NotificationSettingsUseCurrentPipelineChannelsAndAdvancedLayout()
+    {
+        Assert.Contains("BuildNotificationsAdminTabCurrent", CodeBehind, StringComparison.Ordinal);
+        foreach (var text in new[]
+                 {
+                     "Record events", "Fan out", "Hand off to the delivery channels below.",
+                     "DELIVERY CHANNELS", "Silo Push Relay", "Personal Webhooks", "Server Channels",
+                     "ADVANCED", "FANOUT TUNING", "RETENTION"
+                 })
+            Assert.Contains($"\"{text}\"", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("UpdateNotificationEnabledCount", CodeBehind, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InlineSaveBarUsesOneDetachedPageLevelSubscription()
+    {
+        Assert.Contains("ViewModel.PropertyChanged += ViewModel_PropertyChanged", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("ViewModel.PropertyChanged -= ViewModel_PropertyChanged", CodeBehind, StringComparison.Ordinal);
+        Assert.DoesNotContain("ViewModel.PropertyChanged += (_, args)", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("_inlineSaveBar.Visibility = Visibility.Visible", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("_inlineDiscardButton.IsEnabled = count > 0", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("_inlineSaveButton.IsEnabled = count > 0", CodeBehind, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RestartRequiredSaveBarUsesCurrentServerRestartEndpoint()
+    {
+        Assert.Contains("Server restart required for changes to take effect.", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("Title = \"Restart server?\"", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("RestartServerAsync", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("/api/v1/admin/server/restart", AdminApi, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AiSettingsReadLegacyValuesButAlwaysWriteCurrentKeys()
+    {
+        foreach (var legacy in new[]
+                 {
+                     "subtitle_ai.base_url", "subtitle_ai.chat_model", "subtitle_ai.api_key",
+                     "subtitle_ai.max_concurrent_jobs"
+                 })
+            Assert.Contains($"\"{legacy}\"", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("GetSettingValue", CodeBehind, StringComparison.Ordinal);
     }
 
     [Fact]

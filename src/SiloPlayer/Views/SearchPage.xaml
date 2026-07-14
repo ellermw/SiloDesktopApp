@@ -98,7 +98,7 @@
                 </Grid>
             </Border>
             <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
-                <Button x:Name="EmptyVideoScope" Content="Movies &amp; Shows" Tag="video" Click="Scope_Click" />
+                <Button x:Name="EmptyVideoScope" Content="Media" Tag="video" Click="Scope_Click" />
                 <Button x:Name="EmptyAudiobookScope" Content="Audiobooks" Tag="audiobook" Click="Scope_Click" />
                 <Button x:Name="EmptyAllScope" Content="All" Tag="all" Click="Scope_Click" />
             </StackPanel>
@@ -113,6 +113,7 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
@@ -124,8 +125,11 @@
                     FontWeight="Bold"
                     Foreground="{StaticResource PrimaryTextBrush}" />
 
+                <TextBlock Text="Refine the archive by type, era, rating, or genre."
+                           FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+
                 <!-- Inline result count (web style: "N results" next to header) -->
-                <StackPanel Orientation="Horizontal" Spacing="6">
+                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
                     <TextBlock
                         x:Name="ResultCountText"
                         FontSize="{StaticResource FontSizeTitle}"
@@ -181,13 +185,49 @@
             </Border>
 
             <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Margin="0,0,0,16">
-                <Button x:Name="ResultsVideoScope" Content="Movies &amp; Shows" Tag="video" Click="Scope_Click" />
+                <Button x:Name="ResultsVideoScope" Content="Media" Tag="video" Click="Scope_Click" />
                 <Button x:Name="ResultsAudiobookScope" Content="Audiobooks" Tag="audiobook" Click="Scope_Click" />
                 <Button x:Name="ResultsAllScope" Content="All" Tag="all" Click="Scope_Click" />
             </StackPanel>
 
+            <Grid Grid.Row="3" Margin="40,0,40,16" ColumnSpacing="10" HorizontalAlignment="Left">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="180" />
+                    <ColumnDefinition Width="180" />
+                    <ColumnDefinition Width="140" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ComboBox x:Name="ResultTypeCombo" SelectionChanged="ResultFilter_Changed">
+                    <ComboBoxItem Content="Movies &amp; Series" Tag="video" IsSelected="True" />
+                    <ComboBoxItem Content="Movies" Tag="movie" />
+                    <ComboBoxItem Content="Series" Tag="series" />
+                    <ComboBoxItem Content="Episodes" Tag="episode" />
+                    <ComboBoxItem Content="Audiobooks" Tag="audiobook" />
+                    <ComboBoxItem Content="All Media" Tag="all" />
+                </ComboBox>
+                <ComboBox x:Name="ResultSortCombo" Grid.Column="1" SelectionChanged="ResultSort_Changed">
+                    <ComboBoxItem Content="Date Added" Tag="added_at" IsSelected="True" />
+                    <ComboBoxItem Content="Title" Tag="title" />
+                    <ComboBoxItem Content="Release Date" Tag="release_date" />
+                    <ComboBoxItem Content="Year" Tag="year" />
+                    <ComboBoxItem Content="IMDb Rating" Tag="rating_imdb" />
+                    <ComboBoxItem Content="Resolution" Tag="resolution" />
+                    <ComboBoxItem Content="Bitrate" Tag="bitrate" />
+                </ComboBox>
+                <ComboBox x:Name="ResultOrderCombo" Grid.Column="2" SelectionChanged="ResultFilter_Changed">
+                    <ComboBoxItem Content="Descending" Tag="desc" IsSelected="True" />
+                    <ComboBoxItem Content="Ascending" Tag="asc" />
+                </ComboBox>
+                <Button Grid.Column="3" Style="{StaticResource OutlineButtonStyle}" Click="OpenResultFilters_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE71C;" FontSize="14" />
+                        <TextBlock Text="Filters" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+
             <!-- Results grid -->
-            <ScrollViewer Grid.Row="3" Padding="40,0,40,24">
+            <ScrollViewer Grid.Row="4" Padding="40,0,40,24">
                 <StackPanel>
 
                     <!-- People results section -->
@@ -262,20 +302,19 @@
                         </ItemsRepeater.ItemTemplate>
                     </ItemsRepeater>
 
-                    <StackPanel x:Name="RequestResultsSection" Visibility="Collapsed" Margin="0,28,0,0" Spacing="12">
+                    <StackPanel x:Name="RequestResultsSection" Visibility="Collapsed" Margin="0,36,0,0" Spacing="12">
+                        <TextBlock Text="Discover · Outside your library" FontSize="11" CharacterSpacing="140" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                         <TextBlock Text="Request to Add" FontSize="{StaticResource FontSizeTitle}" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
-                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
                             <ItemsRepeater x:Name="RequestResultsRepeater">
-                                <ItemsRepeater.Layout><StackLayout Orientation="Horizontal" Spacing="12" /></ItemsRepeater.Layout>
+                                <ItemsRepeater.Layout><UniformGridLayout MinItemWidth="170" MinColumnSpacing="12" MinRowSpacing="16" ItemsStretch="Fill" /></ItemsRepeater.Layout>
                                 <ItemsRepeater.ItemTemplate>
                                     <DataTemplate x:DataType="requests:RequestMediaResult">
-                                        <Button Tag="{x:Bind}" Click="RequestResult_Click" Padding="0" Background="Transparent" BorderThickness="0">
-                                            <StackPanel Width="150" Spacing="6"><Border Width="150" Height="225" CornerRadius="8" Background="{StaticResource CardBackgroundBrush}"><Image Source="{x:Bind PosterUrl}" Stretch="UniformToFill" /></Border><TextBlock Text="{x:Bind Title}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{x:Bind YearText}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+                                        <Button Tag="{x:Bind}" Click="RequestResult_Click" Padding="0" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch">
+                                            <StackPanel Spacing="6"><Border Height="240" CornerRadius="8" Background="{StaticResource CardBackgroundBrush}"><Image Source="{x:Bind PosterUrl}" Stretch="UniformToFill" /></Border><TextBlock Text="{x:Bind Title}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{x:Bind YearText}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
                                         </Button>
                                     </DataTemplate>
                                 </ItemsRepeater.ItemTemplate>
                             </ItemsRepeater>
-                        </ScrollViewer>
                     </StackPanel>
 
                     <!-- Skeleton while search results load (inline rows) -->
@@ -321,5 +360,32 @@
                 </StackPanel>
             </ScrollViewer>
         </Grid>
+
+        <controls:SlideSheet x:Name="ResultFiltersSheet" Title="Filters">
+            <controls:SlideSheet.SheetContent>
+                <Grid RowDefinitions="Auto,*,Auto" RowSpacing="12">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Filters" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock Text="Refine your catalog results" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Spacing="12" Padding="0,4,8,12">
+                            <TextBlock Text="Genre" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="ResultGenreCombo" HorizontalAlignment="Stretch" SelectionChanged="ResultFilter_Changed" />
+                            <TextBlock Text="Content Rating" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="ResultRatingCombo" HorizontalAlignment="Stretch" SelectionChanged="ResultFilter_Changed" />
+                            <TextBlock Text="Resolution" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="ResultResolutionCombo" HorizontalAlignment="Stretch" SelectionChanged="ResultFilter_Changed" />
+                            <TextBlock Text="Country" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="ResultCountryCombo" HorizontalAlignment="Stretch" SelectionChanged="ResultFilter_Changed" />
+                        </StackPanel>
+                    </ScrollViewer>
+                    <Grid Grid.Row="2" ColumnDefinitions="*,Auto">
+                        <Button Content="Clear All" Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Left" Click="ClearResultFilters_Click" />
+                        <Button Grid.Column="1" Content="Done" Style="{StaticResource PrimaryButtonStyle}" Click="CloseResultFilters_Click" />
+                    </Grid>
+                </Grid>
+            </controls:SlideSheet.SheetContent>
+        </controls:SlideSheet>
     </Grid>
 </Page>

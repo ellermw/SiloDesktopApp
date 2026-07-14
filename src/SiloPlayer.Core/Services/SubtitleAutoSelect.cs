@@ -63,7 +63,45 @@ public static class SubtitleAutoSelect
         int OriginalIndex,
         string? Language,
         string? Source,
-        bool Forced);
+        bool Forced,
+        string? Codec = null,
+        string? Label = null,
+        bool HearingImpaired = false);
+
+    private static bool IsBitmapCodec(string? codec)
+        => Normalize(codec) is "pgs" or "hdmv_pgs_subtitle" or "dvdsub" or
+            "dvd_subtitle" or "vobsub" or "dvbsub" or "dvb_subtitle";
+
+    private static int TrackPriority(SubtitleCandidate track)
+    {
+        var source = SourcePriority.TryGetValue(track.Source ?? "embedded", out var priority)
+            ? priority
+            : 2;
+        return source * 2 + (IsBitmapCodec(track.Codec) ? 1 : 0);
+    }
+
+    private static bool MatchesSignature(SubtitleCandidate track, SubtitleTrackSignature? signature)
+    {
+        if (signature == null) return false;
+        return Normalize(track.Source) == Normalize(signature.Source) &&
+            Normalize(track.Language) == Normalize(signature.Language) &&
+            Normalize(track.Codec) == Normalize(signature.Codec) &&
+            (Normalize(signature.Label) == "" || Normalize(track.Label) == Normalize(signature.Label)) &&
+            track.Forced == signature.Forced &&
+            track.HearingImpaired == signature.HearingImpaired;
+    }
+
+    private static int SignatureFallbackScore(SubtitleCandidate track, SubtitleTrackSignature? signature)
+    {
+        if (signature == null) return 0;
+        var score = 0;
+        if (Normalize(track.Source) == Normalize(signature.Source)) score += 4;
+        if (track.Forced == signature.Forced) score += 2;
+        if (track.HearingImpaired == signature.HearingImpaired) score += 2;
+        if (Normalize(track.Codec) == Normalize(signature.Codec)) score += 1;
+        if (Normalize(track.Label) == Normalize(signature.Label)) score += 1;
+        return score;
+    }
 
     /// <summary>
     /// Among candidates matching <paramref name="language"/>, return the one with
@@ -78,7 +116,7 @@ public static class SubtitleAutoSelect
         foreach (var t in tracks)
         {
             if (!SameLanguageCode(t.Language, language)) continue;
-            var priority = SourcePriority.TryGetValue(t.Source ?? "embedded", out var p) ? p : 2;
+            var priority = TrackPriority(t);
             if (priority < bestPriority)
             {
                 bestPriority = priority;
@@ -103,7 +141,31 @@ public static class SubtitleAutoSelect
         string? PreferredLanguage,
         string? AudioLanguage,
         string? ProfileLanguage,
-        bool ShowForcedSubtitles);
+        bool ShowForcedSubtitles,
+        SubtitleTrackSignature? PreferredTrackSignature = null);
+
+    private static int FindPreferredSubtitleIndexWithSignature(
+        IReadOnlyList<SubtitleCandidate> tracks,
+        string language,
+        SubtitleTrackSignature? signature)
+    {
+        SubtitleCandidate? best = null;
+        var bestScore = -1;
+        var bestPriority = int.MaxValue;
+        foreach (var track in tracks)
+        {
+            if (!SameLanguageCode(track.Language, language)) continue;
+            var score = SignatureFallbackScore(track, signature);
+            var priority = TrackPriority(track);
+            if (best == null || score > bestScore || (score == bestScore && priority < bestPriority))
+            {
+                best = track;
+                bestScore = score;
+                bestPriority = priority;
+            }
+        }
+        return best?.OriginalIndex ?? -1;
+    }
 
     /// <summary>
     /// Determine which subtitle track should auto-select on playback start.
@@ -129,8 +191,11 @@ public static class SubtitleAutoSelect
                     : null;
 
             case "always":
+                var exact = options.Tracks.FirstOrDefault(t => MatchesSignature(t, options.PreferredTrackSignature));
+                if (exact != null) return exact.OriginalIndex;
                 if (string.IsNullOrEmpty(options.PreferredLanguage)) return null;
-                var matchAlways = FindPreferredSubtitleIndex(options.Tracks, options.PreferredLanguage);
+                var matchAlways = FindPreferredSubtitleIndexWithSignature(
+                    options.Tracks, options.PreferredLanguage, options.PreferredTrackSignature);
                 return matchAlways >= 0 ? matchAlways : null;
 
             case "auto":
@@ -149,7 +214,8 @@ public static class SubtitleAutoSelect
                         ? FindForcedSubtitleIndex(options.Tracks, effectiveAudioLang)
                         : null;
                 }
-                var matchAuto = FindPreferredSubtitleIndex(options.Tracks, lang);
+                var matchAuto = FindPreferredSubtitleIndexWithSignature(
+                    options.Tracks, lang, options.PreferredTrackSignature);
                 return matchAuto >= 0 ? matchAuto : null;
 
             default:
@@ -174,9 +240,25 @@ public static class SubtitleAutoSelect
                 OriginalIndex: t.Index ?? i,
                 Language: t.Language,
                 Source: source,
-                Forced: t.Forced == true));
+                Forced: t.Forced == true,
+                Codec: t.Codec,
+                Label: t.Title ?? t.EmbeddedTitle,
+                HearingImpaired: t.HearingImpaired == true));
             i++;
         }
         return result;
+    }
+
+    public static List<SubtitleCandidate> BuildCandidates(IEnumerable<SubtitleTrackInfo>? tracks)
+    {
+        if (tracks == null) return [];
+        return tracks.Select(t => new SubtitleCandidate(
+            OriginalIndex: t.Index,
+            Language: t.Language,
+            Source: t.Source,
+            Forced: t.Forced,
+            Codec: t.Codec,
+            Label: t.Label,
+            HearingImpaired: t.HearingImpaired)).ToList();
     }
 }

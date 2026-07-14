@@ -25,29 +25,56 @@ public sealed partial class SectionRow : UserControl
     private bool _isHovered;
     private bool _canScrollPrev;
     private bool _canScrollNext;
+    private bool _isPinned;
+    private int? _libraryId;
+
+    private static readonly HashSet<string> BrowseableSectionTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "collection",
+        "custom_filter",
+        "genre",
+        "random",
+        "recently_added",
+    };
+
+    /// <summary>The containing library. Home sections intentionally leave this null.</summary>
+    public int? LibraryId
+    {
+        get => _libraryId;
+        set
+        {
+            if (_libraryId == value) return;
+            _libraryId = value;
+            UpdatePinAvailability();
+            SyncPinState();
+        }
+    }
+
+    public static bool IsBrowseSupported(string? sectionType) =>
+        !string.IsNullOrWhiteSpace(sectionType) && BrowseableSectionTypes.Contains(sectionType);
 
     /// <summary>
     /// Optional callback invoked when the "Explore all" button is clicked.
     /// When set, the button becomes visible in the title row.
     /// </summary>
-    public Action? OnViewAll { get; set; }
+    private Action? _onViewAll;
+    public Action? OnViewAll
+    {
+        get => _onViewAll;
+        set
+        {
+            _onViewAll = value;
+            if (ExploreAllBtn != null)
+                ExploreAllBtn.Visibility = value != null ? Visibility.Visible : Visibility.Collapsed;
+            UpdateArrowsOpacity();
+        }
+    }
 
-    /// <summary>
-    /// Optional callback invoked when the per-section refresh button is
-    /// clicked. When set, the parent should re-fetch this section's items
-    /// from the server and rebind. Webui parity with retrySection().
-    /// </summary>
-    public Action<HomeSectionWithItems>? OnRefresh { get; set; }
+    public Action<HomeSectionWithItems>? OnRetry { get; set; }
 
     public SectionRow()
     {
         this.InitializeComponent();
-    }
-
-    private void RefreshSection_Click(object sender, RoutedEventArgs e)
-    {
-        if (Section == null) return;
-        OnRefresh?.Invoke(Section);
     }
 
     private static void OnSectionChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -64,11 +91,15 @@ public sealed partial class SectionRow : UserControl
 
         // Show the "Explore all" button only when a navigation callback is set.
         ExploreAllBtn.Visibility = OnViewAll != null ? Visibility.Visible : Visibility.Collapsed;
+        UpdatePinAvailability();
+        SyncPinState();
 
         // B44: swap the ItemsRepeater template by section type. Landscape for
         // continue_watching / next_up; poster for everything else.
         bool useLandscape = section.SectionType is "continue_watching" or "next_up";
-        string templateKey = useLandscape ? "LandscapeCardTemplate" : "PosterCardTemplate";
+        string templateKey = section.SectionType == "continue_listening"
+            ? "AudiobookCardTemplate"
+            : useLandscape ? "LandscapeCardTemplate" : "PosterCardTemplate";
         CardsRepeater.ItemTemplate = (DataTemplate)this.Resources[templateKey];
         CardsRepeater.ItemsSource = section.Items;
 
@@ -76,14 +107,22 @@ public sealed partial class SectionRow : UserControl
         // during F12 per-section fetch). Replaced by the real cards as soon
         // as Items gets populated and UpdateSection is called again.
         bool hasItems = section.Items != null && section.Items.Count > 0;
-        if (hasItems)
+        if (section.LoadFailed)
         {
+            SkeletonPanel.Visibility = Visibility.Collapsed;
+            CardsScrollViewer.Visibility = Visibility.Collapsed;
+            ErrorPanel.Visibility = Visibility.Visible;
+        }
+        else if (hasItems)
+        {
+            ErrorPanel.Visibility = Visibility.Collapsed;
             SkeletonPanel.Visibility = Visibility.Collapsed;
             SkeletonPanel.Children.Clear();
             CardsScrollViewer.Visibility = Visibility.Visible;
         }
         else
         {
+            ErrorPanel.Visibility = Visibility.Collapsed;
             BuildSkeletonRow();
             SkeletonPanel.Visibility = Visibility.Visible;
             CardsScrollViewer.Visibility = Visibility.Collapsed;
@@ -160,6 +199,8 @@ public sealed partial class SectionRow : UserControl
         bool hasExploreAll = OnViewAll != null;
         bool show = _isHovered && (_canScrollPrev || _canScrollNext || hasExploreAll);
         double target = show ? 1.0 : 0.0;
+        if (PinSectionBtn.Visibility == Visibility.Visible)
+            PinSectionBtn.Opacity = _isPinned || _isHovered ? 1.0 : 0.0;
         if (Math.Abs(ArrowsPanel.Opacity - target) < 0.01) return;
 
         var anim = new DoubleAnimation
@@ -173,6 +214,54 @@ public sealed partial class SectionRow : UserControl
         var sb = new Storyboard();
         sb.Children.Add(anim);
         sb.Begin();
+
+    }
+
+    private void UpdatePinAvailability()
+    {
+        var canPin = _libraryId is > 0 && IsBrowseSupported(Section?.SectionType);
+        PinSectionBtn.Visibility = canPin ? Visibility.Visible : Visibility.Collapsed;
+        if (!canPin) _isPinned = false;
+        UpdatePinVisual();
+    }
+
+    private void SyncPinState()
+    {
+        if (_libraryId is not > 0 || Section == null || !IsBrowseSupported(Section.SectionType))
+            return;
+        _isPinned = App.MainWindowInstance is MainWindow window
+            && window.IsSidebarPin(_libraryId.Value, "section", Section.Id);
+        UpdatePinVisual();
+    }
+
+    private async void PinSection_Click(object sender, RoutedEventArgs e)
+    {
+        if (_libraryId is not > 0 || Section == null) return;
+        PinSectionBtn.IsEnabled = false;
+        try
+        {
+            if (App.MainWindowInstance is not MainWindow window) return;
+            _isPinned = await window.ToggleSidebarPinAsync(
+                _libraryId.Value, "section", Section.Id, Section.Title);
+            UpdatePinVisual();
+        }
+        catch
+        {
+            // Pinning is a convenience action; keep the carousel usable if a
+            // transient settings write fails.
+        }
+        finally
+        {
+            PinSectionBtn.IsEnabled = true;
+        }
+    }
+
+    private void UpdatePinVisual()
+    {
+        if (PinSectionBtn == null) return;
+        PinSectionIcon.Glyph = _isPinned ? "\uE841" : "\uE840";
+        PinSectionBtn.Opacity = _isPinned || _isHovered ? 1.0 : 0.0;
+        ToolTipService.SetToolTip(PinSectionBtn, _isPinned ? "Unpin from sidebar" : "Pin to sidebar");
     }
 
     // ─── Explore all ────────────────────────────────────────────────────
@@ -181,6 +270,13 @@ public sealed partial class SectionRow : UserControl
     {
         OnViewAll?.Invoke();
     }
+
+    private void RetrySection_Click(object sender, RoutedEventArgs e)
+    {
+        if (Section != null)
+            OnRetry?.Invoke(Section);
+    }
+
 
     // ─── Scroll actions ─────────────────────────────────────────────────
 

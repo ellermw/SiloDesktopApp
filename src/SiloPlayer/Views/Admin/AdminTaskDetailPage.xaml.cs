@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels.Admin;
 
 namespace SiloPlayer.Views.Admin;
@@ -15,6 +16,9 @@ public sealed partial class AdminTaskDetailPage : Page
 
     private string _taskKey = "";
     private DispatcherTimer? _refreshTimer;
+    private EventChannelClient? _eventChannel;
+    private IDisposable? _eventSubscription;
+    private DateTime _lastEventRefresh = DateTime.MinValue;
 
     public AdminTaskDetailPage()
     {
@@ -40,12 +44,29 @@ public sealed partial class AdminTaskDetailPage : Page
         };
 
         await LoadAsync();
+        try
+        {
+            _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
+            _eventChannel.EventReceived += OnEventReceived;
+            _eventSubscription = _eventChannel.Subscribe("tasks");
+        }
+        catch { }
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
         StopRefreshTimer();
+        if (_eventChannel is not null) _eventChannel.EventReceived -= OnEventReceived;
+        _eventSubscription?.Dispose();
+        _eventSubscription = null;
+    }
+
+    private void OnEventReceived(string channel, string eventName, System.Text.Json.JsonElement data)
+    {
+        if (channel != "tasks" || (DateTime.UtcNow - _lastEventRefresh).TotalMilliseconds < 500) return;
+        _lastEventRefresh = DateTime.UtcNow;
+        DispatcherQueue.TryEnqueue(async () => await LoadAsync());
     }
 
     // ===== Load =====
@@ -113,12 +134,13 @@ public sealed partial class AdminTaskDetailPage : Page
     private void BuildHeader(TaskInfo task)
     {
         TitleBadgeRow.Children.Clear();
+        BreadcrumbTaskText.Text = task.Name;
 
         // Task name — page-title clamp(2rem,4vw,3rem) = large bold
         TitleBadgeRow.Children.Add(new TextBlock
         {
             Text       = task.Name,
-            FontSize   = 32,
+            FontSize   = 48,
             FontWeight = FontWeights.Bold,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center

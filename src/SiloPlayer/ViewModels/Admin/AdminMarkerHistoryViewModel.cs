@@ -135,7 +135,11 @@ public sealed record MarkerHistoryRowViewModel(
 
     private static string FormatClock(double seconds)
     {
-        var value = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        // Match JavaScript Math.round used by the WebUI. TimeSpan's component
+        // accessors truncate fractional seconds and made marker endpoints render
+        // one second early for values such as 1299.8.
+        var roundedSeconds = Math.Floor(Math.Max(0, seconds) + 0.5);
+        var value = TimeSpan.FromSeconds(roundedSeconds);
         return value.TotalHours >= 1
             ? $"{(int)value.TotalHours}:{value.Minutes:00}:{value.Seconds:00}"
             : $"{value.Minutes}:{value.Seconds:00}";

@@ -123,7 +123,9 @@ public sealed partial class AdminNodesPage : Page
     {
         var row = new Grid
         {
-            Padding = new Thickness(20, 14, 20, 14),
+            // Web tables use compact 44px data rows. The WinUI toggle already contributes
+            // most of that height, so large vertical padding made every row ~50% too tall.
+            Padding = new Thickness(20, 6, 20, 6),
             ColumnSpacing = 12
         };
 

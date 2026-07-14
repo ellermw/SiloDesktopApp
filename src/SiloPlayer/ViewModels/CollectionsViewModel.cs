@@ -20,6 +20,10 @@ public partial class CollectionsViewModel : ObservableObject
 
     public ObservableCollection<Collection> Collections { get; } = [];
 
+    public ObservableCollection<CollectionGroup> Groups { get; } = [];
+
+    public ObservableCollection<ServerCollectionsLibrary> ServerLibraries { get; } = [];
+
     public ObservableCollection<CollectionTemplateCategory> TemplateGroups { get; } = [];
 
     public ObservableCollection<Library> Libraries { get; } = [];
@@ -63,10 +67,28 @@ public partial class CollectionsViewModel : ObservableObject
 
         try
         {
-            var response = await _collectionsApi.GetCollectionsAsync();
+            var collectionsTask = _collectionsApi.GetCollectionsAsync();
+            var serverCollectionsTask = _collectionsApi.GetServerCollectionsAsync();
+            var response = await collectionsTask;
             Collections.Clear();
             foreach (var c in response.Collections)
                 Collections.Add(c);
+            Groups.Clear();
+            foreach (var group in response.Groups.OrderBy(group => group.SortOrder))
+                Groups.Add(group);
+
+            ServerLibraries.Clear();
+            try
+            {
+                var serverResponse = await serverCollectionsTask;
+                foreach (var library in serverResponse.Libraries)
+                    ServerLibraries.Add(library);
+            }
+            catch
+            {
+                // Server collections are an independent, optional surface. A
+                // failure here must not hide the user's editable collections.
+            }
             IsEmpty = Collections.Count == 0;
         }
         catch (Exception ex)
@@ -77,6 +99,121 @@ public partial class CollectionsViewModel : ObservableObject
         {
             IsLoading = false;
         }
+    }
+
+    public async Task<bool> CreateGroupAsync(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        try
+        {
+            await _collectionsApi.CreateCollectionGroupAsync(name.Trim(), Slugify(name));
+            await LoadCollectionsAsync();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to add group: {ex.Message}";
+            return false;
+        }
+    }
+
+    public async Task<bool> RenameGroupAsync(CollectionGroup group, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        try
+        {
+            await _collectionsApi.UpdateCollectionGroupAsync(group.Id, name.Trim());
+            await LoadCollectionsAsync();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to rename group: {ex.Message}";
+            return false;
+        }
+    }
+
+    public async Task<bool> DeleteGroupAsync(CollectionGroup group)
+    {
+        try
+        {
+            await _collectionsApi.DeleteCollectionGroupAsync(group.Id);
+            await LoadCollectionsAsync();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to delete group: {ex.Message}";
+            return false;
+        }
+    }
+
+    public async Task<bool> MoveCollectionToGroupAsync(Collection collection, string? groupId)
+    {
+        try
+        {
+            await _collectionsApi.MoveCollectionToGroupAsync(collection.Id, groupId);
+            await LoadCollectionsAsync();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to move collection: {ex.Message}";
+            return false;
+        }
+    }
+
+    public async Task<bool> MoveCollectionAsync(Collection collection, int offset)
+    {
+        var scope = Collections
+            .Where(item => string.Equals(item.GroupId, collection.GroupId, StringComparison.Ordinal))
+            .OrderBy(item => item.SortOrder)
+            .ToList();
+        var index = scope.FindIndex(item => item.Id == collection.Id);
+        var target = index + offset;
+        if (index < 0 || target < 0 || target >= scope.Count) return false;
+
+        (scope[index], scope[target]) = (scope[target], scope[index]);
+        try
+        {
+            await _collectionsApi.ReorderCollectionsAsync(scope.Select(item => item.Id).ToList(), collection.GroupId);
+            await LoadCollectionsAsync();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to reorder collections: {ex.Message}";
+            return false;
+        }
+    }
+
+    public async Task<bool> MoveGroupAsync(CollectionGroup group, int offset)
+    {
+        var ordered = Groups.OrderBy(item => item.SortOrder).ToList();
+        var index = ordered.FindIndex(item => item.Id == group.Id);
+        var target = index + offset;
+        if (index < 0 || target < 0 || target >= ordered.Count) return false;
+
+        (ordered[index], ordered[target]) = (ordered[target], ordered[index]);
+        try
+        {
+            await _collectionsApi.ReorderCollectionGroupsAsync(ordered.Select(item => item.Id).ToList());
+            await LoadCollectionsAsync();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to reorder groups: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static string Slugify(string name)
+    {
+        var chars = name.Trim().ToLowerInvariant()
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : '-')
+            .ToArray();
+        return string.Join('-', new string(chars).Split('-', StringSplitOptions.RemoveEmptyEntries));
     }
 
     [RelayCommand]

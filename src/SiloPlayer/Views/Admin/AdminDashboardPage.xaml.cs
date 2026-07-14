@@ -31,11 +31,23 @@ public sealed partial class AdminDashboardPage : Page
         this.InitializeComponent();
     }
 
+    private void ContentScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+        => AdminPageContent.Width = Math.Min(1640, Math.Max(0, e.NewSize.Width));
+
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         if (_loaded) return;
         _loaded = true;
-        BuildLoadingState();
+        if (ViewModel.HasCachedData)
+        {
+            BuildContent();
+            LastUpdatedText.Text = "Updating…";
+            LastUpdatedText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            BuildLoadingState();
+        }
 
         // Subscribe to realtime session events for live Now Playing refresh
         try
@@ -45,6 +57,8 @@ public sealed partial class AdminDashboardPage : Page
             _eventChannel.EventReceived += OnEventReceived;
             _eventSubscription = _eventChannel.Subscribe("sessions");
             _scanEventSubscription = _eventChannel.Subscribe("scans");
+            if (_eventChannel.TryGetLatestSnapshot("scans", out var cachedScans))
+                OnSnapshotReceived("scans", cachedScans);
         }
         catch { }
 
@@ -104,7 +118,7 @@ public sealed partial class AdminDashboardPage : Page
         }
         ViewModel.ErrorMessage = errors.Count > 0 ? string.Join(Environment.NewLine, errors) : null;
         ViewModel.IsLoading = false;
-        LastUpdatedText.Text = "Updated just now";
+        LastUpdatedText.Text = "Updated less than 1 minute ago";
         LastUpdatedText.Visibility = Visibility.Visible;
         ScanAllButton.IsEnabled = ViewModel.Libraries.Count > 0;
     }
@@ -218,6 +232,8 @@ public sealed partial class AdminDashboardPage : Page
 
     private void BuildLoadingState()
     {
+        StatsGrid.Visibility = Visibility.Collapsed;
+        StatsLoadingGrid.Visibility = Visibility.Visible;
         foreach (var value in new[] { StatActiveStreams, StatMovies, StatShows, StatUsers, StatStorage })
             value.Text = "";
         foreach (var detail in new[] { StatActiveStreamsSub, StatMoviesSub, StatShowsSub, StatUsersSub, StatStorageSub })
@@ -258,6 +274,8 @@ public sealed partial class AdminDashboardPage : Page
 
     private void UpdateStats()
     {
+        StatsLoadingGrid.Visibility = Visibility.Collapsed;
+        StatsGrid.Visibility = Visibility.Visible;
         var stats = ViewModel.Stats;
         var sessionCount = ViewModel.SessionCount;
 

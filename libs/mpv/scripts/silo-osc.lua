@@ -93,6 +93,7 @@ local state = {
 
     -- Stats overlay
     stats_visible   = false,
+    marker_edit_available = false,
 
     -- Properties from mpv
     time_pos        = 0,
@@ -106,6 +107,7 @@ local state = {
     volume          = 100,
     mute            = false,
     fullscreen      = false,
+    picture_in_picture = false,
     idle            = true,
     track_list      = {},
     media_title     = "",
@@ -151,9 +153,12 @@ local state = {
     -- Subtitle menu
     subtitle_tracks = {},
     active_subtitle = -1,
+    last_subtitle = -1,
     subtitle_menu_visible = false,
     subtitle_menu_overlay = nil,
     subtitle_menu_items = {},
+    subtitle_menu_offset = 1,
+    subtitle_ai_available = false,
 
     -- Audio track menu
     audio_tracks = {},
@@ -169,10 +174,28 @@ local state = {
     chapter_menu_overlay = nil,
     chapter_menu_items = {},
     chapter_menu_offset = 1,
+    chapter_thumbnails = {},
+    chapter_thumbnail_requested = {},
+    chapter_thumbnail_overlay_visible = {},
+    chapter_thumbnail_overlay_signature = {},
+
+    -- Current WebUI Watch Party panel and room-sync state.
+    watch_party = nil,
+    watch_party_actions = {},
+    watch_party_end_confirm = false,
+
+    -- Live AI subtitle translation pauses only long enough for the first cue
+    -- batch. This independent overlay mirrors VideoPlayer.tsx and remains
+    -- visible while the transport HUD fades.
+    translation_buffering = false,
+    translation_buffering_label = "translated",
+    translation_buffering_overlay = nil,
+    translation_spinner_frame = -1,
 
     -- Quality menu
     quality_info        = nil,
     active_quality      = "original",
+    quality_switching   = false,
     quality_menu_visible = false,
     quality_menu_overlay = nil,
     quality_menu_items  = {},
@@ -192,6 +215,11 @@ local state = {
     skip_overlay    = nil,
     skip_rect       = nil,
 
+    -- Episode navigation. The host resolves the previous/next episode and
+    -- tells us when the current item belongs to a series.
+    series_context    = false,
+    prev_ep_available = false,
+
     -- Next Episode button — shown when the host has a queued next episode
     -- AND we're either in the credits range or the final 5% of duration.
     -- Clicking it sends "silo-next-episode" to the host, which jumps
@@ -200,6 +228,13 @@ local state = {
     next_ep_visible   = false,
     next_ep_overlay   = nil,
     next_ep_rect      = nil,
+    next_ep_detail    = nil,
+    next_ep_countdown_active = false,
+    next_ep_countdown_cancelled = false,
+    next_ep_countdown_started_at = 0,
+    next_ep_countdown_remaining = 10,
+    next_ep_countdown_overlay = nil,
+    next_ep_countdown_actions = {},
 
     -- Pause center indicator — 64x64 translucent circle with a play icon.
     -- Drawn via ASS overlay, shown on pause, hidden on resume.
@@ -246,8 +281,8 @@ local function credits_marker_is_plausible()
 end
 
 local quality_tiers = {
-    { id = "auto",       label = "Auto" },
     { id = "original",   label = "Original" },
+    { id = "auto",       label = "Auto" },
     { id = "1080p-high", label = "1080p High",  sublabel = "~10 Mbps" },
     { id = "1080p",      label = "1080p",        sublabel = "~6 Mbps" },
     { id = "720p-high",  label = "720p High",    sublabel = "~4 Mbps" },
@@ -255,6 +290,53 @@ local quality_tiers = {
     { id = "480p",       label = "480p",          sublabel = "~1.5 Mbps" },
     { id = "420p",       label = "420p",          sublabel = "~720 kbps" },
 }
+
+local quality_resolution_height = {
+    ["2160p"] = 2160, ["1440p"] = 1440, ["1080p"] = 1080,
+    ["720p"] = 720, ["480p"] = 480, ["420p"] = 420, ["360p"] = 360,
+}
+
+local function visible_quality_tiers()
+    local result = {}
+    local resolution = state.media_info and state.media_info.resolution or ""
+    local native_height = quality_resolution_height[resolution] or 0
+    for _, tier in ipairs(quality_tiers) do
+        local copy = { id = tier.id, label = tier.label, sublabel = tier.sublabel }
+        if tier.id == "original" and resolution ~= "" then
+            copy.label = "Original (" .. (resolution == "2160p" and "4K" or resolution) .. ")"
+            local details = {}
+            if state.play_method_str and state.play_method_str ~= "" then
+                table.insert(details, state.play_method_str)
+            end
+            local bitrate = state.media_info and state.media_info.bitrate or 0
+            if bitrate > 0 then
+                if bitrate >= 1000 then
+                    local mbps = bitrate / 1000
+                    table.insert(details, mbps % 1 == 0
+                        and string.format("%d Mbps", mbps)
+                        or string.format("%.1f Mbps", mbps))
+                else
+                    table.insert(details, string.format("%d kbps", bitrate))
+                end
+            end
+            copy.sublabel = table.concat(details, " · ")
+        end
+        local tier_resolution = string.match(tier.id, "^(%d+p)")
+        local tier_height = quality_resolution_height[tier_resolution or ""] or 0
+        if tier.id == "original" or tier.id == "auto" or native_height == 0 or tier_height < native_height then
+            table.insert(result, copy)
+        end
+    end
+    return result
+end
+
+local function active_quality_label()
+    if state.quality_switching then return "…" end
+    for _, tier in ipairs(visible_quality_tiers()) do
+        if tier.id == state.active_quality then return tier.label end
+    end
+    return "Quality"
+end
 
 local function consume_video_click()
     state.ignore_video_click_until = mp.get_time() + 0.5
@@ -627,6 +709,54 @@ local function draw_skip_fwd_icon(ass, cx, cy, size, color, alpha, master_alpha)
     draw_text(ass, cx, cy + size * 0.55, "30", math.floor(size * 0.45), color, alpha, master_alpha, 8)
 end
 
+local function ass_escape_text(value)
+    local text = tostring(value or "")
+    text = text:gsub("\\", "\\\\")
+    text = text:gsub("{", "\\{")
+    text = text:gsub("}", "\\}")
+    text = text:gsub("[\r\n]+", " ")
+    return text
+end
+
+local function chapter_at_time(seconds)
+    local last = nil
+    for _, chapter in ipairs(state.chapters or {}) do
+        local chapter_start = tonumber(chapter.start_seconds) or 0
+        local chapter_end = tonumber(chapter.end_seconds) or math.huge
+        last = chapter
+        if seconds >= chapter_start and seconds < chapter_end then
+            return chapter
+        end
+    end
+    return last
+end
+
+local marker_regions = {
+    { key = "intro", label = "Intro", color = "FCD37D" },
+    { key = "recap", label = "Recap", color = "FDB5C4" },
+    { key = "credits", label = "Credits / Outro", color = "4DD3FC" },
+    { key = "preview", label = "Preview", color = "B7E76E" },
+}
+
+local function marker_at_time(seconds)
+    local match = nil
+    for _, marker in ipairs(marker_regions) do
+        local marker_start = tonumber(state[marker.key .. "_start"]) or 0
+        local marker_end = tonumber(state[marker.key .. "_end"]) or 0
+        if marker_end > marker_start and seconds >= marker_start and seconds <= marker_end then
+            if not match or (marker_end - marker_start) < (match.finish - match.start) then
+                match = {
+                    label = marker.label,
+                    color = marker.color,
+                    start = marker_start,
+                    finish = marker_end,
+                }
+            end
+        end
+    end
+    return match
+end
+
 -- Next episode icon — filled SkipForward glyph matching the WebUI's
 -- lucide SkipForward control: one play triangle followed by an end bar.
 -- Keep this deliberately separate from draw_skip_fwd_icon so the next-
@@ -650,6 +780,29 @@ local function draw_next_episode_icon(ass, cx, cy, size, color, alpha, master_al
     draw_rect(ass,
         cx + size * 0.28, cy - half_h,
         cx + size * 0.28 + bar_w, cy + half_h,
+        color, alpha, master_alpha)
+end
+
+-- Previous episode icon — mirrored SkipBack glyph (end bar + play triangle).
+local function draw_prev_episode_icon(ass, cx, cy, size, color, alpha, master_alpha)
+    local a = blend_alpha(alpha, master_alpha)
+    local half_h = size * 0.42
+    local point = cx - size * 0.16
+    local right = cx + size * 0.36
+    ass:new_event()
+    ass:pos(0, 0)
+    ass:append(string.format(
+        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
+        "m %d %d l %d %d %d %d{\\p0}",
+        ass_color(color), ass_alpha(a),
+        math.floor(right), math.floor(cy - half_h),
+        math.floor(point), math.floor(cy),
+        math.floor(right), math.floor(cy + half_h)
+    ))
+    local bar_w = math.max(2, size * 0.12)
+    draw_rect(ass,
+        cx - size * 0.28 - bar_w, cy - half_h,
+        cx - size * 0.28, cy + half_h,
         color, alpha, master_alpha)
 end
 
@@ -819,15 +972,30 @@ end
 
 local _layout_w, _layout_h = 0, 0
 local _layout_next_ep = nil
+local _layout_prev_ep = nil
+local _layout_series = nil
+local _layout_marker_edit = nil
+local _layout_audio_count = -1
+local _layout_chapter_count = -1
 local function compute_layout()
     update_osd_dimensions()
     local W = state.osd_width
     local H = state.osd_height
     -- Skip recomputation if dimensions unchanged
     if W == _layout_w and H == _layout_h and _layout_next_ep == state.next_ep_available
+        and _layout_prev_ep == state.prev_ep_available
+        and _layout_series == state.series_context
+        and _layout_marker_edit == state.marker_edit_available
+        and _layout_audio_count == #state.audio_tracks
+        and _layout_chapter_count == #state.chapters
         and state.layout.bar then return end
     _layout_w, _layout_h = W, H
     _layout_next_ep = state.next_ep_available
+    _layout_prev_ep = state.prev_ep_available
+    _layout_series = state.series_context
+    _layout_marker_edit = state.marker_edit_available
+    _layout_audio_count = #state.audio_tracks
+    _layout_chapter_count = #state.chapters
     local L = state.layout
     local sc = ui_scale()
     local pad = math.floor(config.bar_padding_x * sc)
@@ -856,6 +1024,15 @@ local function compute_layout()
         w = small_size, h = small_size,
         cx = L.btn_play.x + main_size + gap + small_size / 2, cy = controls_y
     }
+    if state.series_context and state.prev_ep_available then
+        L.btn_prev_ep = {
+            x = L.btn_skip_back.x - gap - small_size, y = controls_y - small_size / 2,
+            w = small_size, h = small_size,
+            cx = L.btn_skip_back.x - gap - small_size / 2, cy = controls_y
+        }
+    else
+        L.btn_prev_ep = nil
+    end
     if state.next_ep_available then
         L.btn_next_ep = {
             x = L.btn_skip_fwd.x + small_size + gap, y = controls_y - small_size / 2,
@@ -878,19 +1055,24 @@ local function compute_layout()
     local utility_size = math.floor(40 * sc)
     local utility_gap = math.floor(2 * sc)
     local rx_cursor = W - pad
-    local function place_utility()
-        rx_cursor = rx_cursor - utility_size
-        local rect = { x = rx_cursor, y = controls_y - utility_size / 2, w = utility_size, h = utility_size,
-            cx = rx_cursor + utility_size / 2, cy = controls_y }
+    local function place_utility(width)
+        width = width or utility_size
+        rx_cursor = rx_cursor - width
+        local rect = { x = rx_cursor, y = controls_y - utility_size / 2, w = width, h = utility_size,
+            cx = rx_cursor + width / 2, cy = controls_y }
         rx_cursor = rx_cursor - utility_gap
         return rect
     end
     L.btn_fullscreen = place_utility()
+    L.btn_pip = place_utility()
     L.btn_stats = place_utility()
-    L.btn_quality = place_utility()
+    L.btn_marker_edit = state.marker_edit_available and place_utility() or nil
+    local show_quality_label = W >= math.floor(640 * sc)
+    L.btn_quality = place_utility(show_quality_label and math.floor(140 * sc) or utility_size)
+    L.btn_quality.show_label = show_quality_label
     L.btn_cc = place_utility()
-    L.btn_chapters = place_utility()
-    L.btn_audio = place_utility()
+    L.btn_chapters = #state.chapters > 0 and place_utility() or nil
+    L.btn_audio = #state.audio_tracks > 0 and place_utility() or nil
 
     rx_cursor = rx_cursor - math.floor(6 * sc) - math.floor(config.volume_bar_width * sc)
     L.volume_bar = {
@@ -910,8 +1092,119 @@ local function compute_layout()
         x1 = seek_x1,
         x2 = seek_x2
     }
-    L.metadata = { x = pad, y = controls_y, max_w = math.max(0, L.btn_skip_back.x - pad - math.floor(20 * sc)) }
+    local left_transport_x = L.btn_prev_ep and L.btn_prev_ep.x or L.btn_skip_back.x
+    L.metadata = { x = pad, y = controls_y, max_w = math.max(0, left_transport_x - pad - math.floor(20 * sc)) }
     L.bar_hit = { x = 0, y = L.gradient.y, w = W, h = H - L.gradient.y }
+end
+
+-- Picture-in-picture icon — outlined display with a floating inset frame.
+local function draw_pip_icon(ass, cx, cy, size, color, alpha, master_alpha)
+    local hw = size * 0.36
+    local hh = size * 0.28
+    local t = math.max(size * 0.06, 2)
+    draw_rect(ass, cx - hw, cy - hh, cx + hw, cy - hh + t, color, alpha, master_alpha)
+    draw_rect(ass, cx - hw, cy + hh - t, cx + hw, cy + hh, color, alpha, master_alpha)
+    draw_rect(ass, cx - hw, cy - hh, cx - hw + t, cy + hh, color, alpha, master_alpha)
+    draw_rect(ass, cx + hw - t, cy - hh, cx + hw, cy + hh, color, alpha, master_alpha)
+    draw_rect(ass,
+        cx + size * 0.02, cy + size * 0.01,
+        cx + hw - t, cy + hh - t,
+        color, "40", master_alpha)
+end
+
+-- Lucide-style overlapping tag outlines used by the WebUI marker editor.
+local function draw_marker_tags_icon(ass, cx, cy, size, color, alpha, master_alpha)
+    local a = blend_alpha(alpha, master_alpha)
+    local function tag(dx, dy, scale)
+        local left = cx + dx - size * 0.34 * scale
+        local top = cy + dy - size * 0.30 * scale
+        local shoulder = cx + dx + size * 0.08 * scale
+        local tip_x = cx + dx + size * 0.34 * scale
+        local tip_y = cy + dy
+        local bottom = cy + dy + size * 0.30 * scale
+        ass:new_event()
+        ass:pos(0, 0)
+        ass:append(string.format(
+            "{\\an7\\bord1.5\\shad0\\1a&HFF&\\3c&H%s&\\3a&H%s&\\p1}" ..
+            "m %d %d l %d %d %d %d %d %d %d %d{\\p0}",
+            color, a,
+            math.floor(left), math.floor(top),
+            math.floor(shoulder), math.floor(top),
+            math.floor(tip_x), math.floor(tip_y),
+            math.floor(shoulder), math.floor(bottom),
+            math.floor(left), math.floor(bottom)
+        ))
+        draw_circle(ass, left + size * 0.12 * scale, cy + dy,
+            math.max(1.2, size * 0.035), color, alpha, master_alpha)
+    end
+    tag(-size * 0.09, size * 0.08, 0.86)
+    tag(size * 0.07, -size * 0.07, 0.86)
+end
+
+local chapter_thumbnail_hover_overlay_id = 63
+local chapter_thumbnail_menu_overlay_first = 40
+local chapter_thumbnail_menu_overlay_last = 51
+
+local function remove_chapter_thumbnail_overlay(overlay_id)
+    overlay_id = overlay_id or chapter_thumbnail_hover_overlay_id
+    if not state.chapter_thumbnail_overlay_visible[overlay_id] then return end
+    pcall(mp.command_native, { name = "overlay-remove", id = overlay_id })
+    state.chapter_thumbnail_overlay_visible[overlay_id] = nil
+    state.chapter_thumbnail_overlay_signature[overlay_id] = nil
+end
+
+local function remove_chapter_thumbnail_menu_overlays()
+    for overlay_id = chapter_thumbnail_menu_overlay_first, chapter_thumbnail_menu_overlay_last do
+        remove_chapter_thumbnail_overlay(overlay_id)
+    end
+end
+
+local function request_chapter_thumbnail(chapter)
+    local chapter_index = chapter and tonumber(chapter.index) or -1
+    if chapter_index < 0 or not chapter.thumbnail_url or chapter.thumbnail_url == "" then return end
+    if state.chapter_thumbnails[chapter_index] or state.chapter_thumbnail_requested[chapter_index] then return end
+    state.chapter_thumbnail_requested[chapter_index] = true
+    mp.commandv("script-message", "silo-chapter-thumbnail-request", tostring(chapter_index))
+end
+
+local function update_chapter_thumbnail_overlay(chapter, x, y, display_w, display_h, overlay_id)
+    overlay_id = overlay_id or chapter_thumbnail_hover_overlay_id
+    local chapter_index = chapter and tonumber(chapter.index) or -1
+    local raw = state.chapter_thumbnails[chapter_index]
+    if not raw or tonumber(raw.index) ~= chapter_index or not raw.file
+        or tonumber(raw.width) <= 0 or tonumber(raw.height) <= 0
+        or tonumber(raw.stride) <= 0 then
+        remove_chapter_thumbnail_overlay(overlay_id)
+        return false
+    end
+
+    local signature = table.concat({
+        tostring(raw.index), tostring(math.floor(x)), tostring(math.floor(y)),
+        tostring(math.floor(display_w)), tostring(math.floor(display_h)), tostring(raw.file)
+    }, "|")
+    if signature ~= state.chapter_thumbnail_overlay_signature[overlay_id] then
+        local ok = pcall(mp.command_native, {
+            name = "overlay-add",
+            id = overlay_id,
+            x = math.floor(x),
+            y = math.floor(y),
+            file = raw.file,
+            offset = 0,
+            fmt = "bgra",
+            w = tonumber(raw.width),
+            h = tonumber(raw.height),
+            stride = tonumber(raw.stride),
+            dw = math.floor(display_w),
+            dh = math.floor(display_h),
+        })
+        if not ok then
+            remove_chapter_thumbnail_overlay(overlay_id)
+            return false
+        end
+        state.chapter_thumbnail_overlay_signature[overlay_id] = signature
+    end
+    state.chapter_thumbnail_overlay_visible[overlay_id] = true
+    return true
 end
 
 --------------------------------------------------------------------------------
@@ -920,6 +1213,9 @@ end
 
 local function render_osc()
     if state.current_alpha <= 0.01 then
+        remove_chapter_thumbnail_overlay()
+        remove_chapter_thumbnail_menu_overlays()
+        state.watch_party_actions = {}
         if state.osc_overlay then
             state.osc_overlay.data = ""
             state.osc_overlay:update()
@@ -1008,6 +1304,52 @@ local function render_osc()
         end
     end
 
+    -- Marker regions sit below the played fill, matching the WebUI seek rail.
+    -- Hovering a region brightens it and adds a fine white outline.
+    local hover_time = nil
+    local hover_marker = nil
+    if is_seek_hover and state.duration > 0 then
+        local hover_ratio = clamp((state.mouse_x - sb.x1) / (sb.x2 - sb.x1), 0, 1)
+        hover_time = hover_ratio * state.duration
+        hover_marker = marker_at_time(hover_time)
+    end
+    local function draw_marker_region(start_seconds, end_seconds, color, alpha, is_hovered)
+        if state.duration <= 0 or not start_seconds or not end_seconds
+            or end_seconds <= start_seconds then return end
+        local rx1 = sb.x1 + (sb.x2 - sb.x1) * clamp(start_seconds / state.duration, 0, 1)
+        local rx2 = sb.x1 + (sb.x2 - sb.x1) * clamp(end_seconds / state.duration, 0, 1)
+        if rx2 > rx1 + 1 then
+            local region_h = is_hovered and math.max(current_seek_h, math.floor(8 * sc)) or current_seek_h
+            if is_hovered then
+                draw_rounded_rect(ass, rx1 - 1, seek_draw_y - region_h / 2 - 1,
+                    rx2 + 1, seek_draw_y + region_h / 2 + 1, region_h / 2 + 1,
+                    config.text_color, "70", ma)
+            end
+            draw_rounded_rect(ass, rx1, seek_draw_y - region_h / 2,
+                rx2, seek_draw_y + region_h / 2, region_h / 2,
+                color, is_hovered and "48" or alpha, ma)
+        end
+    end
+    for _, marker in ipairs(marker_regions) do
+        local marker_start = tonumber(state[marker.key .. "_start"]) or 0
+        local marker_end = tonumber(state[marker.key .. "_end"]) or 0
+        draw_marker_region(marker_start, marker_end, marker.color, "99",
+            hover_marker and hover_marker.label == marker.label)
+    end
+
+    -- Chapter boundaries are one-pixel, ten-pixel-high ticks in the WebUI.
+    if state.duration > 0 then
+        for _, chapter in ipairs(state.chapters or {}) do
+            local chapter_start = tonumber(chapter.start_seconds) or 0
+            if chapter_start > 0 and chapter_start < state.duration then
+                local chapter_x = sb.x1 + (sb.x2 - sb.x1) * (chapter_start / state.duration)
+                draw_rect(ass, chapter_x - 0.5, seek_draw_y - math.floor(5 * sc),
+                    chapter_x + 0.5, seek_draw_y + math.floor(5 * sc),
+                    config.text_color, "73", ma)
+            end
+        end
+    end
+
     -- Seek progress fill
     local progress_x = sb.x1 + (sb.x2 - sb.x1) * seek_ratio
     if progress_x > sb.x1 + 1 then
@@ -1026,22 +1368,74 @@ local function render_osc()
 
     -- Seek hover tooltip
     if is_seek_hover and not state.dragging_seek and state.duration > 0 then
-        local hover_ratio = clamp((state.mouse_x - sb.x1) / (sb.x2 - sb.x1), 0, 1)
-        local hover_time = hover_ratio * state.duration
-        local tooltip_text = format_time(hover_time)
-        local tooltip_x = clamp(state.mouse_x, sb.x1 + 30, sb.x2 - 30)
-        local tooltip_y = seek_draw_y - 24
+        local hover_chapter = chapter_at_time(hover_time)
+        local rich = hover_chapter ~= nil or hover_marker ~= nil
+        local tooltip_w = rich and math.floor(176 * sc) or math.floor(60 * sc)
+        local tooltip_x = clamp(state.mouse_x, sb.x1 + tooltip_w / 2, sb.x2 - tooltip_w / 2)
+        local tooltip_bottom = seek_draw_y - math.floor(12 * sc)
+        local content_h = rich and math.floor(56 * sc) or math.floor(28 * sc)
+        local image_h = hover_chapter and math.floor(99 * sc) or 0
+        local tooltip_top = tooltip_bottom - content_h - image_h
 
-        -- Tooltip background
-        local tw = #tooltip_text * 8 + 16
         draw_rounded_rect(ass,
-            tooltip_x - tw / 2, tooltip_y - 13,
-            tooltip_x + tw / 2, tooltip_y + 13,
-            6,
-            config.bar_bg_color, "90", ma)
-        -- Tooltip text
-        draw_text(ass, tooltip_x, tooltip_y, tooltip_text,
-            14, config.text_color, "00", ma, 5)
+            tooltip_x - tooltip_w / 2, tooltip_top,
+            tooltip_x + tooltip_w / 2, tooltip_bottom,
+            math.floor(8 * sc), "171717", "0D", ma)
+
+        if hover_chapter then
+            request_chapter_thumbnail(hover_chapter)
+
+            local image_x = tooltip_x - tooltip_w / 2
+            if not update_chapter_thumbnail_overlay(
+                hover_chapter, image_x, tooltip_top, tooltip_w, image_h) then
+                -- Same 16:9 placeholder used by the WebUI while no generated
+                -- chapter thumbnail exists or while the native bitmap loads.
+                draw_rect(ass, image_x, tooltip_top,
+                    image_x + tooltip_w, tooltip_top + image_h,
+                    "242424", "08", ma)
+                draw_text(ass, tooltip_x, tooltip_top + image_h / 2,
+                    "CHAPTER", math.floor(10 * sc), config.text_color, "D6", ma,
+                    5, nil, true)
+            end
+        else
+            remove_chapter_thumbnail_overlay()
+        end
+
+        local text_left = tooltip_x - tooltip_w / 2 + math.floor(10 * sc)
+        local cursor_y = tooltip_top + image_h + math.floor(13 * sc)
+        if hover_marker then
+            draw_circle(ass, text_left + math.floor(3 * sc), cursor_y,
+                math.max(2, math.floor(3 * sc)), hover_marker.color, "00", ma)
+            draw_text(ass, text_left + math.floor(11 * sc), cursor_y,
+                ass_escape_text(hover_marker.label), math.floor(11 * sc),
+                config.text_color, "00", ma, 4, nil, true)
+            draw_text(ass, tooltip_x + tooltip_w / 2 - math.floor(10 * sc), cursor_y,
+                format_time(hover_marker.start) .. "-" .. format_time(hover_marker.finish),
+                math.floor(10 * sc), config.text_color, "73", ma, 6, "Consolas", false)
+            cursor_y = cursor_y + math.floor(16 * sc)
+        end
+
+        draw_text(ass, text_left, cursor_y, format_time(hover_time),
+            math.floor(12 * sc), config.text_color, "00", ma, 4, "Consolas", true)
+        if hover_chapter then
+            draw_text(ass, text_left, cursor_y + math.floor(16 * sc),
+                ass_escape_text(hover_chapter.title or ("Chapter " .. tostring(hover_chapter.index or ""))),
+                math.floor(11 * sc), config.text_color, "73", ma, 4, nil, false)
+        end
+
+        -- Small downward caret centered over the seek rail.
+        local caret = math.floor(6 * sc)
+        local a = blend_alpha("0D", ma)
+        ass:new_event()
+        ass:pos(0, 0)
+        ass:append(string.format(
+            "{\\an7\\bord0\\shad0%s%s\\p1}m %d %d l %d %d %d %d{\\p0}",
+            ass_color("171717"), ass_alpha(a),
+            math.floor(tooltip_x - caret), math.floor(tooltip_bottom),
+            math.floor(tooltip_x + caret), math.floor(tooltip_bottom),
+            math.floor(tooltip_x), math.floor(tooltip_bottom + caret)))
+    else
+        remove_chapter_thumbnail_overlay()
     end
 
     -- Seek drag tooltip (follows thumb during drag)
@@ -1090,6 +1484,12 @@ local function render_osc()
     draw_secondary_disc(bsb)
     draw_skip_back_icon(ass, bsb.cx, bsb.cy, bsb.w * 0.7, config.text_color, "10", ma)
 
+    if L.btn_prev_ep then
+        draw_secondary_disc(L.btn_prev_ep)
+        draw_prev_episode_icon(ass, L.btn_prev_ep.cx, L.btn_prev_ep.cy,
+            L.btn_prev_ep.w * 0.58, config.text_color, "10", ma)
+    end
+
     local bp = L.btn_play
     draw_circle(ass, bp.cx, bp.cy, bp.w / 2, config.text_color, "00", ma)
     if state.pause then
@@ -1124,25 +1524,6 @@ local function render_osc()
         end
     end
 
-    -- Marker regions use the same semantic tints and layering order as the
-    -- WebUI seek rail. Played progress is drawn afterward and covers elapsed
-    -- portions of a region.
-    local function draw_marker_region(start_seconds, end_seconds, color, alpha)
-        if state.duration <= 0 or not start_seconds or not end_seconds
-            or end_seconds <= start_seconds then return end
-        local rx1 = sb.x1 + (sb.x2 - sb.x1) * clamp(start_seconds / state.duration, 0, 1)
-        local rx2 = sb.x1 + (sb.x2 - sb.x1) * clamp(end_seconds / state.duration, 0, 1)
-        if rx2 > rx1 + 1 then
-            draw_rounded_rect(ass, rx1, seek_draw_y - current_seek_h / 2,
-                rx2, seek_draw_y + current_seek_h / 2, current_seek_h / 2,
-                color, alpha, ma)
-        end
-    end
-    draw_marker_region(state.intro_start, state.intro_end, "FCD37D", "99")
-    draw_marker_region(state.recap_start, state.recap_end, "FDB5C4", "99")
-    draw_marker_region(state.credits_start, state.credits_end, "4DD3FC", "8C")
-    draw_marker_region(state.preview_start, state.preview_end, "B7E76E", "99")
-
     local bv = L.btn_volume
     draw_utility_state(bv, state.mute)
     draw_volume_icon(ass, bv.cx, bv.cy, bv.w * 0.72,
@@ -1170,29 +1551,185 @@ local function render_osc()
         config.text_color, cc_active and "00" or "38", ma, 5, nil, true)
 
     local bchap = L.btn_chapters
-    draw_utility_state(bchap, state.chapter_menu_visible)
-    draw_text(ass, bchap.cx, bchap.cy, "☷", math.floor(20 * sc),
-        config.text_color, #state.chapters > 0 and "38" or "A0", ma, 5, "Segoe UI Symbol", false)
+    if bchap then
+        draw_utility_state(bchap, state.chapter_menu_visible)
+        draw_text(ass, bchap.cx, bchap.cy, "☷", math.floor(20 * sc),
+            config.text_color, "38", ma, 5, "Segoe UI Symbol", false)
+    end
 
     local baudio = L.btn_audio
-    draw_utility_state(baudio, state.audio_menu_visible)
-    draw_text(ass, baudio.cx, baudio.cy, "≋", math.floor(22 * sc),
-        config.text_color, #state.audio_tracks > 0 and "38" or "A0", ma, 5, "Segoe UI Symbol", true)
+    if baudio then
+        draw_utility_state(baudio, state.audio_menu_visible)
+        draw_text(ass, baudio.cx, baudio.cy, "≋", math.floor(22 * sc),
+            config.text_color, #state.audio_tracks > 1 and "38" or "A0", ma, 5, "Segoe UI Symbol", true)
+    end
 
     local bq = L.btn_quality
-    draw_utility_state(bq, state.quality_menu_visible)
-    draw_quality_icon(ass, bq.cx, bq.cy, bq.w * 0.65,
-        config.text_color, state.quality_menu_visible and "00" or "38", ma)
+    if utility_hover(bq) then
+        draw_rounded_rect(ass, bq.x, bq.y, bq.x + bq.w, bq.y + bq.h,
+            bq.h / 2, config.text_color, "EB", ma)
+    end
+    if state.quality_menu_visible then
+        draw_circle(ass, bq.cx, bq.y + bq.h - math.floor(4 * sc),
+            math.max(2, math.floor(2.2 * sc)), config.accent_color, "00", ma)
+    end
+    if bq.show_label then
+        draw_text(ass, bq.x + math.floor(21 * sc), bq.cy, "⚙", math.floor(18 * sc),
+            config.text_color, state.quality_menu_visible and "00" or "38", ma, 5, "Segoe UI Symbol", false)
+        draw_text(ass, bq.x + math.floor(41 * sc), bq.cy, active_quality_label(), math.floor(11 * sc),
+            config.text_color, state.quality_menu_visible and "00" or "38", ma, 4, nil, true)
+    else
+        draw_text(ass, bq.cx, bq.cy, "⚙", math.floor(18 * sc),
+            config.text_color, state.quality_menu_visible and "00" or "38", ma, 5, "Segoe UI Symbol", false)
+    end
+
+    if L.btn_marker_edit then
+        draw_utility_state(L.btn_marker_edit, false)
+        draw_marker_tags_icon(ass, L.btn_marker_edit.cx, L.btn_marker_edit.cy,
+            L.btn_marker_edit.w * 0.68, config.text_color, "38", ma)
+    end
 
     local bst = L.btn_stats
     draw_utility_state(bst, state.stats_visible)
-    draw_text(ass, bst.cx, bst.cy, "i", math.floor(18 * sc),
-        config.text_color, state.stats_visible and "00" or "38", ma, 5, nil, true)
+    draw_text(ass, bst.cx, bst.cy, "ⓘ", math.floor(20 * sc),
+        config.text_color, state.stats_visible and "00" or "38", ma, 5, "Segoe UI Symbol", false)
+
+    local bpip = L.btn_pip
+    draw_utility_state(bpip, state.picture_in_picture)
+    draw_pip_icon(ass, bpip.cx, bpip.cy, bpip.w * 0.66,
+        config.text_color, "20", ma)
 
     local bf = L.btn_fullscreen
     draw_utility_state(bf, state.fullscreen)
     draw_fullscreen_icon(ass, bf.cx, bf.cy, bf.w * 0.68,
         config.text_color, "20", ma, state.fullscreen)
+
+    -- Watch Party panel mirrors WatchTogetherPanel.tsx: top-right glass card,
+    -- live connection status, room code/viewer count, policy, and host actions.
+    state.watch_party_actions = {}
+    local party = state.watch_party
+    if party and party.visible then
+        local panel_w = math.floor(224 * sc)
+        local panel_h = math.floor((party.is_host and 132 or 88) * sc)
+        local panel_x = W - math.floor(16 * sc) - panel_w
+        local panel_y = math.floor(16 * sc)
+        draw_rounded_rect(ass, panel_x - 1, panel_y - 1,
+            panel_x + panel_w + 1, panel_y + panel_h + 1,
+            math.floor(12 * sc), config.text_color, "E8", ma)
+        draw_rounded_rect(ass, panel_x, panel_y,
+            panel_x + panel_w, panel_y + panel_h,
+            math.floor(12 * sc), "000000", "33", ma)
+
+        local connection = tostring(party.connection_state or "disconnected")
+        local connection_label = connection == "connected" and "Connected"
+            or connection == "connecting" and "Connecting"
+            or connection == "reconnecting" and "Reconnecting"
+            or "Disconnected"
+        local dot_color = connection == "connected" and "55C878"
+            or (connection == "connecting" or connection == "reconnecting") and "3FC5F0"
+            or "8A8A8A"
+        draw_text(ass, panel_x + math.floor(12 * sc), panel_y + math.floor(17 * sc),
+            "WATCH PARTY", math.floor(10 * sc), config.text_color, "66", ma, 4, nil, true)
+        draw_circle(ass, panel_x + math.floor(105 * sc), panel_y + math.floor(17 * sc),
+            math.max(2, math.floor(3 * sc)), dot_color, "00", ma)
+        draw_text(ass, panel_x + math.floor(113 * sc), panel_y + math.floor(17 * sc),
+            connection_label, math.floor(10 * sc), config.text_color, "66", ma, 4, nil, false)
+
+        draw_text(ass, panel_x + math.floor(12 * sc), panel_y + math.floor(43 * sc),
+            ass_escape_text(party.code or "..."), math.floor(18 * sc),
+            config.text_color, "00", ma, 4, "Consolas", true)
+        local viewers = tonumber(party.member_count) or 0
+        draw_text(ass, panel_x + math.floor(92 * sc), panel_y + math.floor(43 * sc),
+            tostring(viewers) .. (viewers == 1 and " viewer" or " viewers"),
+            math.floor(11 * sc), config.text_color, "80", ma, 4, nil, false)
+
+        local policy_label
+        if party.is_host then
+            policy_label = party.guest_control_policy == "guest_play_pause"
+                and "Guests can pause & resume" or "Only you control playback"
+        else
+            policy_label = party.can_control_transport
+                and "You can pause & resume" or "Host controls playback"
+        end
+        draw_text(ass, panel_x + math.floor(12 * sc), panel_y + math.floor(64 * sc),
+            policy_label, math.floor(11 * sc), config.text_color, "80", ma, 4, nil, false)
+
+        if party.is_host then
+            draw_rect(ass, panel_x + math.floor(12 * sc), panel_y + math.floor(82 * sc),
+                panel_x + panel_w - math.floor(12 * sc), panel_y + math.floor(83 * sc),
+                config.text_color, "EB", ma)
+            local function party_button(action, label, x, width, danger)
+                local y = panel_y + math.floor(94 * sc)
+                local h = math.floor(25 * sc)
+                draw_rounded_rect(ass, x, y, x + width, y + h, math.floor(6 * sc),
+                    danger and "3434EF" or config.text_color,
+                    danger and "B8" or "DE", ma)
+                draw_text(ass, x + width / 2, y + h / 2, label,
+                    math.floor(11 * sc), danger and "D8D8FF" or config.text_color,
+                    danger and "10" or "28", ma, 5, nil, true)
+                table.insert(state.watch_party_actions,
+                    { x = x, y = y, w = width, h = h, action = action })
+            end
+            local invite_x = panel_x + math.floor(12 * sc)
+            party_button("invite", "Invite", invite_x, math.floor(50 * sc), false)
+            party_button("toggle-policy",
+                party.guest_control_policy == "guest_play_pause" and "Host Only" or "Allow Pause",
+                invite_x + math.floor(56 * sc), math.floor(82 * sc), false)
+            party_button("end", "End", panel_x + panel_w - math.floor(52 * sc),
+                math.floor(40 * sc), true)
+        end
+
+        if party.playback_state == "waiting" then
+            local sync_w = math.floor(180 * sc)
+            local sync_h = math.floor(68 * sc)
+            local sync_x = W / 2 - sync_w / 2
+            local sync_y = H / 2 - sync_h / 2
+            draw_rounded_rect(ass, sync_x - 1, sync_y - 1,
+                sync_x + sync_w + 1, sync_y + sync_h + 1,
+                math.floor(8 * sc), config.text_color, "D9", ma)
+            draw_rounded_rect(ass, sync_x, sync_y,
+                sync_x + sync_w, sync_y + sync_h,
+                math.floor(8 * sc), "000000", "4C", ma)
+            draw_text(ass, W / 2, H / 2 - math.floor(9 * sc), "SYNCING",
+                math.floor(10 * sc), config.text_color, "68", ma, 5, nil, true)
+            draw_text(ass, W / 2, H / 2 + math.floor(13 * sc), "Syncing playback",
+                math.floor(14 * sc), config.text_color, "00", ma, 5, nil, true)
+        end
+
+        if party.is_host and state.watch_party_end_confirm then
+            local confirm_w = math.floor(330 * sc)
+            local confirm_h = math.floor(142 * sc)
+            local confirm_x = W / 2 - confirm_w / 2
+            local confirm_y = H / 2 - confirm_h / 2
+            draw_rounded_rect(ass, confirm_x - 1, confirm_y - 1,
+                confirm_x + confirm_w + 1, confirm_y + confirm_h + 1,
+                math.floor(10 * sc), config.text_color, "D8", ma)
+            draw_rounded_rect(ass, confirm_x, confirm_y,
+                confirm_x + confirm_w, confirm_y + confirm_h,
+                math.floor(10 * sc), "101010", "0C", ma)
+            draw_text(ass, confirm_x + math.floor(18 * sc), confirm_y + math.floor(28 * sc),
+                "End watch party?", math.floor(17 * sc), config.text_color, "00", ma, 4, nil, true)
+            draw_text(ass, confirm_x + math.floor(18 * sc), confirm_y + math.floor(57 * sc),
+                "This disconnects everyone in the room.", math.floor(12 * sc),
+                config.text_color, "72", ma, 4, nil, false)
+            local button_y = confirm_y + math.floor(92 * sc)
+            local button_h = math.floor(32 * sc)
+            local cancel_x = confirm_x + confirm_w - math.floor(174 * sc)
+            local end_x = confirm_x + confirm_w - math.floor(92 * sc)
+            draw_rounded_rect(ass, cancel_x, button_y, cancel_x + math.floor(72 * sc), button_y + button_h,
+                math.floor(6 * sc), config.text_color, "DE", ma)
+            draw_text(ass, cancel_x + math.floor(36 * sc), button_y + button_h / 2, "Cancel",
+                math.floor(12 * sc), config.text_color, "28", ma, 5, nil, true)
+            draw_rounded_rect(ass, end_x, button_y, end_x + math.floor(74 * sc), button_y + button_h,
+                math.floor(6 * sc), "3434EF", "86", ma)
+            draw_text(ass, end_x + math.floor(37 * sc), button_y + button_h / 2, "End Party",
+                math.floor(12 * sc), "D8D8FF", "08", ma, 5, nil, true)
+            table.insert(state.watch_party_actions,
+                { x = cancel_x, y = button_y, w = math.floor(72 * sc), h = button_h, action = "cancel-end" })
+            table.insert(state.watch_party_actions,
+                { x = end_x, y = button_y, w = math.floor(74 * sc), h = button_h, action = "confirm-end" })
+        end
+    end
 
     -- Update overlay
     if not state.osc_overlay then
@@ -1241,15 +1778,21 @@ local function render_stats()
     local H = state.osd_height
 
     local sc = ui_scale()
-    local fs = math.floor(config.stats_font_size * sc)
-    local fs_small = math.max(math.floor((config.stats_font_size - 2) * sc), 10)
-    local padding = math.floor(config.stats_padding * sc)
-    local line_h = math.floor(config.stats_line_height * sc)
+    local fs = math.floor(14 * sc)
+    local fs_small = math.max(math.floor(12 * sc), 10)
+    local padding = math.floor(16 * sc)
+    local line_h = math.floor(20 * sc)
     local section_gap = 12
     local header_h = line_h + 4
-    local box_w = math.floor(380 * sc)
-    local box_x = math.floor(20 * sc)
-    local box_y = math.floor(50 * sc)  -- below any top UI
+    local box_w = math.floor(320 * sc)
+    local box_x = math.floor(16 * sc)
+    local box_y = math.floor(48 * sc)
+
+    local fallback = "\xe2\x80\x94"
+    local function shown(value)
+        if value == nil or tostring(value) == "" then return fallback end
+        return tostring(value)
+    end
 
     -- Build all sections
     local sections = {}
@@ -1257,14 +1800,11 @@ local function render_stats()
     -- Section 1: Player
     local s1 = { header = "PLAYER", rows = {} }
     table.insert(s1.rows, { label = "Player", value = "libmpv (GPU)" })
-    if state.play_method_str ~= "" then
-        table.insert(s1.rows, { label = "Play method", value = state.play_method_str })
-    end
-    if state.protocol_str ~= "" then
-        table.insert(s1.rows, { label = "Protocol", value = state.protocol_str })
-    end
-    if state.stream_type_str ~= "" then
-        table.insert(s1.rows, { label = "Stream type", value = state.stream_type_str })
+    table.insert(s1.rows, { label = "Play method", value = shown(state.play_method_str) })
+    table.insert(s1.rows, { label = "Protocol", value = shown(state.protocol_str) })
+    table.insert(s1.rows, { label = "Stream type", value = shown(state.stream_type_str) })
+    if state.media_info and state.media_info.requested_source and state.media_info.requested_source ~= "" then
+        table.insert(s1.rows, { label = "Auto-switched from", value = state.media_info.requested_source })
     end
     table.insert(sections, s1)
 
@@ -1273,72 +1813,54 @@ local function render_stats()
     table.insert(s2.rows, { label = "Player dimensions", value = string.format("%dx%d", W, H) })
     local vw = mp.get_property_number("video-params/w")
     local vh = mp.get_property_number("video-params/h")
-    if vw and vh and vw > 0 then
-        table.insert(s2.rows, { label = "Video resolution", value = string.format("%dx%d", vw, vh) })
-    end
+    table.insert(s2.rows, { label = "Video resolution", value =
+        vw and vh and vw > 0 and string.format("%dx%d", vw, vh) or fallback })
     local dropped = (mp.get_property_number("frame-drop-count") or 0)
                   + (mp.get_property_number("decoder-frame-drop-count") or 0)
     table.insert(s2.rows, { label = "Dropped frames", value = tostring(dropped) })
-    local delayed = mp.get_property_number("vo-delayed-frame-count") or 0
-    table.insert(s2.rows, { label = "Delayed frames", value = tostring(delayed) })
     table.insert(s2.rows, { label = "Corrupted frames", value = "0" })
     table.insert(sections, s2)
 
     -- Section 3: Playback Stream Info
     local s3 = { header = "PLAYBACK STREAM INFO", rows = {} }
-    if state.stream_codec_video ~= "" then
-        table.insert(s3.rows, { label = "Video codec", value = state.stream_codec_video })
-    end
-    if state.stream_codec_audio ~= "" then
-        table.insert(s3.rows, { label = "Audio codec", value = state.stream_codec_audio })
-    end
+    table.insert(s3.rows, { label = "Video codec", value = shown(state.stream_codec_video) })
+    table.insert(s3.rows, { label = "Audio codec", value = shown(state.stream_codec_audio) })
     table.insert(sections, s3)
 
-    -- Section 4: Original Media Info
-    local s4 = { header = "ORIGINAL MEDIA INFO", rows = {} }
+    -- Section 4: current source file, matching playback-info.ts.
+    local s4 = { header = "CURRENT SOURCE FILE", rows = {} }
     local mi = state.media_info
     if mi then
-        if mi.container and mi.container ~= "" then
-            table.insert(s4.rows, { label = "Container", value = mi.container })
+        table.insert(s4.rows, { label = "Container", value = shown(mi.container) })
+        table.insert(s4.rows, { label = "Size", value = mi.file_size and mi.file_size > 0 and
+            format_file_size(mi.file_size) or fallback })
+        table.insert(s4.rows, { label = "Bitrate", value = mi.bitrate and mi.bitrate > 0 and
+            format_bitrate(mi.bitrate * 1000) or fallback })
+        local video_codec = mi.codec_video and string.upper(mi.codec_video) or ""
+        if video_codec ~= "" and mi.video_profile and mi.video_profile ~= "" then
+            video_codec = video_codec .. " " .. mi.video_profile
         end
-        if mi.file_size and mi.file_size > 0 then
-            table.insert(s4.rows, { label = "Size", value = format_file_size(mi.file_size) })
+        table.insert(s4.rows, { label = "Video codec", value = shown(video_codec) })
+        table.insert(s4.rows, { label = "Video bitrate", value = mi.video_bitrate and mi.video_bitrate > 0 and
+            format_bitrate(mi.video_bitrate) or fallback })
+        table.insert(s4.rows, { label = "Video range type", value = shown(mi.video_range) })
+        local audio_codec = mi.audio_title and mi.audio_title ~= "" and mi.audio_title or
+            (mi.codec_audio and string.upper(mi.codec_audio) or "")
+        table.insert(s4.rows, { label = "Audio codec", value = shown(audio_codec) })
+        table.insert(s4.rows, { label = "Audio bitrate", value = mi.audio_bitrate and mi.audio_bitrate > 0 and
+            format_bitrate(mi.audio_bitrate) or fallback })
+        table.insert(s4.rows, { label = "Audio channels", value = mi.audio_channels and mi.audio_channels > 0 and
+            tostring(mi.audio_channels) or fallback })
+        local sample_rate = fallback
+        if mi.audio_sample_rate and mi.audio_sample_rate > 0 then
+            sample_rate = string.format(mi.audio_sample_rate % 1000 == 0 and "%.0f kHz" or "%.1f kHz",
+                mi.audio_sample_rate / 1000)
         end
-        if mi.bitrate and mi.bitrate > 0 then
-            -- Server sends bitrate in kbps, format_bitrate expects bps
-            table.insert(s4.rows, { label = "Bitrate", value = format_bitrate(mi.bitrate * 1000) })
-        end
-        if mi.codec_video and mi.codec_video ~= "" then
-            table.insert(s4.rows, { label = "Video codec", value = string.upper(mi.codec_video) })
-        end
-        -- Video bitrate from mpv (live)
-        local vb = mp.get_property_number("video-bitrate")
-        if vb and vb > 0 then
-            table.insert(s4.rows, { label = "Video bitrate", value = format_bitrate(vb) })
-        end
-        -- HDR / range type
-        local vp = state.video_params
-        if vp then
-            local gamma = vp.gamma or ""
-            local range_str = "SDR"
-            if gamma == "pq" then range_str = "HDR10"
-            elseif gamma == "hlg" then range_str = "HLG"
-            end
-            if mi.hdr and range_str == "SDR" then range_str = "HDR" end
-            table.insert(s4.rows, { label = "Video range type", value = range_str })
-        end
-        if mi.audio_title and mi.audio_title ~= "" then
-            table.insert(s4.rows, { label = "Audio codec", value = mi.audio_title })
-        elseif mi.codec_audio and mi.codec_audio ~= "" then
-            table.insert(s4.rows, { label = "Audio codec", value = string.upper(mi.codec_audio) })
-        end
-        -- Audio bitrate from mpv (live)
-        local ab = mp.get_property_number("audio-bitrate")
-        if ab and ab > 0 then
-            table.insert(s4.rows, { label = "Audio bitrate", value = format_bitrate(ab) })
-        end
-        if mi.audio_channels and mi.audio_channels > 0 then
-            table.insert(s4.rows, { label = "Audio channels", value = tostring(mi.audio_channels) })
+        table.insert(s4.rows, { label = "Audio sample rate", value = sample_rate })
+    else
+        for _, label in ipairs({ "Container", "Size", "Bitrate", "Video codec", "Video bitrate",
+            "Video range type", "Audio codec", "Audio bitrate", "Audio channels", "Audio sample rate" }) do
+            table.insert(s4.rows, { label = label, value = fallback })
         end
     end
     table.insert(sections, s4)
@@ -1357,7 +1879,7 @@ local function render_stats()
         box_x, box_y,
         box_x + box_w, box_y + total_h,
         8,
-        config.bar_bg_color, config.stats_bg_alpha, 1.0)
+        "000000", "26", 1.0)
 
     local cy = box_y + padding
 
@@ -1469,6 +1991,9 @@ local check_skip_markers
 local render_skip_button
 local check_next_episode_button
 local render_next_episode_button
+local check_next_episode_countdown
+local render_next_episode_countdown
+local render_translation_buffering
 local render_pause_indicator
 
 local function tick()
@@ -1505,7 +2030,16 @@ local function tick()
     check_skip_markers()
 
     -- Check whether to show the Next Episode button (last 5% or credits range)
+    check_next_episode_countdown()
     check_next_episode_button()
+
+    if state.translation_buffering then
+        local frame = math.floor(now * 8) % 4
+        if frame ~= state.translation_spinner_frame then
+            state.translation_spinner_frame = frame
+            render_translation_buffering()
+        end
+    end
 
     -- Cursor visibility
     if state.current_alpha > 0.1 then
@@ -1630,7 +2164,8 @@ local function render_subtitle_menu()
     local fs_small = math.max(math.floor((config.stats_font_size - 2) * sc), 10)
     local padding = math.floor(config.stats_padding * sc)
     local item_h = math.floor((config.stats_line_height + 4) * sc)
-    local menu_w = math.floor(280 * sc)
+    local track_item_h = math.floor((config.stats_line_height + 16) * sc)
+    local menu_w = math.floor(340 * sc)
 
     -- Sort tracks by source priority
     local sorted = {}
@@ -1641,9 +2176,22 @@ local function render_subtitle_menu()
         return source_priority(a.source or "embedded") < source_priority(b.source or "embedded")
     end)
 
-    -- Calculate menu height: header + "Off" + divider + tracks + divider + "Search Online..."
-    local num_items = 1 + #sorted + 1  -- Off + tracks + Search
-    local menu_h = padding * 2 + item_h + 4 + (#sorted * item_h) + 4 + item_h + 8  -- header area + items
+    -- Keep the popup on-screen even when a file exposes dozens of embedded
+    -- subtitle tracks. The wheel moves the bounded track window while the
+    -- fixed actions remain reachable at the bottom.
+    local action_count = state.subtitle_ai_available and 4 or 3
+    local fixed_rows = 1 + action_count -- Off + delay/search/appearance/optional AI
+    local max_visible_tracks = math.max(1,
+        math.floor((H - math.floor(config.hud_height * sc) - 40 * sc
+            - padding * 2 - fixed_rows * item_h - 20) / track_item_h))
+    max_visible_tracks = math.min(max_visible_tracks, 8)
+    local max_first = math.max(1, #sorted - max_visible_tracks + 1)
+    local first = clamp(state.subtitle_menu_offset or 1, 1, max_first)
+    local last = math.min(#sorted, first + max_visible_tracks - 1)
+    state.subtitle_menu_offset = first
+    local visible_tracks = math.max(0, last - first + 1)
+    local menu_h = padding * 2 + item_h + 4 + (visible_tracks * track_item_h)
+        + 8 + (action_count * item_h) + 8
 
     -- Position: above the CC button (bottom-right area)
     compute_layout()
@@ -1665,11 +2213,6 @@ local function render_subtitle_menu()
     local cy = menu_y + padding
     state.subtitle_menu_items = {}
 
-    -- Header
-    draw_text(ass, menu_x + padding, cy + item_h / 2, "Subtitles",
-        fs, config.text_color, "00", 1.0, 4, nil, true)
-    cy = cy + item_h
-
     -- "Off" option
     local off_active = (state.active_subtitle < 0)
     local off_color = off_active and config.text_color or config.dim_text_color
@@ -1685,7 +2228,8 @@ local function render_subtitle_menu()
     cy = cy + item_h + 4  -- divider space
 
     -- Track items
-    for _, track in ipairs(sorted) do
+    for i = first, last do
+        local track = sorted[i]
         local is_active = (track.index == state.active_subtitle)
         local text_color = is_active and config.text_color or config.dim_text_color
 
@@ -1695,31 +2239,97 @@ local function render_subtitle_menu()
                 fs, config.text_color, "00", 1.0, 4)
         end
 
-        -- Language name
+        -- Language name and WebUI-style codec/source badges.
         local display = lang_name(track.language or "")
         if track.forced then display = display .. " (Forced)" end
-        draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, display,
+        local text_y = cy + track_item_h / 2
+        local detail = track.label or ""
+        local has_detail = detail ~= "" and detail ~= track.language and detail ~= display
+        if has_detail then text_y = text_y - math.floor(7 * sc) end
+        draw_text(ass, menu_x + padding + math.floor(24 * sc), text_y, display,
             fs, text_color, "00", 1.0, 4)
 
-        -- Source badge (right-aligned)
-        local badge = capitalize(track.source or "embedded")
-        draw_text(ass, menu_x + menu_w - padding, cy + item_h / 2, badge,
+        local source_labels = {
+            embedded = "EMBEDDED", external = "EXTERNAL", downloaded = "EXTERNAL",
+            ai_generated = "AI GENERATED", generated = "AI GENERATED",
+        }
+        local source_badge = source_labels[track.source or "embedded"]
+            or string.upper(capitalize(track.source or "embedded"))
+        local codec_badge = string.upper(track.codec or "")
+        local badge = codec_badge ~= "" and (codec_badge .. "  " .. source_badge) or source_badge
+        draw_text(ass, menu_x + menu_w - padding, text_y, badge,
             fs_small, config.dim_text_color, "40", 1.0, 6)
 
+        if has_detail then
+            local max_detail = 42
+            if #detail > max_detail then detail = string.sub(detail, 1, max_detail - 1) .. "…" end
+            draw_text(ass, menu_x + padding + math.floor(24 * sc),
+                cy + track_item_h / 2 + math.floor(9 * sc), detail,
+                fs_small, config.dim_text_color, "58", 1.0, 4)
+        end
+
         table.insert(state.subtitle_menu_items, {
-            x = menu_x, y = cy, w = menu_w, h = item_h,
+            x = menu_x, y = cy, w = menu_w, h = track_item_h,
             action = "select", index = track.index
         })
-        cy = cy + item_h
+        cy = cy + track_item_h
     end
 
     cy = cy + 4  -- divider space
 
-    -- "Search Online..." button
-    draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, "Search Online...",
-        fs, "6495ED", "00", 1.0, 4)  -- blue tint
+    -- WebUI delay rail: label, minus, current value, plus, and reset in one row.
+    local delay_ms = math.floor((mp.get_property_number("sub-delay") or 0) * 1000 + 0.5)
+    local delay_alpha = state.active_subtitle >= 0 and "38" or "A0"
+    draw_text(ass, menu_x + padding, cy + item_h / 2, "DELAY",
+        fs_small, config.dim_text_color, "58", 1.0, 4, nil, true)
+    local minus_x = menu_x + menu_w - math.floor(196 * sc)
+    local value_x = menu_x + menu_w - math.floor(139 * sc)
+    local plus_x = menu_x + menu_w - math.floor(94 * sc)
+    local reset_x = menu_x + menu_w - math.floor(52 * sc)
+    draw_text(ass, minus_x, cy + item_h / 2, "−", fs, config.text_color, delay_alpha, 1.0, 5)
+    draw_text(ass, value_x, cy + item_h / 2, string.format("%+d ms", delay_ms),
+        fs_small, config.text_color, delay_alpha, 1.0, 5, "Consolas", false)
+    draw_text(ass, plus_x, cy + item_h / 2, "+", fs, config.text_color, delay_alpha, 1.0, 5)
+    draw_text(ass, reset_x, cy + item_h / 2, "Reset", fs_small,
+        config.dim_text_color, delay_ms ~= 0 and delay_alpha or "A0", 1.0, 5)
+    if state.active_subtitle >= 0 then
+        table.insert(state.subtitle_menu_items, {
+            x = minus_x - math.floor(16 * sc), y = cy, w = math.floor(32 * sc), h = item_h,
+            action = "delay", delta = -0.1
+        })
+        table.insert(state.subtitle_menu_items, {
+            x = plus_x - math.floor(16 * sc), y = cy, w = math.floor(32 * sc), h = item_h,
+            action = "delay", delta = 0.1
+        })
+        if delay_ms ~= 0 then
+            table.insert(state.subtitle_menu_items, {
+                x = reset_x - math.floor(28 * sc), y = cy, w = math.floor(56 * sc), h = item_h,
+                action = "delay_reset"
+            })
+        end
+    end
+    cy = cy + item_h + 4
+
+    draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, "Search Online…",
+        fs, config.dim_text_color, "00", 1.0, 4)
     table.insert(state.subtitle_menu_items, {
         x = menu_x, y = cy, w = menu_w, h = item_h, action = "search"
+    })
+    cy = cy + item_h
+
+    if state.subtitle_ai_available then
+        draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2,
+            "Translate with AI…", fs, config.dim_text_color, "00", 1.0, 4)
+        table.insert(state.subtitle_menu_items, {
+            x = menu_x, y = cy, w = menu_w, h = item_h, action = "ai"
+        })
+        cy = cy + item_h
+    end
+
+    draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, "Appearance…",
+        fs, config.dim_text_color, "00", 1.0, 4)
+    table.insert(state.subtitle_menu_items, {
+        x = menu_x, y = cy, w = menu_w, h = item_h, action = "appearance"
     })
 
     -- Update overlay
@@ -1762,13 +2372,16 @@ local function render_quality_menu()
     local qi = state.quality_info
     local versions = (qi and qi.versions) or {}
     local active_file_id = (qi and qi.active_file_id) or 0
+    local requested_file_id = (qi and qi.requested_file_id) or active_file_id
+    local has_versions = #versions > 1
+    local heading_h = math.floor(24 * sc)
+    local tiers = visible_quality_tiers()
 
     -- Calculate menu height
-    local menu_h = padding * 2 + item_h  -- header
-    if #versions > 0 then
-        menu_h = menu_h + (#versions * item_h) + 8  -- versions + separator
+    local menu_h = padding * 2 + (#tiers * item_h)
+    if has_versions then
+        menu_h = menu_h + (#versions * item_h) + heading_h * 2 + 8
     end
-    menu_h = menu_h + (#quality_tiers * item_h)
 
     -- Position above the quality button
     compute_layout()
@@ -1776,7 +2389,7 @@ local function render_quality_menu()
     local menu_x = W / 2 - menu_w / 2
     local menu_y = H - math.floor(config.hud_height * sc) - menu_h - math.floor(10 * sc)
     if L.btn_quality then
-        menu_x = L.btn_quality.x - menu_w / 2
+        menu_x = L.btn_quality.x + L.btn_quality.w - menu_w
     end
     if menu_x < 10 then menu_x = 10 end
     if menu_x + menu_w > W - 10 then menu_x = W - menu_w - 10 end
@@ -1789,16 +2402,15 @@ local function render_quality_menu()
     local cy = menu_y + padding
     state.quality_menu_items = {}
 
-    -- Header
-    draw_text(ass, menu_x + padding, cy + item_h / 2, "Quality",
-        fs, config.text_color, "00", 1.0, 4, nil, true)
-    cy = cy + item_h
-
     -- Versions section
-    if #versions > 0 then
+    if has_versions then
+        draw_text(ass, menu_x + padding, cy + heading_h / 2, "VERSION",
+            fs_small, config.dim_text_color, "58", 1.0, 4, nil, true)
+        cy = cy + heading_h
         for _, ver in ipairs(versions) do
             local is_active = (ver.file_id == active_file_id)
-            local text_color = is_active and config.text_color or config.dim_text_color
+            local is_requested = (ver.file_id == requested_file_id)
+            local text_color = (is_active or is_requested) and config.text_color or config.dim_text_color
 
             if is_active then
                 draw_text(ass, menu_x + padding, cy + item_h / 2, "\226\156\147",
@@ -1809,8 +2421,9 @@ local function render_quality_menu()
             draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, label,
                 fs, text_color, "00", 1.0, 4)
 
-            if ver.resolution and ver.resolution ~= "" then
-                draw_text(ass, menu_x + menu_w - padding, cy + item_h / 2, ver.resolution,
+            local status = is_active and "Playing" or (is_requested and "Requested" or "")
+            if status ~= "" then
+                draw_text(ass, menu_x + menu_w - padding, cy + item_h / 2, status,
                     fs_small, config.dim_text_color, "40", 1.0, 6)
             end
 
@@ -1826,10 +2439,14 @@ local function render_quality_menu()
         draw_rect(ass, menu_x + padding, cy, menu_x + menu_w - padding, cy + 1,
             config.dim_text_color, "60", 1.0)
         cy = cy + 4
+
+        draw_text(ass, menu_x + padding, cy + heading_h / 2, "QUALITY",
+            fs_small, config.dim_text_color, "58", 1.0, 4, nil, true)
+        cy = cy + heading_h
     end
 
     -- Quality tiers
-    for _, tier in ipairs(quality_tiers) do
+    for _, tier in ipairs(tiers) do
         local is_active = (tier.id == state.active_quality)
         local text_color = is_active and config.text_color or config.dim_text_color
 
@@ -1841,20 +2458,7 @@ local function render_quality_menu()
         draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, tier.label,
             fs, text_color, "00", 1.0, 4)
 
-        -- Dynamic sublabel for Auto: show current play method + bitrate
         local sublabel = tier.sublabel
-        if tier.id == "auto" then
-            local mi = state.media_info
-            local pm = state.play_method_str
-            if pm ~= "" and mi and mi.bitrate and mi.bitrate > 0 then
-                local br = mi.bitrate >= 1000000
-                    and string.format("%.1f Mbps", mi.bitrate / 1000000)
-                    or string.format("%d kbps", mi.bitrate / 1000)
-                sublabel = pm .. " · " .. br
-            elseif pm ~= "" then
-                sublabel = pm
-            end
-        end
 
         if sublabel then
             draw_text(ass, menu_x + menu_w - padding, cy + item_h / 2, sublabel,
@@ -2010,8 +2614,8 @@ local function render_audio_menu()
     local sc = ui_scale()
     local padding = math.floor(12 * sc)
     local header_h = math.floor(30 * sc)
-    local item_h = math.floor(52 * sc)
-    local menu_w = math.floor(340 * sc)
+    local item_h = math.floor(56 * sc)
+    local menu_w = math.floor(360 * sc)
     local max_visible = math.max(3, math.floor((H - math.floor(config.hud_height * sc) - 50 * sc - header_h) / item_h))
     max_visible = math.min(max_visible, 9)
     local first, last = menu_window(#state.audio_tracks, state.audio_menu_offset, max_visible)
@@ -2040,21 +2644,76 @@ local function render_audio_menu()
                 math.floor(14 * sc), config.text_color, "00", 1.0, 4)
         end
 
-        local title = track.title or track.embedded_title or lang_name(track.language or "")
-        if not title or title == "" then title = "Track " .. tostring(index + 1) end
-        draw_text(ass, menu_x + padding + math.floor(22 * sc), cy + math.floor(17 * sc),
-            title, math.floor(14 * sc), config.text_color, active and "00" or "24", 1.0, 4, nil, true)
+        local text_x = menu_x + padding + math.floor(22 * sc)
+        local title = track.title or track.embedded_title
+        local channels = tonumber(track.channels) or 0
+        local channel_label = ""
+        if channels == 8 then channel_label = "7.1"
+        elseif channels == 6 then channel_label = "5.1"
+        elseif channels == 2 then channel_label = "STEREO"
+        elseif channels > 0 then channel_label = tostring(channels) .. " CH" end
+
+        local codec_label = tostring(track.codec or "")
+        local codec_lower = codec_label:lower()
+        if codec_lower:find("atmos", 1, true) then codec_label = "ATMOS"
+        elseif codec_lower:find("truehd", 1, true) then codec_label = "TRUEHD"
+        elseif codec_lower:find("dts%-hd") or codec_lower:find("dts:x", 1, true) then codec_label = "DTS-HD"
+        elseif codec_lower:find("dts", 1, true) then codec_label = "DTS"
+        elseif codec_lower:find("eac3", 1, true) or codec_lower:find("e%-ac%-3") then codec_label = "EAC3"
+        else codec_label = codec_label:upper() end
+
+        if not title or title == "" then
+            local title_parts = {}
+            if track.language and track.language ~= "" then table.insert(title_parts, lang_name(track.language)) end
+            if codec_label ~= "" then table.insert(title_parts, codec_label) end
+            if channel_label ~= "" then table.insert(title_parts, channel_label:lower()) end
+            title = #title_parts > 0 and table.concat(title_parts, " ") or ("Track " .. tostring(index + 1))
+        end
+        draw_text(ass, text_x, cy + math.floor(18 * sc),
+            ass_escape_text(title), math.floor(14 * sc), config.text_color,
+            active and "00" or "24", 1.0, 4, nil, true)
+
+        -- Match the WebUI's compact codec/channel/default pills. Anchoring
+        -- them to the right keeps technical identity visible for long titles.
+        local badges = {}
+        if codec_label ~= "" then table.insert(badges, codec_label) end
+        if channel_label ~= "" then table.insert(badges, channel_label) end
+        if track.default then table.insert(badges, "DEFAULT") end
+        local badge_right = menu_x + menu_w - padding
+        for badge_index = #badges, 1, -1 do
+            local badge = badges[badge_index]
+            local badge_w = math.floor((#badge * 5.6 + 13) * sc)
+            local badge_h = math.floor(16 * sc)
+            local badge_x = badge_right - badge_w
+            local badge_y = cy + math.floor(9 * sc)
+            draw_rounded_rect(ass, badge_x, badge_y, badge_right, badge_y + badge_h,
+                math.floor(3 * sc), config.text_color,
+                badge == "DEFAULT" and "C8" or "DC", 1.0)
+            draw_text(ass, badge_x + badge_w / 2, badge_y + badge_h / 2,
+                badge, math.floor(9.5 * sc), config.text_color, "48", 1.0, 5, nil, true)
+            badge_right = badge_x - math.floor(6 * sc)
+        end
 
         local meta = {}
-        if track.language and track.language ~= "" then table.insert(meta, lang_name(track.language)) end
-        if track.codec and track.codec ~= "" then table.insert(meta, tostring(track.codec):upper()) end
-        if track.layout and track.layout ~= "" then table.insert(meta, track.layout) end
-        if tonumber(track.channels) and tonumber(track.channels) > 0 then
-            table.insert(meta, tostring(track.channels) .. " ch")
+        local language = track.language and lang_name(track.language) or ""
+        if language ~= "" and language:lower() ~= tostring(title):lower() then
+            table.insert(meta, language)
         end
-        if track.default then table.insert(meta, "Default") end
-        draw_text(ass, menu_x + padding + math.floor(22 * sc), cy + math.floor(36 * sc),
-            table.concat(meta, " · "), math.floor(10 * sc), config.text_color, "72", 1.0, 4)
+        if track.layout and track.layout ~= "" then table.insert(meta, track.layout) end
+        local bitrate = tonumber(track.bitrate) or 0
+        if bitrate > 0 then table.insert(meta, string.format("%d kbps", math.floor(bitrate + 0.5))) end
+        local sample_rate = tonumber(track.sample_rate) or 0
+        if sample_rate > 0 then
+            local sample_label = sample_rate >= 1000
+                and string.format("%.1f kHz", sample_rate / 1000)
+                or string.format("%d Hz", sample_rate)
+            sample_label = sample_label:gsub("%.0 kHz", " kHz")
+            table.insert(meta, sample_label)
+        end
+        local bit_depth = tonumber(track.bit_depth) or 0
+        if bit_depth > 0 then table.insert(meta, tostring(bit_depth) .. "-bit") end
+        draw_text(ass, text_x, cy + math.floor(40 * sc),
+            table.concat(meta, " · "), math.floor(11 * sc), config.text_color, "72", 1.0, 4)
 
         table.insert(state.audio_menu_items,
             { x = menu_x, y = cy, w = menu_w, h = item_h, index = index })
@@ -2073,6 +2732,7 @@ end
 
 local function render_chapter_menu()
     if not state.chapter_menu_visible then
+        remove_chapter_thumbnail_menu_overlays()
         if state.chapter_menu_overlay then
             state.chapter_menu_overlay.data = ""
             state.chapter_menu_overlay:update()
@@ -2088,9 +2748,9 @@ local function render_chapter_menu()
     local sc = ui_scale()
     local padding = math.floor(12 * sc)
     local header_h = math.floor(30 * sc)
-    local item_h = math.floor(42 * sc)
+    local item_h = math.floor(64 * sc)
     local menu_w = math.floor(300 * sc)
-    local max_visible = math.max(4, math.floor((H - math.floor(config.hud_height * sc) - 50 * sc - header_h) / item_h))
+    local max_visible = math.max(3, math.floor((H * 0.60 - header_h - padding * 2) / item_h))
     max_visible = math.min(max_visible, 12)
     local first, last = menu_window(#state.chapters, state.chapter_menu_offset, max_visible)
     state.chapter_menu_offset = first
@@ -2116,14 +2776,36 @@ local function render_chapter_menu()
             draw_rect(ass, menu_x, cy, menu_x + menu_w, cy + item_h,
                 config.text_color, "F2", 1.0)
         end
-        draw_text(ass, menu_x + padding, cy + math.floor(15 * sc),
-            chapter.title or ("Chapter " .. tostring(i)), math.floor(13 * sc),
+
+        local thumb_x = menu_x + padding
+        local thumb_y = cy + math.floor(8 * sc)
+        local thumb_w = math.floor(80 * sc)
+        local thumb_h = math.floor(48 * sc)
+        local overlay_id = chapter_thumbnail_menu_overlay_first + (i - first)
+        request_chapter_thumbnail(chapter)
+        if not update_chapter_thumbnail_overlay(
+            chapter, thumb_x, thumb_y, thumb_w, thumb_h, overlay_id) then
+            draw_rounded_rect(ass, thumb_x, thumb_y, thumb_x + thumb_w, thumb_y + thumb_h,
+                math.floor(4 * sc), "242424", "08", 1.0)
+            draw_text(ass, thumb_x + thumb_w / 2, thumb_y + thumb_h / 2,
+                "CH", math.floor(9 * sc), config.text_color, "D0", 1.0, 5, nil, true)
+        end
+
+        local text_x = thumb_x + thumb_w + math.floor(12 * sc)
+        draw_text(ass, text_x, cy + math.floor(25 * sc),
+            ass_escape_text(chapter.title or ("Chapter " .. tostring(i))), math.floor(14 * sc),
             config.text_color, active and "00" or "28", 1.0, 4, nil, active)
-        draw_text(ass, menu_x + padding, cy + math.floor(32 * sc),
-            format_time(start_seconds), math.floor(10 * sc), config.text_color, "78", 1.0, 4, "Consolas", false)
+        draw_text(ass, text_x, cy + math.floor(44 * sc),
+            format_time(start_seconds), math.floor(11 * sc), config.text_color, "78", 1.0, 4, "Consolas", false)
         table.insert(state.chapter_menu_items,
             { x = menu_x, y = cy, w = menu_w, h = item_h, start_seconds = start_seconds })
         cy = cy + item_h
+    end
+
+    local visible_overlays = math.max(0, last - first + 1)
+    for overlay_id = chapter_thumbnail_menu_overlay_first + visible_overlays,
+        chapter_thumbnail_menu_overlay_last do
+        remove_chapter_thumbnail_overlay(overlay_id)
     end
 
     if not state.chapter_menu_overlay then
@@ -2167,6 +2849,13 @@ end
 local function point_on_next_episode_button(mx, my)
     local r = update_next_episode_button_rect()
     return r ~= nil and point_in_rect(mx, my, r)
+end
+
+local function point_on_next_episode_countdown_action(mx, my)
+    for _, item in ipairs(state.next_ep_countdown_actions or {}) do
+        if point_in_rect(mx, my, item) then return item.action end
+    end
+    return nil
 end
 
 local function point_on_floating_action_button(mx, my)
@@ -2278,7 +2967,9 @@ check_next_episode_button = function()
                    and pos < state.credits_end
     local near_end = pos >= dur * 0.95
 
-    if in_credits or near_end then
+    -- Credits use the richer WebUI countdown card. Keep this compact button
+    -- only as a final-five-percent fallback when no credits region is active.
+    if near_end and not in_credits then
         state.next_ep_visible = true
     end
 
@@ -2290,6 +2981,158 @@ check_next_episode_button = function()
     if state.next_ep_visible ~= was_visible then
         render_next_episode_button()
     end
+end
+
+-- Match NextEpisodeOverlay.tsx/useNextEpisode.ts: entering the configured
+-- credits region starts a ten-second countdown that remains visible even when
+-- the transport chrome fades. Cancel suppresses it for this episode; Play Now
+-- and expiry both advance through the same host-owned navigation path.
+check_next_episode_countdown = function()
+    if not state.next_ep_available or not state.next_ep_detail or
+       state.next_ep_countdown_cancelled or not credits_marker_is_plausible() then
+        if state.next_ep_countdown_active then
+            state.next_ep_countdown_active = false
+            render_next_episode_countdown()
+        end
+        return
+    end
+
+    local started_now = false
+    if not state.next_ep_countdown_active then
+        if state.time_pos < state.credits_start then return end
+        state.next_ep_countdown_active = true
+        state.next_ep_countdown_started_at = mp.get_time()
+        state.next_ep_countdown_remaining = 10
+        started_now = true
+    end
+
+    local previous_remaining = state.next_ep_countdown_remaining
+    local elapsed = math.max(0, mp.get_time() - state.next_ep_countdown_started_at)
+    local remaining = math.max(0, math.ceil(10 - elapsed))
+    state.next_ep_countdown_remaining = remaining
+
+    if remaining <= 0 then
+        state.next_ep_countdown_active = false
+        state.next_ep_available = false
+        state.next_ep_visible = false
+        render_next_episode_countdown()
+        render_next_episode_button()
+        mp.commandv("script-message", "silo-next-episode")
+        return
+    end
+
+    if started_now or remaining ~= previous_remaining then
+        render_next_episode_countdown()
+    end
+end
+
+render_next_episode_countdown = function()
+    if not state.next_ep_countdown_active or not state.next_ep_detail then
+        if state.next_ep_countdown_overlay then
+            state.next_ep_countdown_overlay.data = ""
+            state.next_ep_countdown_overlay:update()
+        end
+        state.next_ep_countdown_actions = {}
+        return
+    end
+
+    update_osd_dimensions()
+    local W = state.osd_width
+    local H = state.osd_height
+    local sc = ui_scale()
+    local card_w = math.floor(360 * sc)
+    local card_h = math.floor(126 * sc)
+    local card_x = W - math.floor(24 * sc) - card_w
+    local card_y = H - math.floor(96 * sc) - card_h
+    local pad = math.floor(16 * sc)
+    local gap = math.floor(8 * sc)
+    local button_h = math.floor(32 * sc)
+    local cancel_w = math.floor(78 * sc)
+    local play_x = card_x + pad
+    local buttons_y = card_y + card_h - pad - button_h
+    local cancel_x = card_x + card_w - pad - cancel_w
+    local play_w = cancel_x - gap - play_x
+
+    local ass = assdraw.ass_new()
+    draw_rounded_rect(ass, card_x, card_y, card_x + card_w, card_y + card_h,
+        math.floor(8 * sc), "000000", "33", 1.0)
+
+    draw_text(ass, card_x + pad, card_y + math.floor(18 * sc),
+        "UP NEXT IN " .. tostring(state.next_ep_countdown_remaining) .. "s",
+        math.floor(11 * sc), config.text_color, "66", 1.0, 7, nil, false)
+
+    local detail = state.next_ep_detail
+    local episode_label = "S" .. tostring(detail.season_number or "?") ..
+        ":E" .. tostring(detail.episode_number or "?")
+    local title = tostring(detail.title or "")
+    if title ~= "" then episode_label = episode_label .. " \xe2\x80\x94 " .. title end
+    draw_text(ass, card_x + pad, card_y + math.floor(47 * sc),
+        ass_escape_text(episode_label), math.floor(14 * sc),
+        config.text_color, "00", 1.0, 7, nil, true)
+
+    draw_rounded_rect(ass, play_x, buttons_y, play_x + play_w, buttons_y + button_h,
+        math.floor(5 * sc), "FFFFFF", "00", 1.0)
+    draw_text(ass, play_x + play_w / 2, buttons_y + button_h / 2, "Play Now",
+        math.floor(13 * sc), "000000", "00", 1.0, 5, nil, true)
+
+    draw_rounded_rect(ass, cancel_x, buttons_y, cancel_x + cancel_w, buttons_y + button_h,
+        math.floor(5 * sc), "FFFFFF", "D0", 1.0)
+    draw_text(ass, cancel_x + cancel_w / 2, buttons_y + button_h / 2, "Cancel",
+        math.floor(13 * sc), config.text_color, "00", 1.0, 5, nil, false)
+
+    state.next_ep_countdown_actions = {
+        { action = "play", x = play_x, y = buttons_y, w = play_w, h = button_h },
+        { action = "cancel", x = cancel_x, y = buttons_y, w = cancel_w, h = button_h },
+    }
+
+    if not state.next_ep_countdown_overlay then
+        state.next_ep_countdown_overlay = mp.create_osd_overlay("ass-events")
+    end
+    state.next_ep_countdown_overlay.data = ass.text
+    state.next_ep_countdown_overlay.res_x = W
+    state.next_ep_countdown_overlay.res_y = H
+    state.next_ep_countdown_overlay.z = 57
+    state.next_ep_countdown_overlay:update()
+end
+
+render_translation_buffering = function()
+    if not state.translation_buffering then
+        if state.translation_buffering_overlay then
+            state.translation_buffering_overlay.data = ""
+            state.translation_buffering_overlay:update()
+        end
+        return
+    end
+
+    update_osd_dimensions()
+    local W = state.osd_width
+    local H = state.osd_height
+    local sc = ui_scale()
+    local label = "Preparing " .. tostring(state.translation_buffering_label or "translated") ..
+        " subtitles\xe2\x80\xa6"
+    local panel_w = math.floor(math.min(520, math.max(330, 150 + #label * 7)) * sc)
+    local panel_h = math.floor(48 * sc)
+    local panel_x = (W - panel_w) / 2
+    local panel_y = (H - panel_h) / 2
+    local frames = { "\xe2\x97\x9c", "\xe2\x97\x9d", "\xe2\x97\x9e", "\xe2\x97\x9f" }
+    local spinner = frames[(state.translation_spinner_frame % #frames) + 1]
+
+    local ass = assdraw.ass_new()
+    draw_rounded_rect(ass, panel_x, panel_y, panel_x + panel_w, panel_y + panel_h,
+        math.floor(8 * sc), "000000", "33", 1.0)
+    draw_text(ass, panel_x + math.floor(27 * sc), panel_y + panel_h / 2,
+        spinner, math.floor(18 * sc), config.text_color, "00", 1.0, 5, nil, false)
+    draw_text(ass, panel_x + math.floor(48 * sc), panel_y + panel_h / 2,
+        ass_escape_text(label), math.floor(14 * sc), config.text_color, "00", 1.0, 4, nil, false)
+
+    if not state.translation_buffering_overlay then
+        state.translation_buffering_overlay = mp.create_osd_overlay("ass-events")
+    end
+    state.translation_buffering_overlay.data = ass.text
+    state.translation_buffering_overlay.res_x = W
+    state.translation_buffering_overlay.res_y = H
+    state.translation_buffering_overlay.z = 58
+    state.translation_buffering_overlay:update()
 end
 
 -- Draw a pill "Next Episode ▶" button in the bottom-right corner above
@@ -2339,7 +3182,7 @@ end
 -- Pause center indicator: 64×64 circle bg-black/50 with a Play triangle.
 -- Matches the webui player chrome (64x64 circle bg-black/50 + Play icon).
 render_pause_indicator = function()
-    local should_show = state.pause and not state.osc_disabled
+    local should_show = state.pause and not state.osc_disabled and not state.translation_buffering
 
     if should_show == state.pause_indicator_shown then return end
     state.pause_indicator_shown = should_show
@@ -2416,6 +3259,22 @@ local function handle_mouse_down()
     local mx = state.mouse_x
     local my = state.mouse_y
 
+    local next_action = point_on_next_episode_countdown_action(mx, my)
+    if next_action then
+        consume_video_click()
+        state.next_ep_countdown_active = false
+        if next_action == "cancel" then
+            state.next_ep_countdown_cancelled = true
+        else
+            state.next_ep_available = false
+            state.next_ep_visible = false
+            render_next_episode_button()
+            mp.commandv("script-message", "silo-next-episode")
+        end
+        render_next_episode_countdown()
+        return
+    end
+
     -- Skip intro/credits button
     if point_on_skip_button(mx, my) then
         consume_video_click()
@@ -2434,6 +3293,31 @@ local function handle_mouse_down()
         state.next_ep_available = false
         render_next_episode_button()
         mp.commandv("script-message", "silo-next-episode")
+        return
+    end
+
+    -- Watch Party host actions live in the same top-right panel as the WebUI.
+    for _, item in ipairs(state.watch_party_actions or {}) do
+        if point_in_rect(mx, my, item) then
+            consume_video_click()
+            if item.action == "end" then
+                state.watch_party_end_confirm = true
+                request_tick()
+            elseif item.action == "cancel-end" then
+                state.watch_party_end_confirm = false
+                request_tick()
+            elseif item.action == "confirm-end" then
+                state.watch_party_end_confirm = false
+                mp.commandv("script-message", "silo-watch-party-action", "end")
+                request_tick()
+            else
+                mp.commandv("script-message", "silo-watch-party-action", item.action)
+            end
+            return
+        end
+    end
+    if state.watch_party_end_confirm then
+        consume_video_click()
         return
     end
 
@@ -2489,9 +3373,25 @@ local function handle_mouse_down()
                     mp.commandv("script-message", "silo-subtitle-select", tostring(item.index))
                 elseif item.action == "search" then
                     mp.commandv("script-message", "silo-subtitle-search")
+                elseif item.action == "appearance" then
+                    mp.commandv("script-message", "silo-subtitle-appearance")
+                elseif item.action == "ai" then
+                    mp.commandv("script-message", "silo-subtitle-ai")
+                elseif item.action == "delay" then
+                    local current = mp.get_property_number("sub-delay") or 0
+                    mp.set_property_number("sub-delay", clamp(current + item.delta, -10, 10))
+                elseif item.action == "delay_reset" then
+                    mp.set_property_number("sub-delay", 0)
                 end
-                state.subtitle_menu_visible = false
-                render_subtitle_menu()
+                -- Delay controls in the WebUI are an interactive rail. Keep
+                -- the menu open so repeated +/-100 ms adjustments and Reset
+                -- are possible without reopening the popup after every click.
+                if item.action == "delay" or item.action == "delay_reset" then
+                    render_subtitle_menu()
+                else
+                    state.subtitle_menu_visible = false
+                    render_subtitle_menu()
+                end
                 return
             end
         end
@@ -2508,6 +3408,7 @@ local function handle_mouse_down()
                 if item.action == "version" then
                     mp.commandv("script-message", "silo-version-select", tostring(item.file_id))
                 elseif item.action == "quality" then
+                    state.quality_switching = true
                     mp.commandv("script-message", "silo-quality-select", item.tier_id)
                 end
                 state.quality_menu_visible = false
@@ -2559,6 +3460,12 @@ local function handle_mouse_down()
     -- Check skip back
     if L.btn_skip_back and point_in_rect(mx, my, L.btn_skip_back) then
         seek_relative_and_resume(-10)
+        return
+    end
+
+    if L.btn_prev_ep and point_in_rect(mx, my, L.btn_prev_ep) then
+        state.prev_ep_available = false
+        mp.commandv("script-message", "silo-prev-episode")
         return
     end
 
@@ -2634,6 +3541,16 @@ local function handle_mouse_down()
         return
     end
 
+    if L.btn_marker_edit and point_in_rect(mx, my, L.btn_marker_edit) then
+        mp.commandv("script-message", "silo-marker-edit")
+        return
+    end
+
+    if L.btn_pip and point_in_rect(mx, my, L.btn_pip) then
+        mp.commandv("script-message", "silo-pip-toggle")
+        return
+    end
+
     -- Check exit
     if L.btn_exit and point_in_rect(mx, my, L.btn_exit) then
         mp.commandv("script-message", "silo-exit")
@@ -2695,6 +3612,11 @@ end
 
 -- Scroll wheel for volume
 local function handle_wheel_up()
+    if state.subtitle_menu_visible then
+        state.subtitle_menu_offset = math.max(1, state.subtitle_menu_offset - 1)
+        render_subtitle_menu()
+        return
+    end
     if state.chapter_menu_visible then
         state.chapter_menu_offset = math.max(1, state.chapter_menu_offset - 1)
         render_chapter_menu()
@@ -2713,6 +3635,11 @@ local function handle_wheel_up()
 end
 
 local function handle_wheel_down()
+    if state.subtitle_menu_visible then
+        state.subtitle_menu_offset = state.subtitle_menu_offset + 1
+        render_subtitle_menu()
+        return
+    end
     if state.chapter_menu_visible then
         state.chapter_menu_offset = state.chapter_menu_offset + 1
         render_chapter_menu()
@@ -2768,6 +3695,18 @@ local function observe_properties()
     -- Fullscreen state is managed by the host — listen for its updates
     mp.register_script_message("osc-fullscreen-state", function(val)
         state.fullscreen = (val == "true")
+    end)
+
+    mp.register_script_message("osc-pip-state", function(val)
+        state.picture_in_picture = (val == "true")
+    end)
+
+    mp.register_script_message("osc-set-subtitle-ai-available", function(val)
+        state.subtitle_ai_available = (val == "true" or val == "1")
+    end)
+
+    mp.register_script_message("osc-set-marker-edit-available", function(val)
+        state.marker_edit_available = (val == "true" or val == "1")
     end)
 
     mp.register_script_message("osc-set-visibility", function(val)
@@ -2842,6 +3781,47 @@ local function observe_properties()
         end
     end)
 
+    mp.register_script_message("osc-set-next-episode-detail", function(json_str)
+        state.next_ep_countdown_active = false
+        state.next_ep_countdown_cancelled = false
+        state.next_ep_countdown_started_at = 0
+        state.next_ep_countdown_remaining = 10
+        state.next_ep_countdown_actions = {}
+        if not json_str or json_str == "" or json_str == "null" then
+            state.next_ep_detail = nil
+        else
+            local ok, data = pcall(require("mp.utils").parse_json, json_str)
+            state.next_ep_detail = ok and data or nil
+        end
+        render_next_episode_countdown()
+    end)
+
+    mp.register_script_message("osc-set-translation-buffering", function(json_str)
+        if not json_str or json_str == "" or json_str == "null" or json_str == "false" then
+            state.translation_buffering = false
+            state.translation_buffering_label = "translated"
+        else
+            local ok, data = pcall(require("mp.utils").parse_json, json_str)
+            state.translation_buffering = ok and data and data.active == true or false
+            state.translation_buffering_label = ok and data and data.label or "translated"
+        end
+        state.translation_spinner_frame = -1
+        render_translation_buffering()
+        render_pause_indicator()
+    end)
+
+    mp.register_script_message("osc-set-watch-party", function(json_str)
+        if not json_str or json_str == "" or json_str == "null" then
+            state.watch_party = nil
+            state.watch_party_actions = {}
+            state.watch_party_end_confirm = false
+        else
+            local ok, data = pcall(require("mp.utils").parse_json, json_str)
+            state.watch_party = ok and data or nil
+        end
+        request_tick()
+    end)
+
     mp.register_script_message("osc-set-media-info", function(json_str)
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if ok and data then
@@ -2861,11 +3841,15 @@ local function observe_properties()
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if ok and data then
             state.subtitle_tracks = data
+            state.subtitle_menu_offset = 1
         end
     end)
 
     mp.register_script_message("osc-set-active-subtitle", function(idx)
         state.active_subtitle = tonumber(idx) or -1
+        if state.active_subtitle >= 0 then
+            state.last_subtitle = state.active_subtitle
+        end
     end)
 
     mp.register_script_message("osc-set-audio-tracks", function(json_str)
@@ -2873,7 +3857,17 @@ local function observe_properties()
         if ok and data then
             state.audio_tracks = data
             state.audio_menu_offset = 1
+            if #state.audio_tracks <= 1 then
+                state.audio_menu_visible = false
+                render_audio_menu()
+            end
         end
+    end)
+
+    mp.register_script_message("osc-set-episode-navigation", function(series_context, previous, following)
+        state.series_context = (series_context == "true" or series_context == "1")
+        state.prev_ep_available = (previous == "true" or previous == "1")
+        state.next_ep_available = (following == "true" or following == "1")
     end)
 
     mp.register_script_message("osc-set-active-audio", function(idx)
@@ -2883,15 +3877,44 @@ local function observe_properties()
     mp.register_script_message("osc-set-chapters", function(json_str)
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if ok and data then
+            remove_chapter_thumbnail_overlay()
+            remove_chapter_thumbnail_menu_overlays()
+            state.chapter_thumbnails = {}
+            state.chapter_thumbnail_requested = {}
             state.chapters = data
             state.chapter_menu_offset = 1
+            if #state.chapters == 0 then
+                state.chapter_menu_visible = false
+                render_chapter_menu()
+            end
         end
+    end)
+
+    mp.register_script_message("osc-set-chapter-thumbnail", function(index, file, width, height, stride)
+        local chapter_index = tonumber(index) or -1
+        state.chapter_thumbnails[chapter_index] = {
+            index = chapter_index,
+            file = file,
+            width = tonumber(width) or 0,
+            height = tonumber(height) or 0,
+            stride = tonumber(stride) or 0,
+        }
+        state.chapter_thumbnail_requested[chapter_index] = true
+        request_tick()
+    end)
+
+    mp.register_script_message("osc-clear-chapter-thumbnail", function()
+        remove_chapter_thumbnail_overlay()
+        remove_chapter_thumbnail_menu_overlays()
+        state.chapter_thumbnails = {}
+        state.chapter_thumbnail_requested = {}
     end)
 
     mp.register_script_message("osc-set-quality-info", function(json_str)
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if ok and data then
             state.quality_info = data
+            state.quality_switching = false
             if data.active_quality then
                 state.active_quality = data.active_quality
             end
@@ -2900,6 +3923,7 @@ local function observe_properties()
 
     mp.register_script_message("osc-set-active-quality", function(tier_id)
         state.active_quality = tier_id or "auto"
+        state.quality_switching = false
     end)
 
     mp.observe_property("idle-active", "bool", function(_, val)
@@ -3027,13 +4051,48 @@ local function setup_key_bindings()
     mp.add_forced_key_binding("m", "silo-mute-toggle", function()
         mp.commandv("cycle", "mute")
     end)
+    mp.add_forced_key_binding("M", "silo-mute-toggle-shift", function()
+        mp.commandv("cycle", "mute")
+    end)
+
+    local function toggle_play_pause()
+        mp.commandv("cycle", "pause")
+    end
+    mp.add_forced_key_binding("SPACE", "silo-play-pause-space", toggle_play_pause)
+    mp.add_forced_key_binding("k", "silo-play-pause-k", toggle_play_pause)
+    mp.add_forced_key_binding("K", "silo-play-pause-k-shift", toggle_play_pause)
+
+    local function toggle_captions()
+        if state.active_subtitle >= 0 then
+            state.last_subtitle = state.active_subtitle
+            state.active_subtitle = -1
+            mp.commandv("script-message", "silo-subtitle-select", "-1")
+        else
+            local target = state.last_subtitle
+            if target < 0 and #state.subtitle_tracks > 0 then
+                target = state.subtitle_tracks[1].index or -1
+            end
+            if target >= 0 then
+                state.active_subtitle = target
+                mp.commandv("script-message", "silo-subtitle-select", tostring(target))
+            end
+        end
+    end
+    mp.add_forced_key_binding("c", "silo-captions-toggle", toggle_captions)
+    mp.add_forced_key_binding("C", "silo-captions-toggle-shift", toggle_captions)
 
     mp.add_forced_key_binding("f", "silo-fs-override", function()
         mp.commandv("script-message", "silo-fullscreen-toggle")
     end)
-
-    -- Space for play/pause (as backup, mpv usually handles this)
-    -- mp.add_key_binding("space", "silo-osc-space", function() mp.commandv("cycle", "pause") end)
+    mp.add_forced_key_binding("F", "silo-fs-override-shift", function()
+        mp.commandv("script-message", "silo-fullscreen-toggle")
+    end)
+    mp.add_forced_key_binding("p", "silo-pip-override", function()
+        mp.commandv("script-message", "silo-pip-toggle")
+    end)
+    mp.add_forced_key_binding("P", "silo-pip-override-shift", function()
+        mp.commandv("script-message", "silo-pip-toggle")
+    end)
 end
 
 --------------------------------------------------------------------------------
@@ -3226,6 +4285,11 @@ local function init()
         state.dragging_seek = false
         state.dragging_volume = false
         state.seek_drag_pos = 0
+        state.next_ep_countdown_active = false
+        state.next_ep_countdown_cancelled = false
+        state.next_ep_countdown_started_at = 0
+        state.next_ep_countdown_remaining = 10
+        render_next_episode_countdown()
         show_osc()
     end)
 
@@ -3237,6 +4301,9 @@ local function init()
         if state.quality_menu_overlay then state.quality_menu_overlay:remove() end
         if state.notice_overlay then state.notice_overlay:remove() end
         if state.skip_overlay then state.skip_overlay:remove() end
+        if state.next_ep_overlay then state.next_ep_overlay:remove() end
+        if state.next_ep_countdown_overlay then state.next_ep_countdown_overlay:remove() end
+        if state.translation_buffering_overlay then state.translation_buffering_overlay:remove() end
         if state.tick_timer then state.tick_timer:kill() end
         if state.hide_timer then state.hide_timer:kill() end
         if state.notice_timer then state.notice_timer:kill() end

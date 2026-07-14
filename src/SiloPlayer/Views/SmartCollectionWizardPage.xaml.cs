@@ -53,13 +53,21 @@ public sealed partial class SmartCollectionWizardPage : Page
         if (_loaded) return;
         _loaded = true;
 
-        PopulateStaticCombos();
         await ViewModel.ConfigureAsync(_args);
+        PopulateStaticCombos();
         ApplyModeVisibility();
         BuildLibrariesPanel();
         BuildRulesPanel();
         BuildPreviewItemsPanel();
+        WizardTitle.Text = string.IsNullOrWhiteSpace(_args?.CollectionId)
+            ? "New Collection"
+            : ViewModel.Title;
+        SaveButtonText.Text = string.IsNullOrWhiteSpace(_args?.CollectionId)
+            ? "Create Collection"
+            : "Save Collection";
+        ShowStep(1);
         Bindings.Update();
+        await ViewModel.PreviewAsync();
     }
 
     private void PopulateStaticCombos()
@@ -348,6 +356,32 @@ public sealed partial class SmartCollectionWizardPage : Page
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
         await ViewModel.SaveAsync();
+    }
+
+    private void ContinueToDetails_Click(object sender, RoutedEventArgs e) => ShowStep(2);
+
+    private void BackToFilters_Click(object sender, RoutedEventArgs e) => ShowStep(1);
+
+    private void ShowStep(int step)
+    {
+        var filtersVisible = step == 1;
+        DetailsStepPanel.Visibility = filtersVisible ? Visibility.Collapsed : Visibility.Visible;
+        FiltersStepRulesPanel.Visibility = filtersVisible ? Visibility.Visible : Visibility.Collapsed;
+        FiltersStepPreviewPanel.Visibility = filtersVisible ? Visibility.Visible : Visibility.Collapsed;
+        ContinueButton.Visibility = filtersVisible ? Visibility.Visible : Visibility.Collapsed;
+        CancelButton.Visibility = filtersVisible ? Visibility.Visible : Visibility.Collapsed;
+        BackToFiltersButton.Visibility = filtersVisible ? Visibility.Collapsed : Visibility.Visible;
+        SaveButton.Visibility = filtersVisible ? Visibility.Collapsed : Visibility.Visible;
+
+        WizardSubtitle.Text = filtersVisible
+            ? "Tune the filters until the cards below show the collection you want."
+            : string.IsNullOrWhiteSpace(_args?.CollectionId)
+                ? "Give your new collection a name, artwork, and sharing rules."
+                : "Update naming, artwork, and sharing for this collection.";
+        FiltersStepBadge.Background = (Brush)Application.Current.Resources[
+            filtersVisible ? "AccentBackgroundBrush" : "SurfaceBrush"];
+        DetailsStepBadge.Background = (Brush)Application.Current.Resources[
+            filtersVisible ? "SurfaceBrush" : "AccentBackgroundBrush"];
     }
 
     private void BackButton_Click(object sender, RoutedEventArgs e)

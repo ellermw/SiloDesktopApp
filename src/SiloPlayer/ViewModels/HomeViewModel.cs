@@ -47,6 +47,10 @@ public partial class HomeViewModel : ObservableObject,
             case MediaSurfaceChangeKind.RatingChanged:
                 InvalidateCache();
                 break;
+            case MediaSurfaceChangeKind.HomeDismissed:
+                RemoveFromProgressRows(message.ContentId, message.SeriesId);
+                InvalidateCache();
+                break;
         }
     }
 
@@ -230,7 +234,8 @@ public partial class HomeViewModel : ObservableObject,
                 LogSectionFetchFailure(section.Id, ex);
                 try
                 {
-                    await RunOnUiThreadAsync(() => RemoveFromBoundCollection(section.Id)).ConfigureAwait(false);
+                    await RunOnUiThreadAsync(() =>
+                        ReplaceInBoundCollection(CloneSection(section, loadFailed: true))).ConfigureAwait(false);
                 }
                 catch (Exception uiEx)
                 {
@@ -242,6 +247,43 @@ public partial class HomeViewModel : ObservableObject,
 
         await Task.WhenAll(tasks);
     }
+
+    public async Task RetrySectionAsync(string sectionId)
+    {
+        var current = FeaturedSections.Concat(Sections).FirstOrDefault(s => s.Id == sectionId);
+        if (current == null) return;
+
+        ReplaceInBoundCollection(CloneSection(current, loadFailed: false));
+        try
+        {
+            var response = await _homeApi.GetSectionItemsAsync(sectionId);
+            if (response.Section?.Items is { Count: > 0 })
+                ReplaceInBoundCollection(response.Section);
+            else
+                RemoveFromBoundCollection(sectionId);
+        }
+        catch (Exception ex)
+        {
+            LogSectionFetchFailure(sectionId, ex);
+            ReplaceInBoundCollection(CloneSection(current, loadFailed: true));
+        }
+    }
+
+    private static HomeSectionWithItems CloneSection(HomeSectionWithItems source, bool loadFailed) => new()
+    {
+        Id = source.Id,
+        SectionType = source.SectionType,
+        Title = source.Title,
+        Featured = source.Featured,
+        ItemLimit = source.ItemLimit,
+        TotalCount = source.TotalCount,
+        IsCustom = source.IsCustom,
+        Customized = source.Customized,
+        LoadFailed = loadFailed,
+        Items = loadFailed
+            ? new ObservableCollection<MediaItem>()
+            : new ObservableCollection<MediaItem>(source.Items),
+    };
 
     private static Task RunOnUiThreadAsync(Action action)
     {

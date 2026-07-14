@@ -23,6 +23,18 @@ public sealed class FullscreenStateSyncSourceTests
         Assert.Contains("draw_fullscreen_icon", osc);
     }
 
+    [Fact]
+    public void PictureInPictureStateAndEpisodeActionsRoundTripThroughHost()
+    {
+        var service = ReadRepoFile("src", "SiloPlayer", "Services", "PlayerService.cs");
+
+        Assert.Contains("PublishPictureInPictureVisualState", service);
+        Assert.Contains("case \"silo-pip-toggle\"", service);
+        Assert.Contains("case \"silo-prev-episode\"", service);
+        Assert.Contains("PlayPreviousEpisodeAsync", service);
+        Assert.Contains("osc-set-episode-navigation", service);
+    }
+
     private static string ReadRepoFile(params string[] parts)
     {
         var dir = AppContext.BaseDirectory;

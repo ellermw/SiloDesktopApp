@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.ViewModels;
 
@@ -14,14 +15,16 @@ public partial class ProfileSelectViewModel : ObservableObject
     private readonly CatalogApi _catalogApi;
     private readonly AuthService _authService;
     private readonly SettingsService _settingsService;
+    private readonly ThemeService _themeService;
 
-    public ProfileSelectViewModel(AuthApi authApi, SettingsApi settingsApi, CatalogApi catalogApi, AuthService authService, SettingsService settingsService)
+    public ProfileSelectViewModel(AuthApi authApi, SettingsApi settingsApi, CatalogApi catalogApi, AuthService authService, SettingsService settingsService, ThemeService themeService)
     {
         _authApi = authApi;
         _settingsApi = settingsApi;
         _catalogApi = catalogApi;
         _authService = authService;
         _settingsService = settingsService;
+        _themeService = themeService;
     }
 
     public ObservableCollection<Profile> Profiles { get; } = [];
@@ -249,7 +252,7 @@ public partial class ProfileSelectViewModel : ObservableObject
 
     private async Task ActivateProfileAsync(Profile profile, string? profileToken)
     {
-        _authService.SelectProfile(profile.Id, profileToken);
+        _authService.SelectProfile(profile.Id, profileToken, profile);
         _catalogApi.InvalidateLibraryCache();
 
         // Save last profile and user info
@@ -261,6 +264,8 @@ public partial class ProfileSelectViewModel : ObservableObject
             settings.LastUsername = _authService.CurrentUser.Username;
         }
         _settingsService.Save(settings);
+
+        await _themeService.SyncFromServerAsync();
 
         ShouldShowTasteSeed = false;
         if (!settings.TasteSeedDismissedProfileIds.Contains(profile.Id, StringComparer.Ordinal))

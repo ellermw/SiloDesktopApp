@@ -3,6 +3,34 @@ namespace SiloPlayer.Tests;
 public sealed class CurrentSettingsParitySourceTests
 {
     [Fact]
+    public void SettingsShellMatchesCurrentWideSearchableFourGroupNavigation()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml");
+        var code = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml.cs");
+
+        Assert.Contains("MaxWidth=\"1424\"", xaml);
+        Assert.Contains("x:Name=\"SettingsSearchBox\"", xaml);
+        Assert.Contains("14 settings sections", xaml);
+        Assert.Contains("x:Name=\"AppearanceNavGroup\"", xaml);
+        Assert.Matches("AppearanceNavGroup[\\s\\S]+CardOverlaysTab[\\s\\S]+PersonalizeTab[\\s\\S]+LibraryDataNavGroup", xaml);
+        Assert.Contains("SettingsSearchBox_TextChanged", code);
+    }
+
+    [Fact]
+    public void PlaybackAndSubtitlePanelsUseCurrentWebGroupingAndCopy()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml");
+
+        Assert.Contains("Choose the defaults Silo should use when playback starts.", xaml);
+        Assert.Contains("Text=\"Defaults\"", xaml);
+        Assert.Contains("Text=\"Auto-skip intros\"", xaml);
+        Assert.Contains("Text=\"Start next at preview\"", xaml);
+        Assert.Contains("Text=\"Background &amp; Position\"", xaml);
+        Assert.Contains("This sample reflects the current subtitle appearance.", xaml);
+        Assert.Matches("SubtitlePreviewBg2[\\s\\S]+Save Appearance[\\s\\S]+Text group", xaml);
+    }
+
+    [Fact]
     public void SettingsNavigationIncludesCurrentCardOverlayAndPersonalizeRoutes()
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml");
@@ -102,6 +130,40 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("LoadThemeCatalogAsync", page);
         Assert.Contains("DownloadThemeAsync", api);
         Assert.Contains("/api/v1/theme/catalog", api);
+        Assert.Contains("x:Name=\"ThemeCustomCssBox\"", ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml"));
+        Assert.Contains("PutSettingAsync(\"ui_custom_css\"", page);
+        Assert.Contains("SanitizeThemeCss", page);
+        Assert.Contains("ThemeEditorSectionTab_Click", page);
+    }
+
+    [Fact]
+    public void LibrariesRememberPageStateAndHomeSectionsAutoSaveLikeCurrentWebUi()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml");
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml.cs");
+
+        Assert.Contains("Remember library pages", xaml);
+        Assert.Contains("ui.remember_library_page_state", page);
+        Assert.Contains("ui.library_page_state", page);
+        Assert.Contains("HomeSectionsCountText", xaml);
+        Assert.DoesNotContain("Click=\"HomeSectionsSave_Click\"", xaml);
+        Assert.Matches("MoveSectionUp\\(section\\);[\\s\\S]{0,160}SaveHomeSectionsCommand", page);
+        Assert.Matches("ToggleSectionVisibility\\(section\\);[\\s\\S]{0,160}SaveHomeSectionsCommand", page);
+    }
+
+    [Fact]
+    public void ProfileThemeIsSynchronizedBeforeTheAuthenticatedUiAppears()
+    {
+        var service = ReadRepoFile("src", "SiloPlayer", "Services", "ThemeService.cs");
+        var window = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
+        var profiles = ReadRepoFile("src", "SiloPlayer", "ViewModels", "ProfileSelectViewModel.cs");
+
+        Assert.Contains("SyncFromServerAsync", service);
+        Assert.Contains("GetSettingAsync(\"ui_theme\"", service);
+        Assert.Contains("GetServerBrandingAsync", service);
+        Assert.Contains("GetSettingAsync(\"ui_custom_theme_vars\"", service);
+        Assert.Contains("await _themeService.SyncFromServerAsync(timeout.Token);", window);
+        Assert.Contains("await _themeService.SyncFromServerAsync();", profiles);
     }
 
     [Fact]

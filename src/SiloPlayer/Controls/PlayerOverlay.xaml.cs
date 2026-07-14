@@ -1076,7 +1076,7 @@ public sealed partial class PlayerOverlay : UserControl
         PopulateSubtitleFlyout();
     }
 
-    private async Task ShowSubtitleAiDialogAsync()
+    public async Task ShowSubtitleAiDialogAsync()
     {
         var session = _playerService.Manager?.CurrentSession;
         if (session == null) return;
@@ -1104,9 +1104,23 @@ public sealed partial class PlayerOverlay : UserControl
 
         var source = new ComboBox { Header = "Track", HorizontalAlignment = HorizontalAlignment.Stretch };
         var target = new ComboBox { Header = "Language", HorizontalAlignment = HorizontalAlignment.Stretch };
-        foreach (var (code, name) in new[] { ("en", "English"), ("es", "Spanish"), ("fr", "French"), ("de", "German"), ("it", "Italian"), ("pt", "Portuguese"), ("ja", "Japanese"), ("ko", "Korean"), ("zh", "Chinese"), ("ar", "Arabic"), ("hi", "Hindi"), ("nl", "Dutch"), ("pl", "Polish"), ("sv", "Swedish") })
+        foreach (var (code, name) in new[]
+        {
+            ("ar", "Arabic"), ("bn", "Bengali"), ("bg", "Bulgarian"), ("zh", "Chinese"),
+            ("hr", "Croatian"), ("cs", "Czech"), ("da", "Danish"), ("nl", "Dutch"),
+            ("en", "English"), ("fa", "Persian"), ("fi", "Finnish"), ("fr", "French"),
+            ("de", "German"), ("el", "Greek"), ("he", "Hebrew"), ("hi", "Hindi"),
+            ("hu", "Hungarian"), ("id", "Indonesian"), ("it", "Italian"), ("ja", "Japanese"),
+            ("ko", "Korean"), ("ms", "Malay"), ("no", "Norwegian"), ("pl", "Polish"),
+            ("pt", "Portuguese"), ("ro", "Romanian"), ("ru", "Russian"), ("sk", "Slovak"),
+            ("sl", "Slovenian"), ("es", "Spanish"), ("sv", "Swedish"), ("ta", "Tamil"),
+            ("te", "Telugu"), ("th", "Thai"), ("tr", "Turkish"), ("uk", "Ukrainian"),
+            ("vi", "Vietnamese")
+        })
             target.Items.Add(new ComboBoxItem { Content = name, Tag = code });
-        target.SelectedIndex = 0;
+        target.SelectedIndex = target.Items.Cast<ComboBoxItem>()
+            .Select((item, index) => (item, index))
+            .FirstOrDefault(pair => string.Equals(pair.item.Tag?.ToString(), "en", StringComparison.Ordinal)).index;
         void RebuildSource()
         {
             source.Items.Clear();
@@ -1124,8 +1138,61 @@ public sealed partial class PlayerOverlay : UserControl
         }
         mode.SelectionChanged += (_, _) => RebuildSource();
         RebuildSource();
-        var form = new StackPanel { Spacing = 12, MinWidth = 390, Children = { mode, source, target } };
-        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "AI subtitles", Content = form, PrimaryButtonText = "Start", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary };
+        SubtitleAiQuota? quota = null;
+        if (capability.TranscribeEnabled)
+        {
+            try { quota = await api.GetSubtitleAiQuotaAsync(); } catch { }
+        }
+        var quotaText = new TextBlock
+        {
+            FontSize = 11,
+            Foreground = quota?.Limited == true && quota.Remaining <= 0
+                ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Orange)
+                : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(90, 255, 255, 255)),
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = quota?.Limited == true ? Visibility.Visible : Visibility.Collapsed,
+            Text = quota?.Limited == true
+                ? quota.Remaining <= 0
+                    ? $"You've used all {quota.Limit} transcriptions for the {FormatQuotaPeriod(quota.Period)}. Try again later."
+                    : $"{quota.Remaining} of {quota.Limit} transcriptions left for the {FormatQuotaPeriod(quota.Period)}."
+                : ""
+        };
+        var helpText = new TextBlock
+        {
+            FontSize = 11,
+            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(90, 255, 255, 255)),
+            TextWrapping = TextWrapping.Wrap
+        };
+        void UpdateHelpText()
+        {
+            var fromAudio = (mode.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "audio";
+            helpText.Text = fromAudio
+                ? "The audio is transcribed on the server (and translated if the language differs) — longer files take a while. The finished track is saved for everyone."
+                : "Playback pauses while the first lines are translated, then resumes with subtitles streaming in. The finished track is saved for everyone.";
+        }
+        UpdateHelpText();
+        var form = new StackPanel { Spacing = 12, MinWidth = 390, Children = { mode, source, target, quotaText, helpText } };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = (mode.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "audio"
+                ? "Generate subtitles with AI"
+                : "Translate subtitles with AI",
+            Content = form,
+            PrimaryButtonText = (mode.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "audio" ? "Generate" : "Translate",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary
+        };
+        void UpdateDialogMode()
+        {
+            var fromAudio = (mode.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "audio";
+            dialog.Title = fromAudio ? "Generate subtitles with AI" : "Translate subtitles with AI";
+            dialog.PrimaryButtonText = fromAudio ? "Generate" : "Translate";
+            dialog.IsPrimaryButtonEnabled = !fromAudio || quota?.Limited != true || quota.Remaining > 0;
+            UpdateHelpText();
+        }
+        mode.SelectionChanged += (_, _) => UpdateDialogMode();
+        UpdateDialogMode();
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
         var selectedMode = (mode.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "subtitles";
@@ -1154,10 +1221,35 @@ public sealed partial class PlayerOverlay : UserControl
         try
         {
             var started = await api.StartSubtitleAiAsync(request);
+            var liveLanguage = string.IsNullOrWhiteSpace(request.TargetLanguage)
+                ? request.SourceLanguage
+                : request.TargetLanguage;
+            if (string.Equals(started.Job.Status, "running", StringComparison.OrdinalIgnoreCase))
+            {
+                App.Services.GetService<ToastService>()?.Info(
+                    "A job for this track is already in progress — it'll appear when it's ready.");
+            }
+            else
+            {
+                _playerService.PrepareLiveSubtitleTranslation(
+                    started.Job.Id,
+                    session.MediaFileId,
+                    liveLanguage,
+                    $"{PlayerService.LanguageCodeToName(liveLanguage)} AI");
+            }
             _ = MonitorSubtitleAiJobAsync(api, started.Job.Id, session.MediaFileId);
         }
         catch (Exception ex) { await ShowPlayerDialogAsync("Could not start AI subtitles", ex.Message); }
     }
+
+    private static string FormatQuotaPeriod(string period) => period switch
+    {
+        "hour" or "hourly" => "last hour",
+        "day" or "daily" => "last day",
+        "week" or "weekly" => "last week",
+        "month" or "monthly" => "last month",
+        _ => string.IsNullOrWhiteSpace(period) ? "current period" : period
+    };
 
     private async Task MonitorSubtitleAiJobAsync(PlaybackApi api, long jobId, int mediaFileId)
     {
@@ -1168,26 +1260,17 @@ public sealed partial class PlayerOverlay : UserControl
             SubtitleAiJob job;
             try { job = await api.GetSubtitleAiJobAsync(jobId); }
             catch { continue; }
-            if (job.Status is "failed" or "cancelled") return;
+            if (job.Status is "failed" or "cancelled")
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                    _playerService.FailLiveSubtitleTranslation(jobId, job.ErrorMessage));
+                return;
+            }
             if (job.Status != "completed") continue;
-            DispatcherQueue.TryEnqueue(() => _ = RefreshPlaybackAfterSubtitleAiAsync(mediaFileId));
+            DispatcherQueue.TryEnqueue(() => _ = _playerService.RefreshSubtitlesAfterAiAsync(
+                mediaFileId, job.ResultSubtitleId));
             return;
         }
-    }
-
-    private async Task RefreshPlaybackAfterSubtitleAiAsync(int mediaFileId)
-    {
-        try
-        {
-            var current = _playerService.Manager?.CurrentSession;
-            var version = _playerService.Versions.FirstOrDefault(v => v.FileId == mediaFileId);
-            if (current?.MediaFileId == mediaFileId && version != null)
-            {
-                await _playerService.SwitchVersionAsync(version);
-                PopulateSubtitleFlyout();
-            }
-        }
-        catch { }
     }
 
     private async Task ShowPlayerDialogAsync(string title, string message)
@@ -1197,55 +1280,149 @@ public sealed partial class PlayerOverlay : UserControl
     }
 
     private bool CanEditMarkers()
-    {
-        var user = _authService.CurrentUser;
-        return user != null && (string.Equals(user.Role, "admin", StringComparison.OrdinalIgnoreCase)
-            || user.Permissions.Contains("marker_edit", StringComparer.OrdinalIgnoreCase));
-    }
+        => AuthorizationPolicy.CanEditMarkers(_authService);
 
     private async void MarkerEdit_Click(object sender, RoutedEventArgs e)
+        => await ShowMarkerEditDialogAsync();
+
+    public async Task ShowMarkerEditDialogAsync()
     {
         var session = _playerService.Manager?.CurrentSession;
         if (session == null || !CanEditMarkers()) return;
 
         var rows = new[]
         {
-            CreateMarkerEditRow("intro", "Intro", _playerService.ActiveIntro),
-            CreateMarkerEditRow("recap", "Recap", _playerService.ActiveRecap),
-            CreateMarkerEditRow("credits", "Credits / Outro", _playerService.ActiveCredits),
-            CreateMarkerEditRow("preview", "Preview", _playerService.ActivePreview)
+            CreateMarkerEditRow("intro", "Intro", "#38BDF8", _playerService.ActiveIntro),
+            CreateMarkerEditRow("recap", "Recap", "#A78BFA", _playerService.ActiveRecap),
+            CreateMarkerEditRow("credits", "Credits / Outro", "#FBBF24", _playerService.ActiveCredits),
+            CreateMarkerEditRow("preview", "Preview", "#34D399", _playerService.ActivePreview)
         };
-        var panel = new StackPanel { Spacing = 12, MinWidth = 460 };
+
+        var segmentPanel = new StackPanel { Spacing = 4 };
+        foreach (var row in rows) segmentPanel.Children.Add(row.Element);
+
+        var currentTimeText = new TextBlock
+        {
+            Text = FormatChapterTime(_playerService.Position),
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF)),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var resetAll = new Button
+        {
+            Content = "↶  Reset all",
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            BorderThickness = new Thickness(0),
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)),
+            Padding = new Thickness(10, 6, 10, 6),
+            FontSize = 12,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Visibility = Visibility.Collapsed
+        };
+        var footer = new Grid { Margin = new Thickness(4, 4, 4, 0) };
+        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(resetAll, 1);
+        footer.Children.Add(currentTimeText);
+        footer.Children.Add(resetAll);
+
+        var panel = new StackPanel { Spacing = 8, MinWidth = 352, MaxWidth = 352 };
         panel.Children.Add(new TextBlock
         {
-            Text = "Set marker edges in seconds, or copy the current playhead. Disable a marker to clear it.",
+            Text = "Drag the timeline handles, or set points to the playhead.",
+            FontSize = 11,
             TextWrapping = TextWrapping.Wrap,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF)),
+            Margin = new Thickness(4, 0, 4, 2)
         });
-        foreach (var row in rows) panel.Children.Add(row.Element);
+        panel.Children.Add(segmentPanel);
+        panel.Children.Add(footer);
 
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "Edit markers",
-            Content = new ScrollViewer { Content = panel, MaxHeight = 560 },
+            Content = panel,
             PrimaryButtonText = "Save",
             CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary
+            DefaultButton = ContentDialogButton.Primary,
+            IsPrimaryButtonEnabled = false
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        MarkerEditRow activeRow = rows[0];
+        void SelectRow(MarkerEditRow selected)
+        {
+            activeRow = selected;
+            foreach (var row in rows)
+            {
+                var active = ReferenceEquals(row, selected);
+                row.Actions.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+                row.Element.Background = new SolidColorBrush(active
+                    ? Windows.UI.Color.FromArgb(0x10, 0xFF, 0xFF, 0xFF)
+                    : Windows.UI.Color.FromArgb(0, 0, 0, 0));
+                row.Element.BorderThickness = active ? new Thickness(1) : new Thickness(0);
+            }
+        }
+
+        void RefreshDirtyState()
+        {
+            foreach (var row in rows) row.Refresh();
+            var dirty = rows.Any(row => !RangesEqual(row.Original, row.CurrentRange));
+            dialog.IsPrimaryButtonEnabled = dirty;
+            resetAll.Visibility = dirty ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        foreach (var row in rows)
+        {
+            row.HeaderButton.Click += (_, _) => SelectRow(row);
+            row.SetStartButton.Click += (_, _) =>
+            {
+                row.SetStart(_playerService.Position);
+                RefreshDirtyState();
+            };
+            row.SetEndButton.Click += (_, _) =>
+            {
+                row.SetEnd(_playerService.Position, _playerService.Duration);
+                RefreshDirtyState();
+            };
+            row.ResetButton.Click += (_, _) =>
+            {
+                row.SetRange(row.Original);
+                RefreshDirtyState();
+            };
+            row.ClearButton.Click += (_, _) =>
+            {
+                row.SetRange(null);
+                RefreshDirtyState();
+            };
+        }
+        resetAll.Click += (_, _) =>
+        {
+            foreach (var row in rows) row.SetRange(row.Original);
+            RefreshDirtyState();
+        };
+        SelectRow(activeRow);
+        RefreshDirtyState();
+
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        timer.Tick += (_, _) => currentTimeText.Text = FormatChapterTime(_playerService.Position);
+        timer.Start();
+        ContentDialogResult result;
+        try
+        {
+            result = await dialog.ShowAsync();
+        }
+        finally
+        {
+            timer.Stop();
+        }
+        if (result != ContentDialogResult.Primary) return;
 
         var changes = new Dictionary<string, object?>();
         foreach (var row in rows)
         {
-            TimeRange? next = null;
-            if (row.Enabled.IsOn)
-            {
-                var start = double.IsNaN(row.Start.Value) ? 0 : Math.Max(0, row.Start.Value);
-                var end = double.IsNaN(row.End.Value) ? start + 0.5 : Math.Min(_playerService.Duration, row.End.Value);
-                if (end <= start) end = Math.Min(_playerService.Duration, start + 0.5);
-                next = new TimeRange { Start = start, End = end };
-            }
+            var next = row.CurrentRange;
             if (!RangesEqual(row.Original, next))
                 changes[row.Kind] = next == null ? null : new { start = next.Start, end = next.End };
             row.Result = next;
@@ -1264,23 +1441,41 @@ public sealed partial class PlayerOverlay : UserControl
         }
     }
 
-    private MarkerEditRow CreateMarkerEditRow(string kind, string label, TimeRange? original)
+    private MarkerEditRow CreateMarkerEditRow(string kind, string label, string colorHex, TimeRange? original)
     {
-        var enabled = new ToggleSwitch { Header = label, IsOn = original != null };
-        var start = new NumberBox { Header = "Start", Value = original?.Start ?? 0, Minimum = 0, Maximum = Math.Max(0, _playerService.Duration), SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
-        var end = new NumberBox { Header = "End", Value = original?.End ?? Math.Min(60, _playerService.Duration), Minimum = 0, Maximum = Math.Max(0, _playerService.Duration), SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
-        var setStart = new Button { Content = "Start = playhead" };
-        var setEnd = new Button { Content = "End = playhead" };
-        setStart.Click += (_, _) => { enabled.IsOn = true; start.Value = _playerService.Position; };
-        setEnd.Click += (_, _) => { enabled.IsOn = true; end.Value = _playerService.Position; };
-        var grid = new Grid { ColumnSpacing = 8 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        Grid.SetColumn(end, 1); grid.Children.Add(start); grid.Children.Add(end);
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { setStart, setEnd } };
-        var body = new StackPanel { Spacing = 7, Children = { enabled, grid, buttons } };
-        return new MarkerEditRow(kind, original == null ? null : new TimeRange { Start = original.Start, End = original.End }, enabled, start, end,
-            new Border { Padding = new Thickness(10), CornerRadius = new CornerRadius(8), Background = (Brush)Application.Current.Resources["CardBackgroundBrush"], Child = body });
+        var color = (Windows.UI.Color)Microsoft.UI.Xaml.Markup.XamlBindingHelper.ConvertValue(typeof(Windows.UI.Color), colorHex);
+        var dot = new Border { Width = 9, Height = 9, CornerRadius = new CornerRadius(5), Background = new SolidColorBrush(color) };
+        var title = new TextBlock { Text = label, FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.Medium, Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xDC, 0xFF, 0xFF, 0xFF)) };
+        var rangeText = new TextBlock { FontSize = 11, FontFamily = new FontFamily("Consolas"), Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0x88, 0xFF, 0xFF, 0xFF)), HorizontalAlignment = HorizontalAlignment.Right };
+        var headerGrid = new Grid { ColumnSpacing = 10 };
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(dot, 0); Grid.SetColumn(title, 1); Grid.SetColumn(rangeText, 2);
+        headerGrid.Children.Add(dot); headerGrid.Children.Add(title); headerGrid.Children.Add(rangeText);
+        var header = new Button { Content = headerGrid, Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)), BorderThickness = new Thickness(0), Padding = new Thickness(2, 3, 2, 3), HorizontalContentAlignment = HorizontalAlignment.Stretch };
+
+        Button EdgeButton(string text) => new()
+        {
+            Content = text,
+            FontSize = 11,
+            Padding = new Thickness(10, 5, 10, 5),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x0D, 0xFF, 0xFF, 0xFF)),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xD9, 0xFF, 0xFF, 0xFF))
+        };
+        var setStart = EdgeButton("Set start");
+        var setEnd = EdgeButton("Set end");
+        var reset = EdgeButton("↶");
+        ToolTipService.SetToolTip(reset, "Reset to saved");
+        var clear = EdgeButton("⌫");
+        ToolTipService.SetToolTip(clear, "Clear marker");
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(21, 5, 0, 2), Children = { setStart, setEnd, reset, clear }, Visibility = Visibility.Collapsed };
+        var body = new StackPanel { Spacing = 0, Children = { header, actions } };
+        var border = new Border { Padding = new Thickness(8, 5, 8, 5), CornerRadius = new CornerRadius(12), BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF)), Child = body };
+        return new MarkerEditRow(kind, original, rangeText, header, actions, setStart, setEnd, reset, clear, border);
     }
 
     private static bool RangesEqual(TimeRange? left, TimeRange? right)
@@ -1675,20 +1870,88 @@ public sealed partial class PlayerOverlay : UserControl
         PlaybackInfoText.Text = string.Join(" \u2022 ", parts);
     }
 
-    private sealed class MarkerEditRow(
-        string kind,
-        TimeRange? original,
-        ToggleSwitch enabled,
-        NumberBox start,
-        NumberBox end,
-        FrameworkElement element)
+    private sealed class MarkerEditRow
     {
-        public string Kind { get; } = kind;
-        public TimeRange? Original { get; } = original;
-        public ToggleSwitch Enabled { get; } = enabled;
-        public NumberBox Start { get; } = start;
-        public NumberBox End { get; } = end;
-        public FrameworkElement Element { get; } = element;
+        private double? _start;
+        private double? _end;
+
+        public MarkerEditRow(
+            string kind,
+            TimeRange? original,
+            TextBlock rangeText,
+            Button headerButton,
+            StackPanel actions,
+            Button setStartButton,
+            Button setEndButton,
+            Button resetButton,
+            Button clearButton,
+            Border element)
+        {
+            Kind = kind;
+            Original = Clone(original);
+            _start = original?.Start;
+            _end = original?.End;
+            RangeText = rangeText;
+            HeaderButton = headerButton;
+            Actions = actions;
+            SetStartButton = setStartButton;
+            SetEndButton = setEndButton;
+            ResetButton = resetButton;
+            ClearButton = clearButton;
+            Element = element;
+            Refresh();
+        }
+
+        public string Kind { get; }
+        public TimeRange? Original { get; }
+        public TextBlock RangeText { get; }
+        public Button HeaderButton { get; }
+        public StackPanel Actions { get; }
+        public Button SetStartButton { get; }
+        public Button SetEndButton { get; }
+        public Button ResetButton { get; }
+        public Button ClearButton { get; }
+        public Border Element { get; }
         public TimeRange? Result { get; set; }
+
+        public TimeRange? CurrentRange => _start.HasValue && _end.HasValue
+            ? new TimeRange { Start = _start.Value, End = _end.Value }
+            : null;
+
+        public void SetRange(TimeRange? range)
+        {
+            _start = range?.Start;
+            _end = range?.End;
+            Refresh();
+        }
+
+        public void SetStart(double seconds)
+        {
+            _start = Math.Max(0, seconds);
+            if (!_end.HasValue || _end <= _start)
+                _end = _start + 0.5;
+            Refresh();
+        }
+
+        public void SetEnd(double seconds, double duration)
+        {
+            _end = Math.Min(Math.Max(0, duration), Math.Max(0, seconds));
+            if (!_start.HasValue || _start >= _end)
+                _start = Math.Max(0, _end.Value - 0.5);
+            Refresh();
+        }
+
+        public void Refresh()
+        {
+            RangeText.Text = CurrentRange is { } range
+                ? $"{FormatChapterTime(range.Start)} – {FormatChapterTime(range.End)}"
+                : "Not set";
+            var dirty = !RangesEqual(Original, CurrentRange);
+            ResetButton.IsEnabled = dirty;
+            ClearButton.IsEnabled = CurrentRange != null;
+        }
+
+        private static TimeRange? Clone(TimeRange? range)
+            => range == null ? null : new TimeRange { Start = range.Start, End = range.End };
     }
 }

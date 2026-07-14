@@ -20,6 +20,9 @@ public class AdminPlaybackHistoryParitySourceTests
             Assert.Contains(text, Markup, StringComparison.Ordinal);
         Assert.Contains("RefreshButton_Click", Markup, StringComparison.Ordinal);
         Assert.Contains("Symbol=\"Refresh\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("Radius2XL", Markup, StringComparison.Ordinal);
+        Assert.Contains("Item filter active", Markup, StringComparison.Ordinal);
+        Assert.Contains("No playback history matches the current filters", Markup, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -30,5 +33,7 @@ public class AdminPlaybackHistoryParitySourceTests
         Assert.Contains("NavigateToLogs", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("RebuildAll();", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("TimeSpan.FromSeconds(30)", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("DetachPageHandlers", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("TimeSpan.FromSeconds(1)", CodeBehind, StringComparison.Ordinal);
     }
 }

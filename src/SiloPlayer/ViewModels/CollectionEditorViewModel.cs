@@ -16,6 +16,7 @@ public partial class CollectionEditorViewModel : ObservableObject
     private readonly CatalogApi _catalogApi;
     private readonly SettingsApi _settingsApi;
     private readonly SiloPlayer.Core.Services.AuthService _authService;
+    private readonly HashSet<string> _originalManualItemIds = new(StringComparer.Ordinal);
 
     public CollectionEditorViewModel(
         CollectionsApi collectionsApi,
@@ -214,8 +215,12 @@ public partial class CollectionEditorViewModel : ObservableObject
             {
                 var itemsResponse = await _collectionsApi.GetCollectionItemsAsync(collectionId);
                 ManualItems.Clear();
+                _originalManualItemIds.Clear();
                 foreach (var item in itemsResponse.Items)
+                {
                     ManualItems.Add(item);
+                    _originalManualItemIds.Add(item.MediaItemId);
+                }
             }
         }
         catch (Exception ex)
@@ -282,6 +287,9 @@ public partial class CollectionEditorViewModel : ObservableObject
                     await _collectionsApi.UpdateCollectionAsync(CollectionId, request, PosterFileName, poster, PosterContentType);
                 else
                     await _collectionsApi.UpdateCollectionAsync(CollectionId, request);
+
+                if (CollectionType == "manual")
+                    await SaveManualItemsAsync(CollectionId);
             }
             else
             {
@@ -318,6 +326,10 @@ public partial class CollectionEditorViewModel : ObservableObject
                             // Continue adding remaining items even if one fails
                         }
                     }
+
+                    await _collectionsApi.ReorderCollectionItemsAsync(
+                        created.Id,
+                        ManualItems.Select(item => item.MediaItemId).ToList());
                 }
             }
 
@@ -333,6 +345,27 @@ public partial class CollectionEditorViewModel : ObservableObject
         {
             IsSaving = false;
         }
+    }
+
+    private async Task SaveManualItemsAsync(string collectionId)
+    {
+        var currentIds = ManualItems
+            .Select(item => item.MediaItemId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToList();
+        var currentSet = currentIds.ToHashSet(StringComparer.Ordinal);
+
+        foreach (var removed in _originalManualItemIds.Where(id => !currentSet.Contains(id)).ToList())
+            await _collectionsApi.RemoveCollectionItemAsync(collectionId, removed);
+
+        foreach (var added in currentIds.Where(id => !_originalManualItemIds.Contains(id)))
+            await _collectionsApi.AddCollectionItemAsync(collectionId, added);
+
+        if (currentIds.Count > 0)
+            await _collectionsApi.ReorderCollectionItemsAsync(collectionId, currentIds);
+
+        _originalManualItemIds.Clear();
+        foreach (var id in currentIds) _originalManualItemIds.Add(id);
     }
 
     [RelayCommand]

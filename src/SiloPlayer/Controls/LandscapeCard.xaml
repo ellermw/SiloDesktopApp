@@ -6,18 +6,18 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Width="280"
+    Width="315"
     PointerEntered="OnPointerEntered"
     PointerExited="OnPointerExited">
 
     <Grid
         x:Name="RootGrid"
-        Width="280"
+        Width="315"
         Background="Transparent"
         CacheMode="BitmapCache">
 
         <Grid.RowDefinitions>
-            <RowDefinition Height="158" />
+            <RowDefinition Height="177" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
@@ -92,6 +92,11 @@
 
             <!-- Hover overlays — MUST be last so they paint on top of image/gradient/progress/badges.
                  Z-order: background → image → gradient → progress → remaining badge → dim → play → border. -->
+            <StackPanel x:Name="OverlayTopLeft" Orientation="Vertical" Spacing="4" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="6" />
+            <StackPanel x:Name="OverlayTopRight" Orientation="Vertical" Spacing="4" VerticalAlignment="Top" HorizontalAlignment="Right" Margin="6" />
+            <StackPanel x:Name="OverlayBottomLeft" Orientation="Vertical" Spacing="4" VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="6" />
+            <StackPanel x:Name="OverlayBottomRight" Orientation="Vertical" Spacing="4" VerticalAlignment="Bottom" HorizontalAlignment="Right" Margin="6" />
+
             <Border
                 x:Name="HoverDim"
                 CornerRadius="12"
@@ -119,10 +124,8 @@
                     Margin="3,0,0,0" />
             </Grid>
 
-            <!-- Dismiss X button (top-right) — visible on hover for CW/NU cards.
-                 Clicking dismisses the item from the home section and shows
-                 the undo banner. Uses DismissRequested event, consumed by
-                 HomePage which owns the HomeViewModel.DismissItem flow. -->
+            <!-- Current WebUI MediaItemMenu trigger: translucent ellipsis in
+                 the top-right, revealed on hover. -->
             <Button
                 x:Name="DismissButton"
                 Width="28" Height="28"
@@ -136,9 +139,9 @@
                 Opacity="0"
                 IsHitTestVisible="True"
                 Click="DismissButton_Click"
-                ToolTipService.ToolTip="Dismiss"
+                ToolTipService.ToolTip="More actions"
                 Visibility="Collapsed">
-                <FontIcon Glyph="&#xE711;" FontSize="12" Foreground="White" />
+                <FontIcon Glyph="&#xE712;" FontSize="14" Foreground="White" />
             </Button>
 
             <!-- Hover accent border — topmost layer -->
@@ -152,7 +155,7 @@
         </Grid>
 
         <!-- Text below image — B32: text click navigates to details -->
-        <StackPanel Grid.Row="1" Margin="4,8,4,0" Spacing="2" Tapped="OnTextTapped" Background="Transparent">
+        <StackPanel Grid.Row="1" Margin="2,10,2,0" Spacing="2" Tapped="OnTextTapped" Background="Transparent">
             <!-- Title -->
             <TextBlock
                 x:Name="TitleText"
@@ -164,6 +167,13 @@
             <!-- Episode context: "Series Title · S1 E3" -->
             <TextBlock
                 x:Name="SubtitleText"
+                FontSize="11"
+                Foreground="{StaticResource SecondaryTextBrush}"
+                TextTrimming="CharacterEllipsis"
+                MaxLines="1"
+                Visibility="Collapsed" />
+            <TextBlock
+                x:Name="TimeLeftText"
                 FontSize="11"
                 Foreground="{StaticResource SecondaryTextBrush}"
                 TextTrimming="CharacterEllipsis"

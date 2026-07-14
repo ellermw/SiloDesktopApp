@@ -54,6 +54,7 @@ public sealed class AdminMarkerHistoryParitySourceTests
         Assert.Contains("Credits / Outro", viewModel);
         Assert.Contains("FormatRange(entry.Before)", viewModel);
         Assert.Contains("FormatRange(entry.After)", viewModel);
+        Assert.Contains("Math.Floor(Math.Max(0, seconds) + 0.5)", viewModel);
     }
 
     [Fact]
@@ -61,10 +62,13 @@ public sealed class AdminMarkerHistoryParitySourceTests
     {
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "Admin", "AdminMarkerHistoryPage.xaml");
 
-        Assert.Contains("MaxWidth=\"1560\"", page);
+        Assert.Contains("MaxWidth=\"1400\"", page);
+        Assert.Contains("HorizontalScrollMode=\"Disabled\"", page);
         Assert.Contains("Text=\"Marker History\"", page);
         Assert.Contains("FontSize=\"48\"", page);
         Assert.Contains("<SymbolIcon Symbol=\"Refresh\"", page);
+        Assert.Contains("ViewModel.IsLoading", page);
+        Assert.Contains("Height=\"40\" Background=\"{StaticResource SurfaceHoverBrush}\"", page);
         Assert.Contains("Text=\"When\"", page);
         Assert.DoesNotContain("Text=\"WHEN\"", page);
     }

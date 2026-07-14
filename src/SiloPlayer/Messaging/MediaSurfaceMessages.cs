@@ -14,6 +14,7 @@ public enum MediaSurfaceChangeKind
     WatchedCleared,
     RatingChanged,
     PlaybackProgress,
+    HomeDismissed,
     ItemMetadataRefreshed,
     CollectionChanged,
 }

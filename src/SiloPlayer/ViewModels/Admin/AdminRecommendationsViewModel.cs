@@ -8,6 +8,7 @@ namespace SiloPlayer.ViewModels.Admin;
 public partial class AdminRecommendationsViewModel : ObservableObject
 {
     private readonly AdminApi _adminApi;
+    private CancellationTokenSource? _loadCts;
 
     // Server settings (for the configuration sections)
     private Dictionary<string, string> _serverSettings = new();
@@ -28,29 +29,50 @@ public partial class AdminRecommendationsViewModel : ObservableObject
     [RelayCommand]
     public async Task LoadAsync()
     {
+        var ownerCts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _loadCts, ownerCts);
+        previous?.Cancel();
+        previous?.Dispose();
+
         IsLoading = true;
         ErrorMessage = null;
         try
         {
             // Load job status and server settings in parallel
-            var statusTask = _adminApi.GetRecommendationsStatusAsync();
-            var settingsTask = _adminApi.GetAdminSettingsAsync();
-            var sensitiveTask = _adminApi.GetSensitiveStatusAsync();
+            var statusTask = _adminApi.GetRecommendationsStatusAsync(ownerCts.Token);
+            var settingsTask = _adminApi.GetAdminSettingsAsync(ownerCts.Token);
+            var sensitiveTask = _adminApi.GetSensitiveStatusAsync(ownerCts.Token);
 
             await Task.WhenAll(statusTask, settingsTask, sensitiveTask);
+            ownerCts.Token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_loadCts, ownerCts)) return;
 
             Status = statusTask.Result;
             _serverSettings = settingsTask.Result;
             _sensitiveConfigured = sensitiveTask.Result.Configured;
         }
+        catch (OperationCanceledException) when (ownerCts.IsCancellationRequested)
+        {
+        }
         catch (Exception ex)
         {
-            ErrorMessage = ex.Message;
+            if (ReferenceEquals(_loadCts, ownerCts))
+                ErrorMessage = ex.Message;
         }
         finally
         {
-            IsLoading = false;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _loadCts, null, ownerCts), ownerCts))
+                IsLoading = false;
+            ownerCts.Dispose();
         }
+    }
+
+    public void CancelLoad()
+    {
+        var cts = Interlocked.Exchange(ref _loadCts, null);
+        cts?.Cancel();
+        cts?.Dispose();
+        IsLoading = false;
     }
 
     // ===== Settings helpers =====
@@ -69,16 +91,18 @@ public partial class AdminRecommendationsViewModel : ObservableObject
     /// Commits a setting change to the server (fire-and-forget from UI perspective).
     /// Updates local cache optimistically.
     /// </summary>
-    public async Task UpdateSettingAsync(string key, string value)
+    public async Task<bool> UpdateSettingAsync(string key, string value)
     {
         try
         {
             await _adminApi.UpdateAdminSettingAsync(key, value);
             _serverSettings[key] = value;
+            return true;
         }
         catch (Exception ex)
         {
             ErrorMessage = ex.Message;
+            return false;
         }
     }
 

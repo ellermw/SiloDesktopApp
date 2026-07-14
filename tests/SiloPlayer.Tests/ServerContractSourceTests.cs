@@ -571,15 +571,15 @@ public sealed class ServerContractSourceTests
     }
 
     [Fact]
-    public void PreferredAudioLanguageMatchesCurrentSiloSettingsSurface()
+    public void SpokenLanguageMatchesCurrentSiloSettingsSurface()
     {
         var root = FindRepositoryRoot();
         var settingsXaml = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "SettingsPage.xaml"));
         var settingsCode = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "SettingsPage.xaml.cs"));
         var settingsViewModel = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "SettingsViewModel.cs"));
 
-        Assert.Contains("Preferred audio language", settingsXaml);
-        Assert.Contains("Choose which audio track language to prefer when a file offers more than one.", settingsXaml);
+        Assert.Contains("Spoken language", settingsXaml);
+        Assert.Contains("Prefer a spoken language for this profile when multiple tracks are available.", settingsXaml);
         Assert.Contains("Content=\"No preference\" Tag=\"\"", settingsXaml);
         Assert.Contains("Content=\"Original\" Tag=\"original\"", settingsXaml);
         Assert.Contains("(\"original\", \"Original\")", settingsCode);
@@ -587,7 +587,7 @@ public sealed class ServerContractSourceTests
         Assert.Contains("SaveProfileFieldAsync(\"language\", AudioLanguage)", settingsViewModel);
         Assert.Contains("preferred_metadata_language", settingsViewModel);
         Assert.Contains("Metadata language", settingsXaml);
-        Assert.DoesNotContain("Spoken language", settingsXaml + settingsCode);
+        Assert.DoesNotContain("Preferred audio language", settingsXaml + settingsCode);
         Assert.DoesNotContain("Original Language", settingsXaml + settingsCode + settingsViewModel);
     }
 

@@ -16,6 +16,11 @@
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
         <converters:InverseBoolConverter x:Key="InverseBool" />
+        <Style TargetType="ToggleSwitch">
+            <Setter Property="OnContent" Value="" />
+            <Setter Property="OffContent" Value="" />
+            <Setter Property="MinWidth" Value="44" />
+        </Style>
     </Page.Resources>
 
     <ScrollViewer IsScrollInertiaEnabled="True">
@@ -34,6 +39,7 @@
                             Text="Shared access defaults for a set of users. A member's own restrictions still apply on top — a group grants the most a member can do, never more."
                             FontSize="14"
                             MaxWidth="820"
+                            HorizontalAlignment="Left"
                             TextWrapping="Wrap"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>

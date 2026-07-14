@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json.Serialization;
 
 namespace SiloPlayer.Core.Models.Home;
 public class HomeSectionsResponse
@@ -15,6 +16,8 @@ public class HomeSectionWithItems
     public int TotalCount { get; set; }
     public bool IsCustom { get; set; }
     public bool Customized { get; set; }
+    [JsonIgnore]
+    public bool LoadFailed { get; set; }
     // ObservableCollection so in-place mutations (e.g. removing an item from
     // Continue Watching when it's marked watched) propagate to the UI without
     // requiring a section swap + full row rebuild.
@@ -39,7 +42,11 @@ public class MediaItem
     public string? BackdropUrl { get; set; }
     public string? BackdropThumbhash { get; set; }
     public string? LogoUrl { get; set; }
+    public string? AddedAt { get; set; }
+    public string? ReleaseDate { get; set; }
+    public string? LastAirDate { get; set; }
     public OverlaySummary? OverlaySummary { get; set; }
+    public BrowseItemSortMetrics? SortMetrics { get; set; }
     public UserState? UserState { get; set; }
     public string? SeriesId { get; set; }
     public string? SeriesTitle { get; set; }
@@ -61,9 +68,25 @@ public class MediaItem
     public string? ItemSource { get; set; }
     public AudiobookDetailExtension? Audiobook { get; set; }
     public EbookDetailExtension? Ebook { get; set; }
+    public int MangaChapterCount { get; set; }
+    public int MangaVolumeCount { get; set; }
     /// <summary>Server-attached badges (e.g. "season_premiere") shown as pills on
     /// section item cards. Source: HomeSectionItem.badges[] on the server.</summary>
     public List<string>? Badges { get; set; }
+}
+
+public class BrowseItemSortMetrics
+{
+    public string? ReleaseDate { get; set; }
+    public int? RuntimeMinutes { get; set; }
+    public string? Resolution { get; set; }
+    public int? BitrateKbps { get; set; }
+    public double? ProgressRatio { get; set; }
+    public string? ViewedAt { get; set; }
+    public int? PlayCount { get; set; }
+    public string? Author { get; set; }
+    public string? Narrator { get; set; }
+    public string? SeriesName { get; set; }
 }
 
 public class AudiobookPerson

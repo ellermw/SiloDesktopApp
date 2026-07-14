@@ -47,15 +47,20 @@ public partial class AdminInviteCodesViewModel : ObservableObject
 
     // ===== Public Signups Toggle =====
 
-    public async Task SetSignupEnabledAsync(bool enabled)
+    public async Task<bool> SetSignupEnabledAsync(bool enabled)
     {
         try
         {
             await _adminApi.UpdateAdminSettingAsync("signup.enabled", enabled ? "true" : "false");
             SignupEnabled = enabled;
             StatusMessage = enabled ? "Public signups enabled." : "Public signups disabled.";
+            return true;
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+            return false;
+        }
     }
 
     // ===== Create =====

@@ -6,11 +6,19 @@
     xmlns:converters="using:SiloPlayer.Converters"
     xmlns:vm="using:SiloPlayer.ViewModels.Admin"
     Background="{StaticResource AppBackgroundBrush}"
-    Loaded="Page_Loaded">
+    Loaded="Page_Loaded"
+    KeyDown="Page_KeyDown">
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
+        <!-- The WebUI uses quiet surface segments, not the Windows accent fill. -->
+        <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="{StaticResource SurfaceHoverColor}" />
+        <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="{StaticResource SurfaceHoverColor}" />
+        <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="{StaticResource SurfaceColor}" />
+        <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="{StaticResource PrimaryTextColor}" />
+        <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="{StaticResource PrimaryTextColor}" />
+        <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="{StaticResource PrimaryTextColor}" />
     </Page.Resources>
 
     <ScrollViewer IsScrollInertiaEnabled="True">
@@ -24,9 +32,33 @@
                                FontSize="14" MaxWidth="680" TextWrapping="Wrap" HorizontalAlignment="Left"
                                Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
-                <TextBox x:Name="DeviceSearchBox" Grid.Column="1" VerticalAlignment="Bottom"
+                <Grid Grid.Column="1" VerticalAlignment="Bottom">
+                <TextBox x:Name="DeviceSearchBox"
+                         Padding="34,0,44,0"
                          PlaceholderText="Search devices, users, IDs, profiles…"
-                         Text="{x:Bind ViewModel.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                         Text="{x:Bind ViewModel.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                         TextChanged="DeviceSearchBox_TextChanged" />
+                <FontIcon Glyph="&#xE721;" FontSize="14"
+                          Foreground="{StaticResource SecondaryTextBrush}"
+                          HorizontalAlignment="Left" VerticalAlignment="Center"
+                          Margin="12,0,0,0" IsHitTestVisible="False" />
+                <Border x:Name="SearchShortcutHint"
+                        HorizontalAlignment="Right" VerticalAlignment="Center"
+                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                        CornerRadius="4" Padding="5,2" Margin="0,0,8,0"
+                        IsHitTestVisible="False">
+                    <TextBlock Text="&#x2318;K" FontFamily="Consolas" FontSize="10"
+                               Foreground="{StaticResource SecondaryTextBrush}" />
+                </Border>
+                <Button x:Name="ClearSearchButton" Visibility="Collapsed"
+                        HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Margin="0,0,5,0" Padding="6"
+                        Background="Transparent" BorderThickness="0"
+                        Click="ClearSearchButton_Click">
+                    <FontIcon Glyph="&#xE711;" FontSize="12"
+                              Foreground="{StaticResource SecondaryTextBrush}" />
+                </Button>
+                </Grid>
             </Grid>
 
             <!-- Fleet pulse: stable totals, density cue, and grouping pivot. -->
@@ -112,9 +144,11 @@
                             <ItemsControl ItemsSource="{x:Bind ViewModel.DeviceGroups, Mode=OneWay}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:AdminDeviceGroupViewModel">
-                                        <Expander IsExpanded="{x:Bind IsExpanded}">
+                                        <Expander IsExpanded="{x:Bind IsExpanded}"
+                                                  HorizontalAlignment="Stretch"
+                                                  HorizontalContentAlignment="Stretch">
                                             <Expander.Header>
-                                                <Grid Padding="4,3" ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock Text="{x:Bind Label}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="1" Text="{x:Bind Meta}" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" /></Grid>
+                                                <Grid Width="344" Padding="4,3" ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock Text="{x:Bind Label}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="1" Text="{x:Bind Meta}" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" /></Grid>
                                             </Expander.Header>
                                             <ListView ItemsSource="{x:Bind Devices}" IsItemClickEnabled="True" ItemClick="DeviceList_ItemClick" SelectionMode="None" HorizontalContentAlignment="Stretch">
                                                 <ListView.ItemTemplate>

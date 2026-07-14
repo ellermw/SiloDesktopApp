@@ -35,6 +35,18 @@ public class PlaybackApi(SiloApiClient client)
     public Task SetFileMarkersAsync(int fileId, IReadOnlyDictionary<string, object?> changes, CancellationToken ct = default)
         => client.PutNoContentAsync($"/api/v1/markers/files/{fileId}", changes, ct);
 
+    public Task<FileMarkersResponse> GetItemMarkersAsync(string itemId, CancellationToken ct = default)
+        => client.GetAsync<FileMarkersResponse>($"/api/v1/markers/items/{Uri.EscapeDataString(itemId)}", ct);
+
+    public Task<FileMarkersResponse> SetItemMarkersAsync(
+        string itemId,
+        IReadOnlyDictionary<string, object?> changes,
+        CancellationToken ct = default)
+        => client.PutAsync<FileMarkersResponse>(
+            $"/api/v1/markers/items/{Uri.EscapeDataString(itemId)}",
+            changes,
+            ct);
+
     public Task<SubtitleAiStatus> GetSubtitleAiStatusAsync(CancellationToken ct = default)
         => client.GetAsync<SubtitleAiStatus>("/api/v1/subtitles/ai/status", ct);
 
@@ -43,6 +55,9 @@ public class PlaybackApi(SiloApiClient client)
 
     public Task<SubtitleAiJob> GetSubtitleAiJobAsync(long jobId, CancellationToken ct = default)
         => client.GetAsync<SubtitleAiJob>($"/api/v1/subtitles/ai/jobs/{jobId}", ct);
+
+    public Task<SubtitleAiQuota> GetSubtitleAiQuotaAsync(CancellationToken ct = default)
+        => client.GetAsync<SubtitleAiQuota>("/api/v1/subtitles/ai/quota", ct);
 
     // ===== Subtitle Preferences =====
 

@@ -1,8 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
+using Microsoft.UI.Input;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.System;
+using Windows.UI.Core;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
@@ -24,6 +28,11 @@ public sealed partial class AdminCollectionsPage : Page
     private Func<CreateLibraryCollectionRequest?>? _editorGetBody;
     private Func<(byte[]? Bytes, string? Name, string? ContentType)>? _editorGetPosterFile;
     private Func<(byte[]? Bytes, string? Name, string? ContentType)>? _editorGetBackdropFile;
+    private readonly Dictionary<string, string> _groupViewModes = [];
+    private readonly HashSet<string> _selectedCollectionIds = new(StringComparer.Ordinal);
+    private string? _selectionAnchorId;
+    private string? _selectionSectionId;
+    private bool _selectionIsUserCollection;
 
     public AdminCollectionsPage()
     {
@@ -89,6 +98,7 @@ public sealed partial class AdminCollectionsPage : Page
         if (LibraryPicker.SelectedItem is ComboBoxItem item)
         {
             ViewModel.SelectedLibraryId = item.Tag as int?;
+            ClearCollectionSelection();
             BuildLoadingSkeletons();
             await ViewModel.LoadCommand.ExecuteAsync(null);
             BuildCollectionRows();
@@ -151,53 +161,132 @@ public sealed partial class AdminCollectionsPage : Page
 
     private void BuildCollectionGroupBoard()
     {
-        var groupedCollections = ViewModel.CollectionGroups
-            .OrderBy(g => g.SortOrder)
-            .Select(group => (Group: group, Items: ViewModel.Collections
-                .Where(c => c.GroupId == group.Id)
-                .OrderBy(c => c.SortOrder)
-                .ThenBy(c => c.Title)
-                .ToList()))
-            .ToList();
-
-        foreach (var (group, items) in groupedCollections)
-            CollectionsPanel.Children.Add(BuildCollectionSection(group.Name, group.DefaultSortMode, items, true, group));
-
         var ungrouped = ViewModel.Collections
             .Where(c => string.IsNullOrEmpty(c.GroupId))
             .OrderBy(c => c.SortOrder)
             .ThenBy(c => c.Title)
             .ToList();
 
-        CollectionsPanel.Children.Add(BuildCollectionSection("Ungrouped", $"{ungrouped.Count} collection{(ungrouped.Count == 1 ? "" : "s")}", ungrouped, true));
+        var sections = ViewModel.CollectionGroups
+            .Select(group => (Id: group.Id, Order: group.SortOrder, Group: (LibraryCollectionGroup?)group))
+            .Append((Id: "ungrouped", Order: ViewModel.UngroupedSortOrder, Group: (LibraryCollectionGroup?)null))
+            .OrderBy(section => section.Order)
+            .ThenBy(section => section.Group?.Name ?? "\uffff", StringComparer.OrdinalIgnoreCase);
+
+        foreach (var section in sections)
+        {
+            if (section.Group == null)
+            {
+                CollectionsPanel.Children.Add(BuildCollectionSection(
+                    "Ungrouped",
+                    null,
+                    ungrouped,
+                    showReorder: true,
+                    group: null,
+                    sectionId: "ungrouped",
+                    collectionDragEnabled: true));
+                continue;
+            }
+
+            var group = section.Group;
+            var viewMode = _groupViewModes.TryGetValue(group.Id, out var currentMode)
+                ? currentMode
+                : group.DefaultSortMode;
+            var items = ApplyCollectionViewSort(
+                ViewModel.Collections.Where(collection => collection.GroupId == group.Id),
+                viewMode);
+            CollectionsPanel.Children.Add(BuildCollectionSection(
+                group.Name,
+                null,
+                items,
+                showReorder: true,
+                group,
+                group.Id,
+                collectionDragEnabled: string.Equals(viewMode, "manual", StringComparison.Ordinal)));
+        }
+    }
+
+    private static List<LibraryCollection> ApplyCollectionViewSort(
+        IEnumerable<LibraryCollection> collections,
+        string mode)
+    {
+        return mode switch
+        {
+            "name_asc" => collections.OrderBy(collection => collection.Title, StringComparer.OrdinalIgnoreCase).ToList(),
+            "name_desc" => collections.OrderByDescending(collection => collection.Title, StringComparer.OrdinalIgnoreCase).ToList(),
+            "recent" => collections.OrderByDescending(collection => collection.UpdatedAt, StringComparer.Ordinal).ToList(),
+            "most_items" => collections.OrderByDescending(collection => collection.ItemCount).ThenBy(collection => collection.Title).ToList(),
+            _ => collections.OrderBy(collection => collection.SortOrder).ThenBy(collection => collection.Title).ToList(),
+        };
     }
 
     private FrameworkElement BuildCollectionSection(
         string title,
-        string badge,
+        string? badge,
         IReadOnlyList<LibraryCollection> collections,
         bool showReorder,
-        LibraryCollectionGroup? group = null)
+        LibraryCollectionGroup? group = null,
+        string? sectionId = null,
+        bool collectionDragEnabled = true)
     {
         var content = new StackPanel { Spacing = 0 };
-        content.Children.Add(BuildGroupHeader(title, group, badge));
+        content.Children.Add(BuildGroupHeader(title, group, badge, showReorder, sectionId));
+        var rows = new StackPanel
+        {
+            Spacing = showReorder ? 8 : 0,
+            Padding = showReorder ? new Thickness(12) : new Thickness(0)
+        };
         if (collections.Count == 0)
         {
-            content.Children.Add(BuildEmptyGroupRow("No collections in this group."));
+            var emptyText = sectionId == "ungrouped"
+                ? "Drop collections here to remove them from any group. They'll appear on the library tab at this section's position."
+                : string.Equals(group?.Kind, "user_collections", StringComparison.OrdinalIgnoreCase)
+                    ? "Reserved slot for user-published collections. Drag this group to set where they'd appear on the library tab."
+                    : "Drag a collection here, or add one with + New collection.";
+            rows.Children.Add(BuildEmptyGroupRow(emptyText, showReorder));
         }
         else
         {
             for (var index = 0; index < collections.Count; index++)
             {
-                if (index > 0)
-                    content.Children.Add(new Border
+                if (!showReorder && index > 0)
+                    rows.Children.Add(new Border
                     {
                         BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
                         BorderThickness = new Thickness(0, 1, 0, 0)
                     });
-                content.Children.Add(BuildCompactCollectionRow(collections[index], showReorder));
+                rows.Children.Add(BuildCompactCollectionRow(
+                    collections[index],
+                    showReorder,
+                    sectionId,
+                    collections,
+                    collectionDragEnabled,
+                    string.Equals(group?.Kind, "user_collections", StringComparison.OrdinalIgnoreCase)));
             }
         }
+        if (showReorder && sectionId != null)
+        {
+            rows.AllowDrop = true;
+            rows.DragOver += (_, args) =>
+            {
+                if (args.DataView.Contains(StandardDataFormats.Text))
+                    args.AcceptedOperation = DataPackageOperation.Move;
+            };
+            rows.Drop += async (_, args) =>
+            {
+                if (!args.DataView.Contains(StandardDataFormats.Text)) return;
+                var token = await args.DataView.GetTextAsync();
+                var draggedIds = ParseDraggedCollectionIds(token);
+                if (draggedIds.Count > 0)
+                {
+                    args.Handled = true;
+                    await ViewModel.MoveCollectionsToAsync(draggedIds, sectionId);
+                    ClearCollectionSelection();
+                    BuildCollectionRows();
+                }
+            };
+        }
+        content.Children.Add(rows);
 
         return new Border
         {
@@ -209,7 +298,12 @@ public sealed partial class AdminCollectionsPage : Page
         };
     }
 
-    private FrameworkElement BuildGroupHeader(string title, LibraryCollectionGroup? group, string? badgeText = null)
+    private FrameworkElement BuildGroupHeader(
+        string title,
+        LibraryCollectionGroup? group,
+        string? badgeText,
+        bool showReorder,
+        string? sectionId)
     {
         var header = new Grid
         {
@@ -217,10 +311,11 @@ public sealed partial class AdminCollectionsPage : Page
             BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
             BorderThickness = new Thickness(0, 0, 0, 1)
         };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var titlePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var titlePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         titlePanel.Children.Add(new TextBlock
         {
             Text = title,
@@ -230,51 +325,217 @@ public sealed partial class AdminCollectionsPage : Page
             VerticalAlignment = VerticalAlignment.Center
         });
 
-        titlePanel.Children.Add(MakeBadgeOutline(badgeText ?? group?.DefaultSortMode ?? ""));
-
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-        if (group != null)
+        if (showReorder && string.Equals(group?.Kind, "user_collections", StringComparison.OrdinalIgnoreCase))
         {
-            var up = MakeIconButton("\uE70E", "Move group up");
-            var down = MakeIconButton("\uE70D", "Move group down");
-            var edit = MakeIconButton("\uE70F", "Rename group");
-            var delete = MakeIconButton("\uE74D", "Delete group");
-
-            up.Click += async (_, _) => await MoveGroupAsync(group, -1);
-            down.Click += async (_, _) => await MoveGroupAsync(group, 1);
-            edit.Click += async (_, _) => await OpenEditGroupDialogAsync(group);
-            delete.Click += async (_, _) => await OpenDeleteGroupDialogAsync(group);
-
-            actions.Children.Add(up);
-            actions.Children.Add(down);
-            actions.Children.Add(edit);
-            actions.Children.Add(delete);
+            var userBadge = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            userBadge.Children.Add(new FontIcon { Glyph = "\uE716", FontSize = 11 });
+            userBadge.Children.Add(new TextBlock { Text = "User Collections", FontSize = 11 });
+            titlePanel.Children.Add(new Border
+            {
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(7, 2, 7, 2),
+                Child = userBadge
+            });
         }
 
-        Grid.SetColumn(titlePanel, 0);
-        Grid.SetColumn(actions, 1);
+        FrameworkElement? dragGrip = null;
+        if (showReorder && sectionId != null)
+        {
+            dragGrip = new TextBlock
+            {
+                Text = "\u22ee\u22ee",
+                FontSize = 14,
+                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+                CanDrag = true,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            ToolTipService.SetToolTip(dragGrip, $"Drag {title}");
+            var capturedSectionId = sectionId;
+            dragGrip.DragStarting += (_, args) =>
+            {
+                args.Data.SetText($"section:{capturedSectionId}");
+                args.Data.RequestedOperation = DataPackageOperation.Move;
+            };
+            header.AllowDrop = true;
+            header.DragOver += (_, args) =>
+            {
+                if (args.DataView.Contains(StandardDataFormats.Text))
+                    args.AcceptedOperation = DataPackageOperation.Move;
+            };
+            header.Drop += async (_, args) =>
+            {
+                if (!args.DataView.Contains(StandardDataFormats.Text)) return;
+                var token = await args.DataView.GetTextAsync();
+                if (token.StartsWith("section:", StringComparison.Ordinal))
+                {
+                    args.Handled = true;
+                    await ViewModel.MoveGroupSectionToAsync(token[8..], capturedSectionId);
+                }
+            };
+        }
+
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        if (!showReorder && !string.IsNullOrWhiteSpace(badgeText))
+        {
+            actions.Children.Add(MakeBadgeOutline(badgeText));
+        }
+        else if (showReorder && group != null)
+        {
+            actions.Children.Add(new TextBlock
+            {
+                Text = "View:",
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            var viewCombo = new ComboBox { Width = 155, FontSize = 12, CornerRadius = new CornerRadius(6) };
+            foreach (var (value, label) in new[]
+            {
+                ("manual", "Manual"),
+                ("name_asc", "Name A\u2013Z"),
+                ("name_desc", "Name Z\u2013A"),
+                ("recent", "Recently Updated"),
+                ("most_items", "Most Items")
+            })
+                viewCombo.Items.Add(new ComboBoxItem { Content = label, Tag = value });
+            var selectedMode = _groupViewModes.TryGetValue(group.Id, out var mode) ? mode : group.DefaultSortMode;
+            viewCombo.SelectedItem = viewCombo.Items.OfType<ComboBoxItem>()
+                .FirstOrDefault(item => string.Equals(item.Tag as string, selectedMode, StringComparison.Ordinal))
+                ?? viewCombo.Items[0];
+            var capturedGroup = group;
+            viewCombo.SelectionChanged += (_, _) =>
+            {
+                if (viewCombo.SelectedItem is not ComboBoxItem item || item.Tag is not string nextMode) return;
+                if (_groupViewModes.TryGetValue(capturedGroup.Id, out var existing) && existing == nextMode) return;
+                _groupViewModes[capturedGroup.Id] = nextMode;
+                ScheduleRebuild();
+            };
+            actions.Children.Add(viewCombo);
+            var settings = MakeIconButton("\uE712", "Group settings");
+            settings.Click += async (_, _) => await OpenEditGroupDialogAsync(capturedGroup);
+            actions.Children.Add(settings);
+        }
+
+        if (dragGrip != null)
+        {
+            Grid.SetColumn(dragGrip, 0);
+            header.Children.Add(dragGrip);
+        }
+        Grid.SetColumn(titlePanel, 1);
+        Grid.SetColumn(actions, 2);
         header.Children.Add(titlePanel);
         header.Children.Add(actions);
         return header;
     }
 
-    private static FrameworkElement BuildEmptyGroupRow(string text)
+    private static FrameworkElement BuildEmptyGroupRow(string text, bool cardStyle)
     {
-        return new TextBlock
+        var textBlock = new TextBlock
         {
             Text = text,
-            Padding = new Thickness(20, 14, 20, 14),
+            Padding = cardStyle ? new Thickness(20, 16, 20, 16) : new Thickness(20, 14, 20, 14),
             FontSize = 12,
-            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            TextAlignment = cardStyle ? TextAlignment.Center : TextAlignment.Left,
+            TextWrapping = TextWrapping.Wrap
         };
+        return cardStyle
+            ? new Border
+            {
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Child = textBlock
+            }
+            : textBlock;
     }
 
-    private FrameworkElement BuildCompactCollectionRow(LibraryCollection col, bool showReorder)
+    private FrameworkElement BuildCompactCollectionRow(
+        LibraryCollection col,
+        bool showReorder,
+        string? sectionId,
+        IReadOnlyList<LibraryCollection> sectionCollections,
+        bool collectionDragEnabled,
+        bool isUserCollection)
     {
-        var row = new Grid { Padding = new Thickness(16, 12, 16, 12), ColumnSpacing = 12 };
+        var row = new Grid
+        {
+            Padding = showReorder ? new Thickness(8) : new Thickness(16, 12, 16, 12),
+            ColumnSpacing = 12,
+            Background = showReorder && _selectedCollectionIds.Contains(col.Id)
+                ? new SolidColorBrush(Color.FromArgb(34, 99, 102, 241))
+                : showReorder ? (Brush)Application.Current.Resources["CardBackgroundBrush"] : null,
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = showReorder ? new Thickness(1) : new Thickness(0),
+            CornerRadius = showReorder ? new CornerRadius(6) : new CornerRadius(0)
+        };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = showReorder ? new GridLength(18) : new GridLength(0) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        FrameworkElement? dragGrip = null;
+        if (showReorder && sectionId != null)
+        {
+            dragGrip = new TextBlock
+            {
+                Text = "\u22ee\u22ee",
+                FontSize = 13,
+                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+                CanDrag = collectionDragEnabled,
+                Opacity = collectionDragEnabled ? 1 : 0.4
+            };
+            var capturedCollectionId = col.Id;
+            dragGrip.DragStarting += (_, args) =>
+            {
+                var draggedIds = _selectedCollectionIds.Contains(capturedCollectionId)
+                    ? ViewModel.Collections
+                        .OrderBy(collection => collection.SortOrder)
+                        .ThenBy(collection => collection.Title)
+                        .Where(collection => _selectedCollectionIds.Contains(collection.Id))
+                        .Select(collection => collection.Id)
+                        .ToList()
+                    : [capturedCollectionId];
+                args.Data.SetText(draggedIds.Count == 1
+                    ? $"collection:{draggedIds[0]}"
+                    : $"collections:{string.Join(',', draggedIds)}");
+                args.Data.RequestedOperation = DataPackageOperation.Move;
+            };
+            row.AllowDrop = true;
+            row.DragOver += (_, args) =>
+            {
+                if (args.DataView.Contains(StandardDataFormats.Text))
+                    args.AcceptedOperation = DataPackageOperation.Move;
+            };
+            var capturedSectionId = sectionId;
+            row.Drop += async (_, args) =>
+            {
+                if (!args.DataView.Contains(StandardDataFormats.Text)) return;
+                var token = await args.DataView.GetTextAsync();
+                var draggedIds = ParseDraggedCollectionIds(token);
+                if (draggedIds.Count > 0)
+                {
+                    args.Handled = true;
+                    await ViewModel.MoveCollectionsToAsync(draggedIds, capturedSectionId, capturedCollectionId);
+                    ClearCollectionSelection();
+                    BuildCollectionRows();
+                }
+            };
+
+            row.Tapped += (_, args) =>
+            {
+                if (IsInsideButton(args.OriginalSource as DependencyObject)) return;
+                UpdateCollectionSelection(
+                    capturedCollectionId,
+                    capturedSectionId,
+                    sectionCollections,
+                    isUserCollection);
+            };
+        }
 
         FrameworkElement artwork;
         if (Uri.TryCreate(col.PosterUrl, UriKind.Absolute, out var posterUri))
@@ -322,9 +583,11 @@ public sealed partial class AdminCollectionsPage : Page
             Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"]
         });
         metadata.Children.Add(MakeBadgeOutline(col.CollectionType));
-        var libraryNames = string.Join(", ", CollectionLibraryIds(col)
+        if (showReorder && !string.IsNullOrWhiteSpace(col.LastSyncStatus))
+            metadata.Children.Add(MakeBadgeOutline(col.LastSyncStatus));
+        var libraryNames = showReorder ? "" : string.Join(", ", CollectionLibraryIds(col)
             .Select(id => ViewModel.Libraries.FirstOrDefault(l => l.Id == id)?.Name ?? $"Library {id}"));
-        if (!string.IsNullOrWhiteSpace(libraryNames))
+        if (!showReorder && !string.IsNullOrWhiteSpace(libraryNames))
             metadata.Children.Add(new TextBlock
             {
                 Text = libraryNames,
@@ -336,15 +599,6 @@ public sealed partial class AdminCollectionsPage : Page
         info.Children.Add(metadata);
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-        if (showReorder)
-        {
-            var up = MakeIconButton("\uE70E", "Move collection up");
-            var down = MakeIconButton("\uE70D", "Move collection down");
-            up.Click += async (_, _) => await MoveCollectionInGroupAsync(col, -1);
-            down.Click += async (_, _) => await MoveCollectionInGroupAsync(col, 1);
-            actions.Children.Add(up);
-            actions.Children.Add(down);
-        }
         if (!string.Equals(col.CollectionType, "manual", StringComparison.OrdinalIgnoreCase))
         {
             var sync = MakeIconButton("\uE72C", $"Sync {col.Title}");
@@ -364,13 +618,88 @@ public sealed partial class AdminCollectionsPage : Page
         delete.Click += async (_, _) => await OpenDeleteDialogAsync(col);
         actions.Children.Add(delete);
 
-        Grid.SetColumn(artwork, 0);
-        Grid.SetColumn(info, 1);
-        Grid.SetColumn(actions, 2);
+        if (dragGrip != null)
+        {
+            Grid.SetColumn(dragGrip, 0);
+            row.Children.Add(dragGrip);
+        }
+        Grid.SetColumn(artwork, 1);
+        Grid.SetColumn(info, 2);
+        Grid.SetColumn(actions, 3);
         row.Children.Add(artwork);
         row.Children.Add(info);
         row.Children.Add(actions);
         return row;
+    }
+
+    private void UpdateCollectionSelection(
+        string collectionId,
+        string sectionId,
+        IReadOnlyList<LibraryCollection> sectionCollections,
+        bool isUserCollection)
+    {
+        var controlDown = IsKeyDown(VirtualKey.Control);
+        var shiftDown = IsKeyDown(VirtualKey.Shift);
+        if (_selectedCollectionIds.Count > 0 && _selectionIsUserCollection != isUserCollection)
+            ClearCollectionSelection();
+
+        if (shiftDown && _selectionSectionId == sectionId && _selectionAnchorId != null)
+        {
+            var anchorIndex = sectionCollections.ToList().FindIndex(item => item.Id == _selectionAnchorId);
+            var currentIndex = sectionCollections.ToList().FindIndex(item => item.Id == collectionId);
+            if (anchorIndex >= 0 && currentIndex >= 0)
+            {
+                for (var index = Math.Min(anchorIndex, currentIndex); index <= Math.Max(anchorIndex, currentIndex); index++)
+                    _selectedCollectionIds.Add(sectionCollections[index].Id);
+            }
+        }
+        else if (controlDown)
+        {
+            if (!_selectedCollectionIds.Add(collectionId))
+                _selectedCollectionIds.Remove(collectionId);
+            _selectionAnchorId = collectionId;
+            _selectionSectionId = sectionId;
+        }
+        else
+        {
+            _selectedCollectionIds.Clear();
+            _selectedCollectionIds.Add(collectionId);
+            _selectionAnchorId = collectionId;
+            _selectionSectionId = sectionId;
+        }
+
+        _selectionIsUserCollection = isUserCollection;
+        BuildCollectionRows();
+    }
+
+    private void ClearCollectionSelection()
+    {
+        _selectedCollectionIds.Clear();
+        _selectionAnchorId = null;
+        _selectionSectionId = null;
+        _selectionIsUserCollection = false;
+    }
+
+    private static bool IsKeyDown(VirtualKey key) =>
+        (InputKeyboardSource.GetKeyStateForCurrentThread(key) & CoreVirtualKeyStates.Down) != 0;
+
+    private static bool IsInsideButton(DependencyObject? source)
+    {
+        while (source != null)
+        {
+            if (source is Button) return true;
+            source = VisualTreeHelper.GetParent(source);
+        }
+        return false;
+    }
+
+    private static IReadOnlyList<string> ParseDraggedCollectionIds(string token)
+    {
+        if (token.StartsWith("collection:", StringComparison.Ordinal))
+            return [token[11..]];
+        if (token.StartsWith("collections:", StringComparison.Ordinal))
+            return token[12..].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return [];
     }
 
     private static IReadOnlyList<int> CollectionLibraryIds(LibraryCollection collection) =>
@@ -669,55 +998,90 @@ public sealed partial class AdminCollectionsPage : Page
             return;
         }
 
-        var nameBox = new TextBox
-        {
-            PlaceholderText = "Group name",
-            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
-            Width = 360
-        };
+        var (content, nameBox, sortCombo) = BuildGroupDialogContent(null);
 
         var dialog = new ContentDialog
         {
-            Title = "New Collection Group",
+            Title = "New group",
             PrimaryButtonText = "Create",
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
-            Content = nameBox,
+            Content = content,
             DefaultButton = ContentDialogButton.Primary
         };
 
         if (await dialog.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
         {
-            try { await ViewModel.CreateGroupAsync(nameBox.Text); }
+            var sortMode = (sortCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "manual";
+            try { await ViewModel.CreateGroupAsync(nameBox.Text, sortMode); }
             catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
         }
     }
 
     private async Task OpenEditGroupDialogAsync(LibraryCollectionGroup group)
     {
-        var nameBox = new TextBox
-        {
-            Text = group.Name,
-            PlaceholderText = "Group name",
-            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
-            Width = 360
-        };
+        var (content, nameBox, sortCombo) = BuildGroupDialogContent(group);
+        var canDelete = !string.Equals(group.Kind, "user_collections", StringComparison.OrdinalIgnoreCase);
 
         var dialog = new ContentDialog
         {
-            Title = "Rename Collection Group",
+            Title = "Edit group",
             PrimaryButtonText = "Save",
+            SecondaryButtonText = canDelete ? "Delete group" : "",
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
-            Content = nameBox,
+            Content = content,
             DefaultButton = ContentDialogButton.Primary
         };
 
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Secondary && canDelete)
         {
-            try { await ViewModel.UpdateGroupAsync(group, nameBox.Text); }
+            await OpenDeleteGroupDialogAsync(group);
+        }
+        else if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
+        {
+            var sortMode = (sortCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? group.DefaultSortMode;
+            try { await ViewModel.UpdateGroupAsync(group, nameBox.Text, sortMode); }
             catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
         }
+    }
+
+    private static (StackPanel Content, TextBox NameBox, ComboBox SortCombo) BuildGroupDialogContent(
+        LibraryCollectionGroup? group)
+    {
+        var panel = new StackPanel { Spacing = 14, Width = 390 };
+        var nameBox = new TextBox
+        {
+            Text = group?.Name ?? "",
+            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
+        };
+        panel.Children.Add(new TextBlock { Text = "Name", FontSize = 13, FontWeight = FontWeights.SemiBold });
+        panel.Children.Add(nameBox);
+
+        var sortCombo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, CornerRadius = new CornerRadius(6) };
+        foreach (var (value, label) in new[]
+        {
+            ("manual", "Manual (drag-drop order)"),
+            ("name_asc", "Name A\u2013Z"),
+            ("name_desc", "Name Z\u2013A"),
+            ("recent", "Recently Updated"),
+            ("most_items", "Most Items")
+        })
+            sortCombo.Items.Add(new ComboBoxItem { Content = label, Tag = value });
+        var selectedMode = group?.DefaultSortMode ?? "manual";
+        sortCombo.SelectedItem = sortCombo.Items.OfType<ComboBoxItem>()
+            .FirstOrDefault(item => string.Equals(item.Tag as string, selectedMode, StringComparison.Ordinal))
+            ?? sortCombo.Items[0];
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Default sort (end-user view)",
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 2, 0, 0)
+        });
+        panel.Children.Add(sortCombo);
+        return (panel, nameBox, sortCombo);
     }
 
     private async Task OpenDeleteGroupDialogAsync(LibraryCollectionGroup group)

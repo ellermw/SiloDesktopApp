@@ -94,8 +94,9 @@
                             FontSize="{StaticResource FontSizeDisplayLarge}"
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock
-                            Text="Build collections in a full-page editor so sharing, rules, and preview stay visible."
+                    <TextBlock
+                        x:Name="PageSubtitle"
+                        Text="Build collections in a full-page editor so sharing, rules, and preview stay visible."
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}"
                             TextWrapping="Wrap"
@@ -120,10 +121,16 @@
                 <Border x:Name="BasicInfoSection" Style="{StaticResource EditorGroupStyle}">
                     <StackPanel Spacing="20">
                         <TextBlock
-                            Text="Basic Info"
+                            x:Name="BasicInfoTitle"
+                            Text="Display"
                             FontSize="18"
                             FontWeight="SemiBold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock
+                            Text="Rename, describe, and control who can browse this collection."
+                            FontSize="13"
+                            Foreground="{StaticResource TertiaryTextBrush}"
+                            TextWrapping="Wrap" />
 
                         <!-- Name -->
                         <StackPanel Spacing="6">
@@ -160,7 +167,7 @@
                                 HorizontalAlignment="Left" />
                         </StackPanel>
 
-                        <StackPanel Spacing="6">
+                        <StackPanel x:Name="PosterSection" Spacing="6">
                             <TextBlock Text="Poster" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                             <TextBox
                                 x:Name="PosterSourceUrlTextBox"
@@ -177,7 +184,7 @@
                         </StackPanel>
 
                         <!-- Type selector -->
-                        <StackPanel Spacing="6">
+                        <StackPanel x:Name="TypeSection" Spacing="6">
                             <TextBlock
                                 Text="Type"
                                 FontSize="13"
@@ -207,7 +214,7 @@
                         </StackPanel>
 
                         <!-- Shared toggle -->
-                        <StackPanel Spacing="6">
+                        <StackPanel x:Name="SharingSection" Spacing="6">
                             <TextBlock
                                 Text="Visibility"
                                 FontSize="13"
@@ -236,18 +243,18 @@
                     Visibility="Collapsed">
                     <StackPanel Spacing="16">
                         <TextBlock
-                            Text="Imported Source"
+                            Text="Source"
                             FontSize="18"
                             FontWeight="SemiBold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
 
                         <TextBlock
-                            Text="Imported collections stay connected to their source. Edit the safe sync settings here, or use Sync now from the collection menu."
+                            Text="Where this collection pulls its items from and how often."
                             FontSize="13"
                             Foreground="{StaticResource TertiaryTextBrush}"
                             TextWrapping="Wrap" />
 
-                        <StackPanel Spacing="6">
+                        <StackPanel x:Name="SourceUrlSection" Spacing="6">
                             <TextBlock
                                 Text="Source URL"
                                 FontSize="13"
@@ -309,12 +316,12 @@
 
                         <Grid ColumnSpacing="12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <ComboBox x:Name="WatchFilterCombo" Header="Watch filter" SelectionChanged="WatchFilter_Changed" HorizontalAlignment="Stretch">
+                            <ComboBox x:Name="WatchFilterCombo" Header="Watch state" SelectionChanged="WatchFilter_Changed" HorizontalAlignment="Stretch">
                                 <ComboBoxItem Content="All" Tag="all" IsSelected="True" />
                                 <ComboBoxItem Content="Unwatched" Tag="unwatched" />
                                 <ComboBoxItem Content="Watched" Tag="watched" />
                             </ComboBox>
-                            <ComboBox x:Name="MediaFilterCombo" Grid.Column="1" Header="Media filter" SelectionChanged="MediaFilter_Changed" HorizontalAlignment="Stretch">
+                            <ComboBox x:Name="MediaFilterCombo" Grid.Column="1" Header="Content" SelectionChanged="MediaFilter_Changed" HorizontalAlignment="Stretch">
                                 <ComboBoxItem Content="All" Tag="all" IsSelected="True" />
                                 <ComboBoxItem Content="Movies" Tag="movie" />
                                 <ComboBoxItem Content="Shows" Tag="series" />
@@ -324,8 +331,8 @@
                         <ToggleSwitch
                             x:Name="IncludeInServerCollectionsToggle"
                             IsOn="{x:Bind ViewModel.IncludeInServerCollections, Mode=TwoWay}"
-                            OnContent="Include on server collection surfaces"
-                            OffContent="Hide from server collection surfaces" />
+                            OnContent="Show in my library Collections tab"
+                            OffContent="Hide from my library Collections tab" />
 
                         <Border Padding="14" CornerRadius="10" Background="{StaticResource SurfaceBrush}">
                             <Grid ColumnSpacing="12">
@@ -424,7 +431,7 @@
                     Style="{StaticResource EditorGroupStyle}">
                     <StackPanel Spacing="16">
                         <TextBlock
-                            Text="Collection Items"
+                                    Text="Items"
                             FontSize="18"
                             FontWeight="SemiBold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
@@ -454,6 +461,12 @@
                                 <FontIcon Glyph="&#xE721;" FontSize="16" />
                             </Button>
                         </Grid>
+
+                        <TextBlock
+                            Text="Use the controls to reorder. The saved order is what every viewer sees."
+                            FontSize="13"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            TextWrapping="Wrap" />
 
                         <!-- Search results -->
                         <StackPanel x:Name="SearchResultsPanel" Spacing="4" />

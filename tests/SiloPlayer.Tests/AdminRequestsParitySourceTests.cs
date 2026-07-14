@@ -5,41 +5,71 @@ public class AdminRequestsParitySourceTests
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".."));
 
-    private static string Markup => File.ReadAllText(Path.Combine(
-        RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminRequestsPage.xaml"));
-
-    private static string Source => File.ReadAllText(Path.Combine(
+    private static string PageSource => File.ReadAllText(Path.Combine(
         RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminRequestsPage.xaml.cs"));
 
+    private static string PageMarkup => File.ReadAllText(Path.Combine(
+        RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminRequestsPage.xaml"));
+
     [Fact]
-    public void RequestsExposesEveryCurrentAdminTab()
+    public void IntegrationsUseInlinePluginSchemaCardsInsteadOfRawJsonDialog()
     {
-        Assert.Contains("Content=\"Queue\"", Markup, StringComparison.Ordinal);
-        Assert.Contains("Content=\"Settings\"", Markup, StringComparison.Ordinal);
-        Assert.Contains("Content=\"Integrations\"", Markup, StringComparison.Ordinal);
-        Assert.Contains("Content=\"User Overrides\"", Markup, StringComparison.Ordinal);
-        Assert.DoesNotContain("Text=\"Media Requests\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("RenderIntegrationEditors();", PageSource, StringComparison.Ordinal);
+        Assert.Contains("BuildIntegrationSchema(", PageSource, StringComparison.Ordinal);
+        Assert.Contains("BuildIntegrationSchemaField(", PageSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Plugin configuration (JSON)", PageSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("EditIntegrationAsync", PageSource, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void QueueRendersCurrentFulfillmentAndActionDetails()
+    public void IntegrationSchemaSupportsDynamicOptionsAndCurrentControlTypes()
     {
-        Assert.Contains("BuildTargets(request)", Source, StringComparison.Ordinal);
-        Assert.Contains("target.InstanceName ?? target.IntegrationKind", Source, StringComparison.Ordinal);
-        Assert.Contains("target.LastError", Source, StringComparison.Ordinal);
-        Assert.Contains("RequestDetailNavigation", Source, StringComparison.Ordinal);
-        Assert.Contains("DeclineAsync(request)", Source, StringComparison.Ordinal);
+        Assert.Contains("LoadRequestIntegrationOptionsAsync", PageSource, StringComparison.Ordinal);
+        Assert.Contains("field.DynamicOptions", PageSource, StringComparison.Ordinal);
+        Assert.Contains("\"MULTI_SELECT\"", PageSource, StringComparison.Ordinal);
+        Assert.Contains("field.ShowWhen", PageSource, StringComparison.Ordinal);
+        Assert.Contains("descriptor.Sections", PageSource, StringComparison.Ordinal);
+        Assert.Contains("ApplyIntegrationExclusivity", PageSource, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void SettingsIntegrationsAndOverridesUseCurrentServerApis()
+    public void ConnectionCardsUseWebUiTwoColumnLayoutAndActions()
     {
-        Assert.Contains("GetAdminRequestSettingsAsync", Source, StringComparison.Ordinal);
-        Assert.Contains("UpdateAdminRequestSettingsAsync", Source, StringComparison.Ordinal);
-        Assert.Contains("GetRequestIntegrationsAsync", Source, StringComparison.Ordinal);
-        Assert.Contains("CreateRequestIntegrationAsync", Source, StringComparison.Ordinal);
-        Assert.Contains("GetRequestUserLimitAsync", Source, StringComparison.Ordinal);
-        Assert.Contains("UpdateRequestUserLimitAsync", Source, StringComparison.Ordinal);
-        Assert.Contains("request_router.v1", Source, StringComparison.Ordinal);
+        Assert.Contains("grid.ColumnDefinitions.Add", PageSource, StringComparison.Ordinal);
+        Assert.Contains("Grid.SetColumn(card, index % 2)", PageSource, StringComparison.Ordinal);
+        Assert.Contains("Create connection", PageSource, StringComparison.Ordinal);
+        Assert.Contains("Connection saved", PageSource, StringComparison.Ordinal);
+        Assert.Contains("Delete connection", PageSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void QueueRowsPreserveWebUiLinksAndWrappedActions()
+    {
+        Assert.Contains("Frame.Navigate(typeof(AdminUserDetailPage), userId)", PageSource, StringComparison.Ordinal);
+        Assert.Contains("Navigate<ItemDetailPage>(contentId)", PageSource, StringComparison.Ordinal);
+        Assert.Contains("Grid.SetColumn(decline, 1)", PageSource, StringComparison.Ordinal);
+        Assert.Contains("Grid.SetRow(retry, 1)", PageSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SettingsAndOverridesMatchWebUiCardWidthAndControlLayout()
+    {
+        Assert.Contains("x:Name=\"SettingsPanel\" Visibility=\"Collapsed\" Width=\"768\"", PageMarkup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"OverridesPanel\" Visibility=\"Collapsed\" Width=\"768\"", PageMarkup, StringComparison.Ordinal);
+        Assert.Contains("Always fulfill in both 1080p and 4K", PageMarkup, StringComparison.Ordinal);
+        Assert.Contains("HorizontalAlignment=\"Stretch\" SelectionChanged=\"OverrideUserPicker_SelectionChanged\"", PageMarkup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PluginAdminFormModelCarriesConditionalSectionMetadata()
+    {
+        var model = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer.Core", "Models", "Plugins", "PluginCapability.cs"));
+
+        Assert.Contains("PluginAdminFormSection", model, StringComparison.Ordinal);
+        Assert.Contains("DynamicOptions", model, StringComparison.Ordinal);
+        Assert.Contains("ShowWhen", model, StringComparison.Ordinal);
+        Assert.Contains("ExclusiveGroupField", model, StringComparison.Ordinal);
+        Assert.Contains("PluginAdminFormValidation", model, StringComparison.Ordinal);
     }
 }

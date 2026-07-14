@@ -7,6 +7,8 @@ using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Views.Admin;
 
+public sealed record AdminShellNavigation(Type PageType, object? Parameter = null);
+
 public sealed partial class AdminShellPage : Page
 {
     private readonly NavigationService _navigationService;
@@ -23,6 +25,7 @@ public sealed partial class AdminShellPage : Page
     // Starting sub-page — overrides the default Dashboard landing when AdminShellPage
     // is navigated to with a Type parameter (e.g. deep links from Server Activity popover).
     private Type? _startingPage;
+    private object? _startingParameter;
 
     public AdminShellPage()
     {
@@ -36,11 +39,89 @@ public sealed partial class AdminShellPage : Page
         Unloaded += (_, _) => { _sessionTimer?.Stop(); _sessionTimer = null; };
     }
 
+    private void AdminContentHost_SizeChanged(object sender, SizeChangedEventArgs e)
+        => AdminContentFrame.Width = Math.Min(1640, Math.Max(0, e.NewSize.Width));
+
+    private void AdminContentFrame_Navigated(object sender, NavigationEventArgs e)
+    {
+        AdminOverlayHost.Children.Clear();
+        AdminOverlayHost.IsHitTestVisible = false;
+        if (e.Content is not FrameworkElement page) return;
+
+        RoutedEventHandler? loaded = null;
+        loaded = (_, _) =>
+        {
+            page.Loaded -= loaded;
+            NormalizeAdminPageViewport(page);
+        };
+        page.Loaded += loaded;
+    }
+
+    public void AttachPageOverlay(FrameworkElement overlay)
+    {
+        if (VisualTreeHelper.GetParent(overlay) is Panel previousParent)
+            previousParent.Children.Remove(overlay);
+
+        if (!AdminOverlayHost.Children.Contains(overlay))
+            AdminOverlayHost.Children.Add(overlay);
+    }
+
+    public void DetachPageOverlay(FrameworkElement overlay)
+    {
+        if (AdminOverlayHost.Children.Contains(overlay))
+            AdminOverlayHost.Children.Remove(overlay);
+
+        AdminOverlayHost.IsHitTestVisible = AdminOverlayHost.Children.Any(child =>
+            child is FrameworkElement element && element.Visibility == Visibility.Visible);
+    }
+
+    public void SetPageOverlayVisible(FrameworkElement overlay, bool visible)
+    {
+        if (!AdminOverlayHost.Children.Contains(overlay))
+            AttachPageOverlay(overlay);
+
+        overlay.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        AdminOverlayHost.IsHitTestVisible = AdminOverlayHost.Children.Any(child =>
+            child is FrameworkElement element && element.Visibility == Visibility.Visible);
+    }
+
+    private static void NormalizeAdminPageViewport(DependencyObject page)
+    {
+        var scrollViewer = FindFirstDescendant<ScrollViewer>(page);
+        if (scrollViewer?.Content is not FrameworkElement content) return;
+
+        scrollViewer.HorizontalScrollMode = ScrollMode.Disabled;
+        scrollViewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+        scrollViewer.HorizontalContentAlignment = HorizontalAlignment.Center;
+
+        void ApplyWidth(double width) => content.Width = Math.Max(0, width);
+        ApplyWidth(scrollViewer.ActualWidth);
+        scrollViewer.SizeChanged += (_, args) => ApplyWidth(args.NewSize.Width);
+    }
+
+    private static T? FindFirstDescendant<T>(DependencyObject parent) where T : DependencyObject
+    {
+        var count = VisualTreeHelper.GetChildrenCount(parent);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T match) return match;
+            var nested = FindFirstDescendant<T>(child);
+            if (nested is not null) return nested;
+        }
+        return null;
+    }
+
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
         if (e.Parameter is Type pageType)
             _startingPage = pageType;
+        else if (e.Parameter is AdminShellNavigation navigation)
+        {
+            _startingPage = navigation.PageType;
+            _startingParameter = navigation.Parameter;
+        }
     }
 
     private void AdminShellPage_Loaded(object sender, RoutedEventArgs e)
@@ -88,8 +169,9 @@ public sealed partial class AdminShellPage : Page
         var startType = _startingPage ?? typeof(AdminDashboardPage);
         var startButton = GetNavButtonForPage(startType) ?? NavDashboard;
         SetActiveNavItem(startButton);
-        AdminContentFrame.Navigate(startType);
+        AdminContentFrame.Navigate(startType, _startingParameter);
         _startingPage = null;
+        _startingParameter = null;
 
         // Wire the top-bar Server Activity button nav callbacks
         WireServerActivityNav();
@@ -257,14 +339,16 @@ public sealed partial class AdminShellPage : Page
 
     private void SetActiveNavItem(Button button)
     {
-        var accentBg = (SolidColorBrush)Application.Current.Resources["AccentBackgroundBrush"];
-        var accentFg = (SolidColorBrush)Application.Current.Resources["AccentBrush"];
+        var accentBg = (SolidColorBrush)Application.Current.Resources["SidebarAccentBrush"];
+        var accentFg = (SolidColorBrush)Application.Current.Resources["SidebarAccentForegroundBrush"];
+        var activeBar = (SolidColorBrush)Application.Current.Resources["SidebarPrimaryBrush"];
         var secondaryFg = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
 
         foreach (var (btn, bar, icon, text) in _navItems)
         {
             bool isActive = btn == button;
             btn.Background = isActive ? accentBg : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            bar.Background = activeBar;
             bar.Visibility = isActive ? Visibility.Visible : Visibility.Collapsed;
             icon.Foreground = isActive ? accentFg : secondaryFg;
             text.Foreground = isActive ? accentFg : secondaryFg;

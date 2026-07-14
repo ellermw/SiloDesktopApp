@@ -7,10 +7,14 @@ using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.ViewModels.Admin;
 using System.Collections.Specialized;
+using System.ComponentModel;
 
 namespace SiloPlayer.Views.Admin;
 
-public sealed record AdminPlaybackHistoryFilter(int? UserId = null, string? ProfileId = null);
+public sealed record AdminPlaybackHistoryFilter(
+    int? UserId = null,
+    string? ProfileId = null,
+    string? MediaItemId = null);
 
 public sealed partial class AdminPlaybackHistoryPage : Page
 {
@@ -21,6 +25,9 @@ public sealed partial class AdminPlaybackHistoryPage : Page
     private bool _rebuildItemsPending;
     private bool _rebuildUsersPending;
     private bool _rebuildProfilesPending;
+    private bool _subscriptionsAttached;
+    private bool _isPageActive;
+    private bool _manualRefreshActive;
 
     // Polling timer for periodic refresh (no dedicated event channel for playback history)
     private DispatcherTimer? _refreshTimer;
@@ -33,6 +40,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
     private static int? _persistedUserId;
     private static string? _persistedProfileId;
     private static string? _persistedCompletionFilter;
+    private static string? _persistedMediaItemId;
 
     public AdminPlaybackHistoryPage()
     {
@@ -46,19 +54,30 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         // Accept user_id/profile_id filter, or a bare user_id for legacy callers.
         if (e.Parameter is AdminPlaybackHistoryFilter filter)
         {
+            ViewModel.CompletionFilter = null;
             ViewModel.SelectedUserId = filter.UserId;
             ViewModel.SelectedProfileId = filter.ProfileId;
+            ViewModel.MediaItemId = filter.MediaItemId;
         }
         else if (e.Parameter is int userId)
+        {
+            ViewModel.CompletionFilter = null;
+            ViewModel.MediaItemId = null;
             ViewModel.SelectedUserId = userId;
+        }
         else if (e.Parameter is string paramStr && int.TryParse(paramStr, out var uid))
+        {
+            ViewModel.CompletionFilter = null;
+            ViewModel.MediaItemId = null;
             ViewModel.SelectedUserId = uid;
+        }
         else
         {
             // Restore persisted filters when navigating back without explicit params
             ViewModel.SelectedUserId = _persistedUserId;
             ViewModel.SelectedProfileId = _persistedProfileId;
             ViewModel.CompletionFilter = _persistedCompletionFilter;
+            ViewModel.MediaItemId = _persistedMediaItemId;
         }
     }
 
@@ -69,45 +88,81 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         _persistedUserId = ViewModel.SelectedUserId;
         _persistedProfileId = ViewModel.SelectedProfileId;
         _persistedCompletionFilter = ViewModel.CompletionFilter;
+        _persistedMediaItemId = ViewModel.MediaItemId;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        // Responsive title sizing: clamp(32, 3vw, 48)
-        this.SizeChanged += (_, args) =>
-        {
-            double w = args.NewSize.Width;
-            double fs = Math.Clamp(w * 0.03, 32, 48);
-            PageTitle.FontSize = fs;
-        };
-
-        ViewModel.Items.CollectionChanged += (_, _) => ScheduleRebuildItems();
-        ViewModel.Users.CollectionChanged += (_, _) => ScheduleRebuildUsers();
-        ViewModel.Profiles.CollectionChanged += (_, _) => ScheduleRebuildProfiles();
-        ViewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName == nameof(ViewModel.IsLoading))
-                RefreshStatusText.Text = ViewModel.IsLoading ? "Refreshing..." : "Auto-refreshing";
-        };
+        _isPageActive = true;
+        AttachPageHandlers();
 
         await ViewModel.LoadCommand.ExecuteAsync(null);
+        if (!_isPageActive) return;
         RebuildAll();
 
         // Start a 30-second polling timer (no dedicated event channel for playback history)
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
-        _refreshTimer.Tick += async (_, _) =>
-        {
-            try { await ViewModel.LoadCommand.ExecuteAsync(null); }
-            catch { }
-        };
+        _refreshTimer.Tick += RefreshTimer_Tick;
         _refreshTimer.Start();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _isPageActive = false;
+        DetachPageHandlers();
+        if (_refreshTimer is not null)
+            _refreshTimer.Tick -= RefreshTimer_Tick;
         base.OnNavigatedFrom(e);
         _refreshTimer?.Stop();
         _refreshTimer = null;
+        ViewModel.Cancel();
+    }
+
+    private void AttachPageHandlers()
+    {
+        if (_subscriptionsAttached) return;
+        SizeChanged += Page_SizeChanged;
+        ViewModel.Items.CollectionChanged += Items_CollectionChanged;
+        ViewModel.Users.CollectionChanged += Users_CollectionChanged;
+        ViewModel.Profiles.CollectionChanged += Profiles_CollectionChanged;
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        _subscriptionsAttached = true;
+    }
+
+    private void DetachPageHandlers()
+    {
+        if (!_subscriptionsAttached) return;
+        SizeChanged -= Page_SizeChanged;
+        ViewModel.Items.CollectionChanged -= Items_CollectionChanged;
+        ViewModel.Users.CollectionChanged -= Users_CollectionChanged;
+        ViewModel.Profiles.CollectionChanged -= Profiles_CollectionChanged;
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        _subscriptionsAttached = false;
+    }
+
+    private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
+        => PageTitle.FontSize = Math.Clamp(e.NewSize.Width * 0.03, 32, 48);
+
+    private void Items_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuildItems();
+
+    private void Users_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuildUsers();
+
+    private void Profiles_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuildProfiles();
+
+    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ViewModel.IsLoading) && !_manualRefreshActive)
+            RefreshStatusText.Text = ViewModel.IsLoading ? "Refreshing..." : "Auto-refreshing";
+    }
+
+    private async void RefreshTimer_Tick(object? sender, object e)
+    {
+        if (!_isPageActive || _manualRefreshActive) return;
+        try { await ViewModel.LoadCommand.ExecuteAsync(null); }
+        catch { }
     }
 
     private void ScheduleRebuildItems()
@@ -117,6 +172,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         DispatcherQueue.TryEnqueue(() =>
         {
             _rebuildItemsPending = false;
+            if (!_isPageActive) return;
             UpdateStatCards();
             RebuildHistoryTable();
         });
@@ -129,6 +185,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         DispatcherQueue.TryEnqueue(() =>
         {
             _rebuildUsersPending = false;
+            if (!_isPageActive) return;
             RebuildUserComboBox();
         });
     }
@@ -140,6 +197,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         DispatcherQueue.TryEnqueue(() =>
         {
             _rebuildProfilesPending = false;
+            if (!_isPageActive) return;
             RebuildProfileComboBox();
         });
     }
@@ -242,9 +300,9 @@ public sealed partial class AdminPlaybackHistoryPage : Page
 
     private void UpdateResetButton()
     {
-        // Webui always shows Reset button (disabled when no filters active)
+        // The current WebUI keeps Reset available even when the filters are already clear.
         ResetButton.Visibility = Visibility.Visible;
-        ResetButton.IsEnabled = ViewModel.HasActiveFilters;
+        ResetButton.IsEnabled = true;
     }
 
     // ===== Filter event handlers =====
@@ -309,7 +367,15 @@ public sealed partial class AdminPlaybackHistoryPage : Page
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button button) button.IsEnabled = false;
+        if (_manualRefreshActive) return;
+        _manualRefreshActive = true;
+        var startedAt = DateTimeOffset.UtcNow;
+        RefreshButton.IsEnabled = false;
+        RefreshGlyph.Visibility = Visibility.Collapsed;
+        ManualRefreshSpinner.Visibility = Visibility.Visible;
+        ManualRefreshSpinner.IsActive = true;
+        RefreshButtonText.Text = "Refreshing...";
+        RefreshStatusText.Text = "Refreshing...";
         try
         {
             await ViewModel.LoadCommand.ExecuteAsync(null);
@@ -317,7 +383,19 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         }
         finally
         {
-            if (sender is Button refreshButton) refreshButton.IsEnabled = true;
+            var remaining = TimeSpan.FromSeconds(1) - (DateTimeOffset.UtcNow - startedAt);
+            if (remaining > TimeSpan.Zero)
+                await Task.Delay(remaining);
+            _manualRefreshActive = false;
+            if (_isPageActive)
+            {
+                RefreshButton.IsEnabled = true;
+                RefreshGlyph.Visibility = Visibility.Visible;
+                ManualRefreshSpinner.IsActive = false;
+                ManualRefreshSpinner.Visibility = Visibility.Collapsed;
+                RefreshButtonText.Text = "Refresh";
+                RefreshStatusText.Text = "Auto-refreshing";
+            }
         }
     }
 
@@ -407,7 +485,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(175) });
 
         // Col 0: Media (title + type · session short)
         string title = !string.IsNullOrEmpty(item.MediaTitle)
@@ -533,6 +611,8 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         var viewLogsBtn = new Button
         {
             Content = "View Logs",
+            MinWidth = 0,
+            MinHeight = 0,
             Background = new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
             Padding = new Thickness(0),
@@ -546,6 +626,8 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         var ffmpegLogsBtn = new Button
         {
             Content = "FFmpeg Logs",
+            MinWidth = 0,
+            MinHeight = 0,
             Background = new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
             Padding = new Thickness(0),
@@ -578,6 +660,8 @@ public sealed partial class AdminPlaybackHistoryPage : Page
     {
         var button = new Button
         {
+            MinWidth = 0,
+            MinHeight = 0,
             Background = new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
             Padding = new Thickness(0),
@@ -602,6 +686,12 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         App.MainWindowInstance?.RestoreMainPane();
         App.Services.GetRequiredService<SiloPlayer.Helpers.NavigationService>()
             .Navigate<SiloPlayer.Views.ItemDetailPage>(mediaItemId);
+    }
+
+    private void ActiveMediaItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(ViewModel.MediaItemId))
+            NavigateToItem(ViewModel.MediaItemId);
     }
 
     private void NavigateToUser(int userId)
@@ -658,7 +748,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
             // Webui variant="default" — filled accent/blue badge
             var badge = new Border
             {
-                Background = (SolidColorBrush)Application.Current.Resources["AccentBackgroundBrush"],
+                Background = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
                 CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(10, 2, 10, 2),
             };
@@ -667,7 +757,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
                 Text = "Completed",
                 FontSize = 11,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+                Foreground = (SolidColorBrush)Application.Current.Resources["AppBackgroundBrush"],
             };
             return badge;
         }

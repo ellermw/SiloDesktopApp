@@ -6,7 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download the latest Silo Desktop Player**](https://github.com/ellermw/SiloDesktopApp/releases/latest/download/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.42**](https://transfers.taverncdn.com/X6L7vQpwCv/SiloInstaller-1.1.42-Setup.exe) — Windows 10/11 x64 installer.
+
+SHA-256: `805505547F6ADE2ACC944B2F23C9380789CA49B8DF7D804241263B1F8A2AEA62`
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -23,9 +25,9 @@ Status meanings:
 |---|---|---|
 | Authentication and profiles | Substantial | Login, refresh tokens, profile selection, PINs, profile management, signup, and setup flows exist. Device login and the complete impersonation lifecycle remain to be finished. |
 | Catalog and library browsing | Substantial | Virtualized browsing, filters, sorting, search, collections, favorites, watchlist, history, calendar, recommendations, and requests are implemented. Exact layout details and literary-media browsing still need work. |
-| Home screen | Partial | Server-defined sections, hero content, continue watching, recommendations, customization, and incremental loading exist. Exact current card/section behavior and cross-surface refresh remain under review. |
-| Item and person details | Partial | Movie, series, season, episode, cast/crew, versions, watched/favorite/watchlist/rating, and metadata actions exist. Current pre-play selectors, inline episode rules, extras, trailers, and all media-type variants remain incomplete. |
-| Audiobooks, ebooks, and manga | Partial | Models, ebook reading foundation, and portions of detail/browse support exist. Current audiobook player, manga presentation, reader behavior, grouping, and literary metadata flows need a dedicated parity pass. |
+| Home screen | Substantial | Server-defined sections, hero content, continue watching, next up, recommendations, customization, incremental refresh, current card variants, and audiobook rows are implemented. Installed-build visual comparison and remaining responsive edge cases are still required. |
+| Item and person details | Substantial | Movie, series, season, episode, cast/crew, versions, watched/favorite/watchlist/rating, trailers, extras, edition selection, split/marker workflows, and current More actions are implemented. Installed-build comparison and remaining edge cases are still required. |
+| Audiobooks, ebooks, and manga | Partial | Current server contracts, grouped audiobook browsing, literary detail surfaces, ebook reading foundation, and manga actions are present. The full audiobook player, manga reader/presentation, and final literary-media visual pass remain incomplete. |
 | User collections | Substantial | Browse, create, edit, manual/smart rules, imports, and collection management exist. Current templates, guided rules, collage/scheduling details, and visual polish remain. |
 | Notifications | Substantial | Notification center and user notification settings are implemented, including current delivery configuration foundations. Additional current-server edge cases remain to be audited. |
 | Settings | Substantial | Playback, subtitles, appearance, theme editor, accessibility, home, card overlays, libraries, history import, webhook sync, watch providers, profiles, and notification controls are present. The server continues to add fields, so these routes remain subject to drift audits. |
@@ -41,18 +43,27 @@ Status meanings:
 | Admin: System | Functional; visual parity incomplete | Settings, Plugins, Nodes, API Keys, and Maintenance were re-audited against the current WebUI. Current grouped settings navigation, plugin configuration/update policy, node capacity/load columns, API-key tier/create/copy/revoke flows, and catalog import/export job surfaces are implemented. Branding asset uploads, Search connection/status diagnostics, external plugin links, and installed-build visual verification remain. |
 | Admin: Access Groups and Devices | Functional; visual parity incomplete | Access Groups now follows the current responsive cards and in-place editor sections. Devices now uses the current 1920px fleet console with pulse totals, grouping pivots, saved views, platform/override/recency facets, grouped device rows, and an in-place per-profile override editor. Installed-build side-by-side tuning and remaining keyboard/link refinements are still required. |
 | Remaining admin work | Partial | Provider/policy edge cases and final installed-build visual verification remain across the admin suite. Dashboard, Libraries, Activity, Collections, Sections, Requests, and other pages retain explicit visual-parity-incomplete status until those checks pass. |
-| Player on-screen controls | Substantial | Current visual control foundation, play/pause, seek, volume, fullscreen state sync, quality/audio/subtitle menus, intro/credits actions, next episode, keyboard shortcuts, and stats are present. Chapter thumbnails, subtitle actions, playing-next/postroll, PiP/mini-player details, and final state polish remain. |
-| Native playback engine | Hardening | Direct play, remux, HLS fallback, D3D11VA, HEVC/AV1/VP9/H.264, HDR paths, subtitle rendering, track switching, progress reporting, and stall recovery foundations exist. High-bitrate 4K, Dolby Vision, HDR/tone mapping, TrueHD/Atmos/DTS passthrough, fastest startup/seek, and long-session reliability remain active work. |
-| Watch Party | Partial | Join/create, room membership, suggestions, and realtime foundations exist. Content search, series drill-down, spotlight/now-playing UI, auto-start, and complete synchronization remain. |
+| Player on-screen controls | Substantial | Current cinema controls, marker/chapter seek regions, real chapter thumbnails, rich audio/subtitle/quality menus, live AI subtitle translation, playback-info sections, credits countdown, post-roll/finished screens, On Deck, PiP, keyboard shortcuts, and fullscreen synchronization are implemented. The marker editor, remaining overlay geometry, keyboard focus semantics, and installed playback comparison still need final parity work. |
+| Native playback engine | Hardening | Direct play, remux, HLS fallback, D3D11VA, HEVC/AV1/VP9/H.264, HDR paths, subtitle rendering, live track switching, progress/session keepalive, seamless replacement sessions, stall recovery, and premature-EOF guards are implemented. High-bitrate 4K, Dolby Vision, HDR/tone mapping, TrueHD/Atmos/DTS passthrough, fastest startup/seek, and long-session reliability remain active real-media validation work. |
+| Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
 
 ## Recent release work
 
-### Unreleased main branch
+### 1.1.42
+
+- Re-audited the application against public Silo Server commit `28c6ddc237b9a3ef0102a9ec7514e5654865a3fe`, including current catalog, home, collections, settings, admin, item-detail, and player contracts.
+- Added current audiobook grouping/cards, literary-media detail contracts and actions, edition/version selection, trailers/extras, item split and marker workflows, and centralized current permission rules.
+- Reworked library virtualization, filter construction, deferred artwork, cancellation, and UI-stall diagnostics to keep large libraries responsive during hard scrolling.
+- Hardened playback sessions, WebSocket teardown, progress/EOF handling, chapter thumbnails, quality/audio/subtitle menus, live AI subtitle translation, watch parties, credits countdown, post-roll, On Deck, and the current multi-section playback-info overlay.
+- Updated loading, buffering, error, subtitle-delay, quality-label, and marker-editor behavior toward the current WebUI.
+- Expanded regression coverage; this release passes 379 tests and a zero-warning x64 build.
+
+### 1.1.41
 
 - Re-audited Settings, Plugins, Nodes, API Keys, Maintenance, Access Groups, and Devices against public Silo Server commit `28c6ddc237b9a3ef0102a9ec7514e5654865a3fe` and the signed-in live WebUI.
 - Replaced the obsolete Devices card list with the current fleet console, including saved views, facet filters, grouping pivots, grouped rows, and an in-place detail editor.
 - Aligned Access Group cards and editor toggle rows, API-key page geometry and pagination, and Maintenance job counts/result formatting with their current WebUI counterparts.
-- Expanded parity regression coverage; current main passes 268 tests and a zero-warning x64 build.
+- Expanded parity regression coverage; the release passes 268 tests and a zero-warning x64 build.
 
 ### 1.1.41
 
@@ -217,4 +228,4 @@ powershell -ExecutionPolicy Bypass -File installer/build.ps1
 
 ## Reference source
 
-Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Release 1.1.41 was compared against Silo Server commit `28c6ddc237b9a3ef0102a9ec7514e5654865a3fe` from July 11, 2026.
+Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Release 1.1.42 was compared against Silo Server commit `28c6ddc237b9a3ef0102a9ec7514e5654865a3fe` from July 11, 2026.

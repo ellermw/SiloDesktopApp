@@ -302,6 +302,16 @@ public class SiloApiClient
         return await SendAsync<T>(request, ct);
     }
 
+    public async Task<T> PutBytesAsync<T>(string path, ReadOnlyMemory<byte> body,
+        string contentType = "application/octet-stream", CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, BuildUrl(path));
+        AddHeaders(request);
+        request.Content = new ByteArrayContent(body.ToArray());
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+        return await SendAsync<T>(request, ct);
+    }
+
     public async Task PutNoContentAsync(string path, object? body = null, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Put, BuildUrl(path));

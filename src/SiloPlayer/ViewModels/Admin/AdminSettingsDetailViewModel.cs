@@ -141,6 +141,64 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
         HasDirtyChanges = _dirtySettings.Count > 0 || _dirtyRateLimitConfig != null;
     }
 
+    /// <summary>
+    /// Persists only the requested settings. A few current WebUI cards own
+    /// their save action instead of sharing the page-level SaveBar (AI,
+    /// integrations, and watch-provider credentials).
+    /// </summary>
+    public async Task<bool> SaveSettingsAsync(IEnumerable<string> keys)
+    {
+        if (IsSaving) return false;
+
+        var requested = keys.ToHashSet(StringComparer.Ordinal);
+        var changes = _dirtySettings
+            .Where(entry => requested.Contains(entry.Key))
+            .ToArray();
+        if (changes.Length == 0) return false;
+
+        IsSaving = true;
+        StatusMessage = null;
+        ErrorMessage = null;
+        LastSaveRequiresRestart = false;
+
+        try
+        {
+            foreach (var (key, value) in changes)
+            {
+                var response = await _adminApi.UpdateAdminSettingAsync(key, value);
+                LastSaveRequiresRestart |= response.RestartRequired;
+                _settings[key] = value;
+                _dirtySettings.Remove(key);
+            }
+
+            try
+            {
+                var (configured, managed) = await _adminApi.GetSensitiveStatusAsync();
+                _sensitiveConfigured = configured;
+                _managedByEnv = managed;
+            }
+            catch
+            {
+                // The settings themselves were saved. A temporarily unavailable
+                // status endpoint must not turn that success into a false error.
+            }
+
+            DirtyCount = _dirtySettings.Count + (_dirtyRateLimitConfig != null ? 1 : 0);
+            HasDirtyChanges = DirtyCount > 0;
+            StatusMessage = "Settings saved successfully.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to save settings: {ex.Message}";
+            return false;
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
     [RelayCommand]
     private async Task SaveAsync()
     {

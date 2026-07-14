@@ -7,6 +7,7 @@ public class WatchDetailResponse
     public string Title { get; set; } = "";
     public int Year { get; set; }
     public List<FileVersion> Versions { get; set; } = [];
+    public List<PlaybackVariant> PlaybackVariants { get; set; } = [];
     public List<SubtitleInfo> Subtitles { get; set; } = [];
     public WatchUserData? UserData { get; set; }
     public TimeRange? Intro { get; set; }
@@ -20,6 +21,11 @@ public class WatchDetailResponse
     public string? EffectiveSubtitleLanguage { get; set; }
     public string? EffectiveSubtitleMode { get; set; }
     public bool? EffectiveShowForcedSubtitles { get; set; }
+    public SubtitleTrackSignature? EffectiveSubtitleTrackSignature { get; set; }
+    public string? EffectiveVersionResolution { get; set; }
+    public bool? EffectiveVersionHdr { get; set; }
+    public string? EffectiveVersionCodecVideo { get; set; }
+    public string? EffectiveVersionEditionKey { get; set; }
 }
 
 public class FileVersion
@@ -37,6 +43,14 @@ public class FileVersion
     public int Bitrate { get; set; }
     public int? AudioChannels { get; set; }
     public string? AddedAt { get; set; }
+    public string? EditionRaw { get; set; }
+    public string? EditionKey { get; set; }
+    public string? PresentationKind { get; set; }
+    public string? PresentationGroupKey { get; set; }
+    public int? PresentationPartIndex { get; set; }
+    public int? PresentationPartTotal { get; set; }
+    public int? MultiEpisodeStart { get; set; }
+    public int? MultiEpisodeEnd { get; set; }
     /// <summary>Server-computed "auto" audio track index (from user prefs + defaults).</summary>
     public int? EffectiveAudioTrackIndex { get; set; }
     /// <summary>Server-resolved effective audio language for the effective track (commit c16467c).</summary>
@@ -51,11 +65,36 @@ public class FileVersion
     public TimeRange? Preview { get; set; }
 }
 
+public class PlaybackVariant
+{
+    public string VariantId { get; set; } = "";
+    public string? EditionRaw { get; set; }
+    public string? EditionKey { get; set; }
+    public string? PresentationKind { get; set; }
+    public string? PresentationGroupKey { get; set; }
+    public int PartCount { get; set; }
+    public double? TotalDuration { get; set; }
+    public int? DefaultFileId { get; set; }
+    public List<PlaybackVariantPart> Parts { get; set; } = [];
+}
+
+public class PlaybackVariantPart
+{
+    public int PartIndex { get; set; }
+    public int? DefaultFileId { get; set; }
+    public double? TotalDuration { get; set; }
+    public List<FileVersion> Versions { get; set; } = [];
+}
+
 public class VersionVideoTrack
 {
     public string? Title { get; set; }
     public string? Codec { get; set; }
     public string? DolbyVision { get; set; }
+    public int? DvProfile { get; set; }
+    public int? DvBlCompatId { get; set; }
+    public bool? DvElPresent { get; set; }
+    public bool? Hdr10Plus { get; set; }
     public string? Profile { get; set; }
     public int? Level { get; set; }
     public int? Width { get; set; }
@@ -65,6 +104,7 @@ public class VersionVideoTrack
     public string? FrameRate { get; set; }
     public int? Bitrate { get; set; }
     public string? VideoRange { get; set; }
+    public string? VideoRangeType { get; set; }
     public string? ColorPrimaries { get; set; }
     public string? ColorSpace { get; set; }
     public string? ColorTransfer { get; set; }
@@ -79,6 +119,7 @@ public class AudioTrackInfo
     public string? EmbeddedTitle { get; set; }
     public string? Language { get; set; }
     public string? Codec { get; set; }
+    public string? Profile { get; set; }
     public string? Layout { get; set; }
     public int? Channels { get; set; }
     public int? Bitrate { get; set; }
@@ -135,12 +176,33 @@ public class WatchUserData
     public string? LastResolution { get; set; }
     public bool? LastHdr { get; set; }
     public string? LastCodecVideo { get; set; }
+    public string? LastEditionKey { get; set; }
 }
 
 public class TimeRange
 {
     public double Start { get; set; }
     public double End { get; set; }
+}
+
+public class MarkerSegment
+{
+    public double? Start { get; set; }
+    public double? End { get; set; }
+    public string? Source { get; set; }
+    public string? Provider { get; set; }
+    public double? Confidence { get; set; }
+    public string? Algorithm { get; set; }
+    public string? DetectedAt { get; set; }
+}
+
+public class FileMarkersResponse
+{
+    public int FileId { get; set; }
+    public MarkerSegment Intro { get; set; } = new();
+    public MarkerSegment Recap { get; set; } = new();
+    public MarkerSegment Credits { get; set; } = new();
+    public MarkerSegment Preview { get; set; } = new();
 }
 
 // ===== Watch Together (Watch Party) =====

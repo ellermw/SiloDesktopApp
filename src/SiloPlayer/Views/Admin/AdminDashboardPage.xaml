@@ -6,6 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:converters="using:SiloPlayer.Converters"
+    xmlns:controls="using:SiloPlayer.Controls"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}"
     Loaded="Page_Loaded">
@@ -37,15 +38,20 @@
         <!-- Main content -->
         <ScrollViewer
             x:Name="ContentScrollViewer"
-            IsScrollInertiaEnabled="True">
+            IsScrollInertiaEnabled="True"
+            HorizontalScrollMode="Disabled"
+            HorizontalScrollBarVisibility="Disabled"
+            HorizontalContentAlignment="Center"
+            SizeChanged="ContentScrollViewer_SizeChanged">
 
             <!-- webui parity: AdminDashboard inherits .admin-shell (1560px) from AdminLayout.
                  Match exactly at 1560 so the data grid has full webui breathing room. -->
             <StackPanel
+                x:Name="AdminPageContent"
                 Padding="40,32,40,40"
                 Spacing="32"
                 MaxWidth="1640"
-                HorizontalAlignment="Stretch">
+                HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -128,6 +134,20 @@
                 </StackPanel>
 
                 <!-- ===== Stats Row ===== -->
+                <Grid x:Name="StatsLoadingGrid" ColumnSpacing="14" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <controls:SkeletonBox Grid.Column="0" Height="96" CornerRadius="16" />
+                    <controls:SkeletonBox Grid.Column="1" Height="96" CornerRadius="16" />
+                    <controls:SkeletonBox Grid.Column="2" Height="96" CornerRadius="16" />
+                    <controls:SkeletonBox Grid.Column="3" Height="96" CornerRadius="16" />
+                    <controls:SkeletonBox Grid.Column="4" Height="96" CornerRadius="16" />
+                </Grid>
                 <Grid x:Name="StatsGrid" ColumnSpacing="14">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />

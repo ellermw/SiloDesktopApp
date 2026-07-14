@@ -41,14 +41,19 @@
         <!-- Main content -->
         <ScrollViewer
             x:Name="ContentScrollViewer"
-            IsScrollInertiaEnabled="True">
+            IsScrollInertiaEnabled="True"
+            HorizontalScrollMode="Disabled"
+            HorizontalScrollBarVisibility="Disabled"
+            HorizontalContentAlignment="Center"
+            SizeChanged="ContentScrollViewer_SizeChanged">
 
             <!-- webui parity: AdminActivity inherits .admin-shell (1560px) from AdminLayout. -->
             <StackPanel
+                x:Name="AdminPageContent"
                 Padding="40,32,40,40"
                 Spacing="24"
                 MaxWidth="1640"
-                HorizontalAlignment="Stretch">
+                HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -326,6 +331,7 @@
                 <!-- ===== Streams Table ===== -->
                 <!-- Web: rounded-lg border (CornerRadius=8, NOT 24) -->
                 <Border
+                    x:Name="StreamsTable"
                     Background="{StaticResource CardBackgroundBrush}"
                     CornerRadius="8"
                     BorderBrush="{StaticResource BorderBrush}"
@@ -417,23 +423,25 @@
                         </ScrollViewer>
 
                         <!-- Empty state — contextual icon + text set in code-behind -->
-                        <Border x:Name="EmptyState" Padding="20,40" Visibility="Collapsed">
-                            <StackPanel HorizontalAlignment="Center" Spacing="8">
-                                <FontIcon
-                                    x:Name="EmptyStateIcon"
-                                    Glyph="&#xE768;"
-                                    FontSize="32"
-                                    Foreground="{StaticResource TertiaryTextBrush}"
-                                    Opacity="0.2"
-                                    HorizontalAlignment="Center" />
-                                <TextBlock
-                                    x:Name="EmptyStateText"
-                                    Text="No active streams"
-                                    FontSize="14"
-                                    Foreground="{StaticResource SecondaryTextBrush}"
-                                    HorizontalAlignment="Center" />
-                            </StackPanel>
-                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- WebUI renders the empty state without an empty bordered table shell. -->
+                <Border x:Name="EmptyState" Padding="20,72" Visibility="Collapsed">
+                    <StackPanel HorizontalAlignment="Center" Spacing="8">
+                        <FontIcon
+                            x:Name="EmptyStateIcon"
+                            Glyph="&#xE768;"
+                            FontSize="32"
+                            Foreground="{StaticResource TertiaryTextBrush}"
+                            Opacity="0.2"
+                            HorizontalAlignment="Center" />
+                        <TextBlock
+                            x:Name="EmptyStateText"
+                            Text="No active streams"
+                            FontSize="14"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            HorizontalAlignment="Center" />
                     </StackPanel>
                 </Border>
 

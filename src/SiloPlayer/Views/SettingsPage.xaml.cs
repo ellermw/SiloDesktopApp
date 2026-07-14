@@ -1,5 +1,6 @@
 using System.Collections.Specialized;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
@@ -26,8 +27,12 @@ public sealed partial class SettingsPage : Page
     public SettingsViewModel ViewModel { get; }
     private readonly CardOverlayService _cardOverlayService;
     private CardOverlayPrefs? _cardOverlayDraft;
+    private string _cardOverlayPreviewVariant = "movie";
     private bool _suppressOverlayEvents;
     private CancellationTokenSource? _overlaySaveCts;
+    private CancellationTokenSource? _themeCssSaveCts;
+    private bool _themeCssLoaded;
+    private bool _rememberLibraryPagesLoaded;
     // Start suppressed — handlers that fire during XAML parse (before all sibling
     // x:Name fields are assigned) would otherwise null-ref on their forward references
     // and surface as a cryptic "Failed to assign to RangeBase.Value" XamlParseException.
@@ -135,6 +140,7 @@ public sealed partial class SettingsPage : Page
 
         await ViewModel.LoadCommand.ExecuteAsync(null);
         SyncComboBoxes();
+        await LoadRememberLibraryPagesAsync();
         SyncSubtitleAppearanceControls();
         BuildThemeCards();
         UpdateCurrentThemeDisplay();
@@ -150,8 +156,20 @@ public sealed partial class SettingsPage : Page
         {
             var button = requestedTab switch
             {
+                "Playback" => PlaybackTab,
+                "Subtitles" or "SubtitleAppearance" => SubtitlesTab,
+                "Appearance" => AppearanceTab,
+                "ThemeEditor" => ThemeEditorTab,
+                "Accessibility" => AccessibilityTab,
+                "HomeScreen" => HomeScreenTab,
                 "CardOverlays" => CardOverlaysTab,
                 "Personalize" => PersonalizeTab,
+                "Libraries" => LibrariesTab,
+                "Import" or "HistoryImport" => ImportTab,
+                "WebhookSync" => WebhookSyncTab,
+                "WatchProviders" => WatchProvidersTab,
+                "Notifications" or "NotificationsSettings" => NotificationsSettingsTab,
+                "Profiles" => ProfilesTab,
                 _ => null,
             };
             if (button is not null)
@@ -163,6 +181,9 @@ public sealed partial class SettingsPage : Page
     {
         // Stop the history_import event channel subscription when leaving Settings.
         StopImportEventSubscription();
+        _themeCssSaveCts?.Cancel();
+        _themeCssSaveCts?.Dispose();
+        _themeCssSaveCts = null;
         base.OnNavigatedFrom(e);
     }
 
@@ -188,6 +209,55 @@ public sealed partial class SettingsPage : Page
         var settings = settingsService.Load();
         settings.AudioBitstreamPassthrough = AudioPassthroughToggle.IsOn;
         settingsService.Save(settings);
+    }
+
+    private async Task LoadRememberLibraryPagesAsync()
+    {
+        try
+        {
+            const string key = "ui.remember_library_page_state";
+            var response = await App.Services.GetRequiredService<SettingsApi>().GetEffectiveSettingsAsync([key]);
+            var value = response.Settings.FirstOrDefault(entry => entry.Key == key)?.EffectiveValue;
+            _suppressEvents = true;
+            RememberLibraryPagesToggle.IsOn = !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);
+            _suppressEvents = false;
+            _rememberLibraryPagesLoaded = true;
+        }
+        catch
+        {
+            _rememberLibraryPagesLoaded = false;
+        }
+    }
+
+    private async void RememberLibraryPagesToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressEvents || !_rememberLibraryPagesLoaded) return;
+        var api = App.Services.GetRequiredService<SettingsApi>();
+        RememberLibraryPagesToggle.IsEnabled = false;
+        try
+        {
+            if (RememberLibraryPagesToggle.IsOn)
+            {
+                await api.DeleteDeviceSettingAsync("ui.remember_library_page_state");
+            }
+            else
+            {
+                await api.DeleteDeviceSettingAsync("ui.library_page_state");
+                await api.PutDeviceSettingAsync("ui.remember_library_page_state", "false");
+            }
+            App.Services.GetRequiredService<ToastService>().Success("Library page preference saved");
+        }
+        catch (Exception ex)
+        {
+            _suppressEvents = true;
+            RememberLibraryPagesToggle.IsOn = !RememberLibraryPagesToggle.IsOn;
+            _suppressEvents = false;
+            App.Services.GetRequiredService<ToastService>().Error($"Failed to save library page preference: {ex.Message}");
+        }
+        finally
+        {
+            RememberLibraryPagesToggle.IsEnabled = true;
+        }
     }
 
     private void BuildAccessibilityControls()
@@ -299,12 +369,21 @@ public sealed partial class SettingsPage : Page
         Grid.SetColumn(fontCombo, 1);
         fontRow.Children.Add(fontCombo);
         ThemeTokenOverridesHost.Children.Add(fontRow);
-        ThemeResetOverridesButton.Visibility = overrides.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateThemeResetVisibility();
     }
+
+    private void UpdateThemeResetVisibility()
+        => ThemeResetOverridesButton.Visibility = ViewModel.ThemeService.GetThemeOverrides().Count > 0 ||
+                                                  !string.IsNullOrWhiteSpace(ThemeCustomCssBox.Text)
+            ? Visibility.Visible : Visibility.Collapsed;
 
     private void ThemeResetOverrides_Click(object sender, RoutedEventArgs e)
     {
         ViewModel.ThemeService.ResetThemeOverrides();
+        _suppressEvents = true;
+        ThemeCustomCssBox.Text = "";
+        _suppressEvents = false;
+        _ = App.Services.GetRequiredService<SettingsApi>().PutSettingAsync("ui_custom_css", "");
         BuildThemeTokenEditor();
     }
 
@@ -318,7 +397,7 @@ public sealed partial class SettingsPage : Page
         var document = new Dictionary<string, object?>
         {
             ["version"] = 1, ["name"] = "Silo Custom Theme", ["baseTheme"] = ViewModel.ThemeService.CurrentTheme,
-            ["vars"] = ViewModel.ThemeService.GetThemeOverrides(), ["customCss"] = "", ["createdAt"] = DateTime.UtcNow.ToString("O"),
+            ["vars"] = ViewModel.ThemeService.GetThemeOverrides(), ["customCss"] = ThemeCustomCssBox.Text, ["createdAt"] = DateTime.UtcNow.ToString("O"),
         };
         await Windows.Storage.FileIO.WriteTextAsync(file, JsonSerializer.Serialize(document, new JsonSerializerOptions { WriteIndented = true }));
         ViewModel.StatusMessage = "Theme exported";
@@ -343,6 +422,13 @@ public sealed partial class SettingsPage : Page
                 foreach (var property in values.EnumerateObject())
                     if (property.Value.ValueKind == JsonValueKind.String) vars[property.Name] = property.Value.GetString() ?? "";
             ViewModel.ThemeService.ImportThemeOverrides(vars);
+            if (doc.RootElement.TryGetProperty("customCss", out var css) && css.ValueKind == JsonValueKind.String)
+            {
+                _suppressEvents = true;
+                ThemeCustomCssBox.Text = SanitizeThemeCss(css.GetString() ?? "");
+                _suppressEvents = false;
+                await App.Services.GetRequiredService<SettingsApi>().PutSettingAsync("ui_custom_css", ThemeCustomCssBox.Text);
+            }
             BuildThemeTokenEditor();
             ViewModel.StatusMessage = "Theme imported";
         }
@@ -350,6 +436,92 @@ public sealed partial class SettingsPage : Page
     }
 
     private bool _themeCatalogLoading;
+
+    private void ThemeEditorSectionTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string tab }) return;
+        ThemeTokensPanel.Visibility = tab == "tokens" ? Visibility.Visible : Visibility.Collapsed;
+        ThemeCssPanel.Visibility = tab == "css" ? Visibility.Visible : Visibility.Collapsed;
+        ThemeCatalogPanel.Visibility = tab == "catalog" ? Visibility.Visible : Visibility.Collapsed;
+        ThemeTokensTab.Style = (Style)Resources[tab == "tokens" ? "ActiveTabStyle" : "InactiveTabStyle"];
+        ThemeCssTab.Style = (Style)Resources[tab == "css" ? "ActiveTabStyle" : "InactiveTabStyle"];
+        ThemeCatalogTab.Style = (Style)Resources[tab == "catalog" ? "ActiveTabStyle" : "InactiveTabStyle"];
+        if (tab == "css") _ = LoadThemeCustomCssAsync();
+        if (tab == "catalog") _ = LoadThemeCatalogAsync();
+    }
+
+    private async Task LoadThemeCustomCssAsync()
+    {
+        if (_themeCssLoaded) return;
+        try
+        {
+            var setting = await App.Services.GetRequiredService<SettingsApi>().GetSettingAsync("ui_custom_css");
+            _suppressEvents = true;
+            ThemeCustomCssBox.Text = setting.Value ?? "";
+            _suppressEvents = false;
+            _themeCssLoaded = true;
+            UpdateThemeResetVisibility();
+        }
+        catch (Exception ex)
+        {
+            ThemeCustomCssStatus.Text = $"Could not load custom CSS: {ex.Message}";
+        }
+    }
+
+    private void ThemeCustomCssBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_suppressEvents || !_themeCssLoaded) return;
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _themeCssSaveCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
+        ThemeCustomCssStatus.Text = "Saving…";
+        UpdateThemeResetVisibility();
+        _ = SaveThemeCssAfterDelayAsync(ThemeCustomCssBox.Text, cts);
+    }
+
+    private async Task SaveThemeCssAfterDelayAsync(string css, CancellationTokenSource owner)
+    {
+        try
+        {
+            await Task.Delay(1000, owner.Token);
+            var sanitized = SanitizeThemeCss(css);
+            await App.Services.GetRequiredService<SettingsApi>().PutSettingAsync("ui_custom_css", sanitized, owner.Token);
+            if (ReferenceEquals(_themeCssSaveCts, owner))
+            {
+                ThemeCustomCssStatus.Text = sanitized == css ? "Saved" : "Saved; external CSS resources were blocked.";
+                if (sanitized != css)
+                {
+                    _suppressEvents = true;
+                    ThemeCustomCssBox.Text = sanitized;
+                    _suppressEvents = false;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (ReferenceEquals(_themeCssSaveCts, owner)) ThemeCustomCssStatus.Text = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            Interlocked.CompareExchange(ref _themeCssSaveCts, null, owner);
+            owner.Dispose();
+        }
+    }
+
+    private static string SanitizeThemeCss(string css)
+    {
+        var result = Regex.Replace(css, "@import\\s+(?:url\\(.*?\\)|['\"].*?['\"])[^;]*;?", "/* [blocked @import] */", RegexOptions.IgnoreCase);
+        return Regex.Replace(result, "url\\(\\s*(['\"]?)([\\s\\S]*?)\\1\\s*\\)", match =>
+        {
+            var value = match.Groups[2].Value.Trim().Trim('\'', '\"');
+            var safe = value.Length == 0 || value.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
+                       (value.StartsWith('/') && !value.StartsWith("//")) || value.StartsWith('#') ||
+                       (!Regex.IsMatch(value, "^[a-z][a-z0-9+.-]*:", RegexOptions.IgnoreCase) && !value.StartsWith("//"));
+            return safe ? match.Value : "/* [blocked external url] */";
+        }, RegexOptions.IgnoreCase);
+    }
 
     private async Task LoadThemeCatalogAsync(bool refresh = false)
     {
@@ -463,6 +635,54 @@ public sealed partial class SettingsPage : Page
     }
 
     // ===== Tab switching =====
+    private void SettingsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (SettingsSearchBox is null || SettingsSearchStatus is null)
+            return;
+
+        var query = SettingsSearchBox.Text.Trim();
+        var entries = new (Button Button, string SearchText)[]
+        {
+            (PlaybackTab, "playback quality language skipping video spoken metadata auto skip intros credits recaps preview auto play next up episodes"),
+            (SubtitlesTab, "subtitles subtitle language behavior forced captions font size family color outline background opacity position preview"),
+            (AppearanceTab, "appearance theme profile dark light custom date time format clock reset cinema"),
+            (ThemeEditorTab, "theme editor customize colors css design tokens token overrides custom css community themes preview"),
+            (AccessibilityTab, "accessibility readability contrast motion transparency text size weight high contrast preview"),
+            (HomeScreenTab, "home screen sections layout rows continue watching next up recently added library order scope reset"),
+            (CardOverlaysTab, "card overlays poster badges overlay accent color preset preview icon position styling"),
+            (PersonalizeTab, "personalize taste profile recommendations ratings likes dislikes refine"),
+            (LibrariesTab, "libraries library visibility access disabled order playback preferences spoken subtitle forced remember"),
+            (ImportTab, "history import emby jellyfin plex watched mapping sync fetched matched unmatched progress skipped"),
+            (WebhookSyncTab, "webhook sync plex emby jellyfin intake progress watched connections deliveries server url token"),
+            (WatchProvidersTab, "watch providers trakt import export scrobble favorites history progress removals"),
+            (NotificationsSettingsTab, "notifications new episodes email discord browser push webhooks per episode alerts digest url"),
+            (ProfilesTab, "profiles profile names pin access rules primary household library create delete"),
+        };
+
+        var tokens = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var matches = 0;
+        foreach (var entry in entries)
+        {
+            var visible = tokens.Length == 0 || tokens.All(token =>
+                entry.SearchText.Contains(token, StringComparison.OrdinalIgnoreCase));
+            entry.Button.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            if (visible) matches++;
+        }
+
+        PlaybackNavGroup.Visibility = PlaybackTab.Visibility == Visibility.Visible || SubtitlesTab.Visibility == Visibility.Visible
+            ? Visibility.Visible : Visibility.Collapsed;
+        AppearanceNavGroup.Visibility = new[] { AppearanceTab, ThemeEditorTab, AccessibilityTab, HomeScreenTab, CardOverlaysTab, PersonalizeTab }
+            .Any(button => button.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
+        LibraryDataNavGroup.Visibility = new[] { LibrariesTab, ImportTab, WebhookSyncTab, WatchProvidersTab }
+            .Any(button => button.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
+        AccountNavGroup.Visibility = NotificationsSettingsTab.Visibility == Visibility.Visible || ProfilesTab.Visibility == Visibility.Visible
+            ? Visibility.Visible : Visibility.Collapsed;
+
+        SettingsSearchStatus.Text = tokens.Length == 0
+            ? "14 settings sections"
+            : matches == 0 ? "No matching settings" : $"{matches} {(matches == 1 ? "match" : "matches")}";
+    }
+
     private void Tab_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
@@ -638,6 +858,24 @@ public sealed partial class SettingsPage : Page
         }
     }
 
+    private void CardOverlaySectionTab_Click(object sender, RoutedEventArgs e)
+    {
+        var showStyle = sender is Button { Tag: "style" };
+        CardOverlayControlsContainer.Visibility = showStyle ? Visibility.Collapsed : Visibility.Visible;
+        CardOverlayStylePanel.Visibility = showStyle ? Visibility.Visible : Visibility.Collapsed;
+        CardOverlayOverlaysTab.Style = (Style)Resources[showStyle ? "InactiveTabStyle" : "ActiveTabStyle"];
+        CardOverlayStyleTab.Style = (Style)Resources[showStyle ? "ActiveTabStyle" : "InactiveTabStyle"];
+    }
+
+    private void OverlayPreviewVariant_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string variant }) return;
+        _cardOverlayPreviewVariant = variant;
+        OverlayMoviePreviewButton.Style = (Style)Resources[variant == "movie" ? "ActiveTabStyle" : "InactiveTabStyle"];
+        OverlayShowPreviewButton.Style = (Style)Resources[variant == "show" ? "ActiveTabStyle" : "InactiveTabStyle"];
+        UpdateCardOverlayPreview();
+    }
+
     private FrameworkElement BuildCardOverlayRow(OverlayDef definition, OverlayItemConfig initial)
     {
         var grid = new Grid { ColumnSpacing = 16 };
@@ -767,6 +1005,12 @@ public sealed partial class SettingsPage : Page
             ["network"] = "Network", ["show_status"] = "Returning", ["imdb_top_250"] = "Top 250",
             ["rt_certified_fresh"] = "Certified Fresh",
         };
+        if (_cardOverlayPreviewVariant == "show")
+        {
+            sampleValues["runtime"] = "47m";
+            sampleValues["year"] = "2024";
+            sampleValues["show_status"] = "Returning";
+        }
         foreach (var definition in OverlayRegistry.All)
         {
             if (!_cardOverlayDraft.Items.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
@@ -1192,7 +1436,7 @@ public sealed partial class SettingsPage : Page
 
         var visibilityLabel = new TextBlock
         {
-            Text = vm.IsEnabled ? "Visible on navigation" : "Hidden on navigation",
+            Text = "Visible in navigation",
             FontSize = 12,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
@@ -1210,7 +1454,7 @@ public sealed partial class SettingsPage : Page
         visibilityToggle.Toggled += (s, e) =>
         {
             vm.IsEnabled = visibilityToggle.IsOn;
-            visibilityLabel.Text = visibilityToggle.IsOn ? "Visible on navigation" : "Hidden on navigation";
+            visibilityLabel.Text = "Visible in navigation";
         };
         togglePanel.Children.Add(visibilityToggle);
 
@@ -1253,6 +1497,13 @@ public sealed partial class SettingsPage : Page
             Visibility = vm.IsExpanded ? Visibility.Visible : Visibility.Collapsed,
             Margin = new Thickness(0, 4, 0, 0),
         };
+        expandPanel.Children.Add(new TextBlock
+        {
+            Text = "Override your profile's playback defaults for this library. Changes save automatically.",
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
 
         editButton.Click += (s, e) =>
         {
@@ -1263,9 +1514,9 @@ public sealed partial class SettingsPage : Page
 
         outerStack.Children.Add(editButton);
 
-        // --- Preferred audio language dropdown ---
+        // --- Spoken language dropdown ---
         expandPanel.Children.Add(BuildDropdownRow(
-            "Preferred audio language", AudioLanguageOptions, vm.AudioLanguage,
+            "Spoken language", AudioLanguageOptions, vm.AudioLanguage,
             (tag) => vm.AudioLanguage = tag));
 
         // --- Subtitle language dropdown ---
@@ -1658,6 +1909,7 @@ public sealed partial class SettingsPage : Page
     private void RebuildHomeSectionItems()
     {
         HomeSectionItemsContainer.Children.Clear();
+        HomeSectionsCountText.Text = $"{ViewModel.HomeSections.Count} {(ViewModel.HomeSections.Count == 1 ? "section" : "sections")}";
 
         if (ViewModel.HomeSections.Count == 0)
         {
@@ -1743,9 +1995,10 @@ public sealed partial class SettingsPage : Page
             Style = (Style)Application.Current.Resources["GhostButtonStyle"],
             Padding = new Thickness(6),
         };
-        upBtn.Click += (_, _) =>
+        upBtn.Click += async (_, _) =>
         {
             ViewModel.MoveSectionUp(section);
+            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
         };
         actionStack.Children.Add(upBtn);
 
@@ -1756,9 +2009,10 @@ public sealed partial class SettingsPage : Page
             Style = (Style)Application.Current.Resources["GhostButtonStyle"],
             Padding = new Thickness(6),
         };
-        downBtn.Click += (_, _) =>
+        downBtn.Click += async (_, _) =>
         {
             ViewModel.MoveSectionDown(section);
+            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
         };
         actionStack.Children.Add(downBtn);
 
@@ -1770,9 +2024,10 @@ public sealed partial class SettingsPage : Page
             Style = (Style)Application.Current.Resources["GhostButtonStyle"],
             Padding = new Thickness(6),
         };
-        visBtn.Click += (_, _) =>
+        visBtn.Click += async (_, _) =>
         {
             ViewModel.ToggleSectionVisibility(section);
+            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
         };
         actionStack.Children.Add(visBtn);
 
@@ -1806,6 +2061,7 @@ public sealed partial class SettingsPage : Page
                 if (result == ContentDialogResult.Primary)
                 {
                     ViewModel.RemoveSection(section);
+                    await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
                 }
             };
             actionStack.Children.Add(delBtn);
@@ -4053,7 +4309,7 @@ public sealed partial class SettingsPage : Page
         }
 
         var auth = App.Services.GetRequiredService<SiloPlayer.Core.Services.AuthService>();
-        auth.SelectProfile(profile.Id, profileToken);
+        auth.SelectProfile(profile.Id, profileToken, profile);
         App.Services.GetRequiredService<CatalogApi>().InvalidateLibraryCache();
         var settingsService = App.Services.GetRequiredService<SiloPlayer.Core.Services.SettingsService>();
         var settings = settingsService.Load();

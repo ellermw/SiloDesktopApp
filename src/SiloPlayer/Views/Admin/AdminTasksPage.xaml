@@ -36,7 +36,8 @@
                         FontSize="14"
                         Foreground="{StaticResource SecondaryTextBrush}"
                         TextWrapping="Wrap"
-                        MaxWidth="720" />
+                        MaxWidth="720"
+                        HorizontalAlignment="Left" />
                 </StackPanel>
 
                 <!-- Inline loading indicator -->

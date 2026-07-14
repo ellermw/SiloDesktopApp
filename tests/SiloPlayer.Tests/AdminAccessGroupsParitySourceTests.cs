@@ -35,6 +35,8 @@ public sealed class AdminAccessGroupsParitySourceTests
         Assert.Contains("Max transcodes", page);
         Assert.Contains("Metadata curation", page);
         Assert.Contains("Marker editing", page);
+        Assert.Contains("<Setter Property=\"OnContent\" Value=\"\" />", page);
+        Assert.Contains("<Setter Property=\"OffContent\" Value=\"\" />", page);
         Assert.Contains("LibraryIds = AllLibraries", viewModel);
         Assert.Contains("DownloadAllowed && DownloadTranscodeAllowed", viewModel);
         Assert.Contains("AllowedPermissions = AllPermissions", viewModel);

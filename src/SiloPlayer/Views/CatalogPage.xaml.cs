@@ -10,7 +10,13 @@ using SiloPlayer.Controls;
 
 namespace SiloPlayer.Views;
 
-public sealed record CatalogNavigation(string Source = "library", string? Title = null, string? Subtitle = null);
+public sealed record CatalogNavigation(
+    string Source = "library",
+    string? Title = null,
+    string? Subtitle = null,
+    string? Scope = null,
+    string? SectionId = null,
+    int? LibraryId = null);
 
 public sealed partial class CatalogPage : Page
 {
@@ -25,6 +31,9 @@ public sealed partial class CatalogPage : Page
     private long _loadGeneration;
     private bool _selectionMode;
     private string _source = "library";
+    private string? _scope;
+    private string? _sectionId;
+    private int? _fixedLibraryId;
     private string? _snapshot;
     private readonly HashSet<string> _selectedIds = new(StringComparer.OrdinalIgnoreCase);
     private const int PageSize = 60;
@@ -37,6 +46,9 @@ public sealed partial class CatalogPage : Page
         if (e.Parameter is CatalogNavigation navigation)
         {
             _source = navigation.Source;
+            _scope = navigation.Scope;
+            _sectionId = navigation.SectionId;
+            _fixedLibraryId = navigation.LibraryId;
             PageTitleText.Text = navigation.Title ?? (_source == "history" ? "History" : "Catalog");
             PageSubtitleText.Text = navigation.Subtitle ?? (_source == "history"
                 ? "Everything you've recently watched."
@@ -53,8 +65,17 @@ public sealed partial class CatalogPage : Page
             SortCombo.SelectedIndex = 0;
         }
         if (_source == "history") HistoryActions.Visibility = Visibility.Visible;
+        if (_source == "section")
+        {
+            // A section is a stored server recipe. The current WebUI deliberately
+            // suppresses the catalog overlay so local filters cannot silently
+            // change the recipe being explored.
+            FilterPanel.Visibility = Visibility.Collapsed;
+            LockedFiltersPanel.Visibility = Visibility.Visible;
+        }
         await InitializeFiltersAsync();
         _initializing = false;
+        UpdateFilterCount();
         await LoadAsync(true);
     }
 
@@ -69,11 +90,19 @@ public sealed partial class CatalogPage : Page
     private async Task InitializeFiltersAsync()
     {
         var librariesTask = _api.GetLibrariesAsync();
-        var filtersTask = _api.GetFiltersAsync(source: _source == "library" ? null : _source);
+        var filtersTask = _api.GetFiltersAsync(
+            libraryId: _fixedLibraryId,
+            source: _source == "library" ? null : _source,
+            scope: _scope,
+            sectionId: _sectionId);
         await Task.WhenAll(librariesTask, filtersTask);
         LibraryCombo.Items.Add(new ComboBoxItem { Content = "All libraries", Tag = (int?)null });
         foreach (var library in librariesTask.Result) LibraryCombo.Items.Add(new ComboBoxItem { Content = library.Name, Tag = (int?)library.Id });
-        LibraryCombo.SelectedIndex = 0;
+        var fixedLibraryIndex = _fixedLibraryId is > 0
+            ? librariesTask.Result.FindIndex(l => l.Id == _fixedLibraryId.Value) + 1
+            : 0;
+        LibraryCombo.SelectedIndex = Math.Max(0, fixedLibraryIndex);
+        LibraryCombo.IsEnabled = _fixedLibraryId is not > 0;
         Fill(GenreCombo, "All genres", filtersTask.Result.Genres);
         Fill(RatingCombo, "All ratings", filtersTask.Result.ContentRatings);
         Fill(ResolutionCombo, "All resolutions", filtersTask.Result.Resolutions);
@@ -105,7 +134,24 @@ public sealed partial class CatalogPage : Page
         try
         {
             var sort = SelectedTag(SortCombo);
-            var response = await _api.GetCatalogAsync(SelectedLibrary(), sort: sort, order: sort == null ? null : SelectedTag(OrderCombo), genre: SelectedTag(GenreCombo), contentRating: SelectedTag(RatingCombo), country: SelectedTag(CountryCombo), resolution: SelectedTag(ResolutionCombo), q: QueryBox.Text.Trim(), type: SelectedTag(TypeCombo), limit: PageSize, offset: _offset, snapshot: _snapshot, source: _source == "library" ? null : _source, ct: _loadCts.Token);
+            var isSection = _source == "section";
+            var response = await _api.GetCatalogAsync(
+                isSection ? _fixedLibraryId : SelectedLibrary(),
+                sort: isSection ? null : sort,
+                order: isSection || sort == null ? null : SelectedTag(OrderCombo),
+                genre: isSection ? null : SelectedTag(GenreCombo),
+                contentRating: isSection ? null : SelectedTag(RatingCombo),
+                country: isSection ? null : SelectedTag(CountryCombo),
+                resolution: isSection ? null : SelectedTag(ResolutionCombo),
+                q: isSection ? null : QueryBox.Text.Trim(),
+                type: isSection ? null : SelectedTag(TypeCombo),
+                limit: PageSize,
+                offset: _offset,
+                snapshot: _snapshot,
+                source: _source == "library" ? null : _source,
+                scope: _scope,
+                sectionId: _sectionId,
+                ct: _loadCts.Token);
             if (generation != Volatile.Read(ref _loadGeneration)) return;
             foreach (var item in response.Items) _items.Add(item);
             _snapshot = response.Snapshot ?? _snapshot;
@@ -140,6 +186,7 @@ public sealed partial class CatalogPage : Page
     private void Filter_Changed(object sender, object e)
     {
         if (_initializing) return;
+        UpdateFilterCount();
         _debounce?.Stop();
         _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(ReferenceEquals(sender, QueryBox) ? 300 : 40) };
         _debounce.Tick += async (_, _) => { _debounce?.Stop(); await LoadAsync(true); };
@@ -263,6 +310,34 @@ public sealed partial class CatalogPage : Page
         RemoveSelectedButton.Visibility = _selectionMode ? Visibility.Visible : Visibility.Collapsed;
         ClearSelectionButton.IsEnabled = _selectedIds.Count > 0;
         RemoveSelectedButton.IsEnabled = _selectedIds.Count > 0;
+    }
+
+    private void OpenFilters_Click(object sender, RoutedEventArgs e) => FiltersSheet.IsOpen = true;
+    private void CloseFilters_Click(object sender, RoutedEventArgs e) => FiltersSheet.IsOpen = false;
+
+    private async void ClearFilters_Click(object sender, RoutedEventArgs e)
+    {
+        _initializing = true;
+        if (_fixedLibraryId is not > 0) LibraryCombo.SelectedIndex = 0;
+        GenreCombo.SelectedIndex = 0;
+        RatingCombo.SelectedIndex = 0;
+        ResolutionCombo.SelectedIndex = 0;
+        CountryCombo.SelectedIndex = 0;
+        _initializing = false;
+        UpdateFilterCount();
+        await LoadAsync(true);
+    }
+
+    private void UpdateFilterCount()
+    {
+        var count = 0;
+        if (_fixedLibraryId is not > 0 && SelectedLibrary() is > 0) count++;
+        if (SelectedTag(GenreCombo) != null) count++;
+        if (SelectedTag(RatingCombo) != null) count++;
+        if (SelectedTag(ResolutionCombo) != null) count++;
+        if (SelectedTag(CountryCombo) != null) count++;
+        FilterCountText.Text = count.ToString();
+        FilterCountBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
     private int? SelectedLibrary() => (LibraryCombo.SelectedItem as ComboBoxItem)?.Tag as int?;
     private static string? SelectedTag(ComboBox combo) { var value = (combo.SelectedItem as ComboBoxItem)?.Tag?.ToString(); return string.IsNullOrWhiteSpace(value) ? null : value; }

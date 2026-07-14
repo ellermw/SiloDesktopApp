@@ -159,7 +159,7 @@
                         <TextBlock Text="You're the host" FontSize="15" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
-                            Text="Share the room code (top-left) with guests, or copy the invite link. Once the party is together, pick content from your library — synchronized playback will start on everyone's player. (Content selection inside the watch party is coming in a later pass of the desktop player.)"
+                            Text="Share the room code (top-left) with guests, or copy the invite link. Pick content from your library below; synchronized playback starts automatically on every connected player."
                             FontSize="13" TextWrapping="Wrap"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>

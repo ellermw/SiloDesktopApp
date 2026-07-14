@@ -21,7 +21,7 @@
             IsScrollInertiaEnabled="True">
 
             <!-- webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
-            <StackPanel Padding="32,24,32,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
+            <StackPanel Padding="40,24,40,24" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
 
                 <!-- ===== Page header ===== -->
                 <StackPanel Spacing="6">
@@ -35,7 +35,8 @@
                         FontSize="14"
                         Foreground="{StaticResource SecondaryTextBrush}"
                         TextWrapping="Wrap"
-                        MaxWidth="820" />
+                        MaxWidth="820"
+                        HorizontalAlignment="Left" />
                 </StackPanel>
 
                 <!-- Status banner (transient) -->
@@ -103,7 +104,8 @@
                                 FontSize="13"
                                 Foreground="{StaticResource SecondaryTextBrush}"
                                 TextWrapping="Wrap"
-                                MaxWidth="640" />
+                                MaxWidth="640"
+                                HorizontalAlignment="Left" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10"
                                     VerticalAlignment="Center">

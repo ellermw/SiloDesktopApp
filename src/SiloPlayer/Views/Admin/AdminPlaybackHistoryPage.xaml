@@ -18,14 +18,14 @@
         <!-- B26: shadcn `rounded-lg`=8 — was 24/26, way too round. -->
         <Style x:Key="InfoCardStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="{StaticResource RadiusLG}" />
+            <Setter Property="CornerRadius" Value="{StaticResource Radius2XL}" />
             <Setter Property="Padding" Value="16" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
 
         <Style x:Key="TableCardStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="{StaticResource RadiusLG}" />
+            <Setter Property="CornerRadius" Value="{StaticResource Radius2XL}" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
@@ -37,7 +37,7 @@
             IsScrollInertiaEnabled="True">
 
             <!-- webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
-            <StackPanel Padding="32,24,32,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
+            <StackPanel Padding="40,32,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -61,6 +61,24 @@
 
                     <!-- Filter controls in header row -->
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+
+                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                Background="{StaticResource SurfaceBrush}" CornerRadius="6"
+                                Padding="10,5"
+                                Visibility="{x:Bind ViewModel.MediaItemId, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                            <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+                                <TextBlock Text="Item filter active" FontSize="11" FontWeight="SemiBold"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                <Button MinWidth="0" MinHeight="0" Padding="0"
+                                        Background="Transparent" BorderThickness="0"
+                                        Click="ActiveMediaItem_Click">
+                                    <TextBlock Text="{x:Bind ViewModel.ActiveMediaItemLabel, Mode=OneWay}"
+                                               FontSize="12" FontWeight="SemiBold"
+                                               Foreground="{StaticResource PrimaryTextBrush}"
+                                               MaxWidth="180" TextTrimming="CharacterEllipsis" />
+                                </Button>
+                            </StackPanel>
+                        </Border>
 
                         <!-- User ComboBox -->
                         <ComboBox
@@ -96,12 +114,14 @@
                             x:Name="ResetButton"
                             Content="Reset"
                             Style="{StaticResource SecondaryButtonStyle}"
-                            IsEnabled="False"
                             Click="ResetButton_Click" />
-                        <Button Style="{StaticResource SecondaryButtonStyle}" Click="RefreshButton_Click">
+                        <Button x:Name="RefreshButton" MinWidth="132"
+                                Style="{StaticResource SecondaryButtonStyle}" Click="RefreshButton_Click">
                             <StackPanel Orientation="Horizontal" Spacing="7">
-                                <SymbolIcon Symbol="Refresh" />
-                                <TextBlock Text="Refresh" />
+                                <SymbolIcon x:Name="RefreshGlyph" Symbol="Refresh" />
+                                <ProgressRing x:Name="ManualRefreshSpinner" Width="14" Height="14"
+                                              IsActive="False" Visibility="Collapsed" />
+                                <TextBlock x:Name="RefreshButtonText" Text="Refresh" />
                             </StackPanel>
                         </Button>
                     </StackPanel>
@@ -206,7 +226,7 @@
                                 <ColumnDefinition Width="1.2*" />
                                 <ColumnDefinition Width="90" />
                                 <ColumnDefinition Width="1.4*" />
-                                <ColumnDefinition Width="1.2*" />
+                                <ColumnDefinition Width="175" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="Media" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             <TextBlock Grid.Column="1" Text="User" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
@@ -220,13 +240,16 @@
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
 
-                        <!-- Inline loading indicator -->
-                        <ProgressRing
-                            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-                            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                            HorizontalAlignment="Center"
-                            Margin="0,24"
-                            Width="32" Height="32" />
+                        <!-- WebUI loading skeleton: header strip plus five playback rows. -->
+                        <StackPanel Padding="20,0,20,20" Spacing="12"
+                                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                            <Border Height="40" CornerRadius="8" Background="{StaticResource SurfaceHoverBrush}" />
+                            <Border Height="48" CornerRadius="8" Background="{StaticResource SurfaceHoverBrush}" />
+                            <Border Height="48" CornerRadius="8" Background="{StaticResource SurfaceHoverBrush}" />
+                            <Border Height="48" CornerRadius="8" Background="{StaticResource SurfaceHoverBrush}" />
+                            <Border Height="48" CornerRadius="8" Background="{StaticResource SurfaceHoverBrush}" />
+                            <Border Height="48" CornerRadius="8" Background="{StaticResource SurfaceHoverBrush}" />
+                        </StackPanel>
 
                         <!-- Inline error state -->
                         <StackPanel
@@ -255,18 +278,18 @@
                         <Border x:Name="EmptyState" Padding="20,48" Visibility="Collapsed">
                             <StackPanel HorizontalAlignment="Center" Spacing="8">
                                 <FontIcon
-                                    Glyph="&#xE71C;"
-                                    FontSize="32"
-                                    Opacity="0.2"
+                                    Glyph="&#xE81C;"
+                                    FontSize="40"
+                                    Opacity="0.5"
                                     HorizontalAlignment="Center" />
                                 <TextBlock
-                                    Text="No playback history found"
+                                    Text="No playback history"
                                     FontSize="14"
                                     Foreground="{StaticResource SecondaryTextBrush}"
                                     HorizontalAlignment="Center"
                                     TextAlignment="Center" />
                                 <TextBlock
-                                    Text="Try adjusting your filters or date range."
+                                    Text="No playback history matches the current filters. Try adjusting the user, profile, or completion filters."
                                     FontSize="13"
                                     Foreground="{StaticResource TertiaryTextBrush}"
                                     HorizontalAlignment="Center"

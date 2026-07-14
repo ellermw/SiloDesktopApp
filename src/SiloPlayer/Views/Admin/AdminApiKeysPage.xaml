@@ -23,7 +23,7 @@
             IsScrollInertiaEnabled="True">
 
             <!-- WebUI .page-shell: centered, bounded content with responsive page padding. -->
-            <StackPanel Padding="32,24,32,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
+            <StackPanel Padding="40,24,40,24" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -79,7 +79,7 @@
                     Padding="0">
                     <StackPanel>
                         <!-- Table header -->
-                        <Grid Padding="20,14,20,14" ColumnSpacing="12">
+                        <Grid Padding="20,12,20,12" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="1.6*" />
                                 <ColumnDefinition Width="1.2*" />

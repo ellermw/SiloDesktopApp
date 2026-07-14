@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="SiloPlayer.Controls.AudiobookSquareCard"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Width="184" Height="232"
+    PointerEntered="Card_PointerEntered" PointerExited="Card_PointerExited"
+    Tapped="Card_Tapped">
+    <StackPanel Width="184" Spacing="8">
+        <Grid Width="184" Height="184">
+            <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="12">
+                <Grid>
+                    <Image x:Name="CoverImage" Stretch="UniformToFill" Opacity="0" />
+                    <TextBlock x:Name="FallbackTitle" Margin="14" TextWrapping="Wrap"
+                               TextAlignment="Center" MaxLines="3" FontSize="13"
+                               FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+            <Border VerticalAlignment="Bottom" Height="5" Margin="8"
+                    CornerRadius="3" Background="#55000000">
+                <Border x:Name="ProgressFill" HorizontalAlignment="Left" Height="5"
+                        CornerRadius="3" Background="{StaticResource AccentBrush}" />
+            </Border>
+            <Button x:Name="MoreButton" Width="32" Height="32" Padding="0" Margin="8"
+                    HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                    CornerRadius="6" Background="#AA000000" BorderBrush="#30FFFFFF"
+                    BorderThickness="1" Opacity="0" Click="MoreButton_Click">
+                <FontIcon Glyph="&#xE712;" FontSize="15" Foreground="White" />
+            </Button>
+        </Grid>
+        <TextBlock x:Name="TitleText" Margin="4,0" FontSize="14" FontWeight="SemiBold"
+                   TextTrimming="CharacterEllipsis" MaxLines="1"
+                   Foreground="{StaticResource PrimaryTextBrush}" />
+        <TextBlock x:Name="TimeLeftText" Margin="4,-4,4,0" FontSize="11"
+                   Foreground="{StaticResource SecondaryTextBrush}" />
+    </StackPanel>
+</UserControl>

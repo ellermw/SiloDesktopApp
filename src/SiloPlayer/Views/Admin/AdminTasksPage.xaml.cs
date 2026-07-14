@@ -4,6 +4,7 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels.Admin;
 
 namespace SiloPlayer.Views.Admin;
@@ -15,6 +16,9 @@ public sealed partial class AdminTasksPage : Page
     private DispatcherTimer? _refreshTimer;
     private bool _rebuildPending;
     private MetadataRefreshMetrics? _refreshMetrics;
+    private EventChannelClient? _eventChannel;
+    private IDisposable? _eventSubscription;
+    private DateTime _lastEventRefresh = DateTime.MinValue;
 
     public AdminTasksPage()
     {
@@ -24,7 +28,7 @@ public sealed partial class AdminTasksPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        ViewModel.Tasks.CollectionChanged += (_, _) => ScheduleRebuild();
+        ViewModel.Tasks.CollectionChanged += Tasks_CollectionChanged;
 
         try
         {
@@ -44,6 +48,33 @@ public sealed partial class AdminTasksPage : Page
         }
 
         StartOrStopRefreshTimer();
+
+        try
+        {
+            _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
+            _eventChannel.EventReceived += OnEventReceived;
+            _eventSubscription = _eventChannel.Subscribe("tasks");
+        }
+        catch { }
+    }
+
+    protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        StopRefreshTimer();
+        ViewModel.Tasks.CollectionChanged -= Tasks_CollectionChanged;
+        if (_eventChannel is not null) _eventChannel.EventReceived -= OnEventReceived;
+        _eventSubscription?.Dispose();
+        _eventSubscription = null;
+        base.OnNavigatedFrom(e);
+    }
+
+    private void Tasks_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e) => ScheduleRebuild();
+
+    private void OnEventReceived(string channel, string eventName, System.Text.Json.JsonElement data)
+    {
+        if (channel != "tasks" || (DateTime.UtcNow - _lastEventRefresh).TotalMilliseconds < 750) return;
+        _lastEventRefresh = DateTime.UtcNow;
+        DispatcherQueue.TryEnqueue(async () => await ViewModel.LoadCommand.ExecuteAsync(null));
     }
 
     private void ScheduleRebuild()

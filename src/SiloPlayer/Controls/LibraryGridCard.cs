@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 using SiloPlayer.Views;
 
 namespace SiloPlayer.Controls;
@@ -16,8 +17,14 @@ public sealed class LibraryGridCard : Canvas
     private readonly TextBlock _fallbackTitle;
     private readonly TextBlock _titleText;
     private readonly TextBlock _subtitleText;
+    private readonly Button _moreButton;
+    private readonly StackPanel _overlayTopLeft;
+    private readonly StackPanel _overlayTopRight;
+    private readonly StackPanel _overlayBottomLeft;
+    private readonly StackPanel _overlayBottomRight;
     private CancellationTokenSource? _posterLoadCts;
     private int _posterLoadVersion;
+    private double _posterHeight;
 
     private static readonly AsyncWorkThrottle s_imageLoadThrottle = new(maxConcurrency: 8);
     private static readonly SemaphoreSlim s_bitmapCreateLock = new(1);
@@ -30,6 +37,7 @@ public sealed class LibraryGridCard : Canvas
         var cardWidth = (double)Application.Current.Resources["PosterCardWidth"];
         var posterHeight = (double)Application.Current.Resources["PosterCardHeight"];
         var cardHeight = (double)Application.Current.Resources["PosterCardTotalHeight"];
+        _posterHeight = posterHeight;
 
         Width = cardWidth;
         Height = cardHeight;
@@ -62,6 +70,15 @@ public sealed class LibraryGridCard : Canvas
         posterHost.Children.Add(_posterImage);
         posterHost.Children.Add(_fallbackTitle);
 
+        _overlayTopLeft = CreateOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Top);
+        _overlayTopRight = CreateOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Top);
+        _overlayBottomLeft = CreateOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Bottom);
+        _overlayBottomRight = CreateOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Bottom);
+        posterHost.Children.Add(_overlayTopLeft);
+        posterHost.Children.Add(_overlayTopRight);
+        posterHost.Children.Add(_overlayBottomLeft);
+        posterHost.Children.Add(_overlayBottomRight);
+
         _posterBackground = new Border
         {
             Width = cardWidth,
@@ -73,6 +90,31 @@ public sealed class LibraryGridCard : Canvas
         SetLeft(_posterBackground, 0);
         SetTop(_posterBackground, 0);
         Children.Add(_posterBackground);
+
+        _moreButton = new Button
+        {
+            Width = 32,
+            Height = 32,
+            Padding = new Thickness(0),
+            MinWidth = 0,
+            MinHeight = 0,
+            CornerRadius = new CornerRadius(6),
+            Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(170, 0, 0, 0)),
+            BorderBrush = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(48, 255, 255, 255)),
+            BorderThickness = new Thickness(1),
+            Opacity = 0,
+            Content = new FontIcon
+            {
+                Glyph = "\uE712",
+                FontSize = 15,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+            },
+        };
+        SetLeft(_moreButton, cardWidth - 42);
+        SetTop(_moreButton, posterHeight - 42);
+        _moreButton.Tapped += (_, args) => args.Handled = true;
+        _moreButton.Click += MoreButton_Click;
+        Children.Add(_moreButton);
 
         _titleText = new TextBlock
         {
@@ -121,6 +163,7 @@ public sealed class LibraryGridCard : Canvas
         _fallbackTitle.Visibility = Visibility.Visible;
         _titleText.Text = title;
         _subtitleText.Text = MediaItemDisplayText.BuildSubtitle(item, sortKey);
+        UpdateOverlays(item);
 
         var imageUrl = !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
         if (!string.IsNullOrWhiteSpace(imageUrl))
@@ -129,6 +172,27 @@ public sealed class LibraryGridCard : Canvas
             var version = ++_posterLoadVersion;
             _ = LoadPosterAsync(item, imageUrl, version, _posterLoadCts.Token);
         }
+    }
+
+    public void SetLayout(double cardWidth, double posterHeight, double cardHeight)
+    {
+        if (Math.Abs(Width - cardWidth) < 0.5 && Math.Abs(_posterHeight - posterHeight) < 0.5)
+            return;
+
+        Width = cardWidth;
+        Height = cardHeight;
+        _posterHeight = posterHeight;
+        _posterBackground.Width = cardWidth;
+        _posterBackground.Height = posterHeight;
+        _posterImage.Width = cardWidth;
+        _posterImage.Height = posterHeight;
+        _fallbackTitle.MaxWidth = Math.Max(80, cardWidth - 28);
+        _titleText.Width = Math.Max(0, cardWidth - 8);
+        _subtitleText.Width = Math.Max(0, cardWidth - 8);
+        SetTop(_titleText, posterHeight + 12);
+        SetTop(_subtitleText, posterHeight + 34);
+        SetLeft(_moreButton, cardWidth - 42);
+        SetTop(_moreButton, posterHeight - 42);
     }
 
     public void BindPlaceholder()
@@ -143,6 +207,8 @@ public sealed class LibraryGridCard : Canvas
         _titleText.Text = "";
         _subtitleText.Text = "";
         _posterBackground.Background = Brush("CardBackgroundBrush");
+        _moreButton.Opacity = 0;
+        ClearOverlays();
     }
 
     public void Reset()
@@ -157,6 +223,8 @@ public sealed class LibraryGridCard : Canvas
         _titleText.Text = "";
         _subtitleText.Text = "";
         _posterBackground.Background = Brush("CardBackgroundBrush");
+        _moreButton.Opacity = 0;
+        ClearOverlays();
     }
 
     private async Task LoadPosterAsync(MediaItem item, string imageUrl, int version, CancellationToken ct)
@@ -186,7 +254,7 @@ public sealed class LibraryGridCard : Canvas
 
                 var bitmapImage = new BitmapImage
                 {
-                    DecodePixelWidth = 200,
+                    DecodePixelWidth = Math.Clamp((int)Math.Ceiling(Width * 1.25), 200, 640),
                     DecodePixelType = DecodePixelType.Logical,
                     UriSource = new Uri(diskPath),
                 };
@@ -240,11 +308,118 @@ public sealed class LibraryGridCard : Canvas
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
     {
         _posterBackground.Background = Brush("SurfaceHoverBrush");
+        _moreButton.Opacity = 1;
     }
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
     {
         _posterBackground.Background = Brush("CardBackgroundBrush");
+        _moreButton.Opacity = 0;
+    }
+
+    private void MoreButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (MediaItem == null)
+            return;
+
+        var flyout = MediaItemMenu.Build(MediaItem, MediaItemMenu.Surface.Default);
+        flyout.ShowAt(_moreButton, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions
+        {
+            Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.TopEdgeAlignedRight,
+        });
+    }
+
+    private static StackPanel CreateOverlayHost(HorizontalAlignment horizontal, VerticalAlignment vertical) => new()
+    {
+        Orientation = Orientation.Vertical,
+        Spacing = 4,
+        HorizontalAlignment = horizontal,
+        VerticalAlignment = vertical,
+        Margin = new Thickness(6),
+        IsHitTestVisible = false,
+    };
+
+    private void ClearOverlays()
+    {
+        _overlayTopLeft.Children.Clear();
+        _overlayTopRight.Children.Clear();
+        _overlayBottomLeft.Children.Clear();
+        _overlayBottomRight.Children.Clear();
+    }
+
+    private void UpdateOverlays(MediaItem item)
+    {
+        ClearOverlays();
+        var service = App.Services.GetRequiredService<CardOverlayService>();
+        _ = service.EnsureLoadedAsync();
+
+        if (item.Status is "pending" or "unmatched" or "ambiguous")
+        {
+            var label = item.Status switch
+            {
+                "pending" => "SCANNING",
+                "unmatched" => "UNMATCHED",
+                _ => "AMBIGUOUS",
+            };
+            _overlayTopLeft.Children.Add(PosterCard.BuildBadge(
+                label,
+                "status",
+                new OverlayItemConfig(true, OverlayPosition.TopLeft),
+                "classic"));
+            return;
+        }
+
+        if (item.Type == "manga")
+        {
+            if (!string.IsNullOrWhiteSpace(item.ShowStatus))
+            {
+                _overlayTopLeft.Children.Add(PosterCard.BuildBadge(
+                    item.ShowStatus,
+                    "show_status",
+                    new OverlayItemConfig(true, OverlayPosition.TopLeft),
+                    service.Preset));
+            }
+
+            var counts = new List<string>();
+            if (item.MangaVolumeCount > 0) counts.Add($"{item.MangaVolumeCount} Vol");
+            if (item.MangaChapterCount > 0) counts.Add($"{item.MangaChapterCount} Ch");
+            if (counts.Count > 0)
+            {
+                _overlayTopRight.Children.Add(PosterCard.BuildBadge(
+                    string.Join(" · ", counts),
+                    "manga_counts",
+                    new OverlayItemConfig(true, OverlayPosition.TopRight),
+                    service.Preset));
+            }
+            return;
+        }
+
+        var prefs = service.GetPrefs();
+        if (prefs == null)
+            return;
+
+        var data = OverlayData.FromMediaItem(item);
+        foreach (var def in OverlayRegistry.All)
+        {
+            if (!prefs.TryGetValue(def.Id, out var config) || !config.Enabled)
+                continue;
+            if (OverlayRegistry.SuppressesStandaloneOverlays(def.Id, prefs))
+                continue;
+
+            var value = def.GetValue(data);
+            if (string.IsNullOrWhiteSpace(value))
+                continue;
+
+            var host = config.Position switch
+            {
+                OverlayPosition.TopLeft => _overlayTopLeft,
+                OverlayPosition.TopRight => _overlayTopRight,
+                OverlayPosition.BottomLeft => _overlayBottomLeft,
+                OverlayPosition.BottomRight => _overlayBottomRight,
+                _ => _overlayTopLeft,
+            };
+            host.Children.Add(PosterCard.BuildBadge(value, def.Id, config, service.Preset));
+        }
     }
 
     private void OnContextRequested(UIElement sender, ContextRequestedEventArgs args)

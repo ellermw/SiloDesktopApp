@@ -31,6 +31,7 @@ public partial class AdminDashboardViewModel : ObservableObject
     public List<AdminScanRun> ActiveScans { get; set; } = [];
 
     public int SessionCount => Sessions.Count;
+    public bool HasCachedData => Stats is not null || Sessions.Count > 0 || Libraries.Count > 0 || Users.Count > 0;
 
     public string StorageDisplay
     {

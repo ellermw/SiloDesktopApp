@@ -156,7 +156,7 @@ public sealed partial class AdminApiKeysPage : Page
     {
         var row = new Grid
         {
-            Padding = new Thickness(20, 14, 20, 14),
+            Padding = new Thickness(20, 10, 20, 10),
             ColumnSpacing = 12
         };
 

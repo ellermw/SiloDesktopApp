@@ -55,8 +55,16 @@ public sealed class AdminDevicesParitySourceTests
         Assert.Contains("MaxWidth=\"1920\"", page);
         Assert.Contains("DeviceGroups", page);
         Assert.Contains("Reset profile", page);
+        Assert.Contains("SearchShortcutHint", page);
+        Assert.Contains("ClearSearchButton", page);
+        Assert.Contains("HorizontalContentAlignment=\"Stretch\"", page);
+        Assert.Contains("android tv", viewModel);
+        Assert.Contains("fire tv", viewModel);
+        Assert.Contains("device.OverrideCount >= median * 2", viewModel);
+        Assert.Contains("private IEnumerable<AdminDeviceSummary> ScopedDevices", viewModel);
         Assert.Contains("SaveSettingAsync", code);
         Assert.Contains("ResetSettingAsync", code);
+        Assert.Contains("Settings_CollectionChanged", code);
     }
 
     private static string ReadRepoFile(params string[] parts)

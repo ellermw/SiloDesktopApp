@@ -1,29 +1,74 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
+using System.Collections.Specialized;
 using SiloPlayer.ViewModels.Admin;
+using Windows.System;
+using Windows.UI.Core;
 
 namespace SiloPlayer.Views.Admin;
 
 public sealed partial class AdminDevicesPage : Page
 {
     public AdminDevicesViewModel ViewModel { get; } = App.Services.GetRequiredService<AdminDevicesViewModel>();
+    private bool _settingsSubscribed;
 
     public AdminDevicesPage()
     {
         InitializeComponent();
-        ViewModel.Settings.CollectionChanged += (_, _) => RebuildSettingControls();
     }
 
-    private async void Page_Loaded(object sender, RoutedEventArgs e) => await ViewModel.LoadAsync();
+    private async void Page_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (!_settingsSubscribed)
+        {
+            ViewModel.Settings.CollectionChanged += Settings_CollectionChanged;
+            _settingsSubscribed = true;
+        }
+        await ViewModel.LoadAsync();
+    }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        if (_settingsSubscribed)
+        {
+            ViewModel.Settings.CollectionChanged -= Settings_CollectionChanged;
+            _settingsSubscribed = false;
+        }
         ViewModel.Cancel();
         base.OnNavigatedFrom(e);
+    }
+
+    private void Settings_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        => RebuildSettingControls();
+
+    private void Page_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != VirtualKey.K ||
+            (InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control) & CoreVirtualKeyStates.Down) == 0)
+            return;
+
+        DeviceSearchBox.Focus(FocusState.Programmatic);
+        DeviceSearchBox.SelectAll();
+        e.Handled = true;
+    }
+
+    private void DeviceSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        var hasSearch = !string.IsNullOrEmpty(DeviceSearchBox.Text);
+        ClearSearchButton.Visibility = hasSearch ? Visibility.Visible : Visibility.Collapsed;
+        SearchShortcutHint.Visibility = hasSearch ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void ClearSearchButton_Click(object sender, RoutedEventArgs e)
+    {
+        DeviceSearchBox.Text = "";
+        DeviceSearchBox.Focus(FocusState.Programmatic);
     }
 
     private async void DeviceList_ItemClick(object sender, ItemClickEventArgs e)
@@ -124,7 +169,14 @@ public sealed partial class AdminDevicesPage : Page
         FrameworkElement control;
         if (row.Control == "switch")
         {
-            var toggle = new ToggleSwitch { IsOn = row.Value == "true", Tag = row };
+            var toggle = new ToggleSwitch
+            {
+                IsOn = row.Value == "true",
+                Tag = row,
+                OnContent = "",
+                OffContent = "",
+                MinWidth = 44,
+            };
             toggle.Toggled += async (s, _) => await ViewModel.SaveSettingAsync(row, ((ToggleSwitch)s).IsOn ? "true" : "false");
             control = toggle;
         }

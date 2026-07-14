@@ -65,8 +65,7 @@
 
             <StackPanel Padding="40,28,40,40" Spacing="24">
 
-                <!-- ===== Back link ===== -->
-                <!-- Matches web: <Link> with ArrowLeft + "Scheduled Tasks" text, text-muted-foreground -->
+                <!-- ===== Breadcrumb ===== -->
                 <Button
                     x:Name="BackButton"
                     Background="Transparent"
@@ -74,12 +73,12 @@
                     Padding="0"
                     HorizontalAlignment="Left"
                     ToolTipService.ToolTip="Back to Scheduled Tasks">
-                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                        <FontIcon Glyph="&#xE72B;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
-                        <TextBlock
-                            Text="Scheduled Tasks"
-                            FontSize="13"
-                            Foreground="{StaticResource SecondaryTextBrush}" />
+                    <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+                        <TextBlock Text="Admin" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <FontIcon Glyph="&#xE76C;" FontSize="9" Foreground="{StaticResource TertiaryTextBrush}" />
+                        <TextBlock Text="Scheduled Tasks" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <FontIcon Glyph="&#xE76C;" FontSize="9" Foreground="{StaticResource TertiaryTextBrush}" />
+                        <TextBlock x:Name="BreadcrumbTaskText" FontSize="13" Foreground="{StaticResource PrimaryTextBrush}" />
                     </StackPanel>
                 </Button>
 
@@ -101,7 +100,8 @@
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}"
                             TextWrapping="WrapWholeWords"
-                            MaxWidth="700" />
+                            MaxWidth="700"
+                            HorizontalAlignment="Left" />
                     </StackPanel>
 
                     <!-- Right: Run / Cancel button (w-auto, variant=outline) -->

@@ -57,28 +57,40 @@
     </Page.Resources>
 
     <ScrollViewer IsScrollInertiaEnabled="True">
-        <StackPanel MaxWidth="1200" Margin="48,24,48,48">
+        <StackPanel MaxWidth="1424" Margin="48,24,48,48">
 
-            <!-- ===== Header (with back button matching webui SettingsLayout) ===== -->
-            <Grid>
+            <!-- The WebUI keeps the back action floating above a wide page header. -->
+            <Button Style="{StaticResource GhostButtonStyle}"
+                    Width="40" Height="40" Padding="0" CornerRadius="20"
+                    HorizontalAlignment="Left" Click="SettingsBackButton_Click"
+                    AutomationProperties.Name="Go back">
+                <FontIcon Glyph="&#xE76B;" FontSize="16" />
+            </Button>
+
+            <!-- ===== Header ===== -->
+            <Grid Margin="0,40,0,0" ColumnSpacing="32">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <StackPanel Spacing="4">
-                    <TextBlock Text="Settings" FontSize="32" FontWeight="SemiBold"
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Settings" FontSize="48" FontWeight="Bold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock Text="Manage your playback preferences, libraries, and display options."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 </StackPanel>
-                <Button Grid.Column="1" Style="{StaticResource OutlineButtonStyle}"
-                        VerticalAlignment="Top" Padding="12,8" CornerRadius="12"
-                        Click="SettingsBackButton_Click">
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <FontIcon Glyph="&#xE76B;" FontSize="14" />
-                        <TextBlock Text="Back" FontSize="13" />
-                    </StackPanel>
-                </Button>
+                <StackPanel Grid.Column="1" Width="384" VerticalAlignment="Bottom" Spacing="8">
+                    <TextBox x:Name="SettingsSearchBox" PlaceholderText="Search settings"
+                             Height="40" CornerRadius="12" TextChanged="SettingsSearchBox_TextChanged"
+                             AutomationProperties.Name="Search settings">
+                        <TextBox.HeaderTemplate>
+                            <DataTemplate />
+                        </TextBox.HeaderTemplate>
+                    </TextBox>
+                    <TextBlock x:Name="SettingsSearchStatus" Text="14 settings sections"
+                               FontSize="12" Foreground="{StaticResource TertiaryTextBrush}"
+                               AutomationProperties.LiveSetting="Polite" />
+                </StackPanel>
             </Grid>
 
             <!-- ===== Status / Error ===== -->
@@ -103,7 +115,7 @@
 
             <!-- ===== Settings Navigation: Two-column layout (sidebar + content) ===== -->
             <!-- Webui: SettingsLayout.tsx — grouped sidebar (220px) on desktop -->
-            <Grid Margin="0,24,0,0">
+            <Grid Margin="0,40,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="220" />
                     <ColumnDefinition Width="*" />
@@ -113,12 +125,12 @@
                 <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="0,0,12,0">
                     <StackPanel Spacing="20">
                         <!-- Playback group -->
-                        <StackPanel Spacing="2">
+                        <StackPanel x:Name="PlaybackNavGroup" Spacing="2">
                             <TextBlock Text="PLAYBACK" FontSize="10" FontWeight="SemiBold"
                                        CharacterSpacing="180" Foreground="{StaticResource TertiaryTextBrush}"
                                        Margin="12,0,0,6" />
                             <Button x:Name="PlaybackTab" Click="Tab_Click" Tag="Playback"
-                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                    Style="{StaticResource ActiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
                                     <FontIcon Glyph="&#xE768;" FontSize="16" />
                                     <TextBlock Text="Playback" VerticalAlignment="Center" />
@@ -133,12 +145,12 @@
                             </Button>
                         </StackPanel>
                         <!-- Appearance group -->
-                        <StackPanel Spacing="2">
+                        <StackPanel x:Name="AppearanceNavGroup" Spacing="2">
                             <TextBlock Text="APPEARANCE" FontSize="10" FontWeight="SemiBold"
                                        CharacterSpacing="180" Foreground="{StaticResource TertiaryTextBrush}"
                                        Margin="12,0,0,6" />
                             <Button x:Name="AppearanceTab" Click="Tab_Click" Tag="Appearance"
-                                    Style="{StaticResource ActiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
                                     <FontIcon Glyph="&#xE790;" FontSize="16" />
                                     <TextBlock Text="Appearance" VerticalAlignment="Center" />
@@ -165,9 +177,23 @@
                                     <TextBlock Text="Home Screen" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
+                            <Button x:Name="CardOverlaysTab" Click="Tab_Click" Tag="CardOverlays"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE81E;" FontSize="16" />
+                                    <TextBlock Text="Card Overlays" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="PersonalizeTab" Click="Tab_Click" Tag="Personalize"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE735;" FontSize="16" />
+                                    <TextBlock Text="Personalize" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
                         </StackPanel>
                         <!-- Library & Data group -->
-                        <StackPanel Spacing="2">
+                        <StackPanel x:Name="LibraryDataNavGroup" Spacing="2">
                             <TextBlock Text="LIBRARY &amp; DATA" FontSize="10" FontWeight="SemiBold"
                                        CharacterSpacing="180" Foreground="{StaticResource TertiaryTextBrush}"
                                        Margin="12,0,0,6" />
@@ -199,23 +225,9 @@
                                     <TextBlock Text="Watch Providers" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
-                            <Button x:Name="CardOverlaysTab" Click="Tab_Click" Tag="CardOverlays"
-                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
-                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <FontIcon Glyph="&#xE81E;" FontSize="16" />
-                                    <TextBlock Text="Card Overlays" VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Button>
-                            <Button x:Name="PersonalizeTab" Click="Tab_Click" Tag="Personalize"
-                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
-                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <FontIcon Glyph="&#xE735;" FontSize="16" />
-                                    <TextBlock Text="Personalize" VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Button>
                         </StackPanel>
                         <!-- Account group -->
-                        <StackPanel Spacing="2">
+                        <StackPanel x:Name="AccountNavGroup" Spacing="2">
                             <TextBlock Text="ACCOUNT" FontSize="10" FontWeight="SemiBold"
                                        CharacterSpacing="180" Foreground="{StaticResource TertiaryTextBrush}"
                                        Margin="12,0,0,6" />
@@ -253,12 +265,12 @@
 
                 <!-- Right column: all content panels stack here; only the
                      active one is Visible (Tab_Click toggles visibility). -->
-                <StackPanel Grid.Column="1" Padding="24,0,0,0">
+                <StackPanel Grid.Column="1" Padding="40,0,0,0">
 
             <!-- ===================================================================== -->
             <!-- ===== Appearance Panel ===== -->
             <!-- ===================================================================== -->
-            <StackPanel x:Name="AppearancePanel" Spacing="24" Margin="0,0,0,0">
+            <StackPanel x:Name="AppearancePanel" Spacing="24" Margin="0" Visibility="Collapsed">
 
                 <TextBlock Text="Appearance" FontSize="24" FontWeight="SemiBold"
                            Foreground="{StaticResource PrimaryTextBrush}" />
@@ -268,7 +280,7 @@
                     <StackPanel Spacing="8">
                         <TextBlock Text="Theme" FontSize="16" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Click to apply and persist the selection to this profile."
+                        <TextBlock Text="Hover to preview. Click to apply and persist the selection to this profile."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                    TextWrapping="Wrap" Margin="0,0,0,8" />
 
@@ -328,22 +340,22 @@
             <!-- ===================================================================== -->
             <!-- ===== Playback Panel ===== -->
             <!-- ===================================================================== -->
-            <StackPanel x:Name="PlaybackPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="PlaybackPanel" Spacing="24" Margin="0">
 
                 <StackPanel Spacing="12">
                     <TextBlock Text="Playback" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="Defaults for quality, language, and playback shortcuts."
+                    <TextBlock Text="Choose the defaults Silo should use when playback starts."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
                                TextWrapping="Wrap" />
                 </StackPanel>
 
-                <!-- Quality and language group -->
+                <!-- Defaults group mirrors the current WebUI settings surface. -->
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="0">
-                        <TextBlock Text="Quality and language" FontSize="16" FontWeight="SemiBold"
+                        <TextBlock Text="Defaults" FontSize="16" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Choose the defaults this profile should use when playback starts."
+                        <TextBlock Text="These preferences apply unless a library or item has a more specific playback choice."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                    TextWrapping="Wrap" Margin="0,4,0,16" />
 
@@ -356,7 +368,7 @@
                             <StackPanel Grid.Column="0" Spacing="2">
                                 <TextBlock Text="Video quality" FontSize="14" FontWeight="Medium"
                                            Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Pick the resolution to use when the app can match your connection."
+                                <TextBlock Text="Choose the quality your profile should request when playback begins."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
@@ -374,16 +386,16 @@
 
                         <Border Style="{StaticResource SettingsSeparator}" />
 
-                        <!-- Preferred audio language -->
+                        <!-- Spoken language -->
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Preferred audio language" FontSize="14" FontWeight="Medium"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Choose which audio track language to prefer when a file offers more than one."
+                                <TextBlock Text="Spoken language" FontSize="14" FontWeight="Medium"
+                                            Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Prefer a spoken language for this profile when multiple tracks are available."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
@@ -422,17 +434,7 @@
                             </ComboBox>
                         </Grid>
 
-                    </StackPanel>
-                </Border>
-
-                <!-- Skipping and next up group -->
-                <Border Style="{StaticResource SettingsGroupStyle}">
-                    <StackPanel Spacing="0">
-                        <TextBlock Text="Skipping and next up" FontSize="16" FontWeight="SemiBold"
-                                   Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Control the small playback shortcuts that can save you a few taps."
-                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                   TextWrapping="Wrap" Margin="0,4,0,16" />
+                        <Border Style="{StaticResource SettingsSeparator}" />
 
                         <!-- Skip intros -->
                         <Grid>
@@ -441,9 +443,9 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Skip intros automatically" FontSize="14" FontWeight="Medium"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Jump past opening credits when intro markers are available."
+                                <TextBlock Text="Auto-skip intros" FontSize="14" FontWeight="Medium"
+                                            Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Jump past intros automatically when Silo can detect them."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
@@ -457,29 +459,6 @@
 
                         <Border Style="{StaticResource SettingsSeparator}" />
 
-                        <!-- Skip recaps -->
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Skip recaps automatically" FontSize="14" FontWeight="Medium"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Jump past previously-on recaps when recap markers are available."
-                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                           TextWrapping="Wrap" />
-                            </StackPanel>
-                            <ToggleSwitch
-                                x:Name="AutoSkipRecapToggle"
-                                Grid.Column="1"
-                                IsOn="{x:Bind ViewModel.AutoSkipRecap, Mode=TwoWay}"
-                                VerticalAlignment="Center"
-                                OnContent="" OffContent="" />
-                        </Grid>
-
-                        <Border Style="{StaticResource SettingsSeparator}" />
-
                         <!-- Skip credits -->
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -487,9 +466,9 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Skip end credits automatically" FontSize="14" FontWeight="Medium"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Jump past credits when credit markers are available."
+                                <TextBlock Text="Auto-skip credits" FontSize="14" FontWeight="Medium"
+                                            Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Move through end credits automatically when a skip is available."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
@@ -503,6 +482,29 @@
 
                         <Border Style="{StaticResource SettingsSeparator}" />
 
+                        <!-- Skip recaps -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Auto-skip recaps" FontSize="14" FontWeight="Medium"
+                                            Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Skip 'previously on…' recaps automatically when Silo can detect them."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="AutoSkipRecapToggle"
+                                Grid.Column="1"
+                                IsOn="{x:Bind ViewModel.AutoSkipRecap, Mode=TwoWay}"
+                                VerticalAlignment="Center"
+                                OnContent="" OffContent="" />
+                        </Grid>
+
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
                         <!-- Next episode preview -->
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -510,9 +512,9 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Show next episode preview automatically" FontSize="14" FontWeight="Medium"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Use preview markers when available before the next episode countdown."
+                                <TextBlock Text="Start next at preview" FontSize="14" FontWeight="Medium"
+                                            Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Begin the next episode when the current one reaches its next-episode preview teaser, rather than waiting for the end credits."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
@@ -546,21 +548,27 @@
                             <StackPanel Grid.Column="0" Spacing="2">
                                 <TextBlock Text="Next up episodes" FontSize="14" FontWeight="Medium"
                                            Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Choose whether the next unwatched episode appears with Continue Watching or on its own."
+                                <TextBlock Text="Choose whether upcoming episodes stay with Continue Watching or get their own row."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
                                 <ComboBox x:Name="NextUpModeComboBox" Width="240" VerticalAlignment="Center" SelectionChanged="NextUpModeComboBox_SelectionChanged">
                                     <ComboBoxItem Content="With Continue Watching" Tag="combined" />
-                                    <ComboBoxItem Content="In a separate section" Tag="separate" />
+                                    <ComboBoxItem Content="Separate row" Tag="separate" />
                                 </ComboBox>
                                 <Button Content="Reset" Style="{StaticResource GhostButtonStyle}" Command="{x:Bind ViewModel.ResetNextUpModeCommand}" />
                             </StackPanel>
                         </Grid>
 
-                        <Border Style="{StaticResource SettingsSeparator}" />
+                    </StackPanel>
+                </Border>
 
+                <!-- Native-only capability, kept separate so the WebUI defaults card remains identical. -->
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Desktop playback" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
@@ -576,7 +584,7 @@
             <!-- ===================================================================== -->
             <!-- ===== Libraries Panel ===== -->
             <!-- ===================================================================== -->
-            <StackPanel x:Name="LibrariesPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="LibrariesPanel" Spacing="24" Margin="0" Visibility="Collapsed">
 
                 <StackPanel Spacing="12">
                     <TextBlock Text="Libraries" FontSize="24" FontWeight="SemiBold"
@@ -585,6 +593,27 @@
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
                                TextWrapping="Wrap" />
                 </StackPanel>
+
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="0">
+                        <TextBlock Text="Browsing" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="These preferences apply to this profile on the current device."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" Margin="0,4,0,16" />
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Remember library pages" FontSize="14" FontWeight="Medium" />
+                                <TextBlock Text="Return each library to the last tab, sort, and filters used on this profile and device."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch x:Name="RememberLibraryPagesToggle" Grid.Column="1"
+                                          IsOn="True" OnContent="" OffContent=""
+                                          VerticalAlignment="Center" Toggled="RememberLibraryPagesToggle_Toggled" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
 
                 <Border Style="{StaticResource SettingsGroupStyle}" Padding="16">
                     <Grid ColumnSpacing="16">
@@ -611,12 +640,12 @@
             <!-- ===================================================================== -->
             <!-- ===== Subtitles Panel ===== -->
             <!-- ===================================================================== -->
-            <StackPanel x:Name="SubtitlesPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="SubtitlesPanel" Spacing="24" Margin="0" Visibility="Collapsed">
 
                 <StackPanel Spacing="12">
                     <TextBlock Text="Subtitles" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="Preview changes as you work, then save when the style feels right."
+                    <TextBlock Text="Choose when subtitles appear and how they look during playback."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
                                TextWrapping="Wrap" />
                 </StackPanel>
@@ -664,7 +693,7 @@
                     <StackPanel Spacing="8">
                         <TextBlock Text="Preview" FontSize="16" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="This sample reflects the current subtitle size, color, and positioning."
+                        <TextBlock Text="This sample reflects the current subtitle appearance."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                    TextWrapping="Wrap" />
                         <!-- 16:9 preview box -->
@@ -688,13 +717,21 @@
                                     <Border x:Name="SubtitlePreviewBg2" Background="#CC000000" CornerRadius="4" Padding="12,4"
                                             HorizontalAlignment="Center">
                                         <TextBlock x:Name="SubtitlePreviewLine2"
-                                                   Text="with multiple lines"
+                                                   Text="tuned for readability"
                                                    FontSize="16" Foreground="White"
                                                    HorizontalAlignment="Center" />
                                     </Border>
                                 </StackPanel>
                             </Grid>
                         </Border>
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                            <Button Content="Save Appearance" Style="{StaticResource AccentButtonStyle}"
+                                    Padding="16,8" Click="SubtitleSave_Click" />
+                            <Button Content="Discard Changes" Style="{StaticResource SecondaryButtonStyle}"
+                                    Padding="16,8" Click="SubtitleDiscard_Click" />
+                            <Button x:Name="SubtitleResetButton" Content="Reset Appearance" Style="{StaticResource GhostButtonStyle}"
+                                    Padding="16,8" Click="SubtitleReset_Click" />
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 
@@ -703,7 +740,7 @@
                     <StackPanel Spacing="0">
                         <TextBlock Text="Text" FontSize="16" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Adjust the size, typeface, color, and outline treatment for subtitle text."
+                        <TextBlock Text="Adjust the look and readability of subtitle text."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                    TextWrapping="Wrap" Margin="0,4,0,16" />
 
@@ -785,7 +822,7 @@
                             <StackPanel Grid.Column="0" Spacing="2">
                                 <TextBlock Text="Outline color" FontSize="14" FontWeight="Medium"
                                            Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Used when text outline or the outline background style is enabled."
+                                <TextBlock Text="Only used when text outline is enabled."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                             </StackPanel>
                             <StackPanel x:Name="SubtitleOutlineColorSwatches" Grid.Column="1" Orientation="Horizontal" Spacing="8" />
@@ -796,9 +833,9 @@
                 <!-- Background group -->
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="0">
-                        <TextBlock Text="Background" FontSize="16" FontWeight="SemiBold"
+                        <TextBlock Text="Background &amp; Position" FontSize="16" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Change the backing used for boxed subtitles and how strongly it appears."
+                        <TextBlock Text="Tune subtitle placement and contrast."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                    TextWrapping="Wrap" Margin="0,4,0,16" />
 
@@ -811,9 +848,6 @@
                             <StackPanel Grid.Column="0" Spacing="2">
                                 <TextBlock Text="Background style" FontSize="14" FontWeight="Medium"
                                            Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Only the boxed style uses a fill, opacity, and background color."
-                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                           TextWrapping="Wrap" />
                             </StackPanel>
                             <ComboBox x:Name="SubtitleBgStyleComboBox" Grid.Column="1" Width="192"
                                       VerticalAlignment="Center"
@@ -836,7 +870,7 @@
                             <StackPanel Grid.Column="0" Spacing="2">
                                 <TextBlock Text="Background opacity" FontSize="14" FontWeight="Medium"
                                            Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Increase this to make the subtitle box more solid."
+                                <TextBlock Text="Only used for boxed subtitles."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
@@ -860,22 +894,11 @@
                             <StackPanel Grid.Column="0" Spacing="2">
                                 <TextBlock Text="Background color" FontSize="14" FontWeight="Medium"
                                            Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Only used for boxed subtitles."
-                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
                             </StackPanel>
                             <StackPanel x:Name="SubtitleBgColorSwatches" Grid.Column="1" Orientation="Horizontal" Spacing="8" />
                         </Grid>
-                    </StackPanel>
-                </Border>
 
-                <!-- Position group -->
-                <Border Style="{StaticResource SettingsGroupStyle}">
-                    <StackPanel Spacing="0">
-                        <TextBlock Text="Position" FontSize="16" FontWeight="SemiBold"
-                                   Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Place subtitles where they read best on the video frame."
-                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                   TextWrapping="Wrap" Margin="0,4,0,16" />
+                        <Border Style="{StaticResource SettingsSeparator}" />
 
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -883,11 +906,8 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Position" FontSize="14" FontWeight="Medium"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Choose where subtitles sit on the video frame."
-                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                           TextWrapping="Wrap" />
+                                <TextBlock Text="Subtitle position" FontSize="14" FontWeight="Medium"
+                                            Foreground="{StaticResource PrimaryTextBrush}" />
                             </StackPanel>
                             <ComboBox x:Name="SubtitlePositionComboBox" Grid.Column="1" Width="192"
                                       VerticalAlignment="Center"
@@ -900,21 +920,12 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Actions -->
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Content="Save Appearance" Style="{StaticResource AccentButtonStyle}"
-                            Padding="16,8" Click="SubtitleSave_Click" />
-                    <Button Content="Discard Changes" Style="{StaticResource SecondaryButtonStyle}"
-                            Padding="16,8" Click="SubtitleDiscard_Click" />
-                    <Button x:Name="SubtitleResetButton" Content="Reset Appearance" Style="{StaticResource SecondaryButtonStyle}"
-                            Padding="16,8" Click="SubtitleReset_Click" />
-                </StackPanel>
             </StackPanel>
 
             <!-- ===================================================================== -->
             <!-- ===== Home Screen Panel ===== -->
             <!-- ===================================================================== -->
-            <StackPanel x:Name="HomeScreenPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="HomeScreenPanel" Spacing="24" Margin="0" Visibility="Collapsed">
 
                 <StackPanel Spacing="12">
                     <TextBlock Text="Home screen" FontSize="24" FontWeight="SemiBold"
@@ -958,9 +969,22 @@
                     <StackPanel Spacing="8">
                         <TextBlock Text="Sections" FontSize="16" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Reorder, show, or hide sections. Use the arrows to change order."
+                        <TextBlock Text="Add, reorder, or hide sections. Drag to change order."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                    TextWrapping="Wrap" />
+
+                        <Grid Margin="0,4,0,4">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button Content="+ Add from Gallery" Style="{StaticResource AccentButtonStyle}"
+                                        Padding="14,7" Click="HomeSectionsAdd_Click" />
+                                <Button Content="Reset" Style="{StaticResource SecondaryButtonStyle}"
+                                        Padding="14,7" Click="HomeSectionsReset_Click" />
+                            </StackPanel>
+                            <TextBlock x:Name="HomeSectionsCountText" Grid.Column="1" Text="0 sections"
+                                       FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                                       VerticalAlignment="Center" />
+                        </Grid>
 
                         <ProgressRing
                             IsActive="{x:Bind ViewModel.IsLoadingHomeSections, Mode=OneWay}"
@@ -973,21 +997,12 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Actions -->
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Content="+ Add from Gallery" Style="{StaticResource AccentButtonStyle}"
-                            Padding="16,8" Click="HomeSectionsAdd_Click" />
-                    <Button Content="Save" Style="{StaticResource AccentButtonStyle}"
-                            Padding="16,8" Click="HomeSectionsSave_Click" />
-                    <Button Content="Reset to Defaults" Style="{StaticResource SecondaryButtonStyle}"
-                            Padding="16,8" Click="HomeSectionsReset_Click" />
-                </StackPanel>
             </StackPanel>
 
             <!-- ===================================================================== -->
             <!-- ===== Card Overlays Panel ===== -->
             <!-- ===================================================================== -->
-            <StackPanel x:Name="CardOverlaysPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="CardOverlaysPanel" Spacing="24" Margin="0" Visibility="Collapsed">
                 <StackPanel Spacing="8">
                     <TextBlock Text="Card Overlays" FontSize="24" FontWeight="SemiBold" />
                     <TextBlock Text="Choose which badges appear on poster cards, where they sit, and how they look. Inspired by Kometa." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
@@ -1007,28 +1022,53 @@
                                 <StackPanel x:Name="OverlayPreviewBottomRight" HorizontalAlignment="Right" VerticalAlignment="Bottom" Spacing="4" />
                             </Grid>
                         </Border>
+                        <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                            <Button x:Name="OverlayMoviePreviewButton" Content="Movie" Tag="movie"
+                                    Style="{StaticResource ActiveTabStyle}" Padding="12,5"
+                                    Click="OverlayPreviewVariant_Click" />
+                            <Button x:Name="OverlayShowPreviewButton" Content="Show" Tag="show"
+                                    Style="{StaticResource InactiveTabStyle}" Padding="12,5"
+                                    Click="OverlayPreviewVariant_Click" />
+                        </StackPanel>
                     </StackPanel>
                 </Border>
-                <Border Style="{StaticResource SettingsGroupStyle}">
-                    <StackPanel Spacing="12">
-                        <TextBlock Text="Preset" FontSize="18" FontWeight="SemiBold" />
-                        <TextBlock Text="Controls the base appearance of every badge. Individual accent colors and icon preferences can override it." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                        <ComboBox x:Name="CardOverlayPresetCombo" Width="260" HorizontalAlignment="Left" SelectionChanged="CardOverlayPresetCombo_SelectionChanged">
-                            <ComboBoxItem Content="Minimal — tiny text, no background" Tag="minimal" />
-                            <ComboBoxItem Content="Classic — dark translucent pills" Tag="classic" />
-                            <ComboBoxItem Content="Vibrant — opaque accent badges" Tag="vibrant" />
-                            <ComboBoxItem Content="Pill — larger, icon-friendly badges" Tag="pill" />
-                            <ComboBoxItem Content="Square — compact Plex-inspired blocks" Tag="square" />
-                        </ComboBox>
-                    </StackPanel>
-                </Border>
+
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <Button x:Name="CardOverlayOverlaysTab" Content="Overlays" Tag="overlays"
+                            Style="{StaticResource ActiveTabStyle}" Click="CardOverlaySectionTab_Click" />
+                    <Button x:Name="CardOverlayStyleTab" Content="Style" Tag="style"
+                            Style="{StaticResource InactiveTabStyle}" Click="CardOverlaySectionTab_Click" />
+                </StackPanel>
                 <StackPanel x:Name="CardOverlayControlsContainer" Spacing="18" />
+                <StackPanel x:Name="CardOverlayStylePanel" Spacing="18" Visibility="Collapsed">
+                    <Border Style="{StaticResource SettingsGroupStyle}">
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="Preset" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="A preset controls the base appearance of every badge. You can override the accent color of individual badges in the Overlays tab." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            <ComboBox x:Name="CardOverlayPresetCombo" Width="360" HorizontalAlignment="Left" SelectionChanged="CardOverlayPresetCombo_SelectionChanged">
+                                <ComboBoxItem Content="Minimal — tiny text, no background" Tag="minimal" />
+                                <ComboBoxItem Content="Classic — dark translucent pills" Tag="classic" />
+                                <ComboBoxItem Content="Vibrant — opaque accent badges" Tag="vibrant" />
+                                <ComboBoxItem Content="Pill — larger, icon-friendly badges" Tag="pill" />
+                                <ComboBoxItem Content="Square — compact Plex-inspired blocks" Tag="square" />
+                            </ComboBox>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource SettingsGroupStyle}">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="How styling works" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="Where to find what." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="• Preset sets the badge shape, background, font, and whether icons show by default.&#x0a;• Accent color (per overlay) tints that badge — gold for IMDb, red for RT, etc.&#x0a;• Icon toggle (per overlay) overrides the preset's icon default for a single overlay.&#x0a;• Position picks which corner the badge sits in. Multiple badges in the same corner stack vertically."
+                                       FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" LineHeight="22" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
             </StackPanel>
 
             <!-- ===================================================================== -->
             <!-- ===== Personalize Panel ===== -->
             <!-- ===================================================================== -->
-            <StackPanel x:Name="PersonalizePanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="PersonalizePanel" Spacing="24" Margin="0" Visibility="Collapsed">
                 <StackPanel Spacing="8">
                     <TextBlock Text="Personalize" FontSize="24" FontWeight="SemiBold" />
                     <TextBlock Text="Pick titles you love so your home, recommendations, and For You rows reflect your taste." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
@@ -1055,7 +1095,7 @@
             <!-- ===================================================================== -->
             <!-- ===== Import Panel ===== -->
             <!-- ===================================================================== -->
-            <StackPanel x:Name="ImportPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="ImportPanel" Spacing="24" Margin="0" Visibility="Collapsed">
 
                 <!-- ===== Header ===== -->
                 <StackPanel Spacing="12">
@@ -1428,7 +1468,7 @@
             <!-- ===================================================================== -->
             <!-- ===== Plugins Panel ===== -->
             <!-- ===================================================================== -->
-            <StackPanel x:Name="PluginsPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="PluginsPanel" Spacing="24" Margin="0" Visibility="Collapsed">
 
                 <StackPanel Spacing="12">
                     <TextBlock Text="Plugin Settings" FontSize="24" FontWeight="SemiBold"
@@ -1452,7 +1492,7 @@
             <!-- ===== Sessions Panel ===== -->
             <!-- ===================================================================== -->
             <!-- ===== Webhook Sync Panel ===== -->
-            <StackPanel x:Name="WebhookSyncPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="WebhookSyncPanel" Spacing="24" Margin="0" Visibility="Collapsed">
                 <StackPanel Spacing="4">
                     <TextBlock Text="Webhook Sync" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
@@ -1528,7 +1568,7 @@
             </StackPanel>
 
             <!-- ===== Watch Providers Panel ===== -->
-            <StackPanel x:Name="WatchProvidersPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="WatchProvidersPanel" Spacing="24" Margin="0" Visibility="Collapsed">
                 <StackPanel Spacing="4">
                     <TextBlock Text="Watch Providers" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
@@ -1551,7 +1591,7 @@
             </StackPanel>
 
             <!-- ===== Theme Editor Panel ===== -->
-            <StackPanel x:Name="ThemeEditorPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="ThemeEditorPanel" Spacing="24" Margin="0" Visibility="Collapsed">
                 <StackPanel Spacing="4">
                     <Grid>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -1572,6 +1612,8 @@
                     <StackPanel Spacing="8">
                         <TextBlock Text="Preview" FontSize="14" FontWeight="Medium"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Live preview of your customizations." FontSize="12"
+                                   Foreground="{StaticResource SecondaryTextBrush}" />
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                                 CornerRadius="12" Padding="20">
                             <StackPanel Spacing="12">
@@ -1595,22 +1637,45 @@
                     </StackPanel>
                 </Border>
 
-                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <Button x:Name="ThemeTokensTab" Content="Tokens" Tag="tokens"
+                            Style="{StaticResource ActiveTabStyle}" Click="ThemeEditorSectionTab_Click" />
+                    <Button x:Name="ThemeCssTab" Content="Custom CSS" Tag="css"
+                            Style="{StaticResource InactiveTabStyle}" Click="ThemeEditorSectionTab_Click" />
+                    <Button x:Name="ThemeCatalogTab" Content="Catalog" Tag="catalog"
+                            Style="{StaticResource InactiveTabStyle}" Click="ThemeEditorSectionTab_Click" />
+                </StackPanel>
+
+                <Border x:Name="ThemeTokensPanel" Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
                     <StackPanel Spacing="12">
                         <TextBlock Text="Token Overrides" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Override individual native design tokens. Changes layer on top of your active theme and apply instantly."
+                        <TextBlock Text="Override individual design tokens. Changes layer on top of your active theme and apply instantly."
                                    FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
                         <StackPanel x:Name="ThemeTokenOverridesHost" Spacing="10" />
                     </StackPanel>
                 </Border>
 
-                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
+                <Border x:Name="ThemeCssPanel" Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16" Visibility="Collapsed">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Custom CSS" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Write arbitrary CSS for advanced customization. CSS is saved to your Silo profile for the WebUI."
+                                   FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
+                        <TextBox x:Name="ThemeCustomCssBox" AcceptsReturn="True" TextWrapping="NoWrap"
+                                 MinHeight="300" FontFamily="Cascadia Mono" FontSize="13"
+                                 PlaceholderText="/* Custom CSS */" TextChanged="ThemeCustomCssBox_TextChanged"
+                                 AutomationProperties.Name="Custom CSS" />
+                        <TextBlock x:Name="ThemeCustomCssStatus" Text="Changes save automatically."
+                                   FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                </Border>
+
+                <Border x:Name="ThemeCatalogPanel" Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16" Visibility="Collapsed">
                     <StackPanel Spacing="12">
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock Text="Community Themes" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Browse and install themes provided by the Silo server catalog."
+                                <TextBlock Text="Browse and install themes created by the community."
                                            FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
                             </StackPanel>
                             <Button x:Name="ThemeCatalogRefreshButton" Grid.Column="1" Content="Refresh"
@@ -1622,12 +1687,12 @@
             </StackPanel>
 
             <!-- ===== Notification Settings Panel ===== -->
-            <StackPanel x:Name="NotificationsSettingsPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="NotificationsSettingsPanel" Spacing="24" Margin="0" Visibility="Collapsed">
                 <ContentControl x:Name="NotificationsSettingsHost" />
             </StackPanel>
 
             <!-- ===== Profiles Panel ===== -->
-            <StackPanel x:Name="ProfilesPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="ProfilesPanel" Spacing="24" Margin="0" Visibility="Collapsed">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -1636,7 +1701,7 @@
                     <StackPanel Spacing="4">
                         <TextBlock Text="Profiles" FontSize="24" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Manage user profiles: names, PINs, and access rules."
+                        <TextBlock Text="Manage profile names, PINs, and access rules."
                                    FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
                     <Button x:Name="AddProfileButton" Grid.Column="1"
@@ -1645,48 +1710,40 @@
                             Click="AddProfileButton_Click">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon Glyph="&#xE710;" FontSize="13" />
-                            <TextBlock Text="Add Profile" />
+                            <TextBlock Text="New profile" />
                         </StackPanel>
                     </Button>
                 </Grid>
                 <StackPanel x:Name="HouseholdStreamsPanel" Spacing="8" />
                 <StackPanel x:Name="ProfileCardsPanel" Spacing="8" />
-                <TextBlock x:Name="NoProfilesText" Text="No profiles found."
+                <TextBlock x:Name="NoProfilesText" Text="No profiles yet&#x0a;Create a profile to manage access and playback identity."
                            FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
                            HorizontalAlignment="Center" Visibility="Collapsed" />
             </StackPanel>
 
             <!-- ===== Accessibility Panel ===== -->
-            <StackPanel x:Name="AccessibilityPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="AccessibilityPanel" Spacing="24" Margin="0" Visibility="Collapsed">
                 <StackPanel Spacing="12">
                     <TextBlock Text="Accessibility" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="Increase text size, strengthen type weight, and raise contrast for clearer reading."
-                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 </StackPanel>
 
-                <!-- Text Size -->
+                <!-- Readability -->
                 <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
                     <StackPanel Spacing="12">
-                        <TextBlock Text="Text Size" FontSize="14" FontWeight="Medium"
+                        <TextBlock Text="Readability" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Increase text size, strengthen type weight, and raise contrast for clearer reading."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        <TextBlock Text="Text size" FontSize="14" FontWeight="Medium"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <StackPanel x:Name="TextSizeButtons" Orientation="Horizontal" Spacing="8" />
-                    </StackPanel>
-                </Border>
 
-                <!-- Text Weight -->
-                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
-                    <StackPanel Spacing="12">
-                        <TextBlock Text="Text Weight" FontSize="14" FontWeight="Medium"
+                        <TextBlock Text="Text weight" FontSize="14" FontWeight="Medium" Margin="0,8,0,0"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <StackPanel x:Name="TextWeightButtons" Orientation="Horizontal" Spacing="8" />
-                    </StackPanel>
-                </Border>
 
-                <!-- Contrast -->
-                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
-                    <StackPanel Spacing="12">
-                        <TextBlock Text="Contrast" FontSize="14" FontWeight="Medium"
+                        <TextBlock Text="Contrast" FontSize="14" FontWeight="Medium" Margin="0,8,0,0"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <StackPanel x:Name="ContrastButtons" Orientation="Horizontal" Spacing="8" />
                     </StackPanel>
@@ -1697,6 +1754,8 @@
                     <StackPanel Spacing="8">
                         <TextBlock Text="Preview" FontSize="14" FontWeight="Medium"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="See how text looks with your current readability settings."
+                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                                 CornerRadius="8" Padding="16">
                             <StackPanel Spacing="8">
@@ -1713,7 +1772,7 @@
                 </Border>
             </StackPanel>
 
-            <StackPanel x:Name="SessionsPanel" Spacing="24" Margin="0,32,0,0" Visibility="Collapsed">
+            <StackPanel x:Name="SessionsPanel" Spacing="24" Margin="0" Visibility="Collapsed">
 
                 <StackPanel Spacing="12">
                     <TextBlock Text="Active Sessions" FontSize="24" FontWeight="SemiBold"

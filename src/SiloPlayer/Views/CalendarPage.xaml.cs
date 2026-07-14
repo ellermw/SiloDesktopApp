@@ -184,14 +184,18 @@ public sealed partial class CalendarPage : Page
     private void BuildWeekStrip()
     {
         WeekStripPanel.Children.Clear();
+        WeekStripPanel.ColumnDefinitions.Clear();
+        for (var i = 0; i < 7; i++)
+            WeekStripPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         var datesWithEvents = new HashSet<string>();
         foreach (var d in ViewModel.Days) datesWithEvents.Add(d.Date);
 
         var days = CalendarViewModel.GetWeekDays(ViewModel.WeekStart);
         var activeSelectedDay = _selectedDay != null && days.Contains(_selectedDay) ? _selectedDay : null;
-        foreach (var dateStr in days)
+        for (var dayIndex = 0; dayIndex < days.Count; dayIndex++)
         {
+            var dateStr = days[dayIndex];
             var (label, day) = CalendarViewModel.FormatShortDay(dateStr);
             var today = CalendarViewModel.IsToday(dateStr);
             var hasEvents = datesWithEvents.Contains(dateStr);
@@ -270,6 +274,7 @@ public sealed partial class CalendarPage : Page
 
             cell.Child = stack;
             cell.Tapped += (_, _) => SelectDay(dateStr, hasEvents);
+            Grid.SetColumn(cell, dayIndex);
             WeekStripPanel.Children.Add(cell);
         }
 

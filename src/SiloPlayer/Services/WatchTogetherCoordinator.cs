@@ -1,8 +1,11 @@
 using System.ComponentModel;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.ViewModels;
+using Windows.ApplicationModel.DataTransfer;
 
 namespace SiloPlayer.Services;
 
@@ -47,6 +50,8 @@ public sealed class WatchTogetherCoordinator
 
         _playerService.SessionStarted += NotifyPlaybackStarted;
         _playerService.BufferingChanged += OnLocalBufferingChanged;
+        _playerService.ContentLoaded += PushWatchTogetherOverlay;
+        _playerService.WatchTogetherActionRequested += OnWatchTogetherActionRequested;
     }
 
     public WatchTogetherRoomViewModel? ActiveRoom => _activeRoom;
@@ -64,6 +69,7 @@ public sealed class WatchTogetherCoordinator
         _activeRoom = room;
         room.TransportCommandReceived += OnTransportCommandReceived;
         room.PropertyChanged += OnRoomPropertyChanged;
+        PushWatchTogetherOverlay();
 
         // If a session is already in flight when the room becomes active,
         // attach it immediately and kick off periodic state reporting.
@@ -84,6 +90,7 @@ public sealed class WatchTogetherCoordinator
         _activeRoom.DetachSession();
         _activeRoom = null;
         _attachedSessionId = null;
+        _playerService.SetWatchTogetherOverlay(null);
         StopStateReportTimer();
         _readyState = ReadyState.Idle;
     }
@@ -101,6 +108,7 @@ public sealed class WatchTogetherCoordinator
         _attachedSessionId = sessionId;
         _readyState = ReadyState.Idle;
         StartStateReportTimer();
+        PushWatchTogetherOverlay();
     }
 
     public void NotifyPlaybackEnded()
@@ -125,6 +133,11 @@ public sealed class WatchTogetherCoordinator
     private void OnRoomPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (_activeRoom == null) return;
+        if (e.PropertyName is nameof(WatchTogetherRoomViewModel.Room)
+            or nameof(WatchTogetherRoomViewModel.ConnectionState))
+        {
+            PushWatchTogetherOverlay();
+        }
         if (e.PropertyName != nameof(WatchTogetherRoomViewModel.Room)) return;
 
         if (_activeRoom.ShouldAutoStartPlayback &&
@@ -150,6 +163,60 @@ public sealed class WatchTogetherCoordinator
         {
             _readyState = ReadyState.Ready;
             _activeRoom.ReportReady(_playerService.Position, _playerService.IsPaused);
+        }
+    }
+
+    private void PushWatchTogetherOverlay()
+    {
+        _playerService.SetWatchTogetherOverlay(
+            _activeRoom?.Room,
+            _activeRoom?.ConnectionState ?? "disconnected");
+    }
+
+    private void OnWatchTogetherActionRequested(string action)
+    {
+        var roomViewModel = _activeRoom;
+        var room = roomViewModel?.Room;
+        if (roomViewModel == null || room == null || !room.SelfCanManageRoom)
+            return;
+
+        switch (action)
+        {
+            case "invite":
+                CopyInvite(room);
+                break;
+            case "toggle-policy":
+                if (roomViewModel.TogglePolicyCommand.CanExecute(null))
+                    roomViewModel.TogglePolicyCommand.Execute(null);
+                break;
+            case "end":
+                if (roomViewModel.CloseRoomCommand.CanExecute(null))
+                    roomViewModel.CloseRoomCommand.Execute(null);
+                break;
+        }
+    }
+
+    private static void CopyInvite(WatchTogetherRoomSnapshot room)
+    {
+        try
+        {
+            var invite = room.InvitePath;
+            if (string.IsNullOrWhiteSpace(invite))
+                invite = room.Code;
+            else if (!Uri.TryCreate(invite, UriKind.Absolute, out _))
+            {
+                var apiBase = App.Services.GetRequiredService<SiloApiClient>().BaseUrl;
+                var origin = new Uri(apiBase).GetLeftPart(UriPartial.Authority);
+                invite = new Uri(new Uri(origin), invite).ToString();
+            }
+
+            var package = new DataPackage();
+            package.SetText(invite ?? room.Code);
+            Clipboard.SetContent(package);
+        }
+        catch
+        {
+            // Clipboard may be unavailable while Windows is switching secure desktops.
         }
     }
 

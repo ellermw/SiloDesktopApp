@@ -14,11 +14,14 @@ public class AdminUsersParitySourceTests
     [Fact]
     public void UsersPageUsesCurrentHeaderTabsAndActions()
     {
-        Assert.Contains("MaxWidth=\"1560\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("MaxWidth=\"1640\"", Markup, StringComparison.Ordinal);
         Assert.Contains("FontSize=\"48\"", Markup, StringComparison.Ordinal);
         Assert.Contains("Text=\"Access Groups\"", Markup, StringComparison.Ordinal);
         Assert.Contains("Text=\"Add User\"", Markup, StringComparison.Ordinal);
         Assert.Contains("Text=\"Invite Codes\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("Text=\"Public Signups\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("Text=\"Usage\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("Text=\"Create Code\"", Markup, StringComparison.Ordinal);
         Assert.DoesNotContain("Text=\"User Defaults\"", Markup, StringComparison.Ordinal);
     }
 
@@ -26,10 +29,13 @@ public class AdminUsersParitySourceTests
     public void UsersTableIncludesCurrentSortableColumns()
     {
         foreach (var column in new[] { "Username", "Email", "Role", "Status", "Created", "Last Active" })
-            Assert.Contains($"Content=\"{column}\"", Markup, StringComparison.Ordinal);
+            Assert.Contains($"Text=\"{column}\"", Markup, StringComparison.Ordinal);
         Assert.Contains("UserSort_Click", Markup, StringComparison.Ordinal);
         Assert.Contains("_sortColumn", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("UpdateUserSortIndicators", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("FormatCreated(user.CreatedAt)", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("Copy invite code", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("SignupEnabledToggle_Toggled", CodeBehind, StringComparison.Ordinal);
     }
 
     [Fact]

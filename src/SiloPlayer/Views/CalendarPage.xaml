@@ -163,16 +163,12 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" Spacing="6">
+                    <StackPanel Grid.Column="0" Spacing="0">
                         <TextBlock
                             Text="Calendar"
-                            FontSize="{StaticResource FontSizeDisplayLarge}"
+                            FontSize="32"
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock
-                            Text="Upcoming releases and new episodes this week."
-                            FontSize="14"
-                            Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
 
                     <StackPanel Grid.Column="1"
@@ -233,61 +229,32 @@
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1">
                     <StackPanel Spacing="8">
-                        <TextBlock
-                            x:Name="WeekRangeLabel"
-                            Text="{x:Bind ViewModel.WeekRangeLabel, Mode=OneWay}"
-                            FontSize="11"
-                            FontWeight="Medium"
-                            CharacterSpacing="80"
-                            Foreground="{StaticResource SecondaryTextBrush}"
-                            HorizontalAlignment="Center" />
-
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-
-                            <!-- Prev week — right-aligned inside the left 1fr column,
-                                 so it sits right next to the day strip -->
-                            <Button
-                                Grid.Column="0"
-                                Style="{StaticResource GhostButtonStyle}"
-                                HorizontalAlignment="Right"
-                                VerticalAlignment="Center"
-                                Margin="0,0,12,0"
-                                Width="32" Height="32"
-                                Padding="0"
-                                CornerRadius="16"
-                                Command="{x:Bind ViewModel.PrevWeekCommand}"
-                                ToolTipService.ToolTip="Previous week">
-                                <FontIcon Glyph="&#xE76B;" FontSize="12"
-                                          Foreground="{StaticResource SecondaryTextBrush}" />
-                            </Button>
-
-                            <!-- Week day strip (7 cells) — auto-sized and centered -->
                             <StackPanel
-                                x:Name="WeekStripPanel"
-                                Grid.Column="1"
-                                Orientation="Horizontal"
-                                HorizontalAlignment="Center"
-                                VerticalAlignment="Center"
-                                Spacing="4" />
-
-                            <!-- Today + Next week — left-aligned inside the right 1fr
-                                 column, so they sit right next to the day strip -->
-                            <StackPanel
-                                Grid.Column="2"
                                 Orientation="Horizontal"
                                 HorizontalAlignment="Left"
-                                VerticalAlignment="Center"
-                                Margin="12,0,0,0"
-                                Spacing="4">
+                                VerticalAlignment="Center">
                                 <Button
-                                    Content="Today"
-                                    Style="{StaticResource FilterPillOutlineButtonStyle}"
-                                    Command="{x:Bind ViewModel.TodayCommand}" />
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Width="32" Height="32"
+                                    Padding="0"
+                                    CornerRadius="16"
+                                    Command="{x:Bind ViewModel.PrevWeekCommand}"
+                                    ToolTipService.ToolTip="Previous week">
+                                    <FontIcon Glyph="&#xE76B;" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                </Button>
+                                <TextBlock
+                                    x:Name="WeekRangeLabel"
+                                    Text="{x:Bind ViewModel.WeekRangeLabel, Mode=OneWay}"
+                                    FontSize="13"
+                                    FontWeight="SemiBold"
+                                    Foreground="{StaticResource PrimaryTextBrush}"
+                                    VerticalAlignment="Center"
+                                    Margin="5,0" />
                                 <Button
                                     Style="{StaticResource GhostButtonStyle}"
                                     Width="32" Height="32"
@@ -295,11 +262,17 @@
                                     CornerRadius="16"
                                     Command="{x:Bind ViewModel.NextWeekCommand}"
                                     ToolTipService.ToolTip="Next week">
-                                    <FontIcon Glyph="&#xE76C;" FontSize="12"
-                                              Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <FontIcon Glyph="&#xE76C;" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                                 </Button>
                             </StackPanel>
+                            <Button
+                                Grid.Column="1"
+                                Content="Today"
+                                Style="{StaticResource FilterPillOutlineButtonStyle}"
+                                Command="{x:Bind ViewModel.TodayCommand}" />
                         </Grid>
+
+                        <Grid x:Name="WeekStripPanel" ColumnSpacing="6" />
                     </StackPanel>
                 </Border>
 

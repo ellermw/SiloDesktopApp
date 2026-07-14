@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using System.Collections.Specialized;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
@@ -14,6 +15,9 @@ public sealed partial class AdminUsersPage : Page
     public AdminUsersViewModel ViewModel { get; }
     public AdminInviteCodesViewModel InviteCodesViewModel { get; }
     private bool _inviteCodesLoaded;
+    private bool _updatingSignupToggle;
+    private bool _usersSubscribed;
+    private bool _inviteCodesSubscribed;
 
     // B54: Playback quality options now live in SiloPlayer.Core.Helpers.PlaybackQuality.
     private static readonly (string Value, string Label, string Description)[] PlaybackQualityOptions
@@ -32,7 +36,7 @@ public sealed partial class AdminUsersPage : Page
     {
         try
         {
-            ViewModel.Users.CollectionChanged += (_, _) => ScheduleRebuild();
+            SubscribeToCollections();
             await ViewModel.LoadCommand.ExecuteAsync(null);
         }
         catch (Exception ex)
@@ -40,6 +44,45 @@ public sealed partial class AdminUsersPage : Page
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
     }
+
+    private void Page_Unloaded(object sender, RoutedEventArgs e)
+    {
+        if (_usersSubscribed)
+        {
+            ViewModel.Users.CollectionChanged -= Users_CollectionChanged;
+            _usersSubscribed = false;
+        }
+
+        if (_inviteCodesSubscribed)
+        {
+            InviteCodesViewModel.InviteCodes.CollectionChanged -= InviteCodes_CollectionChanged;
+            _inviteCodesSubscribed = false;
+        }
+
+        _rebuildPending = false;
+        _inviteCodesRebuildPending = false;
+    }
+
+    private void SubscribeToCollections()
+    {
+        if (!_usersSubscribed)
+        {
+            ViewModel.Users.CollectionChanged += Users_CollectionChanged;
+            _usersSubscribed = true;
+        }
+
+        if (_inviteCodesLoaded && !_inviteCodesSubscribed)
+        {
+            InviteCodesViewModel.InviteCodes.CollectionChanged += InviteCodes_CollectionChanged;
+            _inviteCodesSubscribed = true;
+        }
+    }
+
+    private void Users_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuild();
+
+    private void InviteCodes_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        => ScheduleInviteCodesRebuild();
 
     private void ScheduleRebuild()
     {
@@ -80,7 +123,7 @@ public sealed partial class AdminUsersPage : Page
         if (!_inviteCodesLoaded)
         {
             _inviteCodesLoaded = true;
-            InviteCodesViewModel.InviteCodes.CollectionChanged += (_, _) => ScheduleInviteCodesRebuild();
+            SubscribeToCollections();
             InviteCodesLoading.IsActive = true;
             InviteCodesLoading.Visibility = Visibility.Visible;
             try { await InviteCodesViewModel.LoadCommand.ExecuteAsync(null); }
@@ -90,7 +133,31 @@ public sealed partial class AdminUsersPage : Page
                 InviteCodesLoading.IsActive = false;
                 InviteCodesLoading.Visibility = Visibility.Collapsed;
             }
+
+            _updatingSignupToggle = true;
+            SignupEnabledToggle.IsOn = InviteCodesViewModel.SignupEnabled;
+            SignupEnabledText.Text = InviteCodesViewModel.SignupEnabled ? "Enabled" : "Disabled";
+            _updatingSignupToggle = false;
         }
+    }
+
+    private async void SignupEnabledToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_updatingSignupToggle || !_inviteCodesLoaded) return;
+
+        var requested = SignupEnabledToggle.IsOn;
+        SignupEnabledToggle.IsEnabled = false;
+        var saved = await InviteCodesViewModel.SetSignupEnabledAsync(requested);
+        _updatingSignupToggle = true;
+        SignupEnabledToggle.IsOn = saved ? requested : InviteCodesViewModel.SignupEnabled;
+        SignupEnabledText.Text = SignupEnabledToggle.IsOn ? "Enabled" : "Disabled";
+        _updatingSignupToggle = false;
+        SignupEnabledToggle.IsEnabled = true;
+
+        if (saved)
+            ShowStatus(requested ? "Public signups enabled." : "Public signups disabled.");
+        else if (!string.IsNullOrWhiteSpace(InviteCodesViewModel.ErrorMessage))
+            ShowStatus(InviteCodesViewModel.ErrorMessage);
     }
 
     // ===== Table Builder =====
@@ -224,7 +291,27 @@ public sealed partial class AdminUsersPage : Page
             _sortAscending = true;
         }
         _userPage = 0;
+        UpdateUserSortIndicators();
         BuildUserRows();
+    }
+
+    private void UpdateUserSortIndicators()
+    {
+        var indicators = new Dictionary<string, FontIcon>
+        {
+            ["username"] = UsernameSortIcon,
+            ["email"] = EmailSortIcon,
+            ["role"] = RoleSortIcon,
+            ["status"] = StatusSortIcon,
+            ["created"] = CreatedSortIcon,
+            ["last_active"] = LastActiveSortIcon,
+        };
+
+        foreach (var (column, icon) in indicators)
+        {
+            icon.Visibility = column == _sortColumn ? Visibility.Visible : Visibility.Collapsed;
+            icon.Glyph = _sortAscending ? "\uE70E" : "\uE70D";
+        }
     }
 
     private static DateTimeOffset ParseDate(string? value)
@@ -1194,13 +1281,18 @@ public sealed partial class AdminUsersPage : Page
         var row = new Grid { Padding = new Thickness(20, 14, 20, 14), ColumnSpacing = 12 };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
 
-        // Code (monospace)
+        // Code + copy action.
+        var codeCell = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
         var codeBorder = new Border
         {
             Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
@@ -1216,8 +1308,18 @@ public sealed partial class AdminUsersPage : Page
             FontFamily = new FontFamily("Consolas, Courier New"),
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         };
-        Grid.SetColumn(codeBorder, 0);
-        row.Children.Add(codeBorder);
+        codeCell.Children.Add(codeBorder);
+        var copyButton = MakeGhostIconButton("\uE8C8", $"Copy invite code {code.Code}");
+        copyButton.Click += (_, _) =>
+        {
+            var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+            package.SetText(code.Code);
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+            ShowStatus("Copied to clipboard.");
+        };
+        codeCell.Children.Add(copyButton);
+        Grid.SetColumn(codeCell, 0);
+        row.Children.Add(codeCell);
 
         // Label
         var label = new TextBlock
@@ -1231,29 +1333,19 @@ public sealed partial class AdminUsersPage : Page
         Grid.SetColumn(label, 1);
         row.Children.Add(label);
 
-        // Max uses
-        var maxUses = new TextBlock
+        // Usage is one field in the WebUI.
+        var usage = new TextBlock
         {
-            Text = code.MaxUses > 0 ? code.MaxUses.ToString() : "\u221E",
+            Text = $"{code.UseCount:N0} / {code.MaxUses:N0}",
             FontSize = 13,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            Foreground = (SolidColorBrush)Application.Current.Resources[
+                code.MaxUses > 0 && code.UseCount >= code.MaxUses ? "ErrorBrush" : "SecondaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center
         };
-        Grid.SetColumn(maxUses, 2);
-        row.Children.Add(maxUses);
+        Grid.SetColumn(usage, 2);
+        row.Children.Add(usage);
 
-        // Use count
-        var useCount = new TextBlock
-        {
-            Text = code.UseCount.ToString(),
-            FontSize = 13,
-            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(useCount, 3);
-        row.Children.Add(useCount);
-
-        // Status badge
+        // Status switch + badge.
         Border statusBadge;
         if (code.Enabled)
         {
@@ -1289,8 +1381,31 @@ public sealed partial class AdminUsersPage : Page
                 Foreground = new SolidColorBrush(Color.FromArgb(255, 160, 160, 160))
             };
         }
-        Grid.SetColumn(statusBadge, 4);
-        row.Children.Add(statusBadge);
+        var capturedCode = code;
+        var statusToggle = new ToggleSwitch
+        {
+            IsOn = code.Enabled,
+            OnContent = "",
+            OffContent = "",
+            MinWidth = 44,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        statusToggle.Toggled += async (_, _) =>
+        {
+            statusToggle.IsEnabled = false;
+            await InviteCodesViewModel.ToggleInviteCodeCommand.ExecuteAsync(capturedCode);
+            ShowStatus(InviteCodesViewModel.StatusMessage ?? (capturedCode.Enabled ? "Code disabled." : "Code enabled."));
+        };
+        var statusCell = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        statusCell.Children.Add(statusToggle);
+        statusCell.Children.Add(statusBadge);
+        Grid.SetColumn(statusCell, 3);
+        row.Children.Add(statusCell);
 
         // Created date
         string createdText = "\u2014";
@@ -1303,31 +1418,21 @@ public sealed partial class AdminUsersPage : Page
             Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center
         };
-        Grid.SetColumn(created, 5);
+        Grid.SetColumn(created, 4);
         row.Children.Add(created);
 
-        // Actions: toggle + delete
+        // Actions: top-up + delete. Enable/disable lives in the Status cell.
         var actions = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 4,
             VerticalAlignment = VerticalAlignment.Center
         };
-        var capturedCode = code;
-
-        var topUpBtn = MakeGhostIconButton("\uE710", "Add uses");
+        var topUpBtn = MakeGhostIconButton("\uE710", $"Top up invite code {code.Code}");
         topUpBtn.Click += async (_, _) => await OpenTopUpInviteCodeDialogAsync(capturedCode);
         actions.Children.Add(topUpBtn);
 
-        var toggleBtn = MakeGhostIconButton(code.Enabled ? "\uE8FB" : "\uE73E", code.Enabled ? "Disable" : "Enable");
-        toggleBtn.Click += async (_, _) =>
-        {
-            await InviteCodesViewModel.ToggleInviteCodeCommand.ExecuteAsync(capturedCode);
-            ShowStatus(capturedCode.Enabled ? "Code disabled." : "Code enabled.");
-        };
-        actions.Children.Add(toggleBtn);
-
-        var deleteBtn = MakeGhostIconButton("\uE74D", "Delete");
+        var deleteBtn = MakeGhostIconButton("\uE74D", $"Delete invite code {code.Code}");
         deleteBtn.Click += async (_, _) =>
         {
             var dialog = new ContentDialog
@@ -1348,7 +1453,7 @@ public sealed partial class AdminUsersPage : Page
         };
         actions.Children.Add(deleteBtn);
 
-        Grid.SetColumn(actions, 6);
+        Grid.SetColumn(actions, 5);
         row.Children.Add(actions);
 
         return row;
@@ -1358,19 +1463,19 @@ public sealed partial class AdminUsersPage : Page
     {
         var codeBox = new TextBox
         {
-            PlaceholderText = "Leave blank to auto-generate",
+            PlaceholderText = "e.g. BETA2026",
             CornerRadius = new CornerRadius(8),
             FontSize = 13
         };
         var labelBox = new TextBox
         {
-            PlaceholderText = "e.g. Friends & Family",
+            PlaceholderText = "e.g. Beta testers",
             CornerRadius = new CornerRadius(8),
             FontSize = 13
         };
         var maxUsesBox = new NumberBox
         {
-            Value = 1,
+            Value = 10,
             Minimum = 1,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
             CornerRadius = new CornerRadius(8),
@@ -1378,9 +1483,9 @@ public sealed partial class AdminUsersPage : Page
         };
 
         var form = new StackPanel { Width = 512, Spacing = 16 };
-        AddInviteCodeFormField(form, "Code (optional)", codeBox);
+        AddInviteCodeFormField(form, "Code (optional, auto-generated if empty)", codeBox);
         AddInviteCodeFormField(form, "Label", labelBox);
-        AddInviteCodeFormField(form, "Max Uses", maxUsesBox);
+        AddInviteCodeFormField(form, "Max uses", maxUsesBox);
 
         var dialog = new ContentDialog
         {
@@ -1398,7 +1503,7 @@ public sealed partial class AdminUsersPage : Page
         {
             Code = string.IsNullOrWhiteSpace(codeBox.Text) ? null : codeBox.Text.Trim(),
             Label = labelBox.Text.Trim(),
-            MaxUses = double.IsNaN(maxUsesBox.Value) ? 1 : (int)maxUsesBox.Value
+            MaxUses = double.IsNaN(maxUsesBox.Value) ? 10 : (int)maxUsesBox.Value
         });
         ShowStatus("Invite code created.");
     }

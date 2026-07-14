@@ -1,5 +1,8 @@
 namespace SiloPlayer.Core.Models.Admin;
 
+using System.Text.Json.Serialization;
+using SiloPlayer.Core.Json;
+
 public sealed class AdminDevicesResponse
 {
     public List<AdminDeviceSummary> Devices { get; set; } = [];
@@ -10,6 +13,7 @@ public sealed class AdminDeviceProfileSummary
     public string ProfileId { get; set; } = "";
     public string ProfileName { get; set; } = "";
     public int OverrideCount { get; set; }
+    [JsonConverter(typeof(FlexibleNullableDateTimeOffsetConverter))]
     public DateTimeOffset? LastUpdated { get; set; }
 }
 
@@ -24,6 +28,7 @@ public class AdminDeviceSummary
     public int OverrideCount { get; set; }
     public int ProfileCount { get; set; }
     public List<AdminDeviceProfileSummary> Profiles { get; set; } = [];
+    [JsonConverter(typeof(FlexibleNullableDateTimeOffsetConverter))]
     public DateTimeOffset? LastUpdated { get; set; }
 }
 
@@ -37,6 +42,7 @@ public sealed class AdminDeviceSetting
     public string DevicePlatform { get; set; } = "";
     public string Key { get; set; } = "";
     public string Value { get; set; } = "";
+    [JsonConverter(typeof(FlexibleNullableDateTimeOffsetConverter))]
     public DateTimeOffset? UpdatedAt { get; set; }
 }
 

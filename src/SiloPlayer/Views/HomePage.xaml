@@ -125,34 +125,56 @@
 
             <!-- Web: space-y-10 py-2 -->
             <StackPanel x:Name="ContentPanel" Padding="0,8,0,0">
-                <!-- Hero carousel for featured sections (web: mb-10 = 40px) -->
+                <!-- Featured slot has distinct loading, error, ready, and empty
+                     states just like renderHeroSlot() in the current WebUI. -->
+                <controls:SkeletonBackdrop x:Name="HeroLoadingSkeleton" Height="380" Margin="40,0,40,40" Visibility="Collapsed" />
+                <Border
+                    x:Name="HeroErrorPanel"
+                    Height="380"
+                    Margin="40,0,40,40"
+                    Padding="48"
+                    CornerRadius="30"
+                    Background="{StaticResource SurfaceBrush}"
+                    Visibility="Collapsed">
+                    <StackPanel VerticalAlignment="Bottom" Spacing="12" MaxWidth="560" HorizontalAlignment="Left">
+                        <TextBlock x:Name="HeroErrorTitle" FontSize="30" FontWeight="Bold" />
+                        <TextBlock Text="This featured section could not be loaded right now." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <Button Content="Retry section" HorizontalAlignment="Left" Click="RetryHero_Click" />
+                    </StackPanel>
+                </Border>
                 <controls:HeroCarousel x:Name="HeroCarouselControl" Margin="0,0,0,40" />
 
-                <!-- Watch Tonight quick-launcher (web parity: glass button above
-                     the section rows, right-aligned). Opens WatchTonightDialog.
-                     Right margin leaves ~50px clearance so the floating Server
-                     Activity button in MainWindow doesn't overlap on top of it. -->
-                <Grid Margin="40,0,92,12">
-                    <Button
-                        x:Name="WatchTonightButton"
-                        HorizontalAlignment="Right"
-                        Background="{StaticResource SurfaceBrush}"
-                        BorderBrush="{StaticResource BorderBrush}"
-                        BorderThickness="1"
-                        CornerRadius="10"
-                        Padding="14,8"
-                        Click="WatchTonightButton_Click">
-                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <FontIcon Glyph="&#xE734;" FontSize="14"
-                                      Foreground="{StaticResource AccentBrush}" />
-                            <TextBlock
-                                Text="Watch Tonight"
-                                FontSize="13"
-                                FontWeight="SemiBold"
-                                Foreground="{StaticResource PrimaryTextBrush}" />
+                <!-- Soft personalization prompt shown only after the initial
+                     taste picker was skipped and the profile still has no
+                     favorites. Mirrors TasteSeedBanner.tsx. -->
+                <Border
+                    x:Name="TasteSeedBanner"
+                    Margin="48,0,48,40"
+                    Padding="24,16"
+                    CornerRadius="22"
+                    Background="{StaticResource SurfaceBrush}"
+                    Visibility="Collapsed">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="40" Height="40" CornerRadius="20" Background="{StaticResource AccentSubtleBrush}">
+                            <FontIcon Glyph="&#xE735;" FontSize="20" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Text="Personalize your home" FontSize="16" FontWeight="SemiBold" />
+                            <TextBlock Text="Pick a few titles you love and we'll tailor your recommendations." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
-                    </Button>
-                </Grid>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <Button Content="Personalize" Style="{StaticResource AccentButtonStyle}" Click="PersonalizeHome_Click" />
+                            <Button Style="{StaticResource GhostButtonStyle}" Width="32" Height="32" Padding="0" ToolTipService.ToolTip="Dismiss personalization prompt" Click="DismissTasteSeed_Click">
+                                <FontIcon Glyph="&#xE711;" FontSize="13" />
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                </Border>
 
                 <!-- Section rows (each section handles its own spacing and padding) -->
                 <StackPanel x:Name="SectionsPanel" />
@@ -169,7 +191,8 @@
                         Glyph="&#xE80F;"
                         FontSize="40"
                         Foreground="{StaticResource SecondaryTextBrush}"
-                        HorizontalAlignment="Center" />
+                        HorizontalAlignment="Center"
+                        Visibility="Collapsed" />
                     <TextBlock
                         x:Name="EmptyHomeTitle"
                         Text="No sections configured"
@@ -179,13 +202,18 @@
                         HorizontalAlignment="Center" />
                     <TextBlock
                         x:Name="EmptyHomeDescription"
-                        Text="Ask your administrator to set up the homepage in Admin → Home Sections."
+                        Text="Your home screen is empty. Customize it by adding sections to display your media."
                         FontSize="14"
                         Foreground="{StaticResource SecondaryTextBrush}"
                         HorizontalAlignment="Center"
                         TextAlignment="Center"
                         TextWrapping="Wrap"
                         MaxWidth="400" />
+                    <Button
+                        Content="Customize Home Screen"
+                        Style="{StaticResource GhostButtonStyle}"
+                        Foreground="{StaticResource AccentBrush}"
+                        Click="CustomizeHome_Click" />
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>

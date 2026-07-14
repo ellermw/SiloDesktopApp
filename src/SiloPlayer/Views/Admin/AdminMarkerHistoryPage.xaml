@@ -19,7 +19,7 @@
     </Page.Resources>
 
     <ScrollViewer IsScrollInertiaEnabled="True">
-        <StackPanel Padding="32,24,32,40" Spacing="24" MaxWidth="1560" HorizontalAlignment="Center">
+        <StackPanel Padding="40,32,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
             <Grid ColumnSpacing="24">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -36,7 +36,8 @@
                         FontSize="14"
                         Foreground="{StaticResource SecondaryTextBrush}"
                         TextWrapping="Wrap"
-                        MaxWidth="760" />
+                        MaxWidth="760"
+                        HorizontalAlignment="Left" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                     <ComboBox
@@ -57,12 +58,24 @@
                 </StackPanel>
             </Grid>
 
-            <ProgressRing
-                IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-                Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                Width="32" Height="32"
-                HorizontalAlignment="Center"
-                Margin="0,24" />
+            <!-- The WebUI keeps the table footprint stable while loading by
+                 showing six row skeletons instead of replacing it with a spinner. -->
+            <Border
+                Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Padding="16"
+                Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                <StackPanel Spacing="12">
+                    <Border Height="40" Background="{StaticResource SurfaceHoverBrush}" CornerRadius="6" />
+                    <Border Height="40" Background="{StaticResource SurfaceHoverBrush}" CornerRadius="6" />
+                    <Border Height="40" Background="{StaticResource SurfaceHoverBrush}" CornerRadius="6" />
+                    <Border Height="40" Background="{StaticResource SurfaceHoverBrush}" CornerRadius="6" />
+                    <Border Height="40" Background="{StaticResource SurfaceHoverBrush}" CornerRadius="6" />
+                    <Border Height="40" Background="{StaticResource SurfaceHoverBrush}" CornerRadius="6" />
+                </StackPanel>
+            </Border>
 
             <StackPanel
                 Spacing="10"
@@ -93,8 +106,8 @@
                 BorderThickness="1"
                 CornerRadius="8"
                 Visibility="{x:Bind ViewModel.HasRows, Mode=OneWay, Converter={StaticResource BoolToVis}}">
-                <ScrollViewer HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled">
-                    <Grid MinWidth="1180">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
+                    <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />

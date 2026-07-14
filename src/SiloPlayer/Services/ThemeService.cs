@@ -689,6 +689,44 @@ public class ThemeService
         }
     }
 
+    /// <summary>
+    /// Synchronizes the profile-scoped WebUI theme after authentication. The
+    /// local theme is only an early-startup fallback; the profile setting (or
+    /// the server branding default when no profile choice exists) is the same
+    /// source of truth used by the WebUI.
+    /// </summary>
+    public async Task SyncFromServerAsync(CancellationToken cancellationToken = default)
+    {
+        string? themeName = null;
+        try
+        {
+            themeName = (await _settingsApi.GetSettingAsync("ui_theme", cancellationToken)).Value;
+        }
+        catch { /* a profile without an explicit choice uses the branding default */ }
+
+        if (string.IsNullOrWhiteSpace(themeName) || !Themes.ContainsKey(themeName))
+        {
+            try
+            {
+                var branding = await _settingsApi.GetServerBrandingAsync(cancellationToken);
+                if (!string.IsNullOrWhiteSpace(branding.DefaultTheme) && Themes.ContainsKey(branding.DefaultTheme))
+                    themeName = branding.DefaultTheme;
+            }
+            catch { /* retain the local startup fallback while offline */ }
+        }
+
+        if (!string.IsNullOrWhiteSpace(themeName) && Themes.ContainsKey(themeName))
+            ApplyTheme(themeName);
+
+        try
+        {
+            var customTheme = await _settingsApi.GetSettingAsync("ui_custom_theme_vars", cancellationToken);
+            var overrides = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(customTheme.Value) ?? [];
+            SetThemeOverridesFromServer(overrides);
+        }
+        catch { /* custom overrides are optional */ }
+    }
+
     public void ApplyTheme(string themeName)
     {
         if (!Themes.TryGetValue(themeName, out var colors)) return;
@@ -810,6 +848,7 @@ public class ThemeService
         UpdateFontFamily(res, "ThemeDisplayFontFamily", colors.DisplayFontFamily);
 
         ApplyOverrideResources(_settingsService.Load().ThemeOverrides);
+        RefreshDerivedControlResources(res);
     }
 
     public IReadOnlyDictionary<string, string> GetThemeOverrides()
@@ -939,6 +978,67 @@ public class ThemeService
         if (TryFindBrush(res, key, out var brush))
         {
             brush!.Color = ColorFromHex(hex);
+        }
+    }
+
+    private static void RefreshDerivedControlResources(ResourceDictionary resources)
+    {
+        CopyBrushColor(resources, "SurfaceBrush",
+            "ButtonBackground", "ButtonBackgroundDisabled", "ContentDialogBackground");
+        CopyBrushColor(resources, "SurfaceHoverBrush",
+            "ButtonBackgroundPointerOver", "TextControlBackgroundPointerOver",
+            "ComboBoxBackgroundPointerOver", "MenuFlyoutItemBackgroundPointerOver");
+        CopyBrushColor(resources, "SurfaceRaisedBrush",
+            "ButtonBackgroundPressed", "ComboBoxBackgroundPressed",
+            "MenuFlyoutItemBackgroundPressed", "SliderTrackFill");
+        CopyBrushColor(resources, "InputBrush",
+            "TextControlBackground", "TextControlBackgroundFocused",
+            "ComboBoxBackground", "ComboBoxBackgroundFocused");
+        CopyBrushColor(resources, "PrimaryTextBrush",
+            "ButtonForeground", "ButtonForegroundPointerOver",
+            "TextControlForeground", "TextControlForegroundPointerOver", "TextControlForegroundFocused",
+            "ComboBoxForeground", "ComboBoxItemForeground", "ComboBoxItemForegroundSelected",
+            "MenuFlyoutItemForeground", "MenuFlyoutItemForegroundPointerOver",
+            "NavigationViewItemForeground", "NavigationViewItemForegroundPointerOver",
+            "ToggleSwitchKnobFillOffPointerOver", "SliderThumbBackground", "SliderThumbBackgroundPointerOver");
+        CopyBrushColor(resources, "SecondaryTextBrush",
+            "ButtonForegroundPressed", "ToggleSwitchKnobFillOff");
+        CopyBrushColor(resources, "TertiaryTextBrush",
+            "TextControlPlaceholderForeground", "TextControlPlaceholderForegroundPointerOver",
+            "TextControlPlaceholderForegroundFocused");
+        CopyBrushColor(resources, "BorderBrush",
+            "ButtonBorderBrush", "ButtonBorderBrushPointerOver", "ButtonBorderBrushPressed",
+            "TextControlBorderBrush", "ComboBoxBorderBrush", "ComboBoxDropDownBorderBrush",
+            "ContentDialogBorderBrush", "MenuFlyoutPresenterBorderBrush",
+            "ToggleSwitchStrokeOff", "ToggleSwitchStrokeOffPointerOver");
+        CopyBrushColor(resources, "AccentBrush",
+            "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused",
+            "ComboBoxBorderBrushPointerOver", "FocusVisualPrimaryBrush",
+            "SystemControlHighlightAccentBrush", "NavigationViewItemForegroundSelected",
+            "HyperlinkButtonForeground", "HyperlinkButtonForegroundPointerOver", "HyperlinkButtonForegroundPressed",
+            "ToggleSwitchFillOn", "ToggleSwitchFillOnPointerOver", "ToggleSwitchFillOnPressed",
+            "ToggleSwitchStrokeOn", "ToggleSwitchStrokeOnPointerOver",
+            "SliderTrackValueFill", "SliderTrackValueFillPointerOver", "SliderTrackValueFillPressed",
+            "SliderThumbBackgroundPressed");
+        CopyBrushColor(resources, "AccentForegroundBrush", "ToggleSwitchKnobFillOn");
+        CopyBrushColor(resources, "AccentBackgroundBrush",
+            "ComboBoxItemBackgroundSelected", "SystemControlHighlightListAccentLowBrush",
+            "SystemControlHighlightListAccentMediumBrush", "NavigationViewItemBackgroundSelected");
+        CopyBrushColor(resources, "PopoverBrush", "ComboBoxDropDownBackground", "MenuFlyoutPresenterBackground");
+        CopyBrushColor(resources, "AppBackgroundBrush", "NavigationViewContentBackground");
+        CopyBrushColor(resources, "SurfaceHoverBrush", "NavigationViewItemBackgroundPointerOver", "ToggleSwitchFillOffPointerOver");
+        CopyBrushColor(resources, "SurfaceBrush", "ToggleSwitchFillOff");
+    }
+
+    private static void CopyBrushColor(ResourceDictionary resources, string sourceKey, params string[] targetKeys)
+    {
+        if (!TryFindBrush(resources, sourceKey, out var source) || source is null)
+            return;
+
+        foreach (var targetKey in targetKeys)
+        {
+            if (TryFindBrush(resources, targetKey, out var target) && target is not null)
+                target.Color = source.Color;
         }
     }
 

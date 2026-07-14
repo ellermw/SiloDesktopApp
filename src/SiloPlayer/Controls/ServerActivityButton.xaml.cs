@@ -109,6 +109,8 @@ public sealed partial class ServerActivityButton : UserControl
             _events.EventReceived += OnEvent;
             _events.StateChanged += OnWsStateChanged;
             _subscription = _events.Subscribe("sessions", "tasks", "scans");
+            if (_events.TryGetLatestSnapshot("scans", out var cachedScans))
+                OnSnapshot("scans", cachedScans);
         }
         catch
         {
@@ -187,7 +189,7 @@ public sealed partial class ServerActivityButton : UserControl
     }
 
     private static bool IsActiveScanStatus(AdminScanRun run) =>
-        run.Status == "accepted" || run.Status == "running";
+        run.Status is "accepted" or "queued" or "running";
 
     private static readonly System.Text.Json.JsonSerializerOptions JsonOpts = new()
     {
@@ -246,7 +248,10 @@ public sealed partial class ServerActivityButton : UserControl
         if (total > 0)
         {
             CountBadge.Visibility = Visibility.Visible;
-            CountBadgeText.Text = total.ToString();
+            // Match ServerActivity.tsx: keep the badge compact so large scan
+            // queues do not cover the activity glyph or collide with the
+            // window edge.
+            CountBadgeText.Text = total > 99 ? "99+" : total.ToString();
             ActivityIcon.Stroke = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"];
         }
         else

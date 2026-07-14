@@ -8,6 +8,9 @@ public class AdminDashboardRegressionSourceTests
     private static string DashboardSource => File.ReadAllText(Path.Combine(
         RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminDashboardPage.xaml.cs"));
 
+    private static string DashboardMarkup => File.ReadAllText(Path.Combine(
+        RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminDashboardPage.xaml"));
+
     [Fact]
     public void DashboardUsesEpisodeNameAndSeriesSubtitleLikeWebUi()
     {
@@ -30,5 +33,47 @@ public class AdminDashboardRegressionSourceTests
         Assert.True(
             loaded.IndexOf("BuildLoadingState();", StringComparison.Ordinal)
             < loaded.IndexOf("await LoadDashboardProgressivelyAsync", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DashboardConstrainsItsAdminShellToTheViewport()
+    {
+        Assert.Contains("HorizontalScrollMode=\"Disabled\"", DashboardMarkup, StringComparison.Ordinal);
+        Assert.Contains("HorizontalScrollBarVisibility=\"Disabled\"", DashboardMarkup, StringComparison.Ordinal);
+        Assert.Contains("HorizontalContentAlignment=\"Center\"", DashboardMarkup, StringComparison.Ordinal);
+        Assert.Contains("MaxWidth=\"1640\"", DashboardMarkup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"AdminPageContent\"", DashboardMarkup, StringComparison.Ordinal);
+        Assert.Contains("SizeChanged=\"ContentScrollViewer_SizeChanged\"", DashboardMarkup, StringComparison.Ordinal);
+        Assert.Contains("AdminPageContent.Width = Math.Min(1640", DashboardSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DashboardReusesItsLastSnapshotWhileRefreshing()
+    {
+        var appSource = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "App.xaml.cs"));
+        var viewModel = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "ViewModels", "Admin", "AdminDashboardViewModel.cs"));
+
+        Assert.Contains("AddSingleton<SiloPlayer.ViewModels.Admin.AdminDashboardViewModel>()", appSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("AddTransient<SiloPlayer.ViewModels.Admin.AdminDashboardViewModel>()", appSource, StringComparison.Ordinal);
+        Assert.Contains("public bool HasCachedData", viewModel, StringComparison.Ordinal);
+        Assert.Contains("if (ViewModel.HasCachedData)", DashboardSource, StringComparison.Ordinal);
+        Assert.Contains("BuildContent();", DashboardSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminShellConstrainsEveryRouteToTheWebUiCanvas()
+    {
+        var shellMarkup = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminShellPage.xaml"));
+        var shellSource = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminShellPage.xaml.cs"));
+
+        Assert.Contains("x:Name=\"AdminContentHost\"", shellMarkup, StringComparison.Ordinal);
+        Assert.Contains("SizeChanged=\"AdminContentHost_SizeChanged\"", shellMarkup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"AdminContentFrame\"", shellMarkup, StringComparison.Ordinal);
+        Assert.Contains("MaxWidth=\"1640\"", shellMarkup, StringComparison.Ordinal);
+        Assert.Contains("AdminContentFrame.Width = Math.Min(1640", shellSource, StringComparison.Ordinal);
     }
 }

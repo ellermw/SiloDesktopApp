@@ -17,14 +17,16 @@ public sealed partial class CollectionsPage : Page
     private string _templateSearch = "";
     private bool _openTemplatesOnLoad;
     private bool _returnAfterTemplates;
+    private bool _collectionBuildQueued;
 
     public CollectionsPage()
     {
         ViewModel = App.Services.GetRequiredService<CollectionsViewModel>();
         this.InitializeComponent();
 
-        ViewModel.Collections.CollectionChanged += (_, _) =>
-            DispatcherQueue.TryEnqueue(BuildCollectionCards);
+        ViewModel.Collections.CollectionChanged += (_, _) => QueueCollectionBuild();
+        ViewModel.Groups.CollectionChanged += (_, _) => QueueCollectionBuild();
+        ViewModel.ServerLibraries.CollectionChanged += (_, _) => QueueCollectionBuild();
 
         ViewModel.PropertyChanged += (_, args) =>
         {
@@ -36,6 +38,7 @@ public sealed partial class CollectionsPage : Page
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         await ViewModel.LoadCollectionsCommand.ExecuteAsync(null);
+        BuildCollectionCards();
         if (_openTemplatesOnLoad)
         {
             _openTemplatesOnLoad = false;
@@ -43,6 +46,17 @@ public sealed partial class CollectionsPage : Page
             if (_returnAfterTemplates)
                 App.Services.GetRequiredService<NavigationService>().GoBack();
         }
+    }
+
+    private void QueueCollectionBuild()
+    {
+        if (_collectionBuildQueued) return;
+        _collectionBuildQueued = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _collectionBuildQueued = false;
+            BuildCollectionCards();
+        });
     }
 
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
@@ -65,7 +79,7 @@ public sealed partial class CollectionsPage : Page
     private void CreateCollection_Click(object sender, RoutedEventArgs e)
     {
         var nav = App.Services.GetRequiredService<NavigationService>();
-        nav.Navigate<CollectionEditorPage>();
+        nav.Navigate<SmartCollectionWizardPage>(new SmartCollectionWizardNavigationArgs());
     }
 
     private void SmartWizard_Click(object sender, RoutedEventArgs e)
@@ -808,146 +822,102 @@ public sealed partial class CollectionsPage : Page
     private void BuildCollectionCards()
     {
         CollectionsGrid.Children.Clear();
+        UpdateEmptyState();
+        AddGroupButton.Visibility = ViewModel.Collections.Count > 0 || ViewModel.Groups.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
-        if (ViewModel.Collections.Count == 0)
+        if (ViewModel.Collections.Count > 0)
         {
-            UpdateEmptyState();
-            return;
-        }
+            var ungrouped = ViewModel.Collections
+                .Where(item => string.IsNullOrWhiteSpace(item.GroupId))
+                .OrderBy(item => item.SortOrder)
+                .ToList();
+            if (ungrouped.Count > 0)
+                CollectionsGrid.Children.Add(BuildCollectionGroupSection(null, "Ungrouped", ungrouped));
 
-        EmptyState.Visibility = Visibility.Collapsed;
-        CreateButton.Visibility = Visibility.Visible;
-
-        // Build a wrapped grid of collection cards
-        var currentRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
-        int cardsPerRow = 5;
-        int count = 0;
-
-        foreach (var collection in ViewModel.Collections)
-        {
-            currentRow.Children.Add(BuildCollectionCard(collection));
-            count++;
-            if (count % cardsPerRow == 0)
+            foreach (var group in ViewModel.Groups.OrderBy(item => item.SortOrder))
             {
-                CollectionsGrid.Children.Add(currentRow);
-                currentRow = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 16,
-                    Margin = new Thickness(0, 16, 0, 0)
-                };
+                var items = ViewModel.Collections
+                    .Where(item => string.Equals(item.GroupId, group.Id, StringComparison.Ordinal))
+                    .OrderBy(item => item.SortOrder)
+                    .ToList();
+                CollectionsGrid.Children.Add(BuildCollectionGroupSection(group, group.Name, items));
             }
         }
 
-        if (currentRow.Children.Count > 0)
-            CollectionsGrid.Children.Add(currentRow);
+        BuildServerCollectionRows();
     }
 
     private Border BuildCollectionCard(Collection collection)
     {
-        // Poster/icon area
-        var posterBorder = new Border
-        {
-            Width = 180,
-            Height = 200,
-            CornerRadius = new CornerRadius(12),
-            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"]
-        };
+        var badges = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
+        badges.Children.Add(BuildCollectionBadge(FormatCollectionType(collection.CollectionType), true));
+        if (collection.IsShared) badges.Children.Add(BuildCollectionBadge("Shared"));
+        if (!string.IsNullOrWhiteSpace(collection.SyncSchedule))
+            badges.Children.Add(BuildCollectionBadge(collection.SyncSchedule));
+        if (collection.LastSyncStatus is "warning" or "failed")
+            badges.Children.Add(BuildCollectionBadge(collection.LastSyncStatus == "failed" ? "Sync failed" : "Sync warning"));
 
-        if (!string.IsNullOrWhiteSpace(collection.PosterUrl) && Uri.TryCreate(collection.PosterUrl, UriKind.Absolute, out var posterUri))
+        var details = new StackPanel
         {
-            posterBorder.Child = new Image
+            Spacing = 10,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children =
             {
-                Source = new BitmapImage(posterUri),
-                Stretch = Stretch.UniformToFill,
-            };
-        }
-        else
-        {
-            posterBorder.Child = new FontIcon
-            {
-                Glyph = "\uE8FD",
-                FontSize = 32,
-                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-        }
-
-        // Type badge overlay
-        string typeLabel = FormatCollectionType(collection.CollectionType).ToUpperInvariant();
-
-        var typeBadge = new Border
-        {
-            Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(8, 3, 8, 3),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(8, 8, 0, 0),
-            Child = new TextBlock
-            {
-                Text = typeLabel,
-                FontSize = 10,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)Application.Current.Resources["AccentBrush"]
+                new TextBlock
+                {
+                    Text = collection.Name,
+                    FontSize = 16,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                },
+                badges
             }
         };
 
-        // Shared indicator
-        var sharedIcon = new Border
+        var actions = new StackPanel
         {
-            Visibility = collection.IsShared ? Visibility.Visible : Visibility.Collapsed,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, 8, 8, 0),
-            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(4),
-            Child = new FontIcon
-            {
-                Glyph = "\uE72D", // Share icon
-                FontSize = 12,
-                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
-            }
+            Orientation = Orientation.Horizontal,
+            Spacing = 2,
+            VerticalAlignment = VerticalAlignment.Center
         };
-
-        var posterGrid = new Grid { Width = 180, Height = 200 };
-        posterGrid.Children.Add(posterBorder);
-        posterGrid.Children.Add(typeBadge);
-        posterGrid.Children.Add(sharedIcon);
-
-        // Title
-        var titleText = new TextBlock
+        if (CanSyncCollection(collection))
+            actions.Children.Add(BuildCollectionActionButton("\uE895", "Sync collection", async () =>
+                await ViewModel.SyncCollectionCommand.ExecuteAsync(collection.Id)));
+        actions.Children.Add(BuildCollectionActionButton("\uE70F", "Edit collection", () =>
         {
-            Text = collection.Name,
+            NavigateToCollectionEditor(collection);
+            return Task.CompletedTask;
+        }));
+        actions.Children.Add(BuildCollectionActionButton("\uE74D", "Delete collection", async () =>
+            await ShowDeleteConfirmationAsync(collection)));
+
+        var content = new Grid { ColumnSpacing = 12 };
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var grip = new FontIcon
+        {
+            Glyph = "\uE700",
             FontSize = 14,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxLines = 1,
-            Margin = new Thickness(2, 8, 2, 0)
-        };
-
-        // Info row: item count
-        var infoText = new TextBlock
-        {
-            Text = FormatCollectionInfo(collection),
-            FontSize = 11,
             Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
-            Margin = new Thickness(2, 2, 2, 0)
+            VerticalAlignment = VerticalAlignment.Center
         };
-
-        var content = new StackPanel
-        {
-            Width = 180,
-            Children = { posterGrid, titleText, infoText }
-        };
+        Grid.SetColumn(grip, 0);
+        Grid.SetColumn(details, 1);
+        Grid.SetColumn(actions, 2);
+        content.Children.Add(grip);
+        content.Children.Add(details);
+        content.Children.Add(actions);
 
         var card = new Border
         {
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(4),
+            MinHeight = 116,
+            CornerRadius = new CornerRadius(24),
+            Padding = new Thickness(20, 16, 14, 16),
+            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
             Child = content,
             Tag = collection
         };
@@ -961,7 +931,7 @@ public sealed partial class CollectionsPage : Page
         card.PointerExited += (s, _) =>
         {
             if (s is Border b)
-                b.Background = null;
+                b.Background = (Brush)Application.Current.Resources["CardBackgroundBrush"];
         };
 
         // B40: card click opens the browse view (catalog grid of the
@@ -1008,8 +978,7 @@ public sealed partial class CollectionsPage : Page
         };
         editItem.Click += (_, _) =>
         {
-            var nav = App.Services.GetRequiredService<NavigationService>();
-            nav.Navigate<CollectionEditorPage>(collection.Id);
+            NavigateToCollectionEditor(collection);
         };
 
         var deleteItem = new MenuFlyoutItem
@@ -1023,10 +992,349 @@ public sealed partial class CollectionsPage : Page
         };
 
         menuFlyout.Items.Add(editItem);
+        menuFlyout.Items.Add(new MenuFlyoutSeparator());
+        var moveMenu = new MenuFlyoutSubItem { Text = "Move to group", Icon = new FontIcon { Glyph = "\uE8B7" } };
+        var ungroupedItem = new MenuFlyoutItem { Text = "Ungrouped" };
+        ungroupedItem.Click += async (_, _) => await ViewModel.MoveCollectionToGroupAsync(collection, null);
+        moveMenu.Items.Add(ungroupedItem);
+        foreach (var group in ViewModel.Groups)
+        {
+            var targetGroup = group;
+            var groupItem = new MenuFlyoutItem { Text = group.Name };
+            groupItem.Click += async (_, _) => await ViewModel.MoveCollectionToGroupAsync(collection, targetGroup.Id);
+            moveMenu.Items.Add(groupItem);
+        }
+        menuFlyout.Items.Add(moveMenu);
+        var moveUp = new MenuFlyoutItem { Text = "Move earlier", Icon = new FontIcon { Glyph = "\uE70E" } };
+        moveUp.Click += async (_, _) => await ViewModel.MoveCollectionAsync(collection, -1);
+        var moveDown = new MenuFlyoutItem { Text = "Move later", Icon = new FontIcon { Glyph = "\uE70D" } };
+        moveDown.Click += async (_, _) => await ViewModel.MoveCollectionAsync(collection, 1);
+        menuFlyout.Items.Add(moveUp);
+        menuFlyout.Items.Add(moveDown);
         if (canManage) menuFlyout.Items.Add(deleteItem);
         card.ContextFlyout = menuFlyout;
 
         return card;
+    }
+
+    private static void NavigateToCollectionEditor(Collection collection)
+    {
+        var nav = App.Services.GetRequiredService<NavigationService>();
+        if (string.Equals(collection.CollectionType, "smart", StringComparison.OrdinalIgnoreCase))
+        {
+            nav.Navigate<SmartCollectionWizardPage>(new SmartCollectionWizardNavigationArgs(
+                CollectionId: collection.Id));
+            return;
+        }
+
+        nav.Navigate<CollectionEditorPage>(collection.Id);
+    }
+
+    private UIElement BuildCollectionGroupSection(CollectionGroup? group, string title, IReadOnlyList<Collection> items)
+    {
+        var section = new StackPanel { Spacing = 14, Margin = new Thickness(0, 0, 0, 28) };
+        var header = new Grid
+        {
+            Padding = new Thickness(0, 0, 0, 9),
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(0, 0, 0, 1)
+        };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var heading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        heading.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 24,
+            FontWeight = FontWeights.Light,
+            Foreground = group == null
+                ? (Brush)Application.Current.Resources["SecondaryTextBrush"]
+                : (Brush)Application.Current.Resources["PrimaryTextBrush"]
+        });
+        heading.Children.Add(new TextBlock
+        {
+            Text = items.Count.ToString(),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"]
+        });
+        header.Children.Add(heading);
+
+        if (group != null)
+        {
+            var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+            controls.Children.Add(BuildCollectionActionButton("\uE70F", "Rename group", () => RenameGroupAsync(group)));
+            controls.Children.Add(BuildCollectionActionButton("\uE74D", "Delete group", () => DeleteGroupAsync(group)));
+            var more = new Button
+            {
+                Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+                Padding = new Thickness(8),
+                Content = new FontIcon { Glyph = "\uE712", FontSize = 13 }
+            };
+            var flyout = new MenuFlyout();
+            var earlier = new MenuFlyoutItem { Text = "Move group earlier" };
+            earlier.Click += async (_, _) => await ViewModel.MoveGroupAsync(group, -1);
+            var later = new MenuFlyoutItem { Text = "Move group later" };
+            later.Click += async (_, _) => await ViewModel.MoveGroupAsync(group, 1);
+            flyout.Items.Add(earlier);
+            flyout.Items.Add(later);
+            more.Flyout = flyout;
+            controls.Children.Add(more);
+            Grid.SetColumn(controls, 1);
+            header.Children.Add(controls);
+        }
+        section.Children.Add(header);
+
+        if (items.Count == 0)
+        {
+            section.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(12),
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(16, 22, 16, 22),
+                Child = new TextBlock
+                {
+                    Text = "Drop a collection here",
+                    FontSize = 12,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"]
+                }
+            });
+            return section;
+        }
+
+        var repeater = new ItemsRepeater
+        {
+            ItemsSource = items.Select(BuildCollectionCard).ToList(),
+            Layout = new UniformGridLayout
+            {
+                MaximumRowsOrColumns = 3,
+                MinItemWidth = 320,
+                MinColumnSpacing = 16,
+                MinRowSpacing = 16,
+                ItemsStretch = UniformGridLayoutItemsStretch.Fill
+            }
+        };
+        section.Children.Add(repeater);
+        return section;
+    }
+
+    private static Border BuildCollectionBadge(string text, bool accent = false)
+        => new()
+        {
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(8, 3, 8, 3),
+            Background = accent
+                ? (Brush)Application.Current.Resources["AccentBackgroundBrush"]
+                : (Brush)Application.Current.Resources["SurfaceBrush"],
+            Child = new TextBlock
+            {
+                Text = text,
+                FontSize = 11,
+                Foreground = accent
+                    ? (Brush)Application.Current.Resources["AccentBrush"]
+                    : (Brush)Application.Current.Resources["SecondaryTextBrush"]
+            }
+        };
+
+    private static Button BuildCollectionActionButton(string glyph, string tooltip, Func<Task> action)
+    {
+        var button = new Button
+        {
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(9),
+            Content = new FontIcon { Glyph = glyph, FontSize = 13 }
+        };
+        ToolTipService.SetToolTip(button, tooltip);
+        button.Click += async (_, _) =>
+        {
+            button.IsEnabled = false;
+            try { await action(); }
+            finally { button.IsEnabled = true; }
+        };
+        return button;
+    }
+
+    private void BuildServerCollectionRows()
+    {
+        ServerCollectionsRows.Children.Clear();
+        ServerCollectionsSection.Visibility = ViewModel.ServerLibraries.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        foreach (var library in ViewModel.ServerLibraries)
+        {
+            var row = new StackPanel { Spacing = 14 };
+            var title = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            title.Children.Add(new TextBlock
+            {
+                Text = library.LibraryName,
+                FontSize = 20,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"]
+            });
+            title.Children.Add(new TextBlock
+            {
+                Text = "View",
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"]
+            });
+            row.Children.Add(title);
+
+            var cards = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
+            foreach (var collection in library.Collections)
+                cards.Children.Add(BuildServerCollectionCard(library, collection));
+
+            row.Children.Add(new ScrollViewer
+            {
+                Content = cards,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+                HorizontalScrollMode = ScrollMode.Enabled,
+                VerticalScrollMode = ScrollMode.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled
+            });
+            ServerCollectionsRows.Children.Add(row);
+        }
+    }
+
+    private Border BuildServerCollectionCard(ServerCollectionsLibrary library, ServerCollectionSummary collection)
+    {
+        var poster = new Border
+        {
+            Width = 178,
+            Height = 267,
+            CornerRadius = new CornerRadius(12),
+            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"]
+        };
+        if (!string.IsNullOrWhiteSpace(collection.PosterUrl) &&
+            Uri.TryCreate(collection.PosterUrl, UriKind.Absolute, out var posterUri))
+        {
+            poster.Child = new Image
+            {
+                Source = new BitmapImage(posterUri),
+                Stretch = Stretch.UniformToFill
+            };
+        }
+        else
+        {
+            poster.Child = new TextBlock
+            {
+                Text = collection.Title,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                TextWrapping = TextWrapping.Wrap,
+                TextAlignment = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(16),
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+            };
+        }
+
+        var count = new Border
+        {
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(7, 2, 7, 2),
+            Margin = new Thickness(0, 0, 8, 8),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            Child = new TextBlock
+            {
+                Text = collection.ItemCount.ToString(),
+                FontSize = 11,
+                FontWeight = FontWeights.Bold,
+                Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"]
+            }
+        };
+        var posterGrid = new Grid();
+        posterGrid.Children.Add(poster);
+        posterGrid.Children.Add(count);
+        var stack = new StackPanel
+        {
+            Width = 178,
+            Spacing = 9,
+            Children =
+            {
+                posterGrid,
+                new TextBlock
+                {
+                    Text = collection.Title,
+                    FontSize = 13,
+                    FontWeight = FontWeights.SemiBold,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"]
+                }
+            }
+        };
+        var card = new Border { Child = stack, Tag = collection };
+        card.Tapped += (_, _) => App.Services.GetRequiredService<NavigationService>()
+            .Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
+            {
+                CollectionId = collection.Id,
+                Title = collection.Title,
+                Subtitle = $"{library.LibraryName} collection",
+                IsUserCollection = false,
+                LibraryId = library.LibraryId
+            });
+        return card;
+    }
+
+    private async void AddGroup_Click(object sender, RoutedEventArgs e)
+    {
+        var input = new TextBox
+        {
+            PlaceholderText = "Group title",
+            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"]
+        };
+        var dialog = new ContentDialog
+        {
+            Title = "Add group",
+            Content = input,
+            PrimaryButtonText = "Add",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = XamlRoot
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            await ViewModel.CreateGroupAsync(input.Text);
+    }
+
+    private async Task RenameGroupAsync(CollectionGroup group)
+    {
+        var input = new TextBox
+        {
+            Text = group.Name,
+            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"]
+        };
+        var dialog = new ContentDialog
+        {
+            Title = "Rename group",
+            Content = input,
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = XamlRoot
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            await ViewModel.RenameGroupAsync(group, input.Text);
+    }
+
+    private async Task DeleteGroupAsync(CollectionGroup group)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Delete group",
+            Content = $"Delete group \"{group.Name}\"? Its collections will move to Ungrouped.",
+            PrimaryButtonText = "Delete",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            await ViewModel.DeleteGroupAsync(group);
     }
 
     private static bool CanSyncCollection(Collection collection)

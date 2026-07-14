@@ -31,6 +31,7 @@ public class AuthService : IDisposable
     public UserInfo? CurrentUser { get; private set; }
     public string? RefreshToken { get; private set; }
     public string? SelectedProfileId { get; private set; }
+    public Profile? SelectedProfile { get; private set; }
 
     public event Action? LoggedOut;
     public event Action? TokenRefreshed;
@@ -112,13 +113,14 @@ public class AuthService : IDisposable
         return true;
     }
 
-    public void SelectProfile(string profileId, string? profileToken = null)
+    public void SelectProfile(string profileId, string? profileToken = null, Profile? profile = null)
     {
         string? serverUrl;
         long generation;
         lock (_stateGate)
         {
             SelectedProfileId = profileId;
+            SelectedProfile = profile?.Id == profileId ? profile : SelectedProfile?.Id == profileId ? SelectedProfile : null;
             _apiClient.SetProfile(profileId, profileToken);
             serverUrl = _sessionServerUrl;
             generation = _sessionGeneration;
@@ -169,6 +171,7 @@ public class AuthService : IDisposable
             hadProfile = SelectedProfileId != null;
             serverUrl = _sessionServerUrl;
             SelectedProfileId = null;
+            SelectedProfile = null;
         }
 
         if (!string.IsNullOrWhiteSpace(serverUrl))
@@ -186,6 +189,7 @@ public class AuthService : IDisposable
             hadProfile = SelectedProfileId != null || _apiClient.ProfileId != null;
             serverUrl = _sessionServerUrl;
             SelectedProfileId = null;
+            SelectedProfile = null;
             _apiClient.ClearProfile();
         }
 
@@ -480,6 +484,7 @@ public class AuthService : IDisposable
             RefreshToken = refreshToken;
             CurrentUser = user;
             SelectedProfileId = null;
+            SelectedProfile = null;
             _sessionServerUrl = serverUrl;
             ScheduleRefreshUnsafe(
                 expiresInSeconds > 0
@@ -523,6 +528,7 @@ public class AuthService : IDisposable
             CurrentUser = null;
             RefreshToken = null;
             SelectedProfileId = null;
+            SelectedProfile = null;
             _sessionServerUrl = null;
         }
 

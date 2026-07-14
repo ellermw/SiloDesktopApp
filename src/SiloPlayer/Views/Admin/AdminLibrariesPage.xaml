@@ -19,14 +19,20 @@
     <Grid>
         <!-- Main content -->
         <ScrollViewer
-            IsScrollInertiaEnabled="True">
+            x:Name="ContentScrollViewer"
+            IsScrollInertiaEnabled="True"
+            HorizontalScrollMode="Disabled"
+            HorizontalScrollBarVisibility="Disabled"
+            HorizontalContentAlignment="Center"
+            SizeChanged="ContentScrollViewer_SizeChanged">
 
             <!-- webui parity: AdminLibraries inherits .admin-shell (1560px) from AdminLayout. -->
             <StackPanel
+                x:Name="AdminPageContent"
                 Padding="40,32,40,40"
                 Spacing="24"
                 MaxWidth="1640"
-                HorizontalAlignment="Stretch">
+                HorizontalAlignment="Center">
 
                 <!-- ===== Page Header (.page-header: flex items-end justify-between) ===== -->
                 <Grid>
@@ -160,14 +166,6 @@
                         </Grid>
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Opacity="0.7" />
-
-                        <!-- Inline loading indicator -->
-                        <ProgressRing
-                            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-                            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                            HorizontalAlignment="Center"
-                            Margin="0,24"
-                            Width="32" Height="32" />
 
                         <!-- Inline error state -->
                         <StackPanel
@@ -371,10 +369,10 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="2*" />
                                 <ColumnDefinition Width="1*" />
-                                <ColumnDefinition Width="90" />
-                                <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="120" />
-                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="160" />
+                                <ColumnDefinition Width="60" />
+                                <ColumnDefinition Width="140" />
+                                <ColumnDefinition Width="140" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="Item" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                             <TextBlock Grid.Column="1" Text="Library" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
@@ -387,6 +385,8 @@
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
 
                         <StackPanel x:Name="SkippedRootsPanel" Spacing="0" />
+                        <StackPanel x:Name="SkippedRootsPaginationPanel" Orientation="Horizontal" Spacing="4"
+                                    HorizontalAlignment="Right" Visibility="Collapsed" />
                         </StackPanel>
                     </StackPanel>
                 </Border>

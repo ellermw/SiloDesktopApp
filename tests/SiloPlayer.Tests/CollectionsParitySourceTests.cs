@@ -174,7 +174,8 @@ public sealed class CollectionsParitySourceTests
         Assert.True(File.Exists(wizardViewModel));
         Assert.Contains("SmartCollectionWizardViewModel", app);
         Assert.Contains("SmartCollectionWizardPage", documentTitle);
-        Assert.Contains("Smart Wizard", collectionsXaml);
+        Assert.Contains("New Collection", collectionsXaml);
+        Assert.DoesNotContain("Smart Wizard", collectionsXaml);
         Assert.Contains("Navigate<SmartCollectionWizardPage>", collectionsPage);
         Assert.Contains("Navigate<SmartCollectionWizardPage>", adminCollectionsPage);
         Assert.Contains("MediaScope", File.ReadAllText(wizardViewModel));

@@ -63,29 +63,30 @@
         <!-- Video is rendered by the mpv GPU popup window positioned over the
              XAML tree — this control hosts only the chrome overlays. -->
 
-        <!-- Loading overlay (opaque, covers video during loading) -->
-        <Grid x:Name="LoadingOverlay" Background="#101722" Visibility="Collapsed">
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
-                <ProgressRing IsActive="True" Width="48" Height="48" />
-                <TextBlock Text="Preparing playback..." Foreground="White" FontSize="16" HorizontalAlignment="Center" />
-            </StackPanel>
+        <!-- Loading overlay â€” current WebUI keeps a solid black frame and
+             exposes only the compact white spinner until first frame. -->
+        <Grid x:Name="LoadingOverlay" Background="Black" Visibility="Collapsed">
+            <ProgressRing IsActive="True" Width="32" Height="32"
+                          Foreground="White"
+                          HorizontalAlignment="Center" VerticalAlignment="Center" />
         </Grid>
 
         <!-- Mid-playback buffering spinner (transparent; 500ms debounce so
              quick cache recoveries don't flash chrome). -->
         <Grid x:Name="BufferingSpinner" Visibility="Collapsed"
+              IsHitTestVisible="False"
               HorizontalAlignment="Center" VerticalAlignment="Center">
-            <Border Background="#80000000" CornerRadius="40" Padding="20">
-                <ProgressRing IsActive="True" Width="48" Height="48" />
-            </Border>
+            <ProgressRing IsActive="True" Width="40" Height="40" Foreground="White" />
         </Grid>
 
         <!-- Error overlay -->
-        <Grid x:Name="ErrorOverlay" Background="#101722" Visibility="Collapsed">
+        <Grid x:Name="ErrorOverlay" Background="#CC000000" Visibility="Collapsed">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" MaxWidth="500">
-                <FontIcon Glyph="&#xE783;" FontSize="48" Foreground="#EF6B73" />
-                <TextBlock x:Name="ErrorText" Foreground="#EF6B73" FontSize="16" TextWrapping="Wrap" TextAlignment="Center" HorizontalAlignment="Center" />
-                <Button Content="Close" HorizontalAlignment="Center" Click="ClosePlayer_Click" Padding="20,10" />
+                <TextBlock x:Name="ErrorText" Foreground="#99FFFFFF" FontSize="14"
+                           TextWrapping="Wrap" TextAlignment="Center" HorizontalAlignment="Center" />
+                <Button Content="Go Back" HorizontalAlignment="Center" Click="ClosePlayer_Click"
+                        Foreground="White" Background="#1AFFFFFF" BorderThickness="0"
+                        CornerRadius="4" Padding="16,8" />
             </StackPanel>
         </Grid>
 

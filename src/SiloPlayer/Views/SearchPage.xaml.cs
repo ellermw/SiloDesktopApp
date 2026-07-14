@@ -10,6 +10,7 @@ namespace SiloPlayer.Views;
 public sealed partial class SearchPage : Page
 {
     public SearchViewModel ViewModel { get; }
+    private bool _filterInitializing = true;
 
     public SearchPage()
     {
@@ -50,7 +51,9 @@ public sealed partial class SearchPage : Page
         ViewModel.Results.Clear();
         ViewModel.PeopleResults.Clear();
         ViewModel.OutsideLibraryResults.Clear();
-        await ViewModel.LoadMediaScopeAsync();
+        await Task.WhenAll(ViewModel.LoadMediaScopeAsync(), ViewModel.LoadFiltersAsync());
+        PopulateResultFilters();
+        _filterInitializing = false;
         UpdateScopeButtons();
         EmptyState.Visibility = Visibility.Visible;
         ResultsState.Visibility = Visibility.Collapsed;
@@ -82,8 +85,9 @@ public sealed partial class SearchPage : Page
 
     private void UpdatePeopleSection()
     {
-        PeopleSection.Visibility = ViewModel.PeopleResults.Count > 0
-            ? Visibility.Visible : Visibility.Collapsed;
+        // The current full catalog search surface only renders media results;
+        // people remain available through the global command palette.
+        PeopleSection.Visibility = Visibility.Collapsed;
     }
 
     private async void Scope_Click(object sender, RoutedEventArgs e)
@@ -103,6 +107,9 @@ public sealed partial class SearchPage : Page
         var placeholder = ViewModel.MediaScope == "audiobook" ? "Search audiobooks..." : ViewModel.MediaScope == "all" ? "Search all media..." : "Search movies, series...";
         SearchBox.PlaceholderText = placeholder;
         ResultsSearchBox.PlaceholderText = placeholder;
+        _filterInitializing = true;
+        SelectComboTag(ResultTypeCombo, ViewModel.MediaType ?? "all");
+        _filterInitializing = false;
     }
 
     private void UpdateRequestResults() => RequestResultsSection.Visibility = ViewModel.OutsideLibraryResults.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -195,5 +202,87 @@ public sealed partial class SearchPage : Page
         ResultsState.Visibility = Visibility.Collapsed;
         _searchDebounce?.Stop();
         SearchBox.Focus(FocusState.Programmatic);
+    }
+
+    private void PopulateResultFilters()
+    {
+        FillResultCombo(ResultGenreCombo, "All Genres", ViewModel.AvailableFilters?.Genres ?? []);
+        FillResultCombo(ResultRatingCombo, "All Ratings", ViewModel.AvailableFilters?.ContentRatings ?? []);
+        FillResultCombo(ResultResolutionCombo, "All Resolutions", ViewModel.AvailableFilters?.Resolutions ?? []);
+        FillResultCombo(ResultCountryCombo, "All Countries", ViewModel.AvailableFilters?.Countries ?? []);
+    }
+
+    private static void FillResultCombo(ComboBox combo, string allLabel, IEnumerable<string> values)
+    {
+        combo.Items.Clear();
+        combo.Items.Add(new ComboBoxItem { Content = allLabel, Tag = "" });
+        foreach (var value in values.Distinct(StringComparer.OrdinalIgnoreCase))
+            combo.Items.Add(new ComboBoxItem { Content = value, Tag = value });
+        combo.SelectedIndex = 0;
+    }
+
+    private async void ResultFilter_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_filterInitializing || string.IsNullOrWhiteSpace(ViewModel.Query)) return;
+        if (ReferenceEquals(sender, ResultTypeCombo))
+        {
+            await ViewModel.SetMediaTypeAsync(SelectedTag(ResultTypeCombo));
+            UpdateScopeButtons();
+            return;
+        }
+
+        ViewModel.SortOrder = SelectedTag(ResultOrderCombo) ?? "desc";
+        ViewModel.Genre = SelectedTag(ResultGenreCombo);
+        ViewModel.ContentRating = SelectedTag(ResultRatingCombo);
+        ViewModel.Resolution = SelectedTag(ResultResolutionCombo);
+        ViewModel.Country = SelectedTag(ResultCountryCombo);
+        await ViewModel.SearchCommand.ExecuteAsync(null);
+    }
+
+    private async void ResultSort_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_filterInitializing) return;
+        ViewModel.SortField = SelectedTag(ResultSortCombo) ?? "added_at";
+        var ascending = ViewModel.SortField is "title" or "content_rating";
+        _filterInitializing = true;
+        SelectComboTag(ResultOrderCombo, ascending ? "asc" : "desc");
+        _filterInitializing = false;
+        if (!string.IsNullOrWhiteSpace(ViewModel.Query)) await ViewModel.SearchCommand.ExecuteAsync(null);
+    }
+
+    private void OpenResultFilters_Click(object sender, RoutedEventArgs e) => ResultFiltersSheet.IsOpen = true;
+    private void CloseResultFilters_Click(object sender, RoutedEventArgs e) => ResultFiltersSheet.IsOpen = false;
+
+    private async void ClearResultFilters_Click(object sender, RoutedEventArgs e)
+    {
+        _filterInitializing = true;
+        ResultGenreCombo.SelectedIndex = 0;
+        ResultRatingCombo.SelectedIndex = 0;
+        ResultResolutionCombo.SelectedIndex = 0;
+        ResultCountryCombo.SelectedIndex = 0;
+        _filterInitializing = false;
+        ViewModel.Genre = null;
+        ViewModel.ContentRating = null;
+        ViewModel.Resolution = null;
+        ViewModel.Country = null;
+        if (!string.IsNullOrWhiteSpace(ViewModel.Query)) await ViewModel.SearchCommand.ExecuteAsync(null);
+    }
+
+    private static string? SelectedTag(ComboBox combo)
+    {
+        var value = (combo.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private static void SelectComboTag(ComboBox combo, string value)
+    {
+        for (var index = 0; index < combo.Items.Count; index++)
+        {
+            if (combo.Items[index] is ComboBoxItem item && string.Equals(item.Tag?.ToString(), value, StringComparison.OrdinalIgnoreCase))
+            {
+                combo.SelectedIndex = index;
+                return;
+            }
+        }
     }
 }

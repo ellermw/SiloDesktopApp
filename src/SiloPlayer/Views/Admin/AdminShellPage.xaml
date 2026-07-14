@@ -9,7 +9,7 @@
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}">
 
-    <Grid>
+    <Grid x:Name="AdminShellRoot">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="240" />
             <ColumnDefinition Width="*" />
@@ -1002,7 +1002,10 @@
         </Border>
 
         <!-- ===== Content Area ===== -->
-        <Grid Grid.Column="1" Background="{StaticResource AppBackgroundBrush}">
+        <Grid x:Name="AdminContentHost"
+              Grid.Column="1"
+              Background="{StaticResource AppBackgroundBrush}"
+              SizeChanged="AdminContentHost_SizeChanged">
             <!-- Header strip: server activity popover button (right-aligned).
                  Mirrors webui AdminLayout header. -->
             <Border
@@ -1035,8 +1038,20 @@
             <!-- Admin page content frame -->
             <Frame
                 x:Name="AdminContentFrame"
+                MaxWidth="1640"
+                HorizontalAlignment="Center"
+                Navigated="AdminContentFrame_Navigated"
                 Background="{StaticResource AppBackgroundBrush}" />
         </Grid>
+
+        <!-- Shell-wide host for page-owned drawers and dialogs.  WebUI admin
+             overlays cover the sidebar, header, and the full viewport rather
+             than being clipped to the centered 1640px content frame. -->
+        <Grid
+            x:Name="AdminOverlayHost"
+            Grid.ColumnSpan="2"
+            Canvas.ZIndex="1000"
+            IsHitTestVisible="False" />
 
     </Grid>
 </Page>

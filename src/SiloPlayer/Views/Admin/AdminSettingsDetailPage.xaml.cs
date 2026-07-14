@@ -4,6 +4,7 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using System.ComponentModel;
 using System.Text.Json;
 using Windows.UI;
 using SiloPlayer.Core.Api;
@@ -21,11 +22,22 @@ public sealed partial class AdminSettingsDetailPage : Page
     private string _settingsSearchQuery = "";
     private Button? _activeTabButton;
     private readonly List<(Button Button, string TabName)> _tabButtons = [];
+    private Border? _inlineSaveBar;
+    private TextBlock? _inlineSaveStatusText;
+    private Button? _inlineDiscardButton;
+    private Button? _inlineSaveButton;
+    private Button? _inlineRestartButton;
+    private TextBlock? _inlineRestartNotice;
+    private TextBlock? _notificationEnabledCountText;
+    private bool _viewModelEventsAttached;
+    private readonly List<Action> _dirtyStateUpdaters = [];
 
     // Lookup for rebuilding fields after discard
     private readonly List<Action> _fieldRebuilders = [];
     private readonly SettingsApi _settingsApi;
     private readonly SiloApiClient _apiClient;
+    private CancellationTokenSource? _adminThemeVarsSaveCts;
+    private CancellationTokenSource? _adminThemeCssSaveCts;
 
     // Settings sub-nav — matches web/src/pages/admin-settings/AdminSettingsLayout.tsx
     // order and labeling. Each item is (label, Segoe Fluent icon glyph).
@@ -77,6 +89,33 @@ public sealed partial class AdminSettingsDetailPage : Page
         ["Log Retention"] = ["audit", "operational", "retention"],
     };
 
+    // Current WebUI search indexes individual setting labels in addition to
+    // section titles and broad keywords. Keep the same behavior so searches
+    // such as "Trusted Proxies" or "Vector Coverage" find their section.
+    private static readonly Dictionary<string, string[]> SettingsSearchFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["General"] = ["Access Token Expiry", "Refresh Token Expiry", "Log Level", "Quiet Subsystems", "Trusted Proxies"],
+        ["Branding"] = ["Server Name", "Login Page Subtitle", "Logo wordmark", "Logo icon", "Favicon", "Login Background", "Brand Accent Color", "Default Theme"],
+        ["Theming"] = ["Preview", "Token Overrides", "Custom CSS", "Theme Catalog URL"],
+        ["Card Overlays"] = ["Card Overlays Enabled", "Default Configuration", "Default style preset", "Overlay position", "Overlay enabled"],
+        ["Scanner & Matcher"] = ["Scanner Workers", "Matcher Workers", "Matcher Batch Size", "Cache Images to S3"],
+        ["Search"] = ["Preferred Provider", "URL", "API Key", "Index Prefix", "Timeout ms", "Matching Strategy", "Sync Batch Size", "Rebuild Batch Size", "Rebuild Queue Depth", "Indexed Types", "Semantic Search", "Semantic Ratio", "Embedder", "Vectorized Documents", "Status", "Vector Coverage", "Per-Type Coverage", "Pending Events", "Dead-lettered Events", "Last Sync", "Last Fallback"],
+        ["Intro Markers"] = ["Mode", "Fetch Markers at Playback if Missing", "Use for Online Marker Lookup", "Allow Contributions", "Auto-submit Local Markers", "Marker Providers"],
+        ["Subtitles"] = ["Provider settings", "Downloaded subtitles", "Subtitle appearance", "Subtitle language", "Subtitle behavior", "Forced subtitles"],
+        ["AI Services"] = ["Base URL", "Chat model", "API Key", "Transcription model", "Transcription base URL", "Transcription API key", "Max concurrent jobs", "Subtitle translation", "Subtitle generation from audio", "Description translation", "On-view translation", "Subtitle batch size", "Subtitle context lines", "Transcription chunk length seconds", "Transcription limit per account", "Transcription limit period"],
+        ["Playback"] = ["FFmpeg Path", "Transcode Directory", "Hardware Acceleration", "Transcoding Enabled", "Local Transcode Fallback", "Allow 4K Transcoding", "Enable Transcode Throttling", "Throttle Buffer seconds", "Chapter Thumbnail Workers", "Chapter Thumbnail Execution", "Chapter Thumbnail Node Capacity", "HDR Chapter Thumbnail Policy", "Watched Threshold", "Min Resume Threshold"],
+        ["Downloads"] = ["Downloads Enabled", "Server Bandwidth Mbps", "Per-User Bandwidth Mbps", "Max Concurrent Downloads Per User", "Max Downloads Per Period", "Period Duration", "Transcode-to-File Enabled", "Artifact Directory", "Max Concurrent Prepares", "Artifact Storage Budget"],
+        ["Watch Providers"] = ["Trakt", "Simkl", "Client ID", "Client Secret"],
+        ["Integrations"] = ["MDBList", "API Key"],
+        ["Email"] = ["Email Enabled", "From Address", "From Name", "Host", "Port", "Security", "Username", "Password", "Verify", "Send test"],
+        ["Notifications"] = ["Record events", "Enable release events", "Fan out", "Enable fanout", "Delivery Channels", "In-App", "Web Push", "Silo Push Relay", "Relay URL", "Deployment ID", "Register Relay", "Privacy Disclosure", "Email", "Allow Per-Episode Email", "Digest Hour", "External URL", "Discord", "Client ID", "Client Secret", "Bot Token", "Allow Per-Episode DMs", "Embed Posters", "Personal Webhooks", "Max Webhooks Per Profile", "Deliveries Per Minute Per Profile", "Allow Private Destinations", "Server Channels", "Batch Window seconds", "Mention Requesters on Discord", "Settle Delay seconds", "Max Series Burst", "Max Event Age hours", "Read Notifications days", "Unread Notifications days", "Processed Events days"],
+        ["Compatibility Proxies"] = ["Jellyfin", "Audiobookshelf", "Public URL", "Server Name", "Server ID", "Emulated Server Version", "Session TTL", "Playback Session TTL", "Enable Jellyfin Proxy", "Enable Audiobookshelf Proxy"],
+        ["Rate Limiting"] = ["Enable Rate Limiting", "Backend", "Global Requests Per Second", "Per-IP Limits", "Requests Per Second", "Requests Per Minute", "Burst", "Standard", "Elevated", "Login", "Signup", "Setup", "Authentication endpoints"],
+        ["Database"] = ["Max Connections", "Enable Redis", "Connection URL", "User DB Backend", "Pool Max Open", "Idle Timeout", "Litestream Sync Interval", "Stale Grace Seconds"],
+        ["Storage"] = ["Public Assets", "Private Internal", "User DB", "Endpoint", "Region", "Path Style", "Bucket", "Key Prefix", "Access Key", "Secret Key", "URL Auth Method", "Read Endpoint", "Token Secret", "Token Param", "Token TTL seconds"],
+        ["Log Retention"] = ["Retention Days", "Max Rows", "Max Size MB", "Decision Log Retention Days", "Decision Log Verbosity", "Scope Sample Rate", "Bucket Overrides"],
+    };
+
     public AdminSettingsDetailPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminSettingsDetailViewModel>();
@@ -87,6 +126,11 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        if (!_viewModelEventsAttached)
+        {
+            ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+            _viewModelEventsAttached = true;
+        }
         BuildTabBar();
 
         try
@@ -165,7 +209,9 @@ public sealed partial class AdminSettingsDetailPage : Page
         return SettingsTabs.Where(tab =>
             tab.Label.Contains(query, StringComparison.OrdinalIgnoreCase)
             || SettingsSearchKeywords.TryGetValue(tab.Label, out var keywords)
-            && keywords.Any(keyword => keyword.Contains(query, StringComparison.OrdinalIgnoreCase)));
+            && keywords.Any(keyword => keyword.Contains(query, StringComparison.OrdinalIgnoreCase))
+            || SettingsSearchFields.TryGetValue(tab.Label, out var fields)
+            && fields.Any(field => field.Contains(query, StringComparison.OrdinalIgnoreCase)));
     }
 
     private void SettingsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -199,7 +245,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         var icon = new FontIcon
         {
             Glyph = glyph,
-            FontSize = 16,
+            FontSize = 18,
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
         };
@@ -212,7 +258,9 @@ public sealed partial class AdminSettingsDetailPage : Page
             Background = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
             Visibility = Visibility.Collapsed,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(-8, 0, 4, 0), // Pull left into padding
+            // Web SideNavItem positions this 12px beyond the content edge. The
+            // button's 12px horizontal padding makes that the rail edge.
+            Margin = new Thickness(-12, 0, 4, 0),
             Tag = "indicator", // Tag for lookup in SetActiveTab
         };
         content.ColumnDefinitions.Insert(0, new ColumnDefinition { Width = GridLength.Auto });
@@ -238,7 +286,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             Content = content,
             Background = new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
-            Padding = new Thickness(14, 9, 12, 9),
+            Padding = new Thickness(12, 10, 12, 10),
             Margin = new Thickness(0, 0, 0, 2),
             CornerRadius = new CornerRadius(12),
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -299,19 +347,26 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void ShowTab(string tabName)
     {
+        _inlineSaveBar = null;
+        _inlineSaveStatusText = null;
+        _inlineDiscardButton = null;
+        _inlineSaveButton = null;
+        _inlineRestartButton = null;
+        _inlineRestartNotice = null;
+        _notificationEnabledCountText = null;
         ContentPanel.Children.Clear();
         _fieldRebuilders.Clear();
-        // webui parity: each settings tab is rendered inside a max-w-3xl (768px) column,
-        // flush-left within the sidebar+content shell. Individual tabs may tighten this further
-        // (e.g. Rate Limiting uses max-w-2xl = 672).
-        ContentPanel.MaxWidth = 768;
-        ContentPanel.HorizontalAlignment = HorizontalAlignment.Left;
+        _dirtyStateUpdaters.Clear();
+        // The WebUI lets most settings surfaces fill the content column. Tabs
+        // that explicitly use max-w-2xl tighten themselves in their builders.
+        ContentPanel.ClearValue(FrameworkElement.MaxWidthProperty);
+        ContentPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
 
         switch (tabName)
         {
             case "General": BuildGeneralTab(); break;
             case "Branding": BuildBrandingTab(); break;
-            case "Theming": BuildThemingTab(); break;
+            case "Theming": BuildThemingTabCurrent(); break;
             case "Card Overlays": BuildOverlaysTab(); break;
             case "Playback": BuildPlaybackTab(); break;
             case "Scanner & Matcher": BuildScannerTab(); break;
@@ -324,7 +379,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             case "Watch Providers": BuildWatchProvidersTab(); break;
             case "Integrations": BuildIntegrationsTab(); break;
             case "Email": BuildEmailTab(); break;
-            case "Notifications": BuildNotificationsAdminTab(); break;
+            case "Notifications": BuildNotificationsAdminTabCurrent(); break;
             case "Compatibility Proxies": BuildJellyfinTab(); break;
             case "Database": BuildDatabaseTab(); break;
             case "Storage": BuildStorageTab(); break;
@@ -333,7 +388,8 @@ public sealed partial class AdminSettingsDetailPage : Page
 
         // Webui renders save/discard inline at the bottom of each tab's content
         // (inside the scrollable area), not as a fixed bottom strip.
-        AddInlineSaveBar();
+        if (tabName is not ("Theming" or "AI Services" or "Watch Providers" or "Integrations" or "Subtitles"))
+            AddInlineSaveBar();
     }
 
     /// <summary>
@@ -348,12 +404,13 @@ public sealed partial class AdminSettingsDetailPage : Page
             CornerRadius = new CornerRadius(12),
             Padding = new Thickness(20, 14, 20, 14),
             Margin = new Thickness(0, 8, 0, 0),
-            Visibility = ViewModel.HasDirtyChanges ? Visibility.Visible : Visibility.Collapsed,
+            Visibility = Visibility.Visible,
             Tag = "inlineSaveBar",
         };
 
         var grid = new Grid { ColumnSpacing = 8 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -363,6 +420,34 @@ public sealed partial class AdminSettingsDetailPage : Page
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
         };
+        var restartNotice = new TextBlock
+        {
+            Text = "Server restart required for changes to take effect.",
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            Visibility = Visibility.Collapsed,
+        };
+        var statusStack = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
+        statusStack.Children.Add(restartNotice);
+        statusStack.Children.Add(statusText);
+
+        var restartBtn = new Button
+        {
+            Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
+            Visibility = Visibility.Collapsed,
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                Children =
+                {
+                    new FontIcon { Glyph = "\uE72C", FontSize = 12 },
+                    new TextBlock { Text = "Restart Server" },
+                },
+            },
+        };
+        restartBtn.Click += RestartServer_Click;
+        Grid.SetColumn(restartBtn, 1);
 
         var discardBtn = new Button
         {
@@ -370,7 +455,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
         };
         discardBtn.Click += DiscardButton_Click;
-        Grid.SetColumn(discardBtn, 1);
+        Grid.SetColumn(discardBtn, 2);
 
         var saveBtn = new Button
         {
@@ -378,31 +463,42 @@ public sealed partial class AdminSettingsDetailPage : Page
             Style = (Style)Application.Current.Resources["AccentButtonStyle"],
         };
         saveBtn.Click += SaveButton_Click;
-        Grid.SetColumn(saveBtn, 2);
+        Grid.SetColumn(saveBtn, 3);
 
-        Grid.SetColumn(statusText, 0);
-        grid.Children.Add(statusText);
+        Grid.SetColumn(statusStack, 0);
+        grid.Children.Add(statusStack);
+        grid.Children.Add(restartBtn);
         grid.Children.Add(discardBtn);
         grid.Children.Add(saveBtn);
         bar.Child = grid;
 
-        // Register for dirty-state changes to update visibility and text
-        void UpdateBar()
-        {
-            bar.Visibility = ViewModel.HasDirtyChanges ? Visibility.Visible : Visibility.Collapsed;
-            var count = ViewModel.DirtyCount;
-            statusText.Text = count > 0
-                ? $"{count} unsaved change{(count != 1 ? "s" : "")}"
-                : "";
-        }
-        ViewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName is nameof(ViewModel.HasDirtyChanges) or nameof(ViewModel.DirtyCount))
-                DispatcherQueue.TryEnqueue(UpdateBar);
-        };
-        UpdateBar();
-
+        _inlineSaveBar = bar;
+        _inlineSaveStatusText = statusText;
+        _inlineDiscardButton = discardBtn;
+        _inlineSaveButton = saveBtn;
+        _inlineRestartButton = restartBtn;
+        _inlineRestartNotice = restartNotice;
+        UpdateInlineSaveBar();
         ContentPanel.Children.Add(bar);
+    }
+
+    private void UpdateInlineSaveBar()
+    {
+        if (_inlineSaveBar is null || _inlineSaveStatusText is null) return;
+        _inlineSaveBar.Visibility = Visibility.Visible;
+        var count = ViewModel.DirtyCount;
+        _inlineSaveStatusText.Text = count > 0
+            ? $"{count} unsaved change{(count != 1 ? "s" : "")}"
+            : "";
+        if (_inlineDiscardButton is not null) _inlineDiscardButton.IsEnabled = count > 0 && !ViewModel.IsSaving;
+        if (_inlineSaveButton is not null)
+        {
+            _inlineSaveButton.IsEnabled = count > 0 && !ViewModel.IsSaving;
+            _inlineSaveButton.Content = ViewModel.IsSaving ? "Saving..." : "Save Changes";
+        }
+        var restartRequired = ViewModel.LastSaveRequiresRestart;
+        if (_inlineRestartButton is not null) _inlineRestartButton.Visibility = restartRequired ? Visibility.Visible : Visibility.Collapsed;
+        if (_inlineRestartNotice is not null) _inlineRestartNotice.Visibility = restartRequired ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ===== Tab Builders =====
@@ -532,6 +628,40 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             host.Children.Clear();
             AddTextBlock(host, $"Brand assets could not be loaded: {ex.Message}");
+        }
+    }
+
+    protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        if (_viewModelEventsAttached)
+        {
+            ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+            _viewModelEventsAttached = false;
+        }
+        _inlineSaveBar = null;
+        _inlineSaveStatusText = null;
+        _inlineDiscardButton = null;
+        _inlineSaveButton = null;
+        _inlineRestartButton = null;
+        _inlineRestartNotice = null;
+        _notificationEnabledCountText = null;
+        _adminThemeVarsSaveCts?.Cancel();
+        _adminThemeVarsSaveCts?.Dispose();
+        _adminThemeVarsSaveCts = null;
+        _adminThemeCssSaveCts?.Cancel();
+        _adminThemeCssSaveCts?.Dispose();
+        _adminThemeCssSaveCts = null;
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(ViewModel.HasDirtyChanges) or nameof(ViewModel.DirtyCount)
+            or nameof(ViewModel.IsSaving) or nameof(ViewModel.LastSaveRequiresRestart))
+        {
+            DispatcherQueue.TryEnqueue(UpdateInlineSaveBar);
+            foreach (var updater in _dirtyStateUpdaters.ToArray())
+                DispatcherQueue.TryEnqueue(() => updater());
         }
     }
 
@@ -887,8 +1017,6 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void BuildThemingTab()
     {
-        AddTabHeader("Theming", "Customize server branding, catalog themes, and login page appearance.");
-
         // Warning banner — matches webui ThemeSettings top banner about server-wide scope.
         var warnBorder = new Border
         {
@@ -936,7 +1064,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         var catalogCard = BeginCard();
         AddTextBlock(catalogCard, "URL of the community theme catalog JSON index. Users browse this in their settings.");
         AddTextField(catalogCard, "Theme Catalog URL", "theme.catalog_url",
-            "https://raw.githubusercontent.com/ContinuumApp/continuum-themes/main/catalog.json");
+            "https://raw.githubusercontent.com/Silo-Server/silo-themes/main/catalog.json");
         EndCard(catalogCard);
 
         AddSectionHeader("Custom CSS");
@@ -1129,6 +1257,295 @@ public sealed partial class AdminSettingsDetailPage : Page
     }
 
     /// <summary>
+    /// Current GitHub WebUI theme settings: warning, live preview, token editor,
+    /// autosaved CSS, then the catalog URL saved on blur.
+    /// </summary>
+    private void BuildThemingTabCurrent()
+    {
+        var warning = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFB, 0xBF, 0x24)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x33, 0xFB, 0xBF, 0x24)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(16),
+        };
+        var warningGrid = new Grid { ColumnSpacing = 12 };
+        warningGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        warningGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        warningGrid.Children.Add(new FontIcon
+        {
+            Glyph = "\uE7BA", FontSize = 16, VerticalAlignment = VerticalAlignment.Top,
+            Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24)),
+        });
+        var warningCopy = new StackPanel { Spacing = 4 };
+        warningCopy.Children.Add(new TextBlock
+        {
+            Text = "Server-wide theme customization", FontSize = 13, FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24)),
+        });
+        warningCopy.Children.Add(new TextBlock
+        {
+            Text = "These overrides apply to all users as a base layer. Individual users can further customize on top of these settings.",
+            FontSize = 13, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextWrapping = TextWrapping.Wrap,
+        });
+        Grid.SetColumn(warningCopy, 1);
+        warningGrid.Children.Add(warningCopy);
+        warning.Child = warningGrid;
+        ContentPanel.Children.Add(warning);
+
+        Dictionary<string, string> variables;
+        try { variables = JsonSerializer.Deserialize<Dictionary<string, string>>(ViewModel.GetSetting("ui.admin_theme_vars")) ?? []; }
+        catch { variables = []; }
+
+        AddSectionHeader("Preview");
+        var previewHost = new StackPanel { Spacing = 8 };
+        _themePreviewHost = previewHost;
+        RefreshThemePreview();
+        ContentPanel.Children.Add(previewHost);
+
+        var resetAll = new Button
+        {
+            Content = "↶  Reset all", Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            HorizontalAlignment = HorizontalAlignment.Right, FontSize = 12,
+        };
+        ContentPanel.Children.Add(resetAll);
+
+        TextBox? cssBox = null;
+        void UpdateResetVisibility() => resetAll.Visibility = variables.Count > 0 ||
+            !string.IsNullOrWhiteSpace(cssBox?.Text ?? ViewModel.GetSetting("ui.admin_custom_css"))
+            ? Visibility.Visible : Visibility.Collapsed;
+
+        void PersistVariables()
+        {
+            ViewModel.SetSetting("ui.admin_theme_vars", JsonSerializer.Serialize(variables));
+            RefreshThemePreview();
+            UpdateResetVisibility();
+            ScheduleAdminThemeSave("ui.admin_theme_vars", 500);
+        }
+
+        AddSectionHeader("Token Overrides");
+        var tokenCard = BeginCard();
+        var tokenGroups = new (string Group, (string Token, string Label)[] Tokens)[]
+        {
+            ("Surfaces", [("background", "Background"), ("foreground", "Foreground"), ("card", "Card"),
+                ("card-foreground", "Card Text"), ("popover", "Popover"), ("popover-foreground", "Popover Text"),
+                ("surface", "Surface"), ("surface-hover", "Surface Hover"), ("surface-raised", "Surface Raised")]),
+            ("Interactive", [("primary", "Primary"), ("primary-foreground", "Primary Text"),
+                ("secondary", "Secondary"), ("secondary-foreground", "Secondary Text"), ("muted", "Muted"),
+                ("muted-foreground", "Muted Text"), ("accent", "Accent"), ("accent-foreground", "Accent Text"),
+                ("destructive", "Destructive"), ("destructive-foreground", "Destructive Text"), ("ambient", "Ambient Glow")]),
+            ("Sidebar", [("sidebar", "Sidebar"), ("sidebar-foreground", "Sidebar Text"),
+                ("sidebar-primary", "Sidebar Primary"), ("sidebar-primary-foreground", "Sidebar Primary Text"),
+                ("sidebar-accent", "Sidebar Accent"), ("sidebar-accent-foreground", "Sidebar Accent Text"),
+                ("sidebar-border", "Sidebar Border"), ("sidebar-section-divider", "Sidebar Section Divider"),
+                ("sidebar-ring", "Sidebar Ring")]),
+            ("Borders & Focus", [("border", "Border"), ("input", "Input Border"), ("ring", "Focus Ring")]),
+        };
+
+        foreach (var (groupName, tokens) in tokenGroups)
+        {
+            tokenCard.Children.Add(new TextBlock
+            {
+                Text = groupName.ToUpperInvariant(), FontSize = 10, FontWeight = FontWeights.SemiBold,
+                CharacterSpacing = 100, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+                Margin = new Thickness(0, tokenCard.Children.Count == 0 ? 0 : 12, 0, 4),
+            });
+            foreach (var (token, label) in tokens)
+            {
+                var row = new Grid { ColumnSpacing = 12, Margin = new Thickness(0, 4, 0, 4) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                var value = variables.GetValueOrDefault(token);
+                var swatch = new Button
+                {
+                    Width = 32, Height = 32, Padding = new Thickness(0), CornerRadius = new CornerRadius(8),
+                    BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], BorderThickness = new Thickness(1),
+                    Background = IsHexThemeColor(value) ? new SolidColorBrush(ParseHexColor(value!)) : (Brush)Application.Current.Resources["SurfaceBrush"],
+                };
+                ToolTipService.SetToolTip(swatch, label);
+                swatch.Click += async (_, _) =>
+                {
+                    var picker = new ColorPicker
+                    {
+                        Color = IsHexThemeColor(variables.GetValueOrDefault(token)) ? ParseHexColor(variables[token]) : Colors.Black,
+                        IsAlphaEnabled = false, IsColorChannelTextInputVisible = true,
+                    };
+                    var dialog = new ContentDialog
+                    {
+                        Title = label, Content = picker, PrimaryButtonText = "Apply", CloseButtonText = "Cancel",
+                        DefaultButton = ContentDialogButton.Primary, XamlRoot = XamlRoot,
+                    };
+                    if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+                    variables[token] = $"#{picker.Color.R:X2}{picker.Color.G:X2}{picker.Color.B:X2}";
+                    PersistVariables();
+                    ShowTab("Theming");
+                };
+                row.Children.Add(swatch);
+                var copy = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+                copy.Children.Add(new TextBlock { Text = label, FontSize = 13, FontWeight = FontWeights.Medium });
+                copy.Children.Add(new TextBlock
+                {
+                    Text = string.IsNullOrWhiteSpace(value) ? "Theme default" : value,
+                    FontSize = 11, FontFamily = new FontFamily("Consolas"),
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                });
+                Grid.SetColumn(copy, 1);
+                row.Children.Add(copy);
+                var reset = new Button
+                {
+                    Content = "↶", Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+                    Padding = new Thickness(8), Visibility = variables.ContainsKey(token) ? Visibility.Visible : Visibility.Collapsed,
+                };
+                ToolTipService.SetToolTip(reset, "Reset to theme default");
+                reset.Click += (_, _) => { variables.Remove(token); PersistVariables(); ShowTab("Theming"); };
+                Grid.SetColumn(reset, 2);
+                row.Children.Add(reset);
+                tokenCard.Children.Add(row);
+            }
+        }
+
+        tokenCard.Children.Add(new TextBlock
+        {
+            Text = "SHAPE & FONT", FontSize = 10, FontWeight = FontWeights.SemiBold, CharacterSpacing = 100,
+            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"], Margin = new Thickness(0, 12, 0, 4),
+        });
+        var radiusValue = ParseThemeRadius(variables.GetValueOrDefault("radius"));
+        var radiusHeader = new Grid();
+        radiusHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        radiusHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        radiusHeader.Children.Add(new TextBlock { Text = "Border Radius", FontSize = 13, FontWeight = FontWeights.Medium });
+        var radiusText = new TextBlock { Text = $"{radiusValue:0.##}rem", FontSize = 11, FontFamily = new FontFamily("Consolas") };
+        Grid.SetColumn(radiusText, 1); radiusHeader.Children.Add(radiusText); tokenCard.Children.Add(radiusHeader);
+        var radiusSlider = new Slider { Minimum = 0, Maximum = 1.5, StepFrequency = 0.05, Value = radiusValue };
+        var radiusReady = false;
+        radiusSlider.Loaded += (_, _) => radiusReady = true;
+        radiusSlider.ValueChanged += (_, _) =>
+        {
+            if (!radiusReady) return;
+            variables["radius"] = $"{radiusSlider.Value:0.##}rem";
+            radiusText.Text = variables["radius"];
+            PersistVariables();
+        };
+        tokenCard.Children.Add(radiusSlider);
+
+        tokenCard.Children.Add(new TextBlock { Text = "Font Family", FontSize = 13, FontWeight = FontWeights.Medium, Margin = new Thickness(0, 8, 0, 0) });
+        var fontRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        foreach (var font in new[] { "Outfit", "Sora", "Urbanist", "Manrope" })
+        {
+            var selected = variables.GetValueOrDefault("font-body", "").Contains(font, StringComparison.OrdinalIgnoreCase);
+            var button = new Button
+            {
+                Content = font, FontFamily = new FontFamily(font),
+                Style = (Style)Application.Current.Resources[selected ? "AccentButtonStyle" : "OutlineButtonStyle"],
+                Padding = new Thickness(12, 6, 12, 6),
+            };
+            button.Click += (_, _) => { variables["font-body"] = $"\"{font}\", sans-serif"; PersistVariables(); ShowTab("Theming"); };
+            fontRow.Children.Add(button);
+        }
+        tokenCard.Children.Add(fontRow);
+        EndCard(tokenCard);
+
+        AddSectionHeader("Custom CSS");
+        var cssCard = BeginCard();
+        cssBox = new TextBox
+        {
+            Text = ViewModel.GetSetting("ui.admin_custom_css"), AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap,
+            MinHeight = 220, MaxHeight = 420, FontFamily = new FontFamily("Consolas"), FontSize = 12,
+            PlaceholderText = "/* Custom CSS applied to every page */",
+        };
+        ScrollViewer.SetVerticalScrollBarVisibility(cssBox, ScrollBarVisibility.Auto);
+        var cssReady = false;
+        cssBox.Loaded += (_, _) => cssReady = true;
+        cssBox.TextChanged += (_, _) =>
+        {
+            if (!cssReady) return;
+            ViewModel.SetSetting("ui.admin_custom_css", SanitizeAdminThemeCss(cssBox.Text ?? ""));
+            UpdateResetVisibility();
+            ScheduleAdminThemeSave("ui.admin_custom_css", 1000);
+        };
+        cssCard.Children.Add(cssBox);
+        EndCard(cssCard);
+
+        AddSectionHeader("Theme Catalog URL");
+        var catalogCard = BeginCard();
+        AddTextBlock(catalogCard, "URL of the community theme catalog JSON index. Users browse this in their settings.");
+        var catalog = new TextBox
+        {
+            Text = ViewModel.GetSetting("theme.catalog_url"),
+            PlaceholderText = "https://raw.githubusercontent.com/Silo-Server/silo-themes/main/catalog.json",
+            HorizontalAlignment = HorizontalAlignment.Stretch, CornerRadius = new CornerRadius(12),
+        };
+        if (string.IsNullOrWhiteSpace(catalog.Text)) catalog.Text = "https://raw.githubusercontent.com/Silo-Server/silo-themes/main/catalog.json";
+        catalog.LostFocus += async (_, _) =>
+        {
+            ViewModel.SetSetting("theme.catalog_url", catalog.Text?.Trim() ?? "");
+            await ViewModel.SaveSettingsAsync(["theme.catalog_url"]);
+        };
+        catalogCard.Children.Add(catalog);
+        EndCard(catalogCard);
+
+        resetAll.Click += async (_, _) =>
+        {
+            variables.Clear();
+            ViewModel.SetSetting("ui.admin_theme_vars", "{}");
+            ViewModel.SetSetting("ui.admin_custom_css", "");
+            await ViewModel.SaveSettingsAsync(["ui.admin_theme_vars", "ui.admin_custom_css"]);
+            ShowTab("Theming");
+        };
+        UpdateResetVisibility();
+    }
+
+    private void ScheduleAdminThemeSave(string key, int delayMilliseconds)
+    {
+        var owner = new CancellationTokenSource();
+        ref var slot = ref (key == "ui.admin_theme_vars" ? ref _adminThemeVarsSaveCts : ref _adminThemeCssSaveCts);
+        var previous = Interlocked.Exchange(ref slot, owner);
+        previous?.Cancel();
+        previous?.Dispose();
+        _ = SaveAdminThemeSettingAfterDelayAsync(key, delayMilliseconds, owner);
+    }
+
+    private async Task SaveAdminThemeSettingAfterDelayAsync(string key, int delayMilliseconds, CancellationTokenSource owner)
+    {
+        try
+        {
+            await Task.Delay(delayMilliseconds, owner.Token);
+            await ViewModel.SaveSettingsAsync([key]);
+        }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
+        finally
+        {
+            if (key == "ui.admin_theme_vars") Interlocked.CompareExchange(ref _adminThemeVarsSaveCts, null, owner);
+            else Interlocked.CompareExchange(ref _adminThemeCssSaveCts, null, owner);
+            owner.Dispose();
+        }
+    }
+
+    private static bool IsHexThemeColor(string? value)
+        => value is { Length: 7 } && value[0] == '#' && value[1..].All(Uri.IsHexDigit);
+
+    private static double ParseThemeRadius(string? value)
+        => double.TryParse(value?.Replace("rem", "", StringComparison.OrdinalIgnoreCase), out var parsed)
+            ? Math.Clamp(parsed, 0, 1.5) : 0.5;
+
+    private static string SanitizeAdminThemeCss(string css)
+    {
+        var result = System.Text.RegularExpressions.Regex.Replace(css,
+            "@import\\s+(?:url\\(.*?\\)|['\"].*?['\"])[^;]*;?", "/* [blocked @import] */",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return System.Text.RegularExpressions.Regex.Replace(result,
+            "url\\(\\s*(['\"]?)([\\s\\S]*?)\\1\\s*\\)", match =>
+            {
+                var value = match.Groups[2].Value.Trim().Trim('\'', '\"');
+                var safe = value.Length == 0 || value.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
+                    (value.StartsWith('/') && !value.StartsWith("//")) || value.StartsWith('#') ||
+                    (!System.Text.RegularExpressions.Regex.IsMatch(value, "^[a-z][a-z0-9+.-]*:", System.Text.RegularExpressions.RegexOptions.IgnoreCase) && !value.StartsWith("//"));
+                return safe ? match.Value : "/* [blocked external url] */";
+            }, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    /// <summary>
     /// Multi-line text area field for larger content like raw CSS / JSON.
     /// Dirty-tracks via ViewModel.SetSetting.
     /// </summary>
@@ -1211,7 +1628,7 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void BuildGeneralTab()
     {
-        AddTabHeader("General", "Authentication, token lifetimes, and server logging behavior.");
+        AddTabHeader("General", "Authentication, token lifetimes, networking, and server logging behavior.");
 
         AddSectionHeader("Authentication");
         var authCard = BeginCard();
@@ -1233,7 +1650,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
             BorderThickness = new Thickness(1),
-            Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
+            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(12, 10, 12, 10),
             Margin = new Thickness(0, 8, 0, 4)
@@ -1402,8 +1819,10 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void BuildIntroMarkersTab()
     {
+        ContentPanel.MaxWidth = 672;
+        ContentPanel.HorizontalAlignment = HorizontalAlignment.Left;
         AddTabHeader("Intro Markers",
-            "Configure intro, recap, credits, and preview marker discovery for playback skip controls.");
+            "Configure marker lookup, local marker generation, and provider contribution.");
 
         AddSectionHeader("Detection");
         var markerCard = BeginCard();
@@ -1711,6 +2130,8 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void BuildSubtitlesTab()
     {
+        ContentPanel.MaxWidth = 672;
+        ContentPanel.HorizontalAlignment = HorizontalAlignment.Left;
         AddTabHeader("Subtitles",
             "Search providers for downloading subtitles. AI translation and transcription live under AI Services.");
 
@@ -1719,17 +2140,19 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void BuildAIServicesTab()
     {
+        ContentPanel.MaxWidth = 672;
+        ContentPanel.HorizontalAlignment = HorizontalAlignment.Left;
         AddTabHeader("AI Services",
             "Shared AI endpoint and feature toggles for subtitle translation, subtitle generation from audio, and description translation.");
 
         AddSectionHeader("Endpoint");
         var endpointCard = BeginCard();
         AddTextField(endpointCard, "Base URL", "ai.base_url",
-            "https://api.openai.com");
+            "https://api.openai.com", "subtitle_ai.base_url");
         AddTextField(endpointCard, "Chat model", "ai.chat_model",
-            "Used for subtitle and description translation, e.g. gpt-4o-mini, llama3.1");
+            "Used for subtitle and description translation, e.g. gpt-4o-mini, llama3.1", "subtitle_ai.chat_model");
         AddPasswordField(endpointCard, "API Key", "ai.api_key",
-            "Leave blank to keep current. Empty is fine for keyless local servers.");
+            "Leave blank to keep current. Empty is fine for keyless local servers.", "subtitle_ai.api_key");
         AddDivider(endpointCard);
         endpointCard.Children.Add(new TextBlock { Text = "Transcription", FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 0) });
         endpointCard.Children.Add(new TextBlock
@@ -1763,7 +2186,13 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddPasswordField(endpointCard, "Transcription API key", "ai.asr_api_key",
             "Optional; blank uses the main API key.");
         AddNumberField(endpointCard, "Max concurrent jobs", "ai.max_concurrent_jobs",
-            "One shared cap across subtitle translation, transcription, and description translation.");
+            "One shared cap across subtitle translation, transcription, and description translation.", "subtitle_ai.max_concurrent_jobs");
+        AddOwnedSettingsSaveButton(endpointCard, "Save Endpoint Settings",
+        [
+            "ai.base_url", "ai.chat_model", "ai.api_key", "ai.asr_model",
+            "ai.asr_base_url", "ai.asr_api_key", "ai.max_concurrent_jobs"
+        ]);
+        AddTextBlock(endpointCard, "Changes take effect after a server restart.");
         EndCard(endpointCard);
 
         AddSectionHeader("Features");
@@ -1796,6 +2225,14 @@ public sealed partial class AdminSettingsDetailPage : Page
                 ("month", "Per month (rolling 30 days)"),
             ],
             "Rolling window the transcription limit counts against.");
+        AddOwnedSettingsSaveButton(featuresCard, "Save Feature Settings",
+        [
+            "subtitle_ai.enabled", "subtitle_ai.transcribe_enabled", "metadata_ai.enabled",
+            "metadata_ai.on_view", "subtitle_ai.batch_size", "subtitle_ai.context_neighbors",
+            "subtitle_ai.asr_chunk_seconds", "subtitle_ai.transcribe_quota_jobs",
+            "subtitle_ai.transcribe_quota_period"
+        ]);
+        AddTextBlock(featuresCard, "Changes take effect after a server restart.");
         EndCard(featuresCard);
     }
 
@@ -2023,13 +2460,18 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void BuildIntegrationsTab()
     {
-        AddTabHeader("Integrations", "Configure list discovery and external integration credentials.");
+        ContentPanel.MaxWidth = 672;
+        ContentPanel.HorizontalAlignment = HorizontalAlignment.Left;
+        AddTabHeader("Integrations", "API keys for external services. Watch provider and subtitle credentials have their own pages in the sidebar.");
 
-        AddSectionHeader("MDBList");
         var mdblistCard = BeginCard();
-        AddTextBlock(mdblistCard,
-            "Enables list search and browse when users add MDBList collections. Importing a list by URL works without a key; discovery requires one.");
-        AddPasswordField(mdblistCard, "API Key", "mdblist.api_key", "Leave blank to keep the current value.");
+        AddCredentialCardHeader(mdblistCard, "MDBList",
+            "Enables list search/browse when users add MDBList collections. Importing a list by URL works without a key — only discovery requires one. Get a free key at mdblist.com/preferences.",
+            ViewModel.IsSensitiveConfigured("mdblist.api_key"));
+        var fields = new StackPanel();
+        AddPasswordField(fields, "API Key", "mdblist.api_key", "Leave blank to keep the current value.");
+        AddOwnedSettingsSaveButton(fields, "Save MDBList API Key", ["mdblist.api_key"]);
+        mdblistCard.Children.Add(fields);
         EndCard(mdblistCard);
     }
 
@@ -2323,28 +2765,106 @@ public sealed partial class AdminSettingsDetailPage : Page
         };
     }
 
+    private void AddCredentialCardHeader(StackPanel parent, string title, string description, bool configured)
+    {
+        var header = new Grid { ColumnSpacing = 12, Margin = new Thickness(0, 0, 0, 8) };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var copy = new StackPanel { Spacing = 3 };
+        copy.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+        });
+        copy.Children.Add(new TextBlock
+        {
+            Text = description,
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        header.Children.Add(copy);
+
+        var status = BuildProviderStatusPill(configured);
+        Grid.SetColumn(status, 1);
+        header.Children.Add(status);
+        parent.Children.Add(header);
+    }
+
+    private void AddOwnedSettingsSaveButton(StackPanel parent, string label, IReadOnlyCollection<string> keys)
+    {
+        var keySet = keys.ToHashSet(StringComparer.Ordinal);
+        var button = new Button
+        {
+            Content = label,
+            Margin = new Thickness(0, 10, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+
+        void UpdateEnabled() => button.IsEnabled = !ViewModel.IsSaving
+            && ViewModel.GetDirtyKeys().Any(keySet.Contains);
+        _dirtyStateUpdaters.Add(UpdateEnabled);
+        UpdateEnabled();
+
+        button.Click += async (_, _) =>
+        {
+            button.IsEnabled = false;
+            var saved = await ViewModel.SaveSettingsAsync(keySet);
+            if (saved)
+            {
+                ShowStatusToast("Settings saved successfully.");
+                // Rebuild sensitive inputs so submitted secrets are cleared and
+                // the configured badge reflects the authoritative state.
+                ShowTab(_activeTab);
+            }
+            else if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+            {
+                ShowStatusToast(ViewModel.ErrorMessage);
+            }
+            UpdateEnabled();
+        };
+        parent.Children.Add(button);
+    }
+
     private void BuildWatchProvidersTab()
     {
+        ContentPanel.MaxWidth = 672;
+        ContentPanel.HorizontalAlignment = HorizontalAlignment.Left;
         AddTabHeader("Watch Providers",
-            "OAuth credentials for watch history and scrobbling services. Users connect their own accounts from profile settings once a provider is configured here.");
+            "OAuth credentials for watch history and scrobbling services. Users connect their own accounts from their profile settings once a provider is configured here.");
 
-        AddSectionHeader("Trakt");
         var traktCard = BeginCard();
-        AddPasswordField(traktCard, "Client ID", "watchsync.trakt.client_id", "Leave blank to keep the current value.");
-        AddPasswordField(traktCard, "Client Secret", "watchsync.trakt.client_secret", "Leave blank to keep the current value.");
+        AddCredentialCardHeader(traktCard, "Trakt", "OAuth credentials for profile connections.",
+            ViewModel.IsSensitiveConfigured("watchsync.trakt.client_id")
+            && ViewModel.IsSensitiveConfigured("watchsync.trakt.client_secret"));
+        var traktFields = new StackPanel();
+        AddPasswordField(traktFields, "Client ID", "watchsync.trakt.client_id", "Leave blank to keep the current value.");
+        AddPasswordField(traktFields, "Client Secret", "watchsync.trakt.client_secret", "Leave blank to keep the current value.");
+        AddOwnedSettingsSaveButton(traktFields, "Save Trakt Credentials",
+            ["watchsync.trakt.client_id", "watchsync.trakt.client_secret"]);
+        traktCard.Children.Add(traktFields);
         EndCard(traktCard);
 
-        AddSectionHeader("Simkl");
         var simklCard = BeginCard();
-        AddPasswordField(simklCard, "Client ID", "watchsync.simkl.client_id", "Leave blank to keep the current value.");
-        AddPasswordField(simklCard, "Client Secret", "watchsync.simkl.client_secret", "Leave blank to keep the current value.");
+        AddCredentialCardHeader(simklCard, "Simkl", "OAuth credentials for profile connections.",
+            ViewModel.IsSensitiveConfigured("watchsync.simkl.client_id")
+            && ViewModel.IsSensitiveConfigured("watchsync.simkl.client_secret"));
+        var simklFields = new StackPanel();
+        AddPasswordField(simklFields, "Client ID", "watchsync.simkl.client_id", "Leave blank to keep the current value.");
+        AddPasswordField(simklFields, "Client Secret", "watchsync.simkl.client_secret", "Leave blank to keep the current value.");
+        AddOwnedSettingsSaveButton(simklFields, "Save Simkl Credentials",
+            ["watchsync.simkl.client_id", "watchsync.simkl.client_secret"]);
+        simklCard.Children.Add(simklFields);
         EndCard(simklCard);
     }
 
     private void BuildEmailTab()
     {
         AddTabHeader("Email",
-            "Outbound email via your own SMTP server. Used by features that send mail — notification emails and account flows — once they are enabled.");
+            "Outbound email via your own SMTP server. Used by features that send mail — notification emails, account flows — once they are enabled.");
 
         AddSectionHeader("General");
         var generalCard = BeginCard();
@@ -2415,10 +2935,422 @@ public sealed partial class AdminSettingsDetailPage : Page
         EndCard(verifyCard);
     }
 
+    private void BuildNotificationsAdminTabCurrent()
+    {
+        AddTabHeader("Notifications",
+            "Operational controls for the notification system. All settings apply live — no restart needed. Per-profile preferences live in each user's own notification settings.");
+
+        ContentPanel.Children.Add(BuildNotificationPipeline());
+
+        var channelsHeading = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 0) };
+        channelsHeading.Children.Add(new TextBlock
+        {
+            Text = "DELIVERY CHANNELS",
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            CharacterSpacing = 220,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+        });
+        channelsHeading.Children.Add(new TextBlock
+        {
+            Text = "Where notifications go once fanout queues them. Channels can be configured while switched off.",
+            FontSize = 12,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+        ContentPanel.Children.Add(channelsHeading);
+
+        var channelList = new StackPanel { Spacing = 0 };
+        AddNotificationChannelRow(channelList, "\uE8F2", "In-App",
+            "Advertise the notification inbox and preferences to web and client apps.",
+            "notifications.ui_enabled");
+        AddNotificationChannelRow(channelList, "\uE7F4", "Web Push",
+            "Browser push notifications to subscribed devices.",
+            "notifications.web_push_enabled");
+        AddNotificationChannelRow(channelList, "\uE95A", "Silo Push Relay",
+            "Mobile push delivery through Silo's relay. Apple devices use APNs today; Android support will use the same relay when available.",
+            "notifications.apple_push_delivery_enabled",
+            ViewModel.IsSensitiveConfigured("notifications.push_relay_api_key") ? "Relay configured" : "Registration required",
+            BuildPushRelayDetails());
+
+        var emailDetails = new StackPanel { Spacing = 0 };
+        AddToggleField(emailDetails, "Allow Per-Episode Email", "notifications.email.allow_per_episode");
+        AddNumberField(emailDetails, "Digest Hour", "notifications.email.digest_hour", "0-23, server local time.");
+        AddTextField(emailDetails, "External URL", "notifications.email.external_url", "Public URL used in notification links.");
+        var digestValue = ViewModel.GetSetting("notifications.email.digest_hour");
+        if (string.IsNullOrWhiteSpace(digestValue)) digestValue = "8";
+        AddNotificationChannelRow(channelList, "\uE715", "Email",
+            "Notifications by email for accounts that opt in, as a daily digest or per episode.",
+            "notifications.email_enabled", $"Digest at {digestValue.PadLeft(2, '0')}:00", emailDetails);
+
+        var discordDetails = BuildDiscordNotificationDetails();
+        var discordConfigured = ViewModel.IsSensitiveConfigured("discord.bot_token")
+            || ViewModel.IsSensitiveConfigured("discord.client_secret");
+        AddNotificationChannelRow(channelList, "\uE902", "Discord",
+            "Bot DMs for linked accounts, plus appearance for every Discord delivery surface.",
+            "notifications.discord_enabled", discordConfigured ? "Credentials configured" : "Credentials required", discordDetails);
+
+        var webhookDetails = new StackPanel { Spacing = 0 };
+        AddNumberField(webhookDetails, "Max Webhooks Per Profile", "notifications.webhooks.max_per_profile",
+            "How many webhooks a single profile may create (default 10)");
+        AddNumberField(webhookDetails, "Deliveries Per Minute Per Profile", "notifications.webhooks.deliveries_per_minute_per_profile",
+            "Webhook delivery rate limit; over-limit notifications still reach the inbox (default 60)");
+        AddToggleField(webhookDetails, "Allow Private Destinations", "notifications.webhooks.allow_private_destinations",
+            "Disables the SSRF guard so webhooks may target private and LAN addresses. Development only.");
+        AddNotificationChannelRow(channelList, "\uE774", "Personal Webhooks",
+            "User-created webhooks (Discord or generic) that receive their personal notifications — the server sends requests to user-chosen URLs.",
+            "notifications.webhooks_enabled", null, webhookDetails);
+
+        var serverChannelDetails = new StackPanel { Spacing = 0 };
+        AddNumberField(serverChannelDetails, "Batch Window (seconds)", "notifications.server_channels.batch_seconds");
+        AddToggleField(serverChannelDetails, "Mention Requesters on Discord", "notifications.server_channels.mention_requesters",
+            "Mention linked requesters in request-related server channel posts.");
+        AddDivider(serverChannelDetails);
+        var channelsHost = new StackPanel { Spacing = 10, Margin = new Thickness(0, 10, 0, 4) };
+        serverChannelDetails.Children.Add(channelsHost);
+        _ = LoadServerNotificationChannelsAsync(channelsHost);
+        AddNotificationChannelRow(channelList, "\uE789", "Server Channels",
+            "Admin-created broadcasts that post server-wide events (new content, request activity) to shared destinations, like a community Discord channel.",
+            "notifications.server_channels_enabled", null, serverChannelDetails);
+
+        ContentPanel.Children.Add(new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(16),
+            Child = channelList,
+        });
+
+        var advancedHeading = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 0) };
+        advancedHeading.Children.Add(new TextBlock
+        {
+            Text = "ADVANCED",
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            CharacterSpacing = 220,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+        });
+        advancedHeading.Children.Add(new TextBlock
+        {
+            Text = "Batching, flood control, and cleanup. The defaults work well for most servers.",
+            FontSize = 12,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        ContentPanel.Children.Add(advancedHeading);
+
+        var advanced = new Grid { ColumnSpacing = 16 };
+        advanced.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        advanced.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var fanout = BeginCard();
+        fanout.Children.Add(new TextBlock
+        {
+            Text = "FANOUT TUNING", FontSize = 11, FontWeight = FontWeights.SemiBold,
+            CharacterSpacing = 220, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            Margin = new Thickness(0, 0, 0, 10),
+        });
+        AddNumberField(fanout, "Settle Delay (seconds)", "notifications.fanout.settle_seconds",
+            "How long an event must sit before fanout claims it, so one scan's episodes batch together (default 30)");
+        AddNumberField(fanout, "Max Series Burst", "notifications.fanout.max_series_burst",
+            "Max notifications per series per batch; the rest are suppressed to avoid floods (default 3)");
+        AddNumberField(fanout, "Max Event Age (hours)", "notifications.fanout.max_event_age_hours",
+            "Events older than this are dropped instead of delivered late, e.g. after extended downtime (default 72)");
+        advanced.Children.Add(WrapInCard(fanout));
+
+        var retention = BeginCard();
+        retention.Children.Add(new TextBlock
+        {
+            Text = "RETENTION", FontSize = 11, FontWeight = FontWeights.SemiBold,
+            CharacterSpacing = 220, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            Margin = new Thickness(0, 0, 0, 10),
+        });
+        AddNumberField(retention, "Read Notifications (days)", "notifications.retention.read_days",
+            "How long read inbox entries are kept (default 90)");
+        AddNumberField(retention, "Unread Notifications (days)", "notifications.retention.unread_days",
+            "How long unread inbox entries are kept (default 180)");
+        AddNumberField(retention, "Processed Events (days)", "notifications.retention.event_days",
+            "How long processed release events are kept for debugging (default 30)");
+        var retentionCard = WrapInCard(retention);
+        Grid.SetColumn(retentionCard, 1);
+        advanced.Children.Add(retentionCard);
+        ContentPanel.Children.Add(advanced);
+    }
+
+    private FrameworkElement BuildNotificationPipeline()
+    {
+        var card = new StackPanel { Spacing = 14 };
+        card.Children.Add(new TextBlock
+        {
+            Text = "PIPELINE", FontSize = 11, FontWeight = FontWeights.SemiBold,
+            CharacterSpacing = 220, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+        });
+        var stages = new Grid { ColumnSpacing = 28 };
+        for (var index = 0; index < 3; index++)
+            stages.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        stages.Children.Add(BuildNotificationPipelineStage("\uE789", "Record events",
+            "Log new-content availability during library scans. Off stops notifications at the source.",
+            "notifications.release_events_enabled"));
+        var fanout = BuildNotificationPipelineStage("\uE8B5", "Fan out",
+            "Match recorded events to interested profiles and queue deliveries.",
+            "notifications.fanout_enabled");
+        Grid.SetColumn(fanout, 1);
+        stages.Children.Add(fanout);
+        var enabledChannels = new[]
+        {
+            "notifications.ui_enabled", "notifications.web_push_enabled", "notifications.apple_push_delivery_enabled",
+            "notifications.email_enabled", "notifications.discord_enabled", "notifications.webhooks_enabled",
+            "notifications.server_channels_enabled",
+        }.Count(IsSettingEnabled);
+        var deliver = BuildNotificationPipelineStage("\uE7F4", "Deliver",
+            "Hand off to the delivery channels below.", null, $"{enabledChannels}/7 channels on");
+        Grid.SetColumn(deliver, 2);
+        stages.Children.Add(deliver);
+        card.Children.Add(stages);
+        return new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(16),
+            Padding = new Thickness(20, 18, 20, 18),
+            Child = card,
+        };
+    }
+
+    private FrameworkElement BuildNotificationPipelineStage(string glyph, string title, string description, string? key, string? badge = null)
+    {
+        var stage = new Grid { ColumnSpacing = 10 };
+        stage.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        stage.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        stage.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        stage.Children.Add(new FontIcon
+        {
+            Glyph = glyph, FontSize = 15, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            Margin = new Thickness(0, 2, 0, 0),
+        });
+        var copy = new StackPanel { Spacing = 4 };
+        copy.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold });
+        copy.Children.Add(new TextBlock
+        {
+            Text = description, FontSize = 11, TextWrapping = TextWrapping.Wrap,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        Grid.SetColumn(copy, 1);
+        stage.Children.Add(copy);
+        FrameworkElement control;
+        if (key is not null)
+        {
+            control = CreateStagedSettingToggle(key);
+        }
+        else
+        {
+            var badgeControl = BuildNotificationBadge(badge ?? "");
+            if (title == "Deliver") _notificationEnabledCountText = (TextBlock)badgeControl.Child;
+            control = badgeControl;
+        }
+        Grid.SetColumn(control, 2);
+        stage.Children.Add(control);
+        return stage;
+    }
+
+    private void AddNotificationChannelRow(StackPanel host, string glyph, string title, string description,
+        string key, string? badge = null, StackPanel? details = null)
+    {
+        if (host.Children.Count > 0)
+            host.Children.Add(new Border
+            {
+                BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(0, 1, 0, 0),
+            });
+        var header = new Grid { Padding = new Thickness(16, 13, 16, 13), ColumnSpacing = 12 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.Children.Add(new Border
+        {
+            Width = 40, Height = 40, CornerRadius = new CornerRadius(10),
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+            Child = new FontIcon { Glyph = glyph, FontSize = 17, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+        });
+        var copy = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
+        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        titleRow.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold });
+        if (!string.IsNullOrWhiteSpace(badge)) titleRow.Children.Add(BuildNotificationBadge(badge));
+        copy.Children.Add(titleRow);
+        copy.Children.Add(new TextBlock
+        {
+            Text = description, FontSize = 11, TextWrapping = TextWrapping.Wrap,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        Grid.SetColumn(copy, 1);
+        header.Children.Add(copy);
+        var toggle = CreateStagedSettingToggle(key);
+        Grid.SetColumn(toggle, 2);
+        header.Children.Add(toggle);
+
+        if (details is null)
+        {
+            host.Children.Add(header);
+            return;
+        }
+
+        host.Children.Add(new Expander
+        {
+            Header = header,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Content = new Border
+            {
+                Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+                Padding = new Thickness(20, 8, 20, 18),
+                Child = details,
+            },
+        });
+    }
+
+    private ToggleSwitch CreateStagedSettingToggle(string key)
+    {
+        var toggle = new ToggleSwitch
+        {
+            IsOn = IsSettingEnabled(key),
+            OnContent = "", OffContent = "", MinWidth = 44,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        toggle.Toggled += (_, _) =>
+        {
+            ViewModel.SetSetting(key, toggle.IsOn ? "true" : "false");
+            UpdateDirtyCountText();
+            UpdateNotificationEnabledCount();
+        };
+        return toggle;
+    }
+
+    private bool IsSettingEnabled(string key)
+        => string.Equals(ViewModel.GetSetting(key), "true", StringComparison.OrdinalIgnoreCase);
+
+    private void UpdateNotificationEnabledCount()
+    {
+        if (_notificationEnabledCountText is null) return;
+        var count = new[]
+        {
+            "notifications.ui_enabled", "notifications.web_push_enabled", "notifications.apple_push_delivery_enabled",
+            "notifications.email_enabled", "notifications.discord_enabled", "notifications.webhooks_enabled",
+            "notifications.server_channels_enabled",
+        }.Count(IsSettingEnabled);
+        _notificationEnabledCountText.Text = $"{count}/7 channels on";
+    }
+
+    private static Border BuildNotificationBadge(string text) => new()
+    {
+        Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+        CornerRadius = new CornerRadius(999),
+        Padding = new Thickness(7, 2, 7, 2),
+        VerticalAlignment = VerticalAlignment.Center,
+        Child = new TextBlock
+        {
+            Text = text, FontSize = 10,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        },
+    };
+
+    private StackPanel BuildDiscordNotificationDetails()
+    {
+        var details = new StackPanel { Spacing = 0 };
+        AddTextField(details, "Client ID", "discord.client_id", "The Discord application's OAuth2 client ID (used for account linking)");
+        AddPasswordField(details, "Client Secret", "discord.client_secret", "The Discord application's OAuth2 client secret");
+        AddPasswordField(details, "Bot Token", "discord.bot_token", "The bot user's token (used to send DMs)");
+        var test = new Button { Content = "Test bot token", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 8) };
+        var result = new TextBlock { FontSize = 12, Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap };
+        test.Click += async (_, _) =>
+        {
+            test.IsEnabled = false;
+            try
+            {
+                var response = await _settingsApi.TestDiscordBotAsync();
+                result.Text = $"{(response.Ok ? "Success" : "Failed")} ({response.DurationMs}ms)" +
+                              (string.IsNullOrWhiteSpace(response.Message) ? "" : $" — {response.Message}");
+                result.Foreground = (SolidColorBrush)Application.Current.Resources[response.Ok ? "SuccessBrush" : "WarningBrush"];
+                result.Visibility = Visibility.Visible;
+            }
+            catch (Exception ex) { ShowStatusToast($"Discord test failed: {ex.Message}"); }
+            finally { test.IsEnabled = true; }
+        };
+        details.Children.Add(test);
+        details.Children.Add(result);
+        AddToggleField(details, "Allow Per-Episode DMs", "notifications.discord.allow_per_episode",
+            "Let users choose a DM per episode instead of the daily digest. Off coerces those accounts to the digest.");
+        AddNumberField(details, "Digest Hour", "notifications.discord.digest_hour", "Hour of day (0-23, server time) when daily digest DMs go out (default 8)");
+        AddSelectField(details, "Embed Posters", "notifications.discord.poster_mode",
+            [("provider", "Provider CDNs only (default)"), ("server", "Provider CDNs + server storage"), ("off", "No images")],
+            "Artwork in outgoing Discord messages across personal webhooks, bot DMs, and server channels.");
+        return details;
+    }
+
+    private StackPanel BuildPushRelayDetails()
+    {
+        const string defaultRelayUrl = "https://push.siloserver.org";
+        var savedUrl = ViewModel.GetSetting("notifications.push_relay_url");
+        if (string.IsNullOrWhiteSpace(savedUrl)) savedUrl = defaultRelayUrl;
+        var deploymentId = ViewModel.GetSetting("notifications.push_relay_deployment_id");
+        var keyPrefix = ViewModel.GetSetting("notifications.push_relay_key_prefix");
+        var expiresAt = ViewModel.GetSetting("notifications.push_relay_expires_at");
+        var credentialReady = ViewModel.IsSensitiveConfigured("notifications.push_relay_api_key");
+        var details = new StackPanel { Spacing = 10 };
+        details.Children.Add(new TextBlock
+        {
+            Text = "Privacy disclosure", FontSize = 14, FontWeight = FontWeights.SemiBold,
+        });
+        details.Children.Add(new TextBlock
+        {
+            Text = "Push requests are content-free. The relay never receives notification text, media names, user or profile names, or your server URL. It processes only technical delivery metadata such as an opaque deployment ID, timing/status, app topic, source IP, and a hashed device push token. The app fetches private content directly from your Silo server after receiving a generic push.",
+            FontSize = 12, TextWrapping = TextWrapping.Wrap,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        details.Children.Add(new TextBlock { Text = "Relay URL", FontSize = 14, FontWeight = FontWeights.Medium });
+        var relayUrl = new TextBox { Text = savedUrl, Style = (Style)Application.Current.Resources["DarkTextBoxStyle"], MaxWidth = 448, HorizontalAlignment = HorizontalAlignment.Left };
+        details.Children.Add(relayUrl);
+        var status = new TextBlock
+        {
+            Text = credentialReady
+                ? $"Relay configured{(string.IsNullOrWhiteSpace(keyPrefix) ? "" : $" · credential {keyPrefix}")}. {BuildPushRelayRenewalText(expiresAt, true)}"
+                : $"Relay registration required. {BuildPushRelayRenewalText(expiresAt, !string.IsNullOrWhiteSpace(deploymentId))}",
+            FontSize = 12, TextWrapping = TextWrapping.Wrap,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+        };
+        details.Children.Add(status);
+        if (!string.IsNullOrWhiteSpace(deploymentId))
+            details.Children.Add(new TextBlock
+            {
+                Text = $"Deployment ID  {deploymentId}", FontSize = 12,
+                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            });
+        var register = new Button
+        {
+            Content = string.IsNullOrWhiteSpace(deploymentId) ? "Register relay" : "Rotate credential",
+            Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        register.Click += async (_, _) =>
+        {
+            register.IsEnabled = false;
+            var oldContent = register.Content;
+            register.Content = "Registering…";
+            try
+            {
+                var registered = await ViewModel.RegisterPushRelayAsync(relayUrl.Text.Trim());
+                status.Text = $"Relay configured{(string.IsNullOrWhiteSpace(registered.KeyPrefix) ? "" : $" · credential {registered.KeyPrefix}")}. {BuildPushRelayRenewalText(registered.ExpiresAt, true)}";
+                register.Content = "Rotate credential";
+            }
+            catch (Exception ex)
+            {
+                register.Content = oldContent;
+                ShowStatusToast($"Relay registration failed: {ex.Message}");
+            }
+            finally { register.IsEnabled = true; }
+        };
+        details.Children.Add(register);
+        return details;
+    }
+
     private void BuildNotificationsAdminTab()
     {
         AddTabHeader("Notifications",
-            "Operational controls for the notification system. Settings apply live; per-profile preferences remain with each user.");
+            "Operational controls for the notification system. All settings apply live — no restart needed. Per-profile preferences live in each user's own notification settings.");
 
         AddSectionHeader("Pipeline");
         var pipelineCard = BeginCard();
@@ -2818,7 +3750,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             Text = savedUrl,
             Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
-            MaxWidth = 448,
+            Width = 448,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
         relay.Children.Add(relayUrl);
@@ -3289,7 +4221,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             Password = "",
             Style = (Style)Application.Current.Resources["DarkPasswordBoxStyle"],
-            MaxWidth = 448,
+            Width = 448,
             HorizontalAlignment = HorizontalAlignment.Left,
             PlaceholderText = isUrlConfigured ? "\u2022\u2022\u2022\u2022 configured" : "redis://host:6379"
         };
@@ -3363,7 +4295,7 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     private void BuildStorageTab()
     {
-        AddTabHeader("Storage", "S3-compatible object storage for artwork, imports/exports, and future replicated data.");
+        AddTabHeader("Storage", "Configure separate S3-compatible storage for client-facing assets and private internal Silo artifacts.");
 
         // Sub-tab bar: Public Assets | Private Internal | User DB (disabled)
         var subTabBar = new StackPanel
@@ -3387,13 +4319,48 @@ public sealed partial class AdminSettingsDetailPage : Page
         var publicContainer = new StackPanel { Spacing = 12 };
 
         var pubCard = new StackPanel { Spacing = 0 };
-        AddTextBlock(pubCard, "Stores client-facing assets: artwork, chapter thumbnails, and subtitle files.");
+        AddTextBlock(pubCard, "Stores client-facing assets such as artwork, chapter thumbnails, and subtitle files.");
+        AddTextBlock(pubCard, "This bucket does not need to be public. Most installs should keep it private and use presigned URLs. Only use Public or Cloudflare Token modes if you want direct CDN/object access.");
         AddTextField(pubCard, "Endpoint", "s3.public_endpoint");
         AddTextField(pubCard, "Region", "s3.public_region");
         AddToggleField(pubCard, "Path Style", "s3.public_path_style");
         AddTextField(pubCard, "Bucket", "s3.public_bucket");
         AddTextField(pubCard, "Key Prefix", "s3.public_key_prefix",
-            "Optional. Stores all objects under this folder inside the bucket. Leave blank for bucket root.");
+            "Optional. Stores all Silo objects under this folder inside the bucket. Leave blank to use the bucket root.");
+        var locationWarning = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x0D, 0xF5, 0x9E, 0x0B)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x33, 0xF5, 0x9E, 0x0B)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(14),
+            Margin = new Thickness(0, 8, 0, 8),
+            Visibility = Visibility.Collapsed,
+            Child = new StackPanel
+            {
+                Spacing = 4,
+                Children =
+                {
+                    new TextBlock { Text = "Storage location change", FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xF5, 0x9E, 0x0B)) },
+                    new TextBlock
+                    {
+                        Text = "Artwork is cached in this bucket. After the server restarts, Silo verifies the cache against the new storage and automatically re-caches anything missing. Uploaded images (custom posters, collection artwork, branding) cannot be re-downloaded — migrate your bucket contents if you want to keep them.",
+                        FontSize = 12, TextWrapping = TextWrapping.Wrap,
+                        Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                    },
+                },
+            },
+        };
+        pubCard.Children.Add(locationWarning);
+        void UpdateLocationWarning()
+        {
+            var dirty = ViewModel.GetDirtyKeys();
+            locationWarning.Visibility = dirty.Any(key => key is "s3.public_endpoint" or "s3.public_bucket" or "s3.public_key_prefix")
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+        _dirtyStateUpdaters.Add(UpdateLocationWarning);
+        UpdateLocationWarning();
         AddPasswordField(pubCard, "Access Key", "s3.public_access_key");
         AddPasswordField(pubCard, "Secret Key", "s3.public_secret_key");
         AddConnectionCheckButton(pubCard, "s3_public", "Check Connection");
@@ -3403,15 +4370,14 @@ public sealed partial class AdminSettingsDetailPage : Page
         var urlAuthCard = new StackPanel { Spacing = 0 };
         urlAuthCard.Children.Add(new TextBlock
         {
-            Text = "ASSET URL AUTHENTICATION",
-            FontSize = 11,
-            FontWeight = FontWeights.SemiBold,
-            CharacterSpacing = 80,
-            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            Text = "Asset URL Authentication",
+            FontSize = 14,
+            FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
             Margin = new Thickness(0, 0, 0, 10),
         });
         AddTextBlock(urlAuthCard,
-            "Controls how read URLs are generated for cached images. Use Cloudflare Token for R2 custom domains.");
+            "Controls how client-facing asset URLs are generated. Presigned URLs are recommended and work with private buckets.");
         AddS3UrlAuthFields(urlAuthCard);
         publicContainer.Children.Add(WrapInCard(urlAuthCard));
 
@@ -3421,13 +4387,13 @@ public sealed partial class AdminSettingsDetailPage : Page
         var privateContainer = new StackPanel { Spacing = 12, Visibility = Visibility.Collapsed };
 
         var privCard = new StackPanel { Spacing = 0 };
-        AddTextBlock(privCard, "Stores non-public Silo objects: imports, exports, and internal artifacts.");
+        AddTextBlock(privCard, "Stores non-public Silo objects such as imports, exports, and internal artifacts.");
         AddTextField(privCard, "Endpoint", "s3.private_endpoint");
         AddTextField(privCard, "Region", "s3.private_region");
         AddToggleField(privCard, "Path Style", "s3.private_path_style");
         AddTextField(privCard, "Bucket", "s3.private_bucket");
         AddTextField(privCard, "Key Prefix", "s3.private_key_prefix",
-            "Optional. Stores all private objects under this folder inside the bucket.");
+            "Optional. Stores all Silo objects under this folder inside the bucket. Leave blank to use the bucket root.");
         AddPasswordField(privCard, "Access Key", "s3.private_access_key");
         AddPasswordField(privCard, "Secret Key", "s3.private_secret_key");
         AddConnectionCheckButton(privCard, "s3_private", "Check Connection");
@@ -4024,7 +4990,7 @@ public sealed partial class AdminSettingsDetailPage : Page
     private void BuildOverlaysTab()
     {
         AddTabHeader("Card Overlays",
-            "Configure the default overlay badges shown on poster cards. Users can override these in their personal settings.");
+            "Configure the default overlay badges and style preset shown on poster cards. Users can override these in their personal settings.");
 
         AddSectionHeader("General");
         var genCard = BeginCard();
@@ -4420,7 +5386,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         header.Children.Add(new TextBlock
         {
             Text = title,
-            FontSize = 18,
+            FontSize = 20,
             FontWeight = FontWeights.SemiBold,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
@@ -4470,7 +5436,7 @@ public sealed partial class AdminSettingsDetailPage : Page
     {
         var border = new Border
         {
-            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
             CornerRadius = new CornerRadius(16),
             Padding = new Thickness(20, 18, 20, 18),
             Child = cardContent,
@@ -4503,7 +5469,15 @@ public sealed partial class AdminSettingsDetailPage : Page
 
     // ===== Field Builders =====
 
-    private TextBox AddTextField(StackPanel parent, string label, string key, string? hint = null)
+    private string GetSettingValue(string key, string? fallbackKey = null)
+    {
+        var value = ViewModel.GetSetting(key);
+        return string.IsNullOrWhiteSpace(value) && !string.IsNullOrWhiteSpace(fallbackKey)
+            ? ViewModel.GetSetting(fallbackKey)
+            : value;
+    }
+
+    private TextBox AddTextField(StackPanel parent, string label, string key, string? hint = null, string? fallbackKey = null)
     {
         if (parent.Children.Count > 0) AddDivider(parent);
 
@@ -4519,9 +5493,9 @@ public sealed partial class AdminSettingsDetailPage : Page
 
         var textBox = new TextBox
         {
-            Text = ViewModel.GetSetting(key),
+            Text = GetSettingValue(key, fallbackKey),
             Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
-            MaxWidth = 448,
+            Width = 448,
             HorizontalAlignment = HorizontalAlignment.Left,
             PlaceholderText = hint ?? ""
         };
@@ -4532,7 +5506,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         };
         field.Children.Add(textBox);
 
-        _fieldRebuilders.Add(() => textBox.Text = ViewModel.GetSetting(key));
+        _fieldRebuilders.Add(() => textBox.Text = GetSettingValue(key, fallbackKey));
 
         if (hint != null)
         {
@@ -4549,7 +5523,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         return textBox;
     }
 
-    private void AddPasswordField(StackPanel parent, string label, string key, string? hint = null)
+    private void AddPasswordField(StackPanel parent, string label, string key, string? hint = null, string? fallbackKey = null)
     {
         if (parent.Children.Count > 0) AddDivider(parent);
 
@@ -4563,13 +5537,14 @@ public sealed partial class AdminSettingsDetailPage : Page
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
 
-        bool isConfigured = ViewModel.IsSensitiveConfigured(key);
+        bool isConfigured = ViewModel.IsSensitiveConfigured(key)
+            || !string.IsNullOrWhiteSpace(fallbackKey) && ViewModel.IsSensitiveConfigured(fallbackKey);
 
         var passwordBox = new PasswordBox
         {
             Password = "",
             Style = (Style)Application.Current.Resources["DarkPasswordBoxStyle"],
-            MaxWidth = 448,
+            Width = 448,
             HorizontalAlignment = HorizontalAlignment.Left,
             PlaceholderText = isConfigured ? "\u2022\u2022\u2022\u2022 configured" : (hint ?? "Not configured"),
             PasswordRevealMode = PasswordRevealMode.Hidden,
@@ -4632,7 +5607,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         parent.Children.Add(field);
     }
 
-    private void AddNumberField(StackPanel parent, string label, string key, string? hint = null)
+    private void AddNumberField(StackPanel parent, string label, string key, string? hint = null, string? fallbackKey = null)
     {
         if (parent.Children.Count > 0) AddDivider(parent);
 
@@ -4646,7 +5621,7 @@ public sealed partial class AdminSettingsDetailPage : Page
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
 
-        var currentVal = ViewModel.GetSetting(key);
+        var currentVal = GetSettingValue(key, fallbackKey);
         double.TryParse(currentVal, out var numVal);
 
         var numberBox = new Microsoft.UI.Xaml.Controls.NumberBox
@@ -4667,7 +5642,7 @@ public sealed partial class AdminSettingsDetailPage : Page
 
         _fieldRebuilders.Add(() =>
         {
-            var v = ViewModel.GetSetting(key);
+            var v = GetSettingValue(key, fallbackKey);
             numberBox.Value = double.TryParse(v, out var n) ? n : double.NaN;
         });
 
@@ -4766,7 +5741,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             Text = ViewModel.GetSetting(key),
             Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
-            MaxWidth = 448,
+            Width = 448,
             HorizontalAlignment = HorizontalAlignment.Left,
             PlaceholderText = hint ?? "e.g. 1h, 30m, 24h"
         };
@@ -5007,26 +5982,33 @@ public sealed partial class AdminSettingsDetailPage : Page
     private void RefreshThemePreview()
     {
         if (_themePreviewHost == null) return;
-        // Remove old preview card (keep the "PREVIEW" header)
-        while (_themePreviewHost.Children.Count > 1)
-            _themePreviewHost.Children.RemoveAt(1);
+        _themePreviewHost.Children.Clear();
 
-        // Build a small sample card showing accent color + text on background
+        Dictionary<string, string> previewVars;
+        try { previewVars = JsonSerializer.Deserialize<Dictionary<string, string>>(ViewModel.GetSetting("ui.admin_theme_vars")) ?? []; }
+        catch { previewVars = []; }
+        Brush PreviewBrush(string token, string fallbackResource)
+            => previewVars.TryGetValue(token, out var value) && IsHexThemeColor(value)
+                ? new SolidColorBrush(ParseHexColor(value))
+                : (Brush)Application.Current.Resources[fallbackResource];
+
+        // Build the same structural preview while applying every native-parsable
+        // color immediately; CSS-only color forms remain visible after server save.
         var card = new Border
         {
-            Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
+            Background = PreviewBrush("card", "CardBackgroundBrush"),
             CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(14),
-            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            Padding = new Thickness(20),
+            BorderBrush = PreviewBrush("border", "BorderBrush"),
             BorderThickness = new Thickness(1),
-            Width = 160,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
         };
         var cardContent = new StackPanel { Spacing = 8 };
         cardContent.Children.Add(new TextBlock
         {
             Text = "Sample Card",
             FontSize = 14, FontWeight = FontWeights.SemiBold,
-            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            Foreground = PreviewBrush("foreground", "PrimaryTextBrush"),
         });
         cardContent.Children.Add(new TextBlock
         {
@@ -5038,7 +6020,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         // Accent-colored pill
         var pill = new Border
         {
-            Background = (SolidColorBrush)Application.Current.Resources["AccentBackgroundBrush"],
+            Background = PreviewBrush("primary", "AccentBackgroundBrush"),
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(10, 4, 10, 4),
             HorizontalAlignment = HorizontalAlignment.Left,
@@ -5047,13 +6029,13 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             Text = "Accent",
             FontSize = 11, FontWeight = FontWeights.SemiBold,
-            Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"],
+            Foreground = PreviewBrush("primary-foreground", "AccentBrush"),
         };
         cardContent.Children.Add(pill);
         // Destructive pill
         var destructivePill = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(0x1A, 0xDC, 0x5A, 0x5A)),
+            Background = PreviewBrush("destructive", "SurfaceHoverBrush"),
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(10, 4, 10, 4),
             HorizontalAlignment = HorizontalAlignment.Left,
@@ -5169,15 +6151,30 @@ public sealed partial class AdminSettingsDetailPage : Page
     {
         var dialog = new ContentDialog
         {
-            Title = "Restart required",
-            Content = "Some settings require a server restart to take effect. Active streams will be interrupted. Please restart the server process manually.",
-            PrimaryButtonText = "OK",
+            Title = "Restart server?",
+            Content = "The server will restart to apply configuration changes. Active streams will be interrupted.",
+            PrimaryButtonText = "Restart",
+            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
+            CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
-            DefaultButton = ContentDialogButton.Primary,
+            DefaultButton = ContentDialogButton.Close,
         };
-        await dialog.ShowAsync();
-        RestartServerButton.Visibility = Visibility.Collapsed;
-        RestartHintText.Visibility = Visibility.Collapsed;
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        try
+        {
+            var adminApi = App.Services.GetRequiredService<AdminApi>();
+            var response = await adminApi.RestartServerAsync();
+            ShowStatusToast(string.IsNullOrWhiteSpace(response.Message) ? "Server is restarting..." : response.Message);
+            ViewModel.LastSaveRequiresRestart = false;
+            RestartServerButton.Visibility = Visibility.Collapsed;
+            RestartHintText.Visibility = Visibility.Collapsed;
+            if (_inlineRestartButton is not null) _inlineRestartButton.Visibility = Visibility.Collapsed;
+            if (_inlineRestartNotice is not null) _inlineRestartNotice.Visibility = Visibility.Collapsed;
+        }
+        catch
+        {
+            ShowStatusToast("Could not restart server. Please restart manually.");
+        }
     }
 
     private void DiscardButton_Click(object sender, RoutedEventArgs e)

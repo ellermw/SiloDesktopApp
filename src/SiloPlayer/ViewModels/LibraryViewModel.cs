@@ -4,10 +4,17 @@ using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Helpers;
 
 namespace SiloPlayer.ViewModels;
+
+public sealed class EditableQueryGroup
+{
+    public string Match { get; set; } = "all";
+    public ObservableCollection<QueryRule> Rules { get; } = [];
+}
 
 public partial class LibraryViewModel : ObservableObject
 {
@@ -29,6 +36,7 @@ public partial class LibraryViewModel : ObservableObject
     public LibraryViewModel(CatalogApi catalogApi)
     {
         _catalogApi = catalogApi;
+        AdvancedGroups.Add(CreateEmptyAdvancedGroup());
     }
 
     public VirtualCatalogItems Items { get; } = new(PageSize);
@@ -51,9 +59,9 @@ public partial class LibraryViewModel : ObservableObject
     [ObservableProperty]
     private string? _errorMessage;
 
-    // B43: align with WebUI catalog sort param.
+    // Current WebUI query sort field.
     [ObservableProperty]
-    private string? _selectedSort = "sort_title";
+    private string? _selectedSort = "title";
 
     [ObservableProperty]
     private string? _selectedOrder = "asc";
@@ -95,6 +103,24 @@ public partial class LibraryViewModel : ObservableObject
     [ObservableProperty]
     private string? _selectedAudioLanguage;
 
+    [ObservableProperty] private string? _selectedMinimumRating;
+    [ObservableProperty] private string? _selectedOriginalLanguage;
+    [ObservableProperty] private string? _selectedActor;
+    [ObservableProperty] private string? _selectedDirector;
+    [ObservableProperty] private string? _selectedWriter;
+    [ObservableProperty] private string? _selectedProducer;
+    [ObservableProperty] private string? _selectedAuthor;
+    [ObservableProperty] private string? _selectedNarrator;
+    [ObservableProperty] private string? _selectedSeries;
+    [ObservableProperty] private string? _selectedNetwork;
+    [ObservableProperty] private string? _selectedMatchStatus;
+    [ObservableProperty] private string? _selectedWatchStatus;
+    [ObservableProperty] private string? _selectedAddedInLast;
+    [ObservableProperty] private string? _selectedReleasedInLast;
+    [ObservableProperty] private bool _selectedFourK;
+    [ObservableProperty] private bool _selectedHdr;
+    [ObservableProperty] private bool _selectedDolbyVision;
+
     // Filter options loaded from server — BulkObservableCollection fires ONE event
     // per AddRange instead of per-item, preventing hundreds of redundant ComboBox rebuilds
     public BulkObservableCollection<string> Genres { get; } = [];
@@ -103,9 +129,14 @@ public partial class LibraryViewModel : ObservableObject
     public BulkObservableCollection<string> Countries { get; } = [];
     public BulkObservableCollection<string> Resolutions { get; } = [];
     public BulkObservableCollection<string> AudioLanguages { get; } = [];
-    // B43: tags must match the WebUI catalog API contract: sort_title / recently_added /
-    // year / rating_imdb. Saved filters from web don't bridge if these don't match.
-    public ObservableCollection<string> SortOptions { get; } = ["sort_title", "recently_added", "year", "rating_imdb"];
+    public BulkObservableCollection<string> OriginalLanguages { get; } = [];
+    public BulkObservableCollection<string> Networks { get; } = [];
+    public ObservableCollection<EditableQueryGroup> AdvancedGroups { get; } = [];
+    public ObservableCollection<QueryRule> AdvancedRules => AdvancedGroups[0].Rules;
+
+    public bool UseAdvancedRules { get; set; }
+    public string AdvancedRulesMatch { get; set; } = "all";
+    public ObservableCollection<string> SortOptions { get; } = ["title", "added_at", "release_date", "year", "rating_imdb"];
 
     // Collections
     public ObservableCollection<LibraryCollection> Collections { get; } = [];
@@ -280,8 +311,7 @@ public partial class LibraryViewModel : ObservableObject
     {
         if (Library == null || TotalCount == 0) return;
 
-        // B43: aligned with WebUI sort_title.
-        SelectedSort = "sort_title";
+        SelectedSort = "title";
         SelectedOrder = "asc";
 
         if (letter == "#")
@@ -372,7 +402,7 @@ public partial class LibraryViewModel : ObservableObject
         try
         {
             var probe = await _catalogApi.GetCatalogAsync(
-                libraryId: Library!.Id, sort: "sort_title", order: "asc", limit: 1, offset: offset);
+                libraryId: Library!.Id, sort: "title", order: "asc", limit: 1, offset: offset);
             if (probe.Items.Count > 0)
             {
                 var title = probe.Items[0].Title.TrimStart();
@@ -637,15 +667,19 @@ public partial class LibraryViewModel : ObservableObject
             libraryId: Library!.Id,
             sort: SelectedSort,
             order: SelectedOrder,
-            genre: SelectedGenre,
-            studio: SelectedStudio,
-            contentRating: SelectedContentRating,
-            country: SelectedCountry,
-            resolution: SelectedResolution,
-            audioLanguage: SelectedAudioLanguage,
-            yearMin: SelectedYearMin,
-            yearMax: SelectedYearMax,
-            type: SelectedType,
+            genre: UseAdvancedRules ? null : SelectedGenre,
+            studio: UseAdvancedRules ? null : SelectedStudio,
+            contentRating: UseAdvancedRules ? null : SelectedContentRating,
+            country: UseAdvancedRules ? null : SelectedCountry,
+            resolution: UseAdvancedRules ? null : SelectedResolution,
+            audioLanguage: UseAdvancedRules ? null : SelectedAudioLanguage,
+            yearMin: UseAdvancedRules ? null : SelectedYearMin,
+            yearMax: UseAdvancedRules ? null : SelectedYearMax,
+            type: UseAdvancedRules ? null : SelectedType,
+            extraRules: BuildExtraRules(),
+            extraRulesMatch: AdvancedRulesMatch,
+            queryGroups: BuildAdvancedGroups(),
+            queryGroupsMatch: AdvancedRulesMatch,
             limit: PageSize,
             offset: pageIndex * PageSize,
             includeTotal: includeTotal,
@@ -657,20 +691,135 @@ public partial class LibraryViewModel : ObservableObject
             libraryId: Library!.Id,
             sort: SelectedSort,
             order: SelectedOrder,
-            genre: SelectedGenre,
-            studio: SelectedStudio,
-            contentRating: SelectedContentRating,
-            country: SelectedCountry,
-            resolution: SelectedResolution,
-            audioLanguage: SelectedAudioLanguage,
-            yearMin: SelectedYearMin,
-            yearMax: SelectedYearMax,
-            type: SelectedType,
+            genre: UseAdvancedRules ? null : SelectedGenre,
+            studio: UseAdvancedRules ? null : SelectedStudio,
+            contentRating: UseAdvancedRules ? null : SelectedContentRating,
+            country: UseAdvancedRules ? null : SelectedCountry,
+            resolution: UseAdvancedRules ? null : SelectedResolution,
+            audioLanguage: UseAdvancedRules ? null : SelectedAudioLanguage,
+            yearMin: UseAdvancedRules ? null : SelectedYearMin,
+            yearMax: UseAdvancedRules ? null : SelectedYearMax,
+            type: UseAdvancedRules ? null : SelectedType,
+            extraRules: BuildExtraRules(),
+            extraRulesMatch: AdvancedRulesMatch,
+            queryGroups: BuildAdvancedGroups(),
+            queryGroupsMatch: AdvancedRulesMatch,
             limit: itemCount,
             offset: startIndex,
             includeTotal: includeTotal,
             snapshot: snapshot,
             ct: ct);
+
+    private IReadOnlyList<QueryRule> BuildExtraRules()
+    {
+        if (UseAdvancedRules) return [];
+
+        return BuildGuidedExtraRules();
+    }
+
+    private IReadOnlyList<QueryRule> BuildGuidedExtraRules()
+    {
+
+        var rules = new List<QueryRule>();
+        void Add(string field, string op, object? value)
+        {
+            if (value is string text && string.IsNullOrWhiteSpace(text)) return;
+            if (value != null) rules.Add(new QueryRule { Field = field, Op = op, Value = value });
+        }
+
+        if (double.TryParse(SelectedMinimumRating, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var minimumRating))
+            Add("rating_imdb", "gte", minimumRating);
+        Add("original_language", "is", SelectedOriginalLanguage);
+        Add("actor", "is", SelectedActor);
+        Add("director", "is", SelectedDirector);
+        Add("writer", "is", SelectedWriter);
+        Add("producer", "is", SelectedProducer);
+        Add("author", "is", SelectedAuthor);
+        Add("narrator", "is", SelectedNarrator);
+        Add("series", "is", SelectedSeries);
+        Add("network", "is", SelectedNetwork);
+        Add("status", "is", SelectedMatchStatus);
+
+        switch (SelectedWatchStatus)
+        {
+            case "watched": Add("watched", "is", true); break;
+            case "in_progress": Add("in_progress", "is", true); break;
+            case "unwatched":
+                Add("watched", "is", false);
+                Add("in_progress", "is", false);
+                break;
+        }
+
+        Add("added_at", "in_last", SelectedAddedInLast);
+        Add("release_date", "in_last", SelectedReleasedInLast);
+        if (SelectedFourK) Add("resolution", "is", "2160p");
+        if (SelectedHdr) Add("hdr", "is", true);
+        if (SelectedDolbyVision) Add("dolby_vision", "is", true);
+        return rules;
+    }
+
+    public void SeedAdvancedRulesFromGuided()
+    {
+        AdvancedGroups.Clear();
+        var group = new EditableQueryGroup();
+        AdvancedGroups.Add(group);
+        void Add(string field, string op, object? value)
+        {
+            if (value is string text && string.IsNullOrWhiteSpace(text)) return;
+            if (value != null) group.Rules.Add(new QueryRule { Field = field, Op = op, Value = value });
+        }
+
+        Add("genre", "is", SelectedGenre);
+        Add("type", "is", SelectedType);
+        Add("content_rating", "is", SelectedContentRating);
+        Add("studio", "is", SelectedStudio);
+        Add("country", "is", SelectedCountry);
+        Add("resolution", "is", SelectedResolution);
+        Add("audio_language", "is", SelectedAudioLanguage);
+        if (int.TryParse(SelectedYearMin, out var yearMin)) Add("year", "gte", yearMin);
+        if (int.TryParse(SelectedYearMax, out var yearMax)) Add("year", "lte", yearMax);
+        foreach (var rule in BuildGuidedExtraRules())
+            Add(rule.Field, rule.Op, rule.Value);
+        if (group.Rules.Count == 0)
+            group.Rules.Add(new QueryRule { Field = "genre", Op = "contains", Value = "" });
+        AdvancedRulesMatch = "all";
+    }
+
+    private IReadOnlyList<QueryGroup>? BuildAdvancedGroups()
+    {
+        if (!UseAdvancedRules) return null;
+
+        return AdvancedGroups
+            .Select(group => new QueryGroup
+            {
+                Match = group.Match == "any" ? "any" : "all",
+                Rules = group.Rules
+                    .Where(rule => !string.IsNullOrWhiteSpace(rule.Field) &&
+                        !string.IsNullOrWhiteSpace(rule.Op) &&
+                        HasAdvancedRuleValue(rule.Value))
+                    .Select(rule => new QueryRule { Field = rule.Field, Op = rule.Op, Value = rule.Value })
+                    .ToList()
+            })
+            .Where(group => group.Rules.Count > 0)
+            .ToList();
+    }
+
+    private static bool HasAdvancedRuleValue(object? value)
+    {
+        if (value is null) return false;
+        if (value is string text) return !string.IsNullOrWhiteSpace(text);
+        if (value is System.Collections.IEnumerable values)
+            return values.Cast<object?>().All(HasAdvancedRuleValue);
+        return true;
+    }
+
+    public static EditableQueryGroup CreateEmptyAdvancedGroup()
+    {
+        var group = new EditableQueryGroup();
+        group.Rules.Add(new QueryRule { Field = "genre", Op = "contains", Value = "" });
+        return group;
+    }
 
     private void ApplyWindowResponse(int startIndex, CatalogResponse response, bool includeTotal)
     {
@@ -813,8 +962,14 @@ public partial class LibraryViewModel : ObservableObject
             Resolutions.Clear();
             Resolutions.AddRange(filters.Resolutions.Prepend(""));
 
-            AudioLanguages.Clear();
-            AudioLanguages.AddRange(filters.AudioLanguages.Prepend(""));
+              AudioLanguages.Clear();
+              AudioLanguages.AddRange(filters.AudioLanguages.Prepend(""));
+
+              OriginalLanguages.Clear();
+              OriginalLanguages.AddRange(filters.OriginalLanguages.Prepend(""));
+
+              Networks.Clear();
+              Networks.AddRange(filters.Networks.Prepend(""));
         }
         catch (OperationCanceledException) { }
         catch

@@ -28,6 +28,7 @@ public class AdminRecommendationsParitySourceTests
         Assert.Contains("\"Ollama\", \"Local\"", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("\"OpenAI\", \"\"", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("CheckSettingsConnectionAsync(\"recommendations_embedding\"", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("DirtyKeys = keys.Where(_dirtyKeys.Contains).ToList()", CodeBehind, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -35,5 +36,7 @@ public class AdminRecommendationsParitySourceTests
     {
         foreach (var text in new[] { "Embedding Lock", "General", "Embedding Configuration", "Schedule", "Advanced", "Diversity Lambda" })
             Assert.Contains(text, CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("\"Cron expression\", \"0 3 * * *\"", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("Width = 448", CodeBehind, StringComparison.Ordinal);
     }
 }

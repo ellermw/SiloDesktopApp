@@ -10,6 +10,16 @@ using SiloPlayer.Views;
 
 namespace SiloPlayer;
 
+public sealed class PlayingNextOnDeckItem
+{
+    public string ContentId { get; init; } = "";
+    public string Title { get; init; } = "";
+    public string Subtitle { get; init; } = "";
+    public string TimeLeft { get; init; } = "";
+    public string? ThumbnailUrl { get; init; }
+    public double ProgressPercent { get; init; }
+}
+
 public sealed partial class MainWindow : Window
 {
     private readonly NavigationService _navigationService;
@@ -22,6 +32,7 @@ public sealed partial class MainWindow : Window
     private readonly SettingsApi _settingsApi;
     private readonly CatalogApi _catalogApi;
     private readonly PlayerService _playerService;
+    private readonly ThemeService _themeService;
 
     public MainWindow()
     {
@@ -52,12 +63,14 @@ public sealed partial class MainWindow : Window
         _apiClient = App.Services.GetRequiredService<SiloApiClient>();
         _settingsApi = App.Services.GetRequiredService<SettingsApi>();
         _catalogApi = App.Services.GetRequiredService<CatalogApi>();
+        _themeService = App.Services.GetRequiredService<ThemeService>();
 
         _navigationService.Frame = ContentFrame;
 
         // F7: update window title on every navigation.
         _navigationService.Navigated += OnNavigated_UpdateWindowTitle;
         _navigationService.Navigated += OnNavigated_ApplyAccessibility;
+        _navigationService.Navigated += OnNavigated_SynchronizeShellChrome;
         if (AppWindow != null) AppWindow.Title = DocumentTitle.AppName;
 
         // F2: register the toast host with the ToastService so any VM/page
@@ -155,6 +168,7 @@ public sealed partial class MainWindow : Window
         if (AppWindow != null) AppWindow.Changed -= OnAppWindowChanged;
         _navigationService.Navigated -= OnNavigated_UpdateWindowTitle;
         _navigationService.Navigated -= OnNavigated_ApplyAccessibility;
+        _navigationService.Navigated -= OnNavigated_SynchronizeShellChrome;
         StopPlayingNextCountdown();
     }
 
@@ -170,22 +184,41 @@ public sealed partial class MainWindow : Window
     {
         DispatcherQueue.TryEnqueue(async () =>
         {
+            var hasNextEpisode = !string.IsNullOrWhiteSpace(_playerService.NextEpisodeContentId);
             var title = _playerService.NextEpisodeTitle ?? "Next episode";
             var series = _playerService.NextEpisodeSeriesTitle;
             var overview = _playerService.NextEpisodeOverview ?? "";
+
+            PlayingNextLabelText.Text = hasNextEpisode ? "PLAYING NEXT" : "FINISHED";
+            PlayingNextEpisodePanel.Visibility = hasNextEpisode ? Visibility.Visible : Visibility.Collapsed;
+            PlayingNextFinishedPanel.Visibility = hasNextEpisode ? Visibility.Collapsed : Visibility.Visible;
+            PlayingNextFinishedHeading.Text = !string.IsNullOrWhiteSpace(_playerService.WatchDetail?.SeriesTitle)
+                ? $"You've finished {_playerService.WatchDetail.SeriesTitle}"
+                : "End of playback";
 
             PlayingNextTitleText.Text = title;
             PlayingNextSeriesText.Text = series ?? "";
             PlayingNextSeriesText.Visibility = string.IsNullOrEmpty(series) ? Visibility.Collapsed : Visibility.Visible;
             PlayingNextOverviewText.Text = overview;
             PlayingNextOverviewText.Visibility = string.IsNullOrEmpty(overview) ? Visibility.Collapsed : Visibility.Visible;
+            PlayingNextMetaText.Text = FormatPlayingNextMeta(
+                _playerService.NextEpisodeAirDate,
+                _playerService.NextEpisodeRuntime);
+            PlayingNextMetaText.Visibility = string.IsNullOrEmpty(PlayingNextMetaText.Text)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
             PlayingNextPoster.Source = null;
             PlayingNextBackdrop.Source = null;
-            _ = LoadPlayingNextPosterAsync();
+            if (hasNextEpisode)
+                _ = LoadPlayingNextPosterAsync();
+            PlayingNextOnDeckRepeater.ItemsSource = null;
+            PlayingNextOnDeckSection.Visibility = Visibility.Collapsed;
+            _ = LoadPlayingNextOnDeckAsync();
 
             _playingNextAutoPlay = await GetPlayingNextAutoPlayAsync();
             _playingNextRemaining = PlayingNextCountdownSeconds;
-            PlayingNextCountdownText.Text = _playingNextRemaining.ToString();
+            PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+            PlayingNextCountdownRing.Value = _playingNextRemaining;
             PlayingNextPlayNowText.Text = "Play Now";
             UpdatePlayingNextAutoPlayVisuals();
             PlayingNextOverlay.Visibility = Visibility.Visible;
@@ -198,8 +231,13 @@ public sealed partial class MainWindow : Window
                 _playerService.Minimize();
             }
 
-            if (_playingNextAutoPlay)
+            if (hasNextEpisode && _playingNextAutoPlay)
                 StartPlayingNextCountdown();
+
+            if (hasNextEpisode)
+                PlayingNextPlayNowButton.Focus(FocusState.Programmatic);
+            else
+                PlayingNextCloseButton.Focus(FocusState.Programmatic);
         });
     }
 
@@ -239,7 +277,8 @@ public sealed partial class MainWindow : Window
             }
             return;
         }
-        PlayingNextCountdownText.Text = _playingNextRemaining.ToString();
+        PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+        PlayingNextCountdownRing.Value = _playingNextRemaining;
     }
 
     private async Task<bool> GetPlayingNextAutoPlayAsync()
@@ -273,7 +312,8 @@ public sealed partial class MainWindow : Window
 
         StopPlayingNextCountdown();
         _playingNextRemaining = PlayingNextCountdownSeconds;
-        PlayingNextCountdownText.Text = _playingNextRemaining.ToString();
+        PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+        PlayingNextCountdownRing.Value = _playingNextRemaining;
 
         if (_playingNextAutoPlay && PlayingNextOverlay.Visibility == Visibility.Visible)
             StartPlayingNextCountdown();
@@ -281,7 +321,11 @@ public sealed partial class MainWindow : Window
 
     private void UpdatePlayingNextAutoPlayVisuals()
     {
-        PlayingNextCountdownPanel.Visibility = _playingNextAutoPlay ? Visibility.Visible : Visibility.Collapsed;
+        var hasNextEpisode = !string.IsNullOrWhiteSpace(_playerService.NextEpisodeContentId);
+        PlayingNextCountdownPanel.Visibility = hasNextEpisode && _playingNextAutoPlay
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        PlayingNextAutoplayToggle.Visibility = hasNextEpisode ? Visibility.Visible : Visibility.Collapsed;
         PlayingNextAutoplayToggleText.Text = _playingNextAutoPlay
             ? "Auto-play is on"
             : "Auto-play is off";
@@ -325,6 +369,127 @@ public sealed partial class MainWindow : Window
             PlayingNextBackdrop.Source = bitmap;
         }
         catch { /* Poster is cosmetic */ }
+    }
+
+    private static string FormatPlayingNextMeta(string? airDate, int runtimeSeconds)
+    {
+        var parts = new List<string>();
+        if (DateTimeOffset.TryParse(airDate, out var parsedDate))
+            parts.Add(parsedDate.ToLocalTime().ToString("MMMM d, yyyy"));
+        if (runtimeSeconds > 0)
+            parts.Add($"{Math.Max(1, (int)Math.Round(runtimeSeconds / 60d))} min");
+        return string.Join("  •  ", parts);
+    }
+
+    private async Task LoadPlayingNextOnDeckAsync()
+    {
+        var nextContentId = _playerService.NextEpisodeContentId;
+        var currentContentId = _playerService.WatchDetail?.ContentId;
+
+        try
+        {
+            var currentSeriesId = _playerService.WatchDetail?.SeriesId;
+            var sections = await App.Services.GetRequiredService<HomeApi>().GetSectionsAsync();
+            if (!string.Equals(_playerService.WatchDetail?.ContentId, currentContentId, StringComparison.Ordinal) ||
+                PlayingNextOverlay.Visibility != Visibility.Visible)
+            {
+                return;
+            }
+
+            var continueWatching = sections.Sections.FirstOrDefault(section =>
+                string.Equals(section.SectionType, "continue_watching", StringComparison.OrdinalIgnoreCase));
+            var cards = (continueWatching?.Items ?? [])
+                .Where(item =>
+                    !string.Equals(item.ContentId, currentContentId, StringComparison.Ordinal) &&
+                    (string.IsNullOrWhiteSpace(nextContentId) ||
+                     !string.Equals(item.ContentId, nextContentId, StringComparison.Ordinal)) &&
+                    (string.IsNullOrWhiteSpace(currentSeriesId) ||
+                     !string.Equals(item.SeriesId, currentSeriesId, StringComparison.Ordinal)))
+                .Select(item =>
+                {
+                    var duration = Math.Max(0, item.DurationSeconds ?? 0);
+                    var position = Math.Clamp(item.PositionSeconds ?? 0, 0, duration > 0 ? duration : double.MaxValue);
+                    var percent = duration > 0 ? Math.Clamp(position / duration * 100, 0, 100) : 0;
+                    var minutesLeft = duration > position
+                        ? Math.Max(1, (int)Math.Round((duration - position) / 60d))
+                        : 0;
+                    var episodeMeta = item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue
+                        ? $"S{item.SeasonNumber}:E{item.EpisodeNumber}"
+                        : "";
+                    var displayTitle = string.IsNullOrWhiteSpace(item.SeriesTitle)
+                        ? item.Title
+                        : item.SeriesTitle;
+                    var subtitle = episodeMeta;
+                    if (!string.IsNullOrWhiteSpace(item.SeriesTitle) && !string.IsNullOrWhiteSpace(item.Title))
+                        subtitle = string.IsNullOrWhiteSpace(subtitle) ? item.Title : $"{subtitle} · {item.Title}";
+                    else if (string.IsNullOrWhiteSpace(subtitle) && item.Year > 0)
+                        subtitle = item.Year.ToString();
+
+                    return new PlayingNextOnDeckItem
+                    {
+                        ContentId = item.ContentId,
+                        Title = displayTitle,
+                        Subtitle = subtitle,
+                        TimeLeft = minutesLeft > 0 ? $"{minutesLeft} min left" : "",
+                        ThumbnailUrl = item.BackdropUrl ?? item.PosterUrl,
+                        ProgressPercent = percent,
+                    };
+                })
+                .ToList();
+
+            PlayingNextOnDeckRepeater.ItemsSource = cards;
+            PlayingNextOnDeckScroller.ChangeView(0, null, null, true);
+            PlayingNextOnDeckPrev.IsEnabled = false;
+            PlayingNextOnDeckNext.IsEnabled = cards.Count > 1;
+            PlayingNextOnDeckSection.Visibility = cards.Count > 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine("state_trace.txt", $"Playing Next On Deck load failed: {ex.Message}");
+        }
+    }
+
+    private void PlayingNextOnDeckPrev_Click(object sender, RoutedEventArgs e)
+    {
+        var amount = Math.Max(320, PlayingNextOnDeckScroller.ViewportWidth * 0.8);
+        PlayingNextOnDeckScroller.ChangeView(
+            Math.Max(0, PlayingNextOnDeckScroller.HorizontalOffset - amount), null, null);
+    }
+
+    private void PlayingNextOnDeckNext_Click(object sender, RoutedEventArgs e)
+    {
+        var amount = Math.Max(320, PlayingNextOnDeckScroller.ViewportWidth * 0.8);
+        PlayingNextOnDeckScroller.ChangeView(
+            Math.Min(PlayingNextOnDeckScroller.ScrollableWidth,
+                PlayingNextOnDeckScroller.HorizontalOffset + amount), null, null);
+    }
+
+    private void PlayingNextOnDeckScroller_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    {
+        const double epsilon = 1;
+        PlayingNextOnDeckPrev.IsEnabled = PlayingNextOnDeckScroller.HorizontalOffset > epsilon;
+        PlayingNextOnDeckNext.IsEnabled = PlayingNextOnDeckScroller.HorizontalOffset <
+            PlayingNextOnDeckScroller.ScrollableWidth - epsilon;
+    }
+
+    private async void PlayingNextOnDeck_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: PlayingNextOnDeckItem item })
+            return;
+
+        StopPlayingNextCountdown();
+        PlayingNextOverlay.Visibility = Visibility.Collapsed;
+        try
+        {
+            await _playerService.PlayAsync(item.ContentId);
+        }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine("state_trace.txt", $"Playing Next On Deck playback failed: {ex}");
+            ShowPlaybackError($"Failed to start playback: {ex.Message}");
+        }
     }
 
     /// <summary>F7: update AppWindow.Title on every page navigation.</summary>
@@ -470,7 +635,8 @@ public sealed partial class MainWindow : Window
 
                                 _authService.SelectProfile(
                                     selectedProfile.Id,
-                                    persistedProfile.Value.ProfileToken);
+                                    persistedProfile.Value.ProfileToken,
+                                    selectedProfile);
                                 _catalogApi.InvalidateLibraryCache();
                                 try
                                 {
@@ -485,12 +651,13 @@ public sealed partial class MainWindow : Window
                             }
                             else
                             {
-                                _authService.SelectProfile(selectedProfile.Id);
+                                _authService.SelectProfile(selectedProfile.Id, profile: selectedProfile);
                                 _catalogApi.InvalidateLibraryCache();
                             }
 
                             settings.LastProfileId = selectedProfile.Id;
                             _settingsService.Save(settings);
+                            await _themeService.SyncFromServerAsync(timeout.Token);
                             ShowMainNavigation();
                             NavigateToHome();
                             return;
@@ -526,7 +693,7 @@ public sealed partial class MainWindow : Window
         NavView.IsPaneVisible = true;
 
         // Always update admin button and profile display for current user
-        bool isAdmin = _authService.CurrentUser?.Role == "admin";
+        bool isAdmin = AuthorizationPolicy.IsActingAdmin(_authService);
         AdminButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
         // Server Activity button uses the exact same gate as the admin sidebar
         // button — whatever decision is made here for AdminButton applies to
@@ -568,6 +735,20 @@ public sealed partial class MainWindow : Window
     {
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
             () => App.Services.GetRequiredService<AccessibilityService>().ApplySaved(ContentFrame.Content as DependencyObject));
+    }
+
+    /// <summary>
+    /// The admin shell owns its own server-activity control and navigation rail.
+    /// Enforce that ownership at the frame boundary so every route into Admin --
+    /// including deep links, back-stack restores, and activity-popover links --
+    /// cannot leave the main-shell activity control layered underneath it.
+    /// </summary>
+    private void OnNavigated_SynchronizeShellChrome(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        if (e.SourcePageType != typeof(Views.Admin.AdminShellPage)) return;
+
+        NavView.IsPaneVisible = false;
+        MainServerActivityButton.Visibility = Visibility.Collapsed;
     }
 
     private Task UpdateProfileDisplayAsync()
@@ -618,7 +799,7 @@ public sealed partial class MainWindow : Window
     public void RestoreMainPane()
     {
         NavView.IsPaneVisible = true;
-        MainServerActivityButton.Visibility = _authService.CurrentUser?.Role == "admin"
+        MainServerActivityButton.Visibility = AuthorizationPolicy.IsActingAdmin(_authService)
             ? Visibility.Visible
             : Visibility.Collapsed;
     }
@@ -721,6 +902,12 @@ public sealed partial class MainWindow : Window
         LocalLog.AppendLine("state_trace.txt", msg);
     }
 
+    public Task ShowSubtitleAiDialogAsync()
+        => PlayerOverlayControl.ShowSubtitleAiDialogAsync();
+
+    public Task ShowMarkerEditDialogAsync()
+        => PlayerOverlayControl.ShowMarkerEditDialogAsync();
+
     public void NavigateToHome()
     {
         _navigationService.Navigate<HomePage>();
@@ -814,6 +1001,67 @@ public sealed partial class MainWindow : Window
     }
 
     private Dictionary<string, List<SidebarPinRow>> _sidebarPins = [];
+
+    public bool IsSidebarPin(int libraryId, string pinType, string pinId)
+    {
+        return _sidebarPins.TryGetValue(libraryId.ToString(), out var pins)
+            && pins.Any(pin =>
+                string.Equals(pin.Type, pinType, StringComparison.OrdinalIgnoreCase)
+             && string.Equals(pin.Id, pinId, StringComparison.Ordinal));
+    }
+
+    public IReadOnlyList<(string Id, string Label)> GetSidebarPins(int libraryId, string pinType)
+    {
+        if (!_sidebarPins.TryGetValue(libraryId.ToString(), out var pins))
+            return [];
+        return pins
+            .Where(pin => string.Equals(pin.Type, pinType, StringComparison.OrdinalIgnoreCase))
+            .Select(pin => (pin.Id, pin.Label))
+            .ToList();
+    }
+
+    public async Task<bool> ToggleSidebarPinAsync(
+        int libraryId,
+        string pinType,
+        string pinId,
+        string label)
+    {
+        var settingsApi = App.Services.GetRequiredService<SettingsApi>();
+        var entry = await settingsApi.GetSettingAsync("sidebar_pins");
+        var map = ParseSidebarPins(entry.Value);
+        var key = libraryId.ToString();
+        var pins = map.TryGetValue(key, out var existing) ? existing : [];
+        var index = pins.FindIndex(pin =>
+            string.Equals(pin.Type, pinType, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(pin.Id, pinId, StringComparison.Ordinal));
+        bool nowPinned;
+        if (index >= 0)
+        {
+            pins.RemoveAt(index);
+            if (pins.Count == 0) map.Remove(key);
+            else map[key] = pins;
+            nowPinned = false;
+        }
+        else
+        {
+            pins.Add(new SidebarPinRow { Type = pinType, Id = pinId, Label = label });
+            map[key] = pins;
+            nowPinned = true;
+        }
+
+        var serializable = map.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.Select(pin => new Dictionary<string, string>
+            {
+                ["type"] = pin.Type,
+                ["id"] = pin.Id,
+                ["label"] = pin.Label,
+            }).ToList());
+        await settingsApi.PutSettingAsync("sidebar_pins", System.Text.Json.JsonSerializer.Serialize(serializable));
+        _sidebarPins = map;
+        UpdateLibraryNavItems();
+        return nowPinned;
+    }
 
     /// <summary>
     /// Reloads the cached sidebar pins from the server setting and rebuilds
@@ -1034,14 +1282,25 @@ public sealed partial class MainWindow : Window
         }
         else if (args.InvokedItemContainer is NavigationViewItem pinItem && pinItem.Tag is SidebarPinNavTag pinTag)
         {
-            // Pinned collection: navigate to the CollectionBrowsePage.
-            _navigationService.Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
+            if (string.Equals(pinTag.PinType, "section", StringComparison.OrdinalIgnoreCase))
             {
-                CollectionId = pinTag.PinId,
-                Title = pinTag.Label,
-                IsUserCollection = false,
-                LibraryId = pinTag.LibraryId,
-            });
+                _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
+                    Source: "section",
+                    Title: pinTag.Label,
+                    Scope: "library",
+                    SectionId: pinTag.PinId,
+                    LibraryId: pinTag.LibraryId));
+            }
+            else
+            {
+                _navigationService.Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
+                {
+                    CollectionId = pinTag.PinId,
+                    Title = pinTag.Label,
+                    IsUserCollection = false,
+                    LibraryId = pinTag.LibraryId,
+                });
+            }
         }
     }
 

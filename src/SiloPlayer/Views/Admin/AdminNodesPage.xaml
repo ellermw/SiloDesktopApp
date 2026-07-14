@@ -23,7 +23,7 @@
             IsScrollInertiaEnabled="True">
 
             <!-- webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
-            <StackPanel Padding="32,24,32,40" Spacing="32" MaxWidth="1400" HorizontalAlignment="Center">
+            <StackPanel Padding="40,24,40,24" Spacing="32" MaxWidth="1400" HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
                 <StackPanel Spacing="12">

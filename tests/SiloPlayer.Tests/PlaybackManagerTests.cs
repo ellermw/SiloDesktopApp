@@ -133,6 +133,33 @@ public sealed class PlaybackManagerTests
         manager.Dispose();
     }
 
+    [Fact]
+    public async Task StartReplacementSessionAsync_SwapsBeforeSlowPreviousCleanupCompletes()
+    {
+        var handler = new ReplacementPlaybackHandler();
+        var apiClient = new SiloApiClient(new HttpClient(handler));
+        apiClient.SetBaseUrl("https://example.test");
+        using var manager = new PlaybackManager(
+            new PlaybackApi(apiClient),
+            new CatalogApi(apiClient),
+            new AuthService(apiClient, new AuthApi(apiClient)),
+            apiClient);
+
+        await manager.StartSessionAsync(123, forceStartPosition: true);
+        var replacement = await manager.StartReplacementSessionAsync(
+            456,
+            120,
+            previousFinalPosition: 120).WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal("session-2", replacement.SessionId);
+        Assert.Equal("session-2", manager.SessionId);
+        await handler.PreviousDeleteStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(handler.ReleasePreviousDelete.Task.IsCompleted);
+
+        handler.ReleasePreviousDelete.TrySetResult();
+        await manager.StopSessionAsync();
+    }
+
     private static async Task<bool> WaitForSignalAsync(Task task, TimeSpan timeout)
     {
         var completed = await Task.WhenAny(task, Task.Delay(timeout));
@@ -229,5 +256,58 @@ public sealed class PlaybackManagerTests
                 Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
             };
         }
+    }
+
+    private sealed class ReplacementPlaybackHandler : HttpMessageHandler
+    {
+        private int _startCount;
+        public TaskCompletionSource PreviousDeleteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleasePreviousDelete { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? "";
+            if (request.Method == HttpMethod.Post && path == "/api/v1/playback/start")
+            {
+                var number = Interlocked.Increment(ref _startCount);
+                return JsonResponse($$"""
+                    {
+                      "session_id": "session-{{number}}",
+                      "media_file_id": {{(number == 1 ? 123 : 456)}},
+                      "play_method": "direct",
+                      "position": {{(number == 1 ? 0 : 120)}},
+                      "is_paused": false,
+                      "stream_url": "/stream/session-{{number}}",
+                      "audio_track_index": 0,
+                      "duration_seconds": 3600,
+                      "subtitle_urls": [],
+                      "playback_info": { "stream_type": "progressive", "transcode_audio": false }
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Post && path.Contains("/progress", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+
+            if (request.Method == HttpMethod.Delete && path == "/api/v1/playback/session-1")
+            {
+                PreviousDeleteStarted.TrySetResult();
+                await ReleasePreviousDelete.Task.WaitAsync(cancellationToken);
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            }
+
+            if (request.Method == HttpMethod.Delete && path == "/api/v1/playback/session-2")
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+
+            if (request.Method == HttpMethod.Post && path == "/api/v1/sync/progress")
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }
+
+        private static HttpResponseMessage JsonResponse(string json) => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        };
     }
 }

@@ -17,9 +17,14 @@ public sealed partial class ItemDetailPage : Page
 {
     public ItemDetailViewModel ViewModel { get; }
     private CancellationTokenSource? _imageCts;
+    private CancellationTokenSource? _translationCts;
+    private bool _isTranslatingOverview;
+    private bool _translateButtonMode;
     private int _highlightedSeasonNumber;
     private WatchDetailResponse? _watchDetail;
     private FileVersion? _selectedVersion;
+    private string? _readerTargetContentId;
+    private int? _readerTargetFileId;
     /// <summary>
     /// Pre-play audio track selection (Phase 2a). Null = auto (server picks based
     /// on effective_audio_track_index or default flag). Otherwise an explicit track
@@ -102,6 +107,9 @@ public sealed partial class ItemDetailPage : Page
             _playerService.StateChanged -= OnPlayerStateChanged;
             _subscribedToStateChanged = false;
         }
+        _translationCts?.Cancel();
+        _translationCts?.Dispose();
+        _translationCts = null;
     }
 
     private string? _currentContentId;
@@ -138,6 +146,9 @@ public sealed partial class ItemDetailPage : Page
             }
 
             UpdateUI();
+            _ = ConfigureOnViewTranslationAsync(ViewModel.Item);
+            if (ViewModel.Item?.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase) == true)
+                _ = LoadEbookProgressAsync(ViewModel.Item);
 
             // Rating is inlined on the item detail response via `user_rating`
             // (server commit 4172a16). Only fire the dedicated /ratings/{id}
@@ -148,8 +159,9 @@ public sealed partial class ItemDetailPage : Page
                 _ = ViewModel.LoadRatingCommand.ExecuteAsync(null);
             }
 
-            // Load similar items (non-blocking)
-            _ = LoadSimilarItemsAsync();
+            // Current WebUI shows "More Like This" only on movie and series pages.
+            if (ViewModel.Item?.Type is "movie" or "series")
+                _ = LoadSimilarItemsAsync();
 
             // Load sibling episodes if this is an episode (non-blocking)
             if (ViewModel.Item?.Type == "episode")
@@ -189,7 +201,7 @@ public sealed partial class ItemDetailPage : Page
                     _ = LoadWatchDetailAsync(nextEpisode.ContentId);
                 }
             }
-            else if (!IsEbook(ViewModel.Item))
+            else if (!IsReaderItem(ViewModel.Item))
             {
                 // For movies/episodes, load watch detail directly
                 _playableContentId = contentId;
@@ -350,6 +362,17 @@ public sealed partial class ItemDetailPage : Page
         var item = ViewModel.Item;
         if (item == null) return;
 
+        WatchedButton.Visibility = Visibility.Visible;
+        FavoriteButton.Visibility = Visibility.Visible;
+        StarRatingContainer.Visibility = Visibility.Visible;
+        MoreButton.Visibility = Visibility.Visible;
+        AddCollectionButton.Visibility = Visibility.Collapsed;
+        ListenFromStartButton.Visibility = Visibility.Collapsed;
+        BookDownloadButton.Visibility = Visibility.Collapsed;
+        HeroPosterContainer.Width = 170;
+        HeroPosterContainer.Height = 255;
+        MediaLocationsTitle.Text = item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase) ? "Files" : "Media locations";
+
         // Reset breadcrumb visibility by default; episode case repopulates it
         BreadcrumbPanel.Children.Clear();
         BreadcrumbPanel.Visibility = Visibility.Collapsed;
@@ -473,6 +496,8 @@ public sealed partial class ItemDetailPage : Page
             ? Visibility.Visible : Visibility.Collapsed;
 
         OverviewText.Text = item.Overview ?? "";
+        if (string.IsNullOrWhiteSpace(item.PendingTranslationLanguage))
+            TranslateOverviewButton.Visibility = Visibility.Collapsed;
 
         // Genres as styled badge pills (webui: clickable genre badges)
         GenresBadgesPanel.Children.Clear();
@@ -516,17 +541,21 @@ public sealed partial class ItemDetailPage : Page
 
         // Show Match + Refresh metadata buttons for admin users
         var authService = App.Services.GetRequiredService<AuthService>();
-        var isAdmin = authService.CurrentUser?.Role == "admin";
-        MatchButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
-        RefreshMetadataButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
-        EditMetadataButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
-        BuildMediaLocationsSection(isAdmin, item.Versions);
+        var canCurateMetadata = AuthorizationPolicy.CanCurateMetadata(authService);
+        // Current WebUI keeps metadata tools inside the More menu.
+        MatchButton.Visibility = Visibility.Collapsed;
+        RefreshMetadataButton.Visibility = Visibility.Collapsed;
+        EditMetadataButton.Visibility = Visibility.Collapsed;
+        BuildMediaLocationsSection(canCurateMetadata, item.Versions);
 
         // Load backdrop
         _imageCts?.Cancel();
         _imageCts?.Dispose();
         _imageCts = new CancellationTokenSource();
         _ = LoadBackdropAsync(item, _imageCts.Token);
+
+        BuildTrailers(item.Videos ?? []);
+        BuildExtras(item.Extras ?? []);
 
         // Build cast
         BuildCast(item.Cast ?? new());
@@ -569,9 +598,521 @@ public sealed partial class ItemDetailPage : Page
         {
             CountriesText.Visibility = Visibility.Collapsed;
         }
+
+        ArrangeCurrentWebUiContentOrder(item.Type);
+        ConfigureBookDetail(item);
+    }
+
+    private void ArrangeCurrentWebUiContentOrder(string itemType)
+    {
+        if (TrailersSection.Parent is not StackPanel parent) return;
+
+        FrameworkElement[] movable =
+        [
+            MediaLocationsSection,
+            SeasonsSection,
+            EpisodesSection,
+            TrailersSection,
+            ExtrasSection,
+            SiblingEpisodesSection,
+            CastHeader,
+            CastScrollViewer,
+            CrewSection,
+            SimilarSection,
+            SubtitlesSection,
+            StudiosText,
+            NetworksText,
+            CountriesText,
+            BookRelatedSection,
+            AudiobookChaptersSection,
+            MangaChaptersSection,
+        ];
+        foreach (var element in movable)
+            parent.Children.Remove(element);
+
+        // These legacy detail rows are not standalone sections in the current
+        // WebUI. Studio/network context and subtitle actions live in the hero.
+        StudiosText.Visibility = Visibility.Collapsed;
+        NetworksText.Visibility = Visibility.Collapsed;
+        CountriesText.Visibility = Visibility.Collapsed;
+        SubtitlesSection.Visibility = Visibility.Collapsed;
+
+        IEnumerable<FrameworkElement> ordered = itemType switch
+        {
+            "movie" =>
+            [
+                MediaLocationsSection, TrailersSection, ExtrasSection,
+                CastHeader, CastScrollViewer, CrewSection, SimilarSection,
+            ],
+            "series" =>
+            [
+                SeasonsSection, EpisodesSection, TrailersSection, ExtrasSection,
+                CastHeader, CastScrollViewer, CrewSection, SimilarSection,
+            ],
+            "episode" =>
+            [
+                MediaLocationsSection, SiblingEpisodesSection,
+                CastHeader, CastScrollViewer, CrewSection,
+            ],
+            "audiobook" =>
+            [
+                BookRelatedSection, AudiobookChaptersSection,
+            ],
+            "ebook" =>
+            [
+                BookRelatedSection, MediaLocationsSection,
+            ],
+            "manga" =>
+            [
+                MangaChaptersSection,
+            ],
+            _ =>
+            [
+                EpisodesSection, CastHeader, CastScrollViewer, CrewSection,
+            ],
+        };
+
+        if (itemType is not ("movie" or "episode" or "ebook"))
+            MediaLocationsSection.Visibility = Visibility.Collapsed;
+        if (itemType is not ("movie" or "series"))
+        {
+            TrailersSection.Visibility = Visibility.Collapsed;
+            ExtrasSection.Visibility = Visibility.Collapsed;
+            SimilarSection.Visibility = Visibility.Collapsed;
+        }
+
+        var orderedElements = ordered.ToList();
+        foreach (var element in orderedElements)
+            parent.Children.Add(element);
+        foreach (var element in movable.Except(orderedElements))
+            parent.Children.Add(element);
+    }
+
+    private void ConfigureBookDetail(MediaItemDetail item)
+    {
+        _readerTargetContentId = null;
+        _readerTargetFileId = null;
+        BookRelatedSection.Visibility = Visibility.Collapsed;
+        AudiobookChaptersSection.Visibility = Visibility.Collapsed;
+        MangaChaptersSection.Visibility = Visibility.Collapsed;
+
+        if (item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase))
+        {
+            var position = Math.Max(0, item.UserData?.PositionSeconds ?? 0);
+            var duration = Math.Max(0, item.Audiobook?.TotalDurationSeconds ?? item.UserData?.DurationSeconds ?? 0);
+            HeroPosterContainer.Height = 170;
+            WatchedButton.Visibility = Visibility.Collapsed;
+            FavoriteButton.Visibility = Visibility.Collapsed;
+            StarRatingContainer.Visibility = Visibility.Collapsed;
+            MoreButton.Visibility = Visibility.Collapsed;
+            AddCollectionButton.Visibility = Visibility.Visible;
+            ListenFromStartButton.Visibility = position > 0 && item.UserData?.Played != true
+                ? Visibility.Visible : Visibility.Collapsed;
+            VersionDropdownButton.Visibility = Visibility.Collapsed;
+            VersionSeparator.Visibility = Visibility.Collapsed;
+            EditionButton.Visibility = Visibility.Collapsed;
+            AudioTracksButton.Visibility = Visibility.Collapsed;
+            SubtitlesPopoverButton.Visibility = Visibility.Collapsed;
+            PlayButtonIcon.Glyph = "\uE768";
+            PlayButtonText.Text = position > 0 && (item.UserData?.Played != true) ? "Resume" : "Listen";
+            if (duration > 0)
+            {
+                RuntimeText.Text = FormatBookDuration(duration);
+                _playProgressFraction = Math.Clamp(position / duration, 0, 1);
+                UpdatePlayProgressWidth();
+            }
+            var authors = PeopleNames(item.Audiobook?.Authors, item.Crew, "Author");
+            var narrators = PeopleNames(item.Audiobook?.Narrators, item.Crew, "Narrator");
+            var creditParts = new List<string>();
+            if (authors.Count > 0) creditParts.Add($"By {string.Join(", ", authors)}");
+            if (narrators.Count > 0) creditParts.Add($"Narrated by {string.Join(", ", narrators)}");
+            HeroCrewLine.Text = string.Join(" \u00B7 ", creditParts);
+            HeroCrewLine.Visibility = creditParts.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            BuildBookRelatedGroups(item.Audiobook?.Series, item.Audiobook?.Related, authors.FirstOrDefault());
+            BuildAudiobookChapters(item);
+            return;
+        }
+
+        if (item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
+        {
+            FavoriteButton.Visibility = Visibility.Collapsed;
+            StarRatingContainer.Visibility = Visibility.Collapsed;
+            MoreButton.Visibility = Visibility.Collapsed;
+            _readerTargetContentId = item.ContentId;
+            _selectedVersion = ChooseReadableBookVersion(item.Versions, item.UserData?.LastFileId);
+            _readerTargetFileId = _selectedVersion?.FileId;
+            SplitPlayButton.Visibility = _selectedVersion != null ? Visibility.Visible : Visibility.Collapsed;
+            BookDownloadButton.Visibility = item.Versions.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            PlayButtonIcon.Glyph = "\uE736";
+            PlayButtonText.Text = "Read";
+            var authors = PeopleNames(item.Ebook?.Authors, item.Crew, "Author");
+            HeroCrewLine.Text = authors.Count > 0 ? $"By {string.Join(", ", authors)}" : "";
+            HeroCrewLine.Visibility = authors.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            BuildBookRelatedGroups(item.Ebook?.Series, item.Ebook?.Related, authors.FirstOrDefault());
+            return;
+        }
+
+        if (item.Type.Equals("manga", StringComparison.OrdinalIgnoreCase))
+        {
+            WatchedButton.Visibility = Visibility.Collapsed;
+            FavoriteButton.Visibility = Visibility.Collapsed;
+            StarRatingContainer.Visibility = Visibility.Collapsed;
+            MoreButton.Visibility = Visibility.Visible;
+            VersionDropdownButton.Visibility = Visibility.Collapsed;
+            VersionSeparator.Visibility = Visibility.Collapsed;
+            EditionButton.Visibility = Visibility.Collapsed;
+            AudioTracksButton.Visibility = Visibility.Collapsed;
+            SubtitlesPopoverButton.Visibility = Visibility.Collapsed;
+            BuildMangaChapters(item);
+            BuildMoreFlyout();
+        }
+    }
+
+    private async Task LoadEbookProgressAsync(MediaItemDetail item)
+    {
+        try
+        {
+            var progress = await App.Services.GetRequiredService<EbooksApi>().GetProgressAsync(item.ContentId);
+            if (ViewModel.Item?.ContentId != item.ContentId) return;
+            if (progress.Progress > 0)
+            {
+                _readerTargetFileId = progress.FileId;
+                _selectedVersion = item.Versions.FirstOrDefault(v => v.FileId == progress.FileId) ?? _selectedVersion;
+                PlayButtonText.Text = $"Continue  {Math.Round(Math.Clamp(progress.Progress, 0, 1) * 100):0}%";
+                _playProgressFraction = Math.Clamp(progress.Progress, 0, 1);
+                UpdatePlayProgressWidth();
+            }
+        }
+        catch { }
+    }
+
+    private static FileVersion? ChooseReadableBookVersion(IEnumerable<FileVersion> versions, int? preferredFileId)
+    {
+        var list = versions.ToList();
+        var supported = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "epub", "pdf", "mobi", "azw", "azw3", "cbz", "cbr", "fb2", "fbz" };
+        static string Format(FileVersion version)
+        {
+            var extension = Path.GetExtension(version.FileName ?? version.FilePath ?? "").TrimStart('.');
+            return string.IsNullOrWhiteSpace(extension) ? version.Container.TrimStart('.') : extension;
+        }
+        if (preferredFileId.HasValue)
+        {
+            var preferred = list.FirstOrDefault(v => v.FileId == preferredFileId.Value && supported.Contains(Format(v)));
+            if (preferred != null) return preferred;
+        }
+        return list.FirstOrDefault(v => Format(v).Equals("epub", StringComparison.OrdinalIgnoreCase))
+            ?? list.FirstOrDefault(v => supported.Contains(Format(v)));
+    }
+
+    private static List<string> PeopleNames(IEnumerable<AudiobookPerson>? people, IEnumerable<CrewMember> crew, string job)
+    {
+        var names = people?.Select(person => person.Name).Where(name => !string.IsNullOrWhiteSpace(name)).Distinct().ToList() ?? [];
+        if (names.Count == 0)
+            names = crew.Where(member => member.Job.Equals(job, StringComparison.OrdinalIgnoreCase))
+                .Select(member => member.Name).Where(name => !string.IsNullOrWhiteSpace(name)).Distinct().ToList();
+        return names;
+    }
+
+    private void BuildBookRelatedGroups(AudiobookSeriesGroup? series, AudiobookRelatedItems? related, string? author)
+    {
+        BookRelatedGroupsPanel.Children.Clear();
+        if (series?.Entries.Count > 0)
+            AddBookRelatedGroup(!string.IsNullOrWhiteSpace(series.Name) ? $"In {series.Name}" : "In this series", series.Entries);
+        if (related?.AlsoByAuthor.Count > 0)
+            AddBookRelatedGroup($"Also by {author ?? "this author"}", related.AlsoByAuthor);
+        if (related?.Similar.Count > 0)
+            AddBookRelatedGroup("You might also like", related.Similar);
+        BookRelatedSection.Visibility = BookRelatedGroupsPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void AddBookRelatedGroup(string heading, IEnumerable<AudiobookRelatedItem> entries)
+    {
+        var group = new StackPanel { Spacing = 12 };
+        group.Children.Add(new TextBlock
+        {
+            Text = heading,
+            Style = (Style)Application.Current.Resources["TitleTextStyle"],
+            FontSize = 20,
+        });
+        var cards = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        foreach (var entry in entries)
+        {
+            cards.Children.Add(new PosterCard
+            {
+                MediaItem = new MediaItem
+                {
+                    ContentId = entry.ContentId,
+                    Type = ViewModel.Item?.Type ?? "ebook",
+                    Title = entry.Title,
+                    Year = entry.Year ?? 0,
+                    PosterUrl = entry.PosterUrl,
+                }
+            });
+        }
+        group.Children.Add(new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+            HorizontalScrollMode = ScrollMode.Enabled,
+            VerticalScrollMode = ScrollMode.Disabled,
+            Content = cards,
+        });
+        BookRelatedGroupsPanel.Children.Add(group);
+    }
+
+    private void BuildAudiobookChapters(MediaItemDetail item)
+    {
+        AudiobookChaptersPanel.Children.Clear();
+        var chapters = item.Versions.SelectMany(version => version.Chapters ?? [])
+            .GroupBy(chapter => Math.Round(chapter.StartSeconds, 3))
+            .Select(group => group.First()).OrderBy(chapter => chapter.StartSeconds).ToList();
+        if (chapters.Count == 0) return;
+        foreach (var chapter in chapters)
+        {
+            var button = new Button
+            {
+                Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Padding = new Thickness(12, 10, 12, 10),
+                Tag = chapter.StartSeconds,
+            };
+            var grid = new Grid { ColumnSpacing = 12 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.Children.Add(new TextBlock { Text = chapter.Title, FontSize = 14, TextTrimming = TextTrimming.CharacterEllipsis });
+            var time = new TextBlock { Text = FormatClock(chapter.StartSeconds), Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], FontSize = 12 };
+            Grid.SetColumn(time, 1);
+            grid.Children.Add(time);
+            button.Content = grid;
+            button.Click += AudiobookChapter_Click;
+            AudiobookChaptersPanel.Children.Add(button);
+        }
+        AudiobookChaptersSection.Visibility = Visibility.Visible;
+    }
+
+    private async void AudiobookChapter_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: double seconds } || ViewModel.Item == null) return;
+        await App.Services.GetRequiredService<Services.PlayerService>().PlayAsync(
+            ViewModel.Item.ContentId,
+            fileId: _selectedVersion?.FileId,
+            startPositionOverride: seconds);
+    }
+
+    private void BuildMangaChapters(MediaItemDetail item)
+    {
+        MangaChaptersPanel.Children.Clear();
+        var chapters = item.Manga?.Chapters
+            .OrderBy(chapter => MangaVolumeSort(chapter.Volume))
+            .ThenBy(chapter => chapter.ChapterIndex ?? double.MaxValue)
+            .ThenBy(chapter => chapter.Title, StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+        var target = chapters.FirstOrDefault(chapter => chapter.Read != true) ?? chapters.FirstOrDefault();
+        _readerTargetContentId = target?.ContentId;
+        SplitPlayButton.Visibility = target != null ? Visibility.Visible : Visibility.Collapsed;
+        PlayButtonIcon.Glyph = "\uE736";
+        PlayButtonText.Text = target == null ? "No chapters" : target.Progress > 0
+            ? $"Resume Reading  {MangaChapterLabel(target)}"
+            : chapters.Any(chapter => chapter.Read == true) && target.Read != true
+                ? $"Continue  {MangaChapterLabel(target)}"
+                : chapters.All(chapter => chapter.Read == true)
+                    ? $"Read Again  {MangaChapterLabel(target)}"
+                    : $"Start Reading  {MangaChapterLabel(target)}";
+        MangaProgressText.Text = chapters.Count == 0 ? "" : $"{chapters.Count(chapter => chapter.Read == true)} of {chapters.Count} read";
+
+        string? currentVolume = null;
+        foreach (var chapter in chapters)
+        {
+            var volume = string.IsNullOrWhiteSpace(chapter.Volume) ? "Chapters" : $"Volume {chapter.Volume}";
+            if (!string.Equals(currentVolume, volume, StringComparison.OrdinalIgnoreCase))
+            {
+                currentVolume = volume;
+                MangaChaptersPanel.Children.Add(new TextBlock
+                {
+                    Text = volume,
+                    FontSize = 13,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                    Margin = new Thickness(12, MangaChaptersPanel.Children.Count == 0 ? 4 : 18, 12, 4),
+                });
+            }
+            MangaChaptersPanel.Children.Add(CreateMangaChapterRow(chapter));
+        }
+        if (chapters.Count == 0)
+            MangaChaptersPanel.Children.Add(new TextBlock { Text = "No chapters found. Chapters appear here once the library scan completes.", Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        MangaChaptersSection.Visibility = Visibility.Visible;
+    }
+
+    private Border CreateMangaChapterRow(MangaChapter chapter)
+    {
+        var row = new Grid { ColumnSpacing = 10 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var readButton = new Button
+        {
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(12, 10, 12, 10),
+            Tag = chapter.ContentId,
+            Content = new TextBlock
+            {
+                Text = MangaChapterLabel(chapter) + (chapter.Progress is > 0 and < 1 ? $"   {Math.Round(chapter.Progress.Value * 100):0}%" : ""),
+                FontSize = 14,
+                Foreground = (Brush)Application.Current.Resources[chapter.Read == true ? "SecondaryTextBrush" : "PrimaryTextBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            },
+        };
+        readButton.Click += MangaRead_Click;
+        row.Children.Add(readButton);
+        var state = new TextBlock { Text = chapter.Read == true ? "\uE73E" : "", FontFamily = new FontFamily("Segoe Fluent Icons"), VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)Application.Current.Resources["AccentBrush"] };
+        Grid.SetColumn(state, 1);
+        row.Children.Add(state);
+        var toggle = new Button { Content = chapter.Read == true ? "Mark unread" : "Mark read", Tag = chapter, Style = (Style)Application.Current.Resources["GhostButtonStyle"], FontSize = 12 };
+        toggle.Click += MangaWatched_Click;
+        Grid.SetColumn(toggle, 2);
+        row.Children.Add(toggle);
+        return new Border { BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], BorderThickness = new Thickness(0, 0, 0, 1), Child = row };
+    }
+
+    private void MangaRead_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string contentId })
+            App.Services.GetRequiredService<NavigationService>().Navigate<EbookReaderPage>(new EbookReaderNavigation(contentId));
+    }
+
+    private async void MangaWatched_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: MangaChapter chapter } || ViewModel.Item == null) return;
+        var api = App.Services.GetRequiredService<CatalogApi>();
+        if (chapter.Read == true) await api.MarkUnwatchedAsync(chapter.ContentId);
+        else await api.MarkWatchedAsync(chapter.ContentId);
+        await ViewModel.LoadCommand.ExecuteAsync(ViewModel.Item.ContentId);
+        UpdateUI();
+    }
+
+    private static string MangaChapterLabel(MangaChapter chapter)
+        => !string.IsNullOrWhiteSpace(chapter.Title) ? chapter.Title
+            : chapter.ChapterIndex.HasValue ? $"Chapter {chapter.ChapterIndex:0.##}" : "Chapter";
+
+    private static double MangaVolumeSort(string? volume)
+        => double.TryParse(volume?.TrimStart('v', 'V'), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var value) ? value : double.MaxValue;
+
+    private static string FormatBookDuration(double seconds)
+    {
+        var span = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return span.TotalHours >= 1 ? $"{(int)span.TotalHours}h {span.Minutes:00}m" : $"{Math.Max(1, span.Minutes)}m";
+    }
+
+    private static string FormatClock(double seconds)
+    {
+        var span = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return span.TotalHours >= 1 ? $"{(int)span.TotalHours}:{span.Minutes:00}:{span.Seconds:00}" : $"{span.Minutes}:{span.Seconds:00}";
     }
 
     // ===== Scores Row =====
+
+    private async Task ConfigureOnViewTranslationAsync(MediaItemDetail? item)
+    {
+        if (item == null || string.IsNullOrWhiteSpace(item.PendingTranslationLanguage))
+        {
+            TranslateOverviewButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        try
+        {
+            var status = await App.Services.GetRequiredService<CatalogApi>().GetMetadataAiStatusAsync();
+            if (!status.Enabled)
+            {
+                TranslateOverviewButton.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            if (status.OnView.Equals("button", StringComparison.OrdinalIgnoreCase))
+            {
+                _translateButtonMode = true;
+                TranslateOverviewButton.Visibility = Visibility.Visible;
+                TranslateOverviewButton.IsEnabled = true;
+                TranslateOverviewButton.Content = "Translate description";
+            }
+            else if (status.OnView.Equals("auto", StringComparison.OrdinalIgnoreCase))
+            {
+                _translateButtonMode = false;
+                TranslateOverviewButton.Visibility = Visibility.Collapsed;
+                await TranslateOverviewAsync(item);
+            }
+            else
+            {
+                _translateButtonMode = false;
+                TranslateOverviewButton.Visibility = Visibility.Collapsed;
+            }
+        }
+        catch
+        {
+            TranslateOverviewButton.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private async void TranslateOverviewButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Item != null)
+            await TranslateOverviewAsync(ViewModel.Item);
+    }
+
+    private async Task TranslateOverviewAsync(MediaItemDetail item)
+    {
+        if (_isTranslatingOverview || string.IsNullOrWhiteSpace(item.PendingTranslationLanguage)) return;
+        _isTranslatingOverview = true;
+        _translationCts?.Cancel();
+        _translationCts?.Dispose();
+        _translationCts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        var ct = _translationCts.Token;
+        TranslateOverviewButton.Visibility = Visibility.Visible;
+        TranslateOverviewButton.IsEnabled = false;
+        TranslateOverviewButton.Content = "Translating…";
+        OverviewText.Opacity = 0.55;
+
+        try
+        {
+            var api = App.Services.GetRequiredService<CatalogApi>();
+            await api.TranslateItemDescriptionAsync(item.ContentId, item.PendingTranslationLanguage!, ct);
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+                var refreshed = ViewModel.Item;
+                if (refreshed == null) continue;
+                OverviewText.Text = refreshed.Overview ?? "";
+                if (string.IsNullOrWhiteSpace(refreshed.PendingTranslationLanguage))
+                {
+                    UpdateUI();
+                    TranslateOverviewButton.Visibility = Visibility.Collapsed;
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The page was left or the WebUI-equivalent 45 second poll window elapsed.
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<Services.ToastService>().Error(ex.Message);
+        }
+        finally
+        {
+            _isTranslatingOverview = false;
+            OverviewText.Opacity = 1;
+            if (_translateButtonMode && !string.IsNullOrWhiteSpace(ViewModel.Item?.PendingTranslationLanguage))
+            {
+                TranslateOverviewButton.Visibility = Visibility.Visible;
+                TranslateOverviewButton.IsEnabled = true;
+                TranslateOverviewButton.Content = "Translate description";
+            }
+        }
+    }
 
     private void UpdateScoresRow(MediaItemDetail item)
     {
@@ -817,8 +1358,39 @@ public sealed partial class ItemDetailPage : Page
     private void BuildMoreFlyout()
     {
         MoreFlyout.Items.Clear();
+        var item = ViewModel.Item;
+        if (item == null) return;
 
-        // Watchlist toggle
+        if (item.Type.Equals("manga", StringComparison.OrdinalIgnoreCase))
+        {
+            var details = new MenuFlyoutItem
+            {
+                Text = "View Details",
+                Icon = new FontIcon { Glyph = "\uE946" },
+            };
+            details.Click += async (_, _) => await ShowMangaDetailsDialogAsync();
+            MoreFlyout.Items.Add(details);
+            if (AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<Core.Services.AuthService>()))
+            {
+                MoreFlyout.Items.Add(new MenuFlyoutSeparator());
+                var refresh = new MenuFlyoutItem { Text = "Refresh Metadata", Icon = new FontIcon { Glyph = "\uE72C" } };
+                refresh.Click += async (_, _) => await ShowRefreshMetadataDialogAsync();
+                MoreFlyout.Items.Add(refresh);
+            }
+            return;
+        }
+
+        if (item.UserData is { PositionSeconds: > 0, Played: false })
+        {
+            var restart = new MenuFlyoutItem
+            {
+                Text = "Play from Beginning",
+                Icon = new FontIcon { Glyph = "\uE777" },
+            };
+            restart.Click += (_, _) => PlayFromStart_Click(restart, new RoutedEventArgs());
+            MoreFlyout.Items.Add(restart);
+        }
+
         var wlItem = new MenuFlyoutItem
         {
             Text = ViewModel.InWatchlist ? "Remove from Watchlist" : "Add to Watchlist",
@@ -831,46 +1403,751 @@ public sealed partial class ItemDetailPage : Page
         };
         MoreFlyout.Items.Add(wlItem);
 
-        // Watched toggle
-        var watchItem = new MenuFlyoutItem
+        var addToCollection = new MenuFlyoutItem
         {
-            Text = ViewModel.IsWatched ? "Mark Unwatched" : "Mark Watched",
-            Icon = new FontIcon { Glyph = "\uE73E" },
+            Text = "Add to Collection",
+            Icon = new FontIcon { Glyph = "\uE8B7" },
         };
-        watchItem.Click += async (_, _) =>
-        {
-            await ViewModel.ToggleWatchedCommand.ExecuteAsync(null);
-            UpdateWatchedButton();
-            BuildMoreFlyout();
-        };
-        MoreFlyout.Items.Add(watchItem);
+        addToCollection.Click += async (_, _) => await ShowAddToCollectionDialogAsync();
+        MoreFlyout.Items.Add(addToCollection);
 
-        // Admin-only: Refresh Metadata
+        if (_selectedVersion != null)
+        {
+            var download = new MenuFlyoutItem
+            {
+                Text = "Download",
+                Icon = new FontIcon { Glyph = "\uE896" },
+            };
+            download.Click += DownloadButton_Click;
+            MoreFlyout.Items.Add(download);
+
+            var searchSubtitles = new MenuFlyoutItem
+            {
+                Text = "Search Subtitles",
+                Icon = new FontIcon { Glyph = "\uED1E" },
+            };
+            searchSubtitles.Click += async (_, _) => await OpenSubtitleSearchDialogAsync();
+            MoreFlyout.Items.Add(searchSubtitles);
+        }
+
         var authService = App.Services.GetRequiredService<Core.Services.AuthService>();
-        if (authService.CurrentUser?.Role == "admin" && ViewModel.Item != null)
+        var isActingAdmin = AuthorizationPolicy.IsActingAdmin(authService);
+        var canCurateMetadata = AuthorizationPolicy.CanCurateMetadata(authService);
+        var canEditMarkers = AuthorizationPolicy.CanEditMarkers(authService);
+        if (isActingAdmin || canCurateMetadata || canEditMarkers)
         {
             MoreFlyout.Items.Add(new MenuFlyoutSeparator());
-            var refreshItem = new MenuFlyoutItem
+
+            if (canCurateMetadata && _selectedVersion != null)
             {
-                Text = "Refresh Metadata",
-                Icon = new FontIcon { Glyph = "\uE72C" },
-            };
-            refreshItem.Click += async (_, _) =>
+                var mediaInfo = new MenuFlyoutItem
+                {
+                    Text = "Media Info",
+                    Icon = new FontIcon { Glyph = "\uE946" },
+                };
+                mediaInfo.Click += async (_, _) => await ShowMediaInfoDialogAsync();
+                MoreFlyout.Items.Add(mediaInfo);
+            }
+
+            if (isActingAdmin)
             {
-                try
+                var history = new MenuFlyoutItem { Text = "View Play History" };
+                history.Click += (_, _) =>
                 {
-                    var adminApi = App.Services.GetRequiredService<Core.Api.AdminApi>();
-                    await adminApi.RefreshItemMetadataAsync(ViewModel.Item.ContentId);
-                    var toast = App.Services.GetRequiredService<Services.ToastService>();
-                    toast.Success("Metadata refresh queued");
-                }
-                catch (Exception ex)
+                    App.MainWindowInstance?.RestoreMainPane();
+                    App.Services.GetRequiredService<NavigationService>()
+                        .Navigate<Admin.AdminShellPage>(new Admin.AdminShellNavigation(
+                            typeof(Admin.AdminPlaybackHistoryPage),
+                            new Admin.AdminPlaybackHistoryFilter(MediaItemId: item.ContentId)));
+                };
+                MoreFlyout.Items.Add(history);
+            }
+
+            if (canCurateMetadata)
+            {
+                var refreshItem = new MenuFlyoutItem
                 {
-                    var toast = App.Services.GetRequiredService<Services.ToastService>();
-                    toast.Error(ex.Message);
-                }
+                    Text = "Refresh Metadata",
+                    Icon = new FontIcon { Glyph = "\uE72C" },
+                };
+                refreshItem.Click += async (_, _) => await ShowRefreshMetadataDialogAsync();
+                MoreFlyout.Items.Add(refreshItem);
+            }
+
+            if (isActingAdmin && item.Type.Equals("episode", StringComparison.OrdinalIgnoreCase))
+            {
+                var redetect = new MenuFlyoutItem
+                {
+                    Text = "Re-detect Intro Markers",
+                    Icon = new FontIcon { Glyph = "\uE72C" },
+                };
+                redetect.Click += async (_, _) => await RedetectIntroMarkersAsync();
+                MoreFlyout.Items.Add(redetect);
+            }
+
+            if (canCurateMetadata)
+            {
+                var edit = new MenuFlyoutItem
+                {
+                    Text = "Edit Metadata",
+                    Icon = new FontIcon { Glyph = "\uE70F" },
+                };
+                edit.Click += EditMetadataButton_Click;
+                MoreFlyout.Items.Add(edit);
+            }
+
+            if (canEditMarkers && item.Type is "movie" or "episode")
+            {
+                var markers = new MenuFlyoutItem
+                {
+                    Text = "Edit Markers",
+                    Icon = new FontIcon { Glyph = "\uE8EC" },
+                };
+                markers.Click += async (_, _) => await ShowMarkerEditorAsync();
+                MoreFlyout.Items.Add(markers);
+            }
+
+            if (canCurateMetadata)
+            {
+                var match = new MenuFlyoutItem
+                {
+                    Text = "Match Item",
+                    Icon = new FontIcon { Glyph = "\uE721" },
+                };
+                match.Click += MatchButton_Click;
+                MoreFlyout.Items.Add(match);
+            }
+
+            if (canCurateMetadata && item.Versions.Count > 1)
+            {
+                var split = new MenuFlyoutItem
+                {
+                    Text = "Split Versions",
+                    Icon = new FontIcon { Glyph = "\uE8C6" },
+                };
+                split.Click += async (_, _) => await ShowSplitVersionsDialogAsync();
+                MoreFlyout.Items.Add(split);
+            }
+        }
+    }
+
+    private async Task ShowAddToCollectionDialogAsync()
+    {
+        var item = ViewModel.Item;
+        if (item == null) return;
+        var toast = App.Services.GetRequiredService<Services.ToastService>();
+        try
+        {
+            var api = App.Services.GetRequiredService<CollectionsApi>();
+            var response = await api.GetCollectionsAsync();
+            var choices = response.Collections
+                .Where(collection => collection.CollectionType.Equals("manual", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(collection => collection.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+            if (choices.Count == 0)
+            {
+                var empty = new ContentDialog
+                {
+                    XamlRoot = XamlRoot,
+                    Title = "Add to Collection",
+                    Content = "You don't have any manual collections yet. Create one in Collections first.",
+                    CloseButtonText = "Close",
+                };
+                await empty.ShowAsync();
+                return;
+            }
+
+            var list = new ListView
+            {
+                SelectionMode = ListViewSelectionMode.Single,
+                MaxHeight = 320,
+                ItemsSource = choices,
+                DisplayMemberPath = "Name",
             };
-            MoreFlyout.Items.Add(refreshItem);
+            var panel = new StackPanel { Spacing = 12 };
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"Pick a manual collection to add “{item.Title}” to.",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+            panel.Children.Add(list);
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = "Add to Collection",
+                Content = panel,
+                PrimaryButtonText = "Add",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+            };
+            dialog.IsPrimaryButtonEnabled = false;
+            list.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = list.SelectedItem != null;
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary
+                || list.SelectedItem is not Core.Models.Collections.Collection collection)
+                return;
+
+            await api.AddCollectionItemAsync(collection.Id, item.ContentId);
+            toast.Success("Added to collection");
+        }
+        catch (Exception ex)
+        {
+            toast.Error(ex.Message);
+        }
+    }
+
+    private async void AddCollectionButton_Click(object sender, RoutedEventArgs e)
+        => await ShowAddToCollectionDialogAsync();
+
+    private async Task ShowMangaDetailsDialogAsync()
+    {
+        var item = ViewModel.Item;
+        if (item == null) return;
+        try
+        {
+            var data = await App.Services.GetRequiredService<CatalogApi>().GetMangaSeriesFilesAsync(item.ContentId);
+            var panel = new StackPanel { Spacing = 12 };
+            if (data.FolderPaths?.Count > 0)
+            {
+                panel.Children.Add(new TextBlock { Text = "Folders", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+                foreach (var path in data.FolderPaths)
+                    panel.Children.Add(new TextBlock { Text = path, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+            }
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"{data.Files.Count} files \u00B7 {FormatFileBytes(data.Files.Sum(file => file.FileSize))}",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            });
+            foreach (var file in data.Files.OrderBy(file => MangaVolumeSort(file.Volume)).ThenBy(file => file.ChapterIndex))
+            {
+                var summary = string.Join(" \u00B7 ", new[]
+                {
+                    string.IsNullOrWhiteSpace(file.Volume) ? null : $"Volume {file.Volume}",
+                    file.ChapterIndex.HasValue ? $"Chapter {file.ChapterIndex:0.##}" : null,
+                    string.IsNullOrWhiteSpace(file.Container) ? null : file.Container.ToUpperInvariant(),
+                    FormatFileBytes(file.FileSize),
+                }.Where(value => !string.IsNullOrWhiteSpace(value)));
+                panel.Children.Add(new TextBlock { Text = file.FileName, FontSize = 14, TextTrimming = TextTrimming.CharacterEllipsis });
+                panel.Children.Add(new TextBlock { Text = summary, FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+            }
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = $"{item.Title} details",
+                Content = new ScrollViewer { Content = panel, MaxHeight = 520 },
+                CloseButtonText = "Close",
+            };
+            await dialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            await new ContentDialog { XamlRoot = XamlRoot, Title = "Unable to load details", Content = ex.Message, CloseButtonText = "Close" }.ShowAsync();
+        }
+    }
+
+    private static string FormatFileBytes(long bytes)
+    {
+        if (bytes <= 0) return "0 B";
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var value = (double)bytes;
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1) { value /= 1024; unit++; }
+        return $"{value:0.#} {units[unit]}";
+    }
+
+    private async Task ShowMediaInfoDialogAsync()
+    {
+        var version = _selectedVersion;
+        if (version == null) return;
+        var lines = new List<string>
+        {
+            BuildQualitySummary(version),
+            $"Container: {version.Container.ToUpperInvariant()}",
+            $"Duration: {FormatExtraDuration(version.Duration)}",
+            $"Bitrate: {(version.Bitrate > 0 ? $"{version.Bitrate / 1_000_000d:0.##} Mbps" : "Unknown")}",
+            $"Size: {(version.FileSize > 0 ? FormatFileSize(version.FileSize) : "Unknown")}",
+        };
+        if (!string.IsNullOrWhiteSpace(version.EditionRaw)) lines.Add($"Edition: {version.EditionRaw}");
+        if (!string.IsNullOrWhiteSpace(version.FileName)) lines.Add($"File: {version.FileName}");
+        if (version.VideoTracks is { Count: > 0 })
+        {
+            var video = version.VideoTracks[0];
+            lines.Add("");
+            lines.Add("VIDEO");
+            lines.Add($"{video.Codec?.ToUpperInvariant()}  {video.Width}×{video.Height}  {video.BitDepth}-bit");
+            if (!string.IsNullOrWhiteSpace(video.DolbyVision)) lines.Add($"Dolby Vision: {video.DolbyVision}");
+            if (video.Hdr10Plus == true) lines.Add("HDR10+");
+        }
+        if (version.AudioTracks is { Count: > 0 })
+        {
+            lines.Add("");
+            lines.Add("AUDIO TRACKS");
+            lines.AddRange(version.AudioTracks.Select((track, index) =>
+                $"{index + 1}. {FormatAudioTrackSummary(track)}"));
+        }
+        if (version.SubtitleTracks is { Count: > 0 })
+        {
+            lines.Add("");
+            lines.Add("SUBTITLE TRACKS");
+            lines.AddRange(version.SubtitleTracks.Select((track, index) =>
+                $"{index + 1}. {FormatSubtitleTrackSummary(track)}"));
+        }
+
+        var text = new TextBlock
+        {
+            Text = string.Join(Environment.NewLine, lines),
+            TextWrapping = TextWrapping.Wrap,
+            IsTextSelectionEnabled = true,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 12,
+        };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "Media Info",
+            Content = new ScrollViewer { Content = text, MaxHeight = 560 },
+            CloseButtonText = "Close",
+        };
+        await dialog.ShowAsync();
+    }
+
+    private async Task ShowRefreshMetadataDialogAsync()
+    {
+        var item = ViewModel.Item;
+        if (item == null) return;
+        var content = new StackPanel { Spacing = 10 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "Choose whether to refresh the existing item or rebuild it from the files on disk.",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = "Quick Refresh — Keep the current item and refresh metadata using the existing scan scope.",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = "Complete Refresh — Clear the current match, re-scan, and rebuild the item from disk context. This can recreate the item with a new ID or type.",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "Refresh Metadata",
+            Content = content,
+            PrimaryButtonText = "Quick Refresh",
+            SecondaryButtonText = "Complete Refresh",
+            CloseButtonText = "Cancel",
+        };
+        var result = await dialog.ShowAsync();
+        var mode = result switch
+        {
+            ContentDialogResult.Primary => "quick",
+            ContentDialogResult.Secondary => "complete",
+            _ => null,
+        };
+        if (mode == null) return;
+
+        var toast = App.Services.GetRequiredService<Services.ToastService>();
+        try
+        {
+            await App.Services.GetRequiredService<AdminApi>()
+                .RefreshItemMetadataAsync(item.ContentId, mode);
+            toast.Success(mode == "complete" ? "Complete refresh queued" : "Metadata refresh queued");
+        }
+        catch (Exception ex)
+        {
+            toast.Error(ex.Message);
+        }
+    }
+
+    private async Task RedetectIntroMarkersAsync()
+    {
+        var item = ViewModel.Item;
+        if (item == null) return;
+        var toast = App.Services.GetRequiredService<Services.ToastService>();
+        try
+        {
+            var response = await App.Services.GetRequiredService<AdminApi>()
+                .RedetectEpisodeIntroAsync(item.ContentId);
+            toast.Success(response.Status == "already_running"
+                ? "Re-detection already running"
+                : "Re-detection started");
+        }
+        catch (Exception ex)
+        {
+            toast.Error(ex.Message);
+        }
+    }
+
+    private async Task ShowMarkerEditorAsync()
+    {
+        var item = ViewModel.Item;
+        if (item == null) return;
+        var playbackApi = App.Services.GetRequiredService<PlaybackApi>();
+        var toast = App.Services.GetRequiredService<Services.ToastService>();
+        FileMarkersResponse current;
+        try
+        {
+            current = await playbackApi.GetItemMarkersAsync(item.ContentId);
+        }
+        catch (Exception ex)
+        {
+            toast.Error(ex.Message);
+            return;
+        }
+
+        var values = new Dictionary<string, (TextBox Start, TextBox End)>();
+        var grid = new Grid { ColumnSpacing = 8, RowSpacing = 10 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(92) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var markerRows = new[]
+        {
+            (Key: "intro", Label: "Intro", Segment: current.Intro),
+            (Key: "recap", Label: "Recap", Segment: current.Recap),
+            (Key: "credits", Label: "Credits", Segment: current.Credits),
+            (Key: "preview", Label: "Preview", Segment: current.Preview),
+        };
+        for (var row = 0; row < markerRows.Length; row++)
+        {
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var marker = markerRows[row];
+            var label = new TextBlock
+            {
+                Text = marker.Label,
+                VerticalAlignment = VerticalAlignment.Center,
+                FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            };
+            var start = new TextBox { Text = FormatMarkerClock(marker.Segment.Start), PlaceholderText = "start" };
+            var end = new TextBox { Text = FormatMarkerClock(marker.Segment.End), PlaceholderText = "end" };
+            var clear = new Button
+            {
+                Content = new FontIcon { Glyph = "\uE74D", FontSize = 13 },
+                Padding = new Thickness(8),
+            };
+            clear.Click += (_, _) => { start.Text = ""; end.Text = ""; };
+            Grid.SetRow(label, row);
+            Grid.SetRow(start, row); Grid.SetColumn(start, 1);
+            Grid.SetRow(end, row); Grid.SetColumn(end, 2);
+            Grid.SetRow(clear, row); Grid.SetColumn(clear, 3);
+            grid.Children.Add(label);
+            grid.Children.Add(start);
+            grid.Children.Add(end);
+            grid.Children.Add(clear);
+            values[marker.Key] = (start, end);
+        }
+
+        var error = new TextBlock
+        {
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.OrangeRed),
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed,
+        };
+        var content = new StackPanel { Spacing = 12 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "Set intro, recap, credits, and preview times. Use m:ss or h:mm:ss; leave both fields empty to remove a marker.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        content.Children.Add(grid);
+        content.Children.Add(error);
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "Edit markers",
+            Content = content,
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        dialog.PrimaryButtonClick += async (_, args) =>
+        {
+            args.Cancel = true;
+            var changes = new Dictionary<string, object?>();
+            foreach (var (kind, fields) in values)
+            {
+                var startText = fields.Start.Text.Trim();
+                var endText = fields.End.Text.Trim();
+                if (startText.Length == 0 && endText.Length == 0)
+                {
+                    changes[kind] = null;
+                    continue;
+                }
+                if (!TryParseMarkerClock(startText, out var startSeconds)
+                    || !TryParseMarkerClock(endText, out var endSeconds))
+                {
+                    error.Text = $"{char.ToUpperInvariant(kind[0]) + kind[1..]}: enter both start and end (for example 1:30).";
+                    error.Visibility = Visibility.Visible;
+                    return;
+                }
+                if (endSeconds <= startSeconds)
+                {
+                    error.Text = $"{char.ToUpperInvariant(kind[0]) + kind[1..]}: end must be after start.";
+                    error.Visibility = Visibility.Visible;
+                    return;
+                }
+                changes[kind] = new Dictionary<string, object?>
+                {
+                    ["start"] = startSeconds,
+                    ["end"] = endSeconds,
+                };
+            }
+
+            dialog.IsPrimaryButtonEnabled = false;
+            try
+            {
+                await playbackApi.SetItemMarkersAsync(item.ContentId, changes);
+                toast.Success("Markers saved");
+                dialog.Hide();
+            }
+            catch (Exception ex)
+            {
+                error.Text = ex.Message;
+                error.Visibility = Visibility.Visible;
+                dialog.IsPrimaryButtonEnabled = true;
+            }
+        };
+        await dialog.ShowAsync();
+    }
+
+    private static string FormatMarkerClock(double? seconds)
+    {
+        if (seconds == null) return "";
+        var span = TimeSpan.FromSeconds(Math.Round(Math.Max(0, seconds.Value)));
+        return span.TotalHours >= 1
+            ? $"{(int)span.TotalHours}:{span.Minutes:00}:{span.Seconds:00}"
+            : $"{span.Minutes}:{span.Seconds:00}";
+    }
+
+    private static bool TryParseMarkerClock(string value, out double seconds)
+    {
+        seconds = 0;
+        var parts = value.Split(':', StringSplitOptions.TrimEntries);
+        if (parts.Length is < 1 or > 3 || parts.Any(part => !int.TryParse(part, out _))) return false;
+        var numbers = parts.Select(int.Parse).ToArray();
+        if (numbers.Any(number => number < 0)) return false;
+        seconds = numbers.Length switch
+        {
+            1 => numbers[0],
+            2 when numbers[1] < 60 => numbers[0] * 60d + numbers[1],
+            3 when numbers[1] < 60 && numbers[2] < 60 => numbers[0] * 3600d + numbers[1] * 60d + numbers[2],
+            _ => -1,
+        };
+        return seconds >= 0;
+    }
+
+    private async Task ShowSplitVersionsDialogAsync()
+    {
+        var item = ViewModel.Item;
+        if (item == null) return;
+        var adminApi = App.Services.GetRequiredService<AdminApi>();
+        var toast = App.Services.GetRequiredService<Services.ToastService>();
+        ItemFilesResponse filesResponse;
+        try
+        {
+            filesResponse = await adminApi.GetItemFilesAsync(item.ContentId);
+        }
+        catch (Exception ex)
+        {
+            toast.Error(ex.Message);
+            return;
+        }
+        if (filesResponse.Files.Count < 2)
+        {
+            toast.Error("This item has only one file; splitting needs at least two.");
+            return;
+        }
+
+        var selectedFiles = new List<(ItemFile File, CheckBox Check)>();
+        var filesPanel = new StackPanel { Spacing = 5 };
+        foreach (var group in filesResponse.Files.GroupBy(file => file.ObservedRootPath))
+        {
+            filesPanel.Children.Add(new TextBlock
+            {
+                Text = group.Key,
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 11,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+            foreach (var file in group)
+            {
+                var check = new CheckBox
+                {
+                    Content = new TextBlock
+                    {
+                        Text = file.FilePath,
+                        FontFamily = new FontFamily("Consolas"),
+                        FontSize = 11,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        MaxWidth = 560,
+                    },
+                };
+                filesPanel.Children.Add(check);
+                selectedFiles.Add((file, check));
+            }
+        }
+
+        var title = new TextBox { Text = item.Title, Header = "Search title" };
+        var year = new NumberBox
+        {
+            Header = "Year",
+            Value = item.Year > 0 ? item.Year : double.NaN,
+            Minimum = 1850,
+            Maximum = 2100,
+        };
+        var imdb = new TextBox { Header = "IMDb ID", Text = item.ImdbId ?? "" };
+        var tmdb = new TextBox { Header = "TMDB ID", Text = item.TmdbId ?? "" };
+        var tvdb = new TextBox { Header = "TVDB ID", Text = item.TvdbId ?? "" };
+        var identityGrid = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
+        identityGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+        identityGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        identityGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        identityGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetColumn(year, 1);
+        Grid.SetRow(imdb, 1);
+        Grid.SetRow(tmdb, 1); Grid.SetColumn(tmdb, 1);
+        Grid.SetRow(tvdb, 2);
+        identityGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        identityGrid.Children.Add(title);
+        identityGrid.Children.Add(year);
+        identityGrid.Children.Add(imdb);
+        identityGrid.Children.Add(tmdb);
+        identityGrid.Children.Add(tvdb);
+
+        var candidates = new ListView
+        {
+            SelectionMode = ListViewSelectionMode.Single,
+            DisplayMemberPath = "Title",
+            MaxHeight = 150,
+        };
+        var search = new Button { Content = "Search matches", HorizontalAlignment = HorizontalAlignment.Left };
+        var detach = new CheckBox { Content = "Detach as unmatched" };
+        var historyMode = new ComboBox { Header = "Watch history", SelectedIndex = 0 };
+        historyMode.Items.Add(new ComboBoxItem { Content = "Follow play evidence (recommended)", Tag = "evidence" });
+        historyMode.Items.Add(new ComboBoxItem { Content = "Keep all history on this item", Tag = "keep" });
+        historyMode.Items.Add(new ComboBoxItem { Content = "Move everything to the new item", Tag = "move_all" });
+
+        var content = new StackPanel { Spacing = 12 };
+        content.Children.Add(new TextBlock
+        {
+            Text = $"{item.Title} ({item.Year}) · {item.Type}",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        content.Children.Add(new TextBlock { Text = "Files to move", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        content.Children.Add(filesPanel);
+        content.Children.Add(new TextBlock { Text = "Target identity", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        content.Children.Add(identityGrid);
+        content.Children.Add(search);
+        content.Children.Add(candidates);
+        content.Children.Add(detach);
+        content.Children.Add(historyMode);
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "Split Versions",
+            Content = new ScrollViewer { Content = content, MaxHeight = 620 },
+            PrimaryButtonText = "Review Split",
+            CloseButtonText = "Cancel",
+            IsPrimaryButtonEnabled = false,
+        };
+        void UpdateCanReview()
+        {
+            var selectedCount = selectedFiles.Count(entry => entry.Check.IsChecked == true);
+            dialog.IsPrimaryButtonEnabled = selectedCount > 0
+                                            && selectedCount < selectedFiles.Count
+                                            && (detach.IsChecked == true || candidates.SelectedItem != null);
+        }
+        foreach (var entry in selectedFiles)
+        {
+            entry.Check.Checked += (_, _) => UpdateCanReview();
+            entry.Check.Unchecked += (_, _) => UpdateCanReview();
+        }
+        detach.Checked += (_, _) => { candidates.SelectedItem = null; UpdateCanReview(); };
+        detach.Unchecked += (_, _) => UpdateCanReview();
+        candidates.SelectionChanged += (_, _) =>
+        {
+            if (candidates.SelectedItem != null) detach.IsChecked = false;
+            UpdateCanReview();
+        };
+        search.Click += async (_, _) =>
+        {
+            search.IsEnabled = false;
+            try
+            {
+                var response = await adminApi.MatchSearchAsync(item.ContentId, new Core.Models.Admin.ItemMatchSearchRequest
+                {
+                    Title = string.IsNullOrWhiteSpace(title.Text) ? null : title.Text.Trim(),
+                    Year = double.IsNaN(year.Value) ? null : (int)year.Value,
+                    ImdbId = string.IsNullOrWhiteSpace(imdb.Text) ? null : imdb.Text.Trim(),
+                    TmdbId = string.IsNullOrWhiteSpace(tmdb.Text) ? null : tmdb.Text.Trim(),
+                    TvdbId = string.IsNullOrWhiteSpace(tvdb.Text) ? null : tvdb.Text.Trim(),
+                });
+                candidates.ItemsSource = response.Candidates;
+                if (response.Candidates.Count == 0) toast.Error("No matching titles found.");
+            }
+            catch (Exception ex)
+            {
+                toast.Error(ex.Message);
+            }
+            finally
+            {
+                search.IsEnabled = true;
+            }
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        var chosenFiles = selectedFiles
+            .Where(entry => entry.Check.IsChecked == true)
+            .Select(entry => entry.File.Id)
+            .ToList();
+        var candidate = candidates.SelectedItem as Core.Models.Admin.MatchCandidate;
+        var request = new ItemSplitRequest
+        {
+            FileIds = chosenFiles,
+            Target = detach.IsChecked == true
+                ? new ItemSplitTarget { Unmatched = true }
+                : new ItemSplitTarget
+                {
+                    ProviderIds = candidate?.ProviderIds,
+                    Title = candidate?.Title,
+                    Year = candidate?.Year > 0 ? candidate.Year : null,
+                },
+            HistoryMode = (historyMode.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "evidence",
+            PersistOverride = true,
+            DryRun = true,
+        };
+
+        try
+        {
+            var preview = await adminApi.SplitItemAsync(item.ContentId, request);
+            var confirm = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = "Confirm Split",
+                Content = $"Move {chosenFiles.Count} file(s) to “{candidate?.Title ?? "Unmatched"}”?\n\n"
+                          + $"History moved: {preview.Reattribution.HistoryMoved}\n"
+                          + $"History staying: {preview.Reattribution.HistoryStayed}\n"
+                          + $"Ambiguous history: {preview.Reattribution.HistoryAmbiguous}",
+                PrimaryButtonText = "Split Versions",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+            };
+            if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+            request.DryRun = false;
+            var result = await adminApi.SplitItemAsync(item.ContentId, request);
+            toast.Success($"Moved {result.FilesMoved} file{(result.FilesMoved == 1 ? "" : "s")} to a separate item");
+            await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+            UpdateUI();
+        }
+        catch (Exception ex)
+        {
+            toast.Error(ex.Message);
         }
     }
 
@@ -1088,10 +2365,11 @@ public sealed partial class ItemDetailPage : Page
     // button. Admin-only; hidden for regular users even if they somehow land
     // on this page with file_path populated.
 
-    private void BuildMediaLocationsSection(bool isAdmin, List<SiloPlayer.Core.Models.Playback.FileVersion>? versions)
+    private void BuildMediaLocationsSection(bool canCurateMetadata, List<SiloPlayer.Core.Models.Playback.FileVersion>? versions)
     {
         MediaLocationsPanel.Children.Clear();
-        if (!isAdmin || versions == null || versions.Count == 0)
+        var isEbook = ViewModel.Item?.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase) == true;
+        if ((!canCurateMetadata && !isEbook) || versions == null || versions.Count == 0)
         {
             MediaLocationsSection.Visibility = Visibility.Collapsed;
             return;
@@ -1107,7 +2385,20 @@ public sealed partial class ItemDetailPage : Page
 
         if (ordered.Count == 0)
         {
-            MediaLocationsSection.Visibility = Visibility.Collapsed;
+            if (ViewModel.Item?.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                MediaLocationsPanel.Children.Add(new TextBlock
+                {
+                    Text = "No ebook files found.",
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                    FontSize = 13,
+                });
+                MediaLocationsSection.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                MediaLocationsSection.Visibility = Visibility.Collapsed;
+            }
             return;
         }
 
@@ -1386,6 +2677,287 @@ public sealed partial class ItemDetailPage : Page
 
     // ===== Navigation =====
 
+    private static string ExtraKindLabel(string kind) => kind switch
+    {
+        "trailer" => "Trailer",
+        "teaser" => "Teaser",
+        "featurette" => "Featurette",
+        "clip" => "Clip",
+        "behind_the_scenes" => "Behind the Scenes",
+        "bloopers" => "Bloopers",
+        "deleted_scene" => "Deleted Scene",
+        _ => "Extra",
+    };
+
+    private static string ExtraKindGroupLabel(string kind) => kind switch
+    {
+        "trailer" => "Trailers",
+        "teaser" => "Teasers",
+        "featurette" => "Featurettes",
+        "clip" => "Clips",
+        "behind_the_scenes" => "Behind the Scenes",
+        "bloopers" => "Bloopers",
+        "deleted_scene" => "Deleted Scenes",
+        _ => "Other",
+    };
+
+    private void BuildTrailers(IReadOnlyList<ItemVideo> videos)
+    {
+        TrailersPanel.Children.Clear();
+        var playable = videos
+            .Where(video => video.Site.Equals("youtube", StringComparison.OrdinalIgnoreCase)
+                            && IsSafeYouTubeKey(video.SiteKey))
+            .ToList();
+
+        TrailersSection.Visibility = playable.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        foreach (var video in playable)
+            TrailersPanel.Children.Add(CreateTrailerCard(video));
+    }
+
+    private static bool IsSafeYouTubeKey(string value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_');
+
+    private Button CreateTrailerCard(ItemVideo video)
+    {
+        var label = string.IsNullOrWhiteSpace(video.Name)
+            ? ExtraKindLabel(video.Kind)
+            : video.Name!;
+
+        var thumbnail = new Image
+        {
+            Stretch = Stretch.UniformToFill,
+            Source = new BitmapImage(new Uri($"https://i.ytimg.com/vi/{video.SiteKey}/hqdefault.jpg")),
+        };
+
+        var imageHost = new Grid { Width = 280, Height = 158 };
+        imageHost.Children.Add(thumbnail);
+        imageHost.Children.Add(new Border
+        {
+            Width = 44,
+            Height = 44,
+            CornerRadius = new CornerRadius(22),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xA8, 0, 0, 0)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new FontIcon
+            {
+                Glyph = "\uE768",
+                FontSize = 18,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+            },
+        });
+
+        var imageClip = new Border
+        {
+            Width = 280,
+            Height = 158,
+            CornerRadius = new CornerRadius(8),
+            Child = imageHost,
+        };
+
+        var meta = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
+        meta.Children.Add(new TextBlock
+        {
+            Text = ExtraKindLabel(video.Kind),
+            FontSize = 11,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        if (video.IsOfficial)
+        {
+            meta.Children.Add(new Border
+            {
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(6, 0, 6, 0),
+                Child = new TextBlock
+                {
+                    Text = "Official",
+                    FontSize = 10,
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                },
+            });
+        }
+
+        var content = new StackPanel { Width = 280, Spacing = 5 };
+        content.Children.Add(imageClip);
+        content.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 1,
+        });
+        content.Children.Add(meta);
+
+        var card = new Button
+        {
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Content = content,
+            Tag = video,
+        };
+        card.Click += TrailerCard_Click;
+        return card;
+    }
+
+    private async void TrailerCard_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: ItemVideo video }
+            || !IsSafeYouTubeKey(video.SiteKey))
+            return;
+
+        var title = string.IsNullOrWhiteSpace(video.Name)
+            ? ExtraKindLabel(video.Kind)
+            : video.Name!;
+        var webView = new WebView2
+        {
+            Width = 960,
+            Height = 540,
+            Source = new Uri($"https://www.youtube-nocookie.com/embed/{video.SiteKey}?autoplay=1"),
+        };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = title,
+            CloseButtonText = "Close",
+            Content = webView,
+        };
+
+        try
+        {
+            await dialog.ShowAsync();
+        }
+        finally
+        {
+            webView.Source = new Uri("about:blank");
+        }
+    }
+
+    private void BuildExtras(IReadOnlyList<ItemExtra> extras)
+    {
+        ExtrasGroupsPanel.Children.Clear();
+        var playable = extras.Where(extra => !string.IsNullOrWhiteSpace(extra.ContentId)).ToList();
+        ExtrasSection.Visibility = playable.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        if (playable.Count == 0) return;
+
+        foreach (var group in playable.GroupBy(extra => extra.Kind))
+        {
+            var groupPanel = new StackPanel { Spacing = 10 };
+            groupPanel.Children.Add(new TextBlock
+            {
+                Text = ExtraKindGroupLabel(group.Key).ToUpperInvariant(),
+                FontSize = 12,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                CharacterSpacing = 100,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+
+            var grid = new Grid { ColumnSpacing = 10, RowSpacing = 10 };
+            for (var column = 0; column < 3; column++)
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var groupedExtras = group.ToList();
+            for (var row = 0; row < (int)Math.Ceiling(groupedExtras.Count / 3.0); row++)
+                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            for (var index = 0; index < groupedExtras.Count; index++)
+            {
+                var card = CreateExtraCard(groupedExtras[index]);
+                Grid.SetRow(card, index / 3);
+                Grid.SetColumn(card, index % 3);
+                grid.Children.Add(card);
+            }
+
+            groupPanel.Children.Add(grid);
+            ExtrasGroupsPanel.Children.Add(groupPanel);
+        }
+    }
+
+    private Button CreateExtraCard(ItemExtra extra)
+    {
+        var title = string.IsNullOrWhiteSpace(extra.Title)
+            ? ExtraKindGroupLabel(extra.Kind)
+            : extra.Title!;
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 1,
+        });
+        if (extra.DurationSeconds is > 0)
+        {
+            text.Children.Add(new TextBlock
+            {
+                Text = FormatExtraDuration(extra.DurationSeconds.Value),
+                FontSize = 11,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+        }
+
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        row.Children.Add(new Border
+        {
+            Width = 36,
+            Height = 36,
+            CornerRadius = new CornerRadius(18),
+            Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
+            Child = new FontIcon { Glyph = "\uE768", FontSize = 15 },
+        });
+        row.Children.Add(text);
+
+        var button = new Button
+        {
+            Style = (Style)Application.Current.Resources["SecondaryButtonStyle"],
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(12, 10, 12, 10),
+            CornerRadius = new CornerRadius(8),
+            Content = row,
+            Tag = extra.ContentId,
+        };
+        button.Click += ExtraCard_Click;
+        return button;
+    }
+
+    private static string FormatExtraDuration(double seconds)
+    {
+        var duration = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return duration.TotalHours >= 1
+            ? $"{(int)duration.TotalHours}:{duration.Minutes:00}:{duration.Seconds:00}"
+            : $"{duration.Minutes}:{duration.Seconds:00}";
+    }
+
+    private void ExtraCard_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string contentId })
+            _ = PlayExtraAsync(contentId);
+    }
+
+    private async Task PlayExtraAsync(string contentId)
+    {
+        var playerService = App.Services.GetRequiredService<Services.PlayerService>();
+        playerService.NextEpisodeContentId = null;
+        if (playerService.State != Services.PlayerState.Idle)
+        {
+            await playerService.CloseAsync();
+            await Task.Delay(300);
+        }
+
+        await playerService.PlayAsync(contentId);
+    }
+
     private void BackButton_Click(object sender, RoutedEventArgs e)
     {
         var nav = App.Services.GetRequiredService<NavigationService>();
@@ -1397,10 +2969,11 @@ public sealed partial class ItemDetailPage : Page
     {
         if (ViewModel.Item == null) return;
 
-        if (IsEbook(ViewModel.Item))
+        if (IsReaderItem(ViewModel.Item))
         {
+            var target = _readerTargetContentId ?? ViewModel.Item.ContentId;
             App.Services.GetRequiredService<NavigationService>()
-                .Navigate<EbookReaderPage>(new EbookReaderNavigation(ViewModel.Item.ContentId));
+                .Navigate<EbookReaderPage>(new EbookReaderNavigation(target, _readerTargetFileId));
             return;
         }
 
@@ -1409,12 +2982,12 @@ public sealed partial class ItemDetailPage : Page
         {
             var episode = ViewModel.Episodes.FirstOrDefault(ep => ep.UserData?.Played != true)
                           ?? ViewModel.Episodes[0];
-            NavigateToPlayer(episode.ContentId);
+            NavigateToPlayer(episode.ContentId, fileId: _selectedVersion?.FileId);
         }
         else
         {
             // For movies, play the item directly
-            NavigateToPlayer(ViewModel.Item.ContentId);
+            NavigateToPlayer(ViewModel.Item.ContentId, fileId: _selectedVersion?.FileId);
         }
     }
 
@@ -1432,17 +3005,25 @@ public sealed partial class ItemDetailPage : Page
     {
         if (ViewModel.Item == null) return;
 
+        if (IsReaderItem(ViewModel.Item))
+        {
+            var target = _readerTargetContentId ?? ViewModel.Item.ContentId;
+            App.Services.GetRequiredService<NavigationService>()
+                .Navigate<EbookReaderPage>(new EbookReaderNavigation(target, _readerTargetFileId));
+            return;
+        }
+
         // For series, restart the current/next episode from position 0
         // (same episode selection as the Play button)
         if (ViewModel.IsSeries && ViewModel.Episodes.Count > 0)
         {
             var episode = ViewModel.Episodes.FirstOrDefault(ep => ep.UserData?.Played != true)
                           ?? ViewModel.Episodes[0];
-            NavigateToPlayer(episode.ContentId, fromStart: true);
+            NavigateToPlayer(episode.ContentId, fromStart: true, fileId: _selectedVersion?.FileId);
         }
         else
         {
-            NavigateToPlayer(ViewModel.Item.ContentId, fromStart: true);
+            NavigateToPlayer(ViewModel.Item.ContentId, fromStart: true, fileId: _selectedVersion?.FileId);
         }
     }
 
@@ -1500,9 +3081,9 @@ public sealed partial class ItemDetailPage : Page
 
         var next = ViewModel.Episodes[currentIdx + 1];
         playerService.NextEpisodeContentId = next.ContentId;
-        // Format the title the way the overlay shows it: "S2 E5 · Episode Name"
-        var label = $"S{next.SeasonNumber} E{next.EpisodeNumber}";
-        playerService.NextEpisodeTitle = string.IsNullOrEmpty(next.Title) ? label : $"{label} \u00B7 {next.Title}";
+        // Match the current WebUI post-roll episode label.
+        var label = $"S{next.SeasonNumber}:E{next.EpisodeNumber}";
+        playerService.NextEpisodeTitle = string.IsNullOrEmpty(next.Title) ? label : $"{label} \u2014 {next.Title}";
         playerService.NextEpisodeSeriesTitle = ViewModel.Item?.Title;
         playerService.NextEpisodePosterUrl = next.StillUrl;
         playerService.NextEpisodeOverview = next.Overview;
@@ -1510,13 +3091,27 @@ public sealed partial class ItemDetailPage : Page
 
     // ===== Initial Play Button & Quality Badges from Catalog Item Data =====
 
+    private static WatchUserData? ToWatchUserData(ItemDetailUserData? source) => source == null
+        ? null
+        : new WatchUserData
+        {
+            PositionSeconds = source.PositionSeconds,
+            DurationSeconds = source.DurationSeconds,
+            Played = source.Played,
+            LastFileId = source.LastFileId,
+            LastResolution = source.LastResolution,
+            LastHdr = source.LastHdr,
+            LastCodecVideo = source.LastCodecVideo,
+            LastEditionKey = source.LastEditionKey,
+        };
+
     /// <summary>
     /// Sets the play button text using catalog item data (before watch detail loads).
     /// Shows "Resume from X:XX" if in-progress, and quality like "· 2160p HDR".
     /// </summary>
     private void UpdatePlayButtonFromItemData(MediaItemDetail item)
     {
-        if (IsEbook(item))
+        if (IsReaderItem(item))
         {
             PlayButtonText.Text = "Read";
             PlayButtonIcon.Glyph = "\uE736";
@@ -1524,6 +3119,7 @@ public sealed partial class ItemDetailPage : Page
             VersionSeparator.Visibility = Visibility.Collapsed;
             AudioTracksButton.Visibility = Visibility.Collapsed;
             SubtitlesPopoverButton.Visibility = Visibility.Collapsed;
+            EditionButton.Visibility = Visibility.Collapsed;
             DownloadButton.Visibility = Visibility.Collapsed;
             return;
         }
@@ -1534,9 +3130,14 @@ public sealed partial class ItemDetailPage : Page
             qualityParts.Add(item.OverlaySummary.Resolution);
         if (item.Versions?.Count > 0)
         {
-            var best = item.Versions.OrderByDescending(v => v.Resolution switch {
-                "2160p" => 4, "1080p" => 3, "720p" => 2, _ => 1
-            }).First();
+            var best = VersionRanking.SelectDefaultPlaybackVariantVersion(
+                item.Versions,
+                item.PlaybackVariants,
+                ToWatchUserData(item.UserData),
+                qualityPreference: null,
+                preferredEditionKey: item.EffectiveVersionEditionKey)
+                ?? item.Versions[0];
+            _selectedVersion = best;
             if (qualityParts.Count == 0 && !string.IsNullOrEmpty(best.Resolution))
                 qualityParts.Add(best.Resolution);
             if (best.Hdr) qualityParts.Add("HDR");
@@ -1577,12 +3178,16 @@ public sealed partial class ItemDetailPage : Page
             // Show "Play from Start" in dropdown
             VersionDropdownButton.Visibility = Visibility.Visible;
             VersionSeparator.Visibility = Visibility.Visible;
-            BuildVersionFlyout(item.Versions ?? [], isResuming: true);
+            ConfigureVersionSelectors(item.Versions ?? [], item.PlaybackVariants, _selectedVersion, isResuming: true);
         }
         else if (item.Versions?.Count > 1)
         {
             // Multiple versions available — show version picker
-            BuildVersionFlyout(item.Versions, isResuming: false);
+            ConfigureVersionSelectors(item.Versions, item.PlaybackVariants, _selectedVersion, isResuming: false);
+        }
+        else if (item.Versions?.Count > 0)
+        {
+            ConfigureVersionSelectors(item.Versions, item.PlaybackVariants, _selectedVersion, isResuming: false);
         }
     }
 
@@ -1681,12 +3286,11 @@ public sealed partial class ItemDetailPage : Page
             UpdateQualityBadges();
 
             // Show download button if we have a selected version
-            if (_selectedVersion != null)
-                DownloadButton.Visibility = Visibility.Visible;
+            DownloadButton.Visibility = Visibility.Collapsed;
+            BuildMoreFlyout();
 
-            // Load subtitles for the best version
-            if (_selectedVersion != null)
-                _ = LoadSubtitlesSectionAsync(_selectedVersion.FileId);
+            // Subtitle selection/search lives in the ActionBar in the current
+            // WebUI. Avoid a duplicate detail-page list and its extra request.
         }
         catch (Exception ex)
         {
@@ -1695,9 +3299,10 @@ public sealed partial class ItemDetailPage : Page
         }
     }
 
-    private static bool IsEbook(MediaItemDetail? item) =>
-        item != null && (item.Ebook != null || item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase) ||
-            item.Type.Equals("manga", StringComparison.OrdinalIgnoreCase) || item.Type.Equals("comic", StringComparison.OrdinalIgnoreCase));
+    private static bool IsReaderItem(MediaItemDetail? item) =>
+        item != null && (item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase) ||
+            item.Type.Equals("manga", StringComparison.OrdinalIgnoreCase) ||
+            item.Type.Equals("comic", StringComparison.OrdinalIgnoreCase));
 
     private void UpdatePlayButton()
     {
@@ -1725,7 +3330,11 @@ public sealed partial class ItemDetailPage : Page
         if (versions.Count > 0)
         {
             var manager = App.Services.GetRequiredService<PlaybackManager>();
-            var best = manager.SelectBestVersion(versions, userData: userData);
+            var best = manager.SelectBestVariantVersion(
+                versions,
+                _watchDetail.PlaybackVariants,
+                userData: userData,
+                preferredEditionKey: _watchDetail.EffectiveVersionEditionKey);
             _selectedVersion = best;
             BuildAudioTracksFlyout(best);
             BuildSubtitlesPopoverFlyout(best);
@@ -1754,7 +3363,19 @@ public sealed partial class ItemDetailPage : Page
             {
                 VersionDropdownButton.Visibility = Visibility.Visible;
                 VersionSeparator.Visibility = Visibility.Visible;
-                BuildVersionFlyout(versions, isResuming);
+                ConfigureVersionSelectors(
+                    versions,
+                    _watchDetail.PlaybackVariants,
+                    best,
+                    isResuming);
+            }
+            else
+            {
+                ConfigureVersionSelectors(
+                    versions,
+                    _watchDetail.PlaybackVariants,
+                    best,
+                    isResuming);
             }
 
             // Show progress bar overlay
@@ -1932,6 +3553,12 @@ public sealed partial class ItemDetailPage : Page
             SubtitlesSummary.Text = "";
     }
 
+    private void UpdatePlayProgressWidth()
+    {
+        if (SplitPlayButton.ActualWidth > 0)
+            PlayProgressBar.Width = SplitPlayButton.ActualWidth * Math.Clamp(_playProgressFraction, 0, 1);
+    }
+
     private async Task OpenSubtitleSearchDialogAsync()
     {
         if (_selectedVersion == null) return;
@@ -2106,7 +3733,131 @@ public sealed partial class ItemDetailPage : Page
         return string.Join(" ", parts);
     }
 
-    private void BuildVersionFlyout(List<FileVersion> versions, bool isResuming)
+    private void ConfigureVersionSelectors(
+        List<FileVersion> versions,
+        List<PlaybackVariant>? variants,
+        FileVersion? selected,
+        bool isResuming)
+    {
+        selected ??= versions.FirstOrDefault();
+        var orderedVariants = (variants ?? [])
+            .Select((variant, index) => new { Variant = variant, Index = index })
+            .OrderBy(entry => VersionRanking.PlaybackVariantEditionPreference(entry.Variant))
+            .ThenBy(entry => entry.Index)
+            .Select(entry => entry.Variant)
+            .ToList();
+        var hasNamedEdition = orderedVariants.Any(variant => !string.IsNullOrWhiteSpace(variant.EditionKey));
+        var labels = orderedVariants.Select(variant => BuildEditionLabel(variant, hasNamedEdition)).ToList();
+        var showEditions = orderedVariants.Count > 1
+                           && hasNamedEdition
+                           && labels.Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1;
+
+        PlaybackVariant? activeVariant = null;
+        if (selected != null)
+        {
+            activeVariant = orderedVariants.FirstOrDefault(variant =>
+                variant.Parts.Any(part => part.Versions.Any(version => version.FileId == selected.FileId)));
+        }
+        activeVariant ??= orderedVariants.FirstOrDefault();
+
+        EditionFlyout.Items.Clear();
+        EditionButton.Visibility = showEditions ? Visibility.Visible : Visibility.Collapsed;
+        if (showEditions && activeVariant != null)
+        {
+            EditionSummaryText.Text = BuildEditionLabel(activeVariant, hasNamedEdition);
+            foreach (var variant in orderedVariants)
+            {
+                var option = new MenuFlyoutItem
+                {
+                    Text = BuildEditionMenuLabel(variant, versions, hasNamedEdition),
+                };
+                var selectedVariant = variant;
+                option.Click += (_, _) =>
+                {
+                    var defaultVersion = ResolveVariantDefaultVersion(selectedVariant, versions);
+                    if (defaultVersion == null) return;
+                    _selectedVersion = defaultVersion;
+                    UpdateSelectedVersionUi(defaultVersion);
+                    ConfigureVersionSelectors(versions, orderedVariants, defaultVersion, isResuming);
+                };
+                EditionFlyout.Items.Add(option);
+            }
+        }
+
+        var activeVersions = activeVariant?.Parts
+            .OrderBy(part => part.PartIndex)
+            .FirstOrDefault()?.Versions;
+        BuildVersionFlyout(
+            activeVersions is { Count: > 0 } ? activeVersions : versions,
+            isResuming,
+            versions,
+            orderedVariants);
+    }
+
+    private static string BuildEditionLabel(PlaybackVariant variant, bool hasNamedEditions)
+    {
+        if (!string.IsNullOrWhiteSpace(variant.EditionRaw)) return variant.EditionRaw.Trim();
+        if (!string.IsNullOrWhiteSpace(variant.EditionKey))
+        {
+            return string.Join(" ", variant.EditionKey
+                .Split(['_', '-'], StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => part.Equals("imax", StringComparison.OrdinalIgnoreCase)
+                    ? "IMAX"
+                    : char.ToUpperInvariant(part[0]) + part[1..]));
+        }
+        return hasNamedEditions ? "Standard" : "Edition";
+    }
+
+    private static string BuildEditionMenuLabel(
+        PlaybackVariant variant,
+        List<FileVersion> versions,
+        bool hasNamedEditions)
+    {
+        var label = BuildEditionLabel(variant, hasNamedEditions);
+        var firstPartVersions = variant.Parts.OrderBy(part => part.PartIndex).FirstOrDefault()?.Versions ?? [];
+        var selected = ResolveVariantDefaultVersion(variant, versions);
+        var detail = new List<string>();
+        if (firstPartVersions.Count > 1) detail.Add($"{firstPartVersions.Count} versions");
+        if (selected != null)
+        {
+            var summary = BuildQualitySummary(selected);
+            if (!string.IsNullOrEmpty(summary)) detail.Add(summary);
+        }
+        return detail.Count == 0 ? label : $"{label}  —  {string.Join(" · ", detail)}";
+    }
+
+    private static FileVersion? ResolveVariantDefaultVersion(
+        PlaybackVariant variant,
+        List<FileVersion> allVersions)
+    {
+        var firstPart = variant.Parts.OrderBy(part => part.PartIndex).FirstOrDefault();
+        if (firstPart == null) return null;
+        if (firstPart.DefaultFileId is int fileId)
+            return allVersions.FirstOrDefault(version => version.FileId == fileId)
+                   ?? firstPart.Versions.FirstOrDefault(version => version.FileId == fileId);
+        return firstPart.Versions
+            .OrderByDescending(version => VersionRanking.ResolutionScore(version.Resolution))
+            .ThenByDescending(version => version.Bitrate)
+            .FirstOrDefault();
+    }
+
+    private void UpdateSelectedVersionUi(FileVersion version)
+    {
+        BuildAudioTracksFlyout(version);
+        BuildSubtitlesPopoverFlyout(version);
+        VersionSummaryText.Text = string.Join(" ", new[]
+        {
+            version.Resolution,
+            version.Hdr ? "HDR" : null,
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        BuildMoreFlyout();
+    }
+
+    private void BuildVersionFlyout(
+        List<FileVersion> versions,
+        bool isResuming,
+        List<FileVersion>? allVersions = null,
+        List<PlaybackVariant>? variants = null)
     {
         VersionFlyout.Items.Clear();
 
@@ -2159,28 +3910,9 @@ public sealed partial class ItemDetailPage : Page
                 item.Click += (_, _) =>
                 {
                     _selectedVersion = fileVersion;
-                    BuildAudioTracksFlyout(fileVersion);
-                    BuildSubtitlesPopoverFlyout(fileVersion);
-
-                    // If already playing, switch version mid-playback
-                    var playerService = App.Services.GetRequiredService<Services.PlayerService>();
-                    if (playerService.State != Services.PlayerState.Idle)
-                    {
-                        _ = playerService.SwitchVersionAsync(fileVersion);
-                    }
-                    else
-                    {
-                        // Start playback with this specific version
-                        var playContentId = ViewModel.Item?.ContentId;
-                        if (ViewModel.IsSeries && ViewModel.Episodes.Count > 0)
-                        {
-                            var episode = ViewModel.Episodes.FirstOrDefault(ep => ep.UserData?.Played != true)
-                                          ?? ViewModel.Episodes[0];
-                            playContentId = episode.ContentId;
-                        }
-                        if (playContentId != null)
-                            NavigateToPlayer(playContentId, fileId: fileVersion.FileId);
-                    }
+                    UpdateSelectedVersionUi(fileVersion);
+                    if (allVersions != null && variants != null)
+                        ConfigureVersionSelectors(allVersions, variants, fileVersion, isResuming);
                 };
                 VersionFlyout.Items.Add(item);
             }

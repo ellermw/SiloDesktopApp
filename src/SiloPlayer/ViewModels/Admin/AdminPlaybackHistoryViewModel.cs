@@ -3,12 +3,14 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.ViewModels.Admin;
 
 public partial class AdminPlaybackHistoryViewModel : ObservableObject
 {
     private readonly AdminApi _adminApi;
+    private CancellationTokenSource? _loadCts;
 
     public AdminPlaybackHistoryViewModel(AdminApi adminApi) { _adminApi = adminApi; }
 
@@ -20,6 +22,8 @@ public partial class AdminPlaybackHistoryViewModel : ObservableObject
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private int? _selectedUserId;
     [ObservableProperty] private string? _selectedProfileId;
+    [ObservableProperty] private string? _mediaItemId;
+    [ObservableProperty] private string _activeMediaItemLabel = "";
     [ObservableProperty] private string? _completionFilter; // null/"all", "true", "false"
     [ObservableProperty] private int _totalCount;
     [ObservableProperty] private int _completedCount;
@@ -30,14 +34,15 @@ public partial class AdminPlaybackHistoryViewModel : ObservableObject
         // When user changes, clear profile selection
         SelectedProfileId = null;
         Profiles.Clear();
-        // Async load profiles for the new user
-        if (value.HasValue)
-            _ = LoadProfilesAsync(value.Value);
     }
 
     [RelayCommand]
     private async Task LoadAsync()
     {
+        var owner = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _loadCts, owner);
+        previous?.Cancel();
+        previous?.Dispose();
         IsLoading = true;
         ErrorMessage = null;
         try
@@ -45,7 +50,9 @@ public partial class AdminPlaybackHistoryViewModel : ObservableObject
             // Load users if not loaded yet
             if (Users.Count == 0)
             {
-                var users = await _adminApi.GetUsersAsync();
+                var users = await _adminApi.GetUsersAsync(owner.Token);
+                owner.Token.ThrowIfCancellationRequested();
+                if (!ReferenceEquals(_loadCts, owner)) return;
                 Users.Clear();
                 foreach (var u in users) Users.Add(u);
             }
@@ -53,7 +60,7 @@ public partial class AdminPlaybackHistoryViewModel : ObservableObject
             // Profiles are loaded reactively via OnSelectedUserIdChanged;
             // only back-fill here if we have a user but profiles haven't arrived yet.
             if (SelectedUserId.HasValue && Profiles.Count == 0)
-                await LoadProfilesAsync(SelectedUserId.Value);
+                await LoadProfilesAsync(SelectedUserId.Value, owner.Token);
 
             // Load history with current filters
             bool? completed = CompletionFilter switch
@@ -66,28 +73,47 @@ public partial class AdminPlaybackHistoryViewModel : ObservableObject
             var items = await _adminApi.GetPlaybackHistoryAsync(
                 userId: SelectedUserId,
                 profileId: SelectedProfileId,
+                mediaItemId: string.IsNullOrWhiteSpace(MediaItemId) ? null : MediaItemId.Trim(),
                 completed: completed,
-                limit: 100);
+                limit: 100,
+                ct: owner.Token);
+
+            owner.Token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_loadCts, owner)) return;
 
             Items.Clear();
             foreach (var item in items) Items.Add(item);
+
+            ActiveMediaItemLabel = Items.FirstOrDefault()?.MediaTitle ?? MediaItemId ?? "";
 
             TotalCount = Items.Count;
             CompletedCount = Items.Count(i => i.Completed);
             PartialCount = Items.Count(i => !i.Completed);
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
-        finally { IsLoading = false; }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (ReferenceEquals(_loadCts, owner)) ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _loadCts, null, owner), owner))
+                IsLoading = false;
+            owner.Dispose();
+        }
     }
 
-    private async Task LoadProfilesAsync(int userId)
+    private async Task LoadProfilesAsync(int userId, CancellationToken cancellationToken)
     {
         try
         {
-            var profiles = await _adminApi.GetUserProfilesAsync(userId);
+            var profiles = await _adminApi.GetUserProfilesAsync(userId, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (SelectedUserId != userId) return;
             Profiles.Clear();
             foreach (var p in profiles) Profiles.Add(p);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch { /* non-fatal */ }
     }
 
@@ -97,13 +123,24 @@ public partial class AdminPlaybackHistoryViewModel : ObservableObject
         SelectedUserId = null;
         SelectedProfileId = null;
         CompletionFilter = null;
+        MediaItemId = null;
+        ActiveMediaItemLabel = "";
         Profiles.Clear();
     }
 
     public bool HasActiveFilters =>
         SelectedUserId.HasValue ||
         !string.IsNullOrEmpty(SelectedProfileId) ||
+        !string.IsNullOrWhiteSpace(MediaItemId) ||
         (!string.IsNullOrEmpty(CompletionFilter) && CompletionFilter != "all");
+
+    public void Cancel()
+    {
+        var cts = Interlocked.Exchange(ref _loadCts, null);
+        cts?.Cancel();
+        cts?.Dispose();
+        IsLoading = false;
+    }
 
     // ===== Static helpers =====
 
@@ -126,8 +163,8 @@ public partial class AdminPlaybackHistoryViewModel : ObservableObject
 
     public static string FormatDateTime(string dateStr)
     {
-        if (!DateTime.TryParse(dateStr, out var dt)) return dateStr;
-        return dt.ToLocalTime().ToString("MMM d, yyyy h:mm:ss tt");
+        if (!DateTimeOffset.TryParse(dateStr, out var value)) return dateStr;
+        return $"{DateTimeDisplay.FormatDate(value)}, {DateTimeDisplay.FormatTime(value, seconds: true)}";
     }
 
     // B29: Delegated to SiloPlayer.Core.Helpers.TimeAgo for consistency

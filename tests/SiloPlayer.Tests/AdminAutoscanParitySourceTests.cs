@@ -14,7 +14,8 @@ public class AdminAutoscanParitySourceTests
     [Fact]
     public void AutoscanUsesCurrentFullWidthTabsAndIconControls()
     {
-        Assert.Contains("MaxWidth=\"1560\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("MaxWidth=\"1640\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("ViewModel.HasFeedback", Markup, StringComparison.Ordinal);
         Assert.Contains("Grid.Column=\"3\"><Button x:Name=\"SettingsTab\"", Markup, StringComparison.Ordinal);
         Assert.Contains("<TextBlock Text=\"Run now\"", Markup, StringComparison.Ordinal);
         Assert.DoesNotContain("Content=\"▶", Markup, StringComparison.Ordinal);
@@ -25,9 +26,11 @@ public class AdminAutoscanParitySourceTests
     public void SourcesExposeCurrentConnectionIntervalAndNestedSettingsHierarchy()
     {
         Assert.Contains("ConnectionDisplay", Markup, StringComparison.Ordinal);
-        Assert.Contains("PollIntervalDisplay", Markup, StringComparison.Ordinal);
+        Assert.Contains("PollIntervalText", Markup, StringComparison.Ordinal);
+        Assert.Contains("Custom label (optional)", Markup, StringComparison.Ordinal);
         Assert.Contains("PathRewriteDisplay", Markup, StringComparison.Ordinal);
-        Assert.Contains("SourceSettingsDisplay", Markup, StringComparison.Ordinal);
+        Assert.Contains("CephFS paths &amp; ignores", Markup, StringComparison.Ordinal);
+        Assert.Contains("Use configured libraries", Markup, StringComparison.Ordinal);
         Assert.Contains("SourceEnabled_Toggled", Markup, StringComparison.Ordinal);
     }
 

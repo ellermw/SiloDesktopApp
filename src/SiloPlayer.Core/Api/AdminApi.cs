@@ -227,7 +227,7 @@ public class AdminApi(SiloApiClient client)
     // ===== Tasks =====
 
     public Task<List<TaskInfo>> GetTasksAsync(CancellationToken ct = default)
-        => client.GetAsync<List<TaskInfo>>("/api/v1/admin/tasks", ct);
+        => client.GetAsync<List<TaskInfo>>($"/api/v1/admin/tasks?_={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}", ct);
 
     public Task<TaskInfo> GetTaskAsync(string key, CancellationToken ct = default)
         => client.GetAsync<TaskInfo>($"/api/v1/admin/tasks/{Uri.EscapeDataString(key)}", ct);
@@ -483,6 +483,9 @@ public class AdminApi(SiloApiClient client)
     public Task<object> CreateSectionAsync(object body, CancellationToken ct = default)
         => client.PostAsync<object>("/api/v1/admin/sections", body, ct);
 
+    public Task<BulkCreateSectionsResponse> BulkCreateSectionsAsync(object body, CancellationToken ct = default)
+        => client.PostAsync<BulkCreateSectionsResponse>("/api/v1/admin/sections/bulk-create", body, ct);
+
     public Task<object> UpdateSectionAsync(string id, object body, CancellationToken ct = default)
         => client.PutAsync<object>($"/api/v1/admin/sections/{Uri.EscapeDataString(id)}", body, ct);
 
@@ -537,8 +540,36 @@ public class AdminApi(SiloApiClient client)
     public Task MatchApplyAsync(string itemId, ItemMatchApplyRequest request, CancellationToken ct = default)
         => client.PostNoContentAsync($"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/match/apply", request, ct);
 
-    public Task RefreshItemMetadataAsync(string itemId, CancellationToken ct = default)
-        => client.PostNoContentAsync($"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/refresh-metadata", new { }, ct);
+    public Task<AdminJob> RefreshItemMetadataAsync(
+        string itemId,
+        string mode = "quick",
+        CancellationToken ct = default)
+        => client.PostAsync<AdminJob>(
+            $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/refresh-metadata",
+            new { mode },
+            ct);
+
+    public Task<RedetectIntroResponse> RedetectEpisodeIntroAsync(
+        string itemId,
+        CancellationToken ct = default)
+        => client.PostAsync<RedetectIntroResponse>(
+            $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/redetect-intro",
+            new Dictionary<string, object?>(),
+            ct);
+
+    public Task<ItemFilesResponse> GetItemFilesAsync(string itemId, CancellationToken ct = default)
+        => client.GetAsync<ItemFilesResponse>(
+            $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/files",
+            ct);
+
+    public Task<ItemSplitResponse> SplitItemAsync(
+        string itemId,
+        ItemSplitRequest request,
+        CancellationToken ct = default)
+        => client.PostAsync<ItemSplitResponse>(
+            $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/split",
+            request,
+            ct);
 
     public Task UpdateItemMetadataAsync(string itemId, object request, CancellationToken ct = default)
         => client.PatchAsync<object>($"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/metadata", request, ct);
@@ -729,6 +760,9 @@ public class AdminApi(SiloApiClient client)
     public Task<ImportTMDBCollectionResponse> ImportTMDBCollectionAsync(ImportTMDBCollectionRequest request, CancellationToken ct = default)
         => client.PostAsync<ImportTMDBCollectionResponse>("/api/v1/admin/collections/import/tmdb", request, ct);
 
+    public Task<ImportTraktCollectionResponse> ImportTraktCollectionAsync(ImportTraktCollectionRequest request, CancellationToken ct = default)
+        => client.PostAsync<ImportTraktCollectionResponse>("/api/v1/admin/collections/import/trakt", request, ct);
+
     public Task UploadCollectionImageAsync(string id, string type, byte[] fileBytes, string fileName, string contentType, CancellationToken ct = default)
         => client.PutMultipartNoContentAsync($"/api/v1/admin/collections/{Uri.EscapeDataString(id)}/image?type={Uri.EscapeDataString(type)}", "file", fileName, fileBytes, contentType, ct);
 
@@ -756,6 +790,11 @@ public class AdminApi(SiloApiClient client)
 
     public Task ClearSourceTokenAsync(int sourceId, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/admin/history-imports/sources/{sourceId}/token", ct);
+
+    public Task<PlexAdminLoginResponse> PlexAdminLoginAsync(
+        PlexAdminLoginRequest request,
+        CancellationToken ct = default)
+        => client.PostAsync<PlexAdminLoginResponse>("/api/v1/admin/history-imports/plex/login", request, ct);
 
     // External user discovery
     public Task<List<HistoryImportExternalUser>> DiscoverExternalUsersAsync(int sourceId, CancellationToken ct = default)
@@ -791,6 +830,9 @@ public class AdminApi(SiloApiClient client)
         return client.GetAsync<List<HistoryImportRun>>(url, ct);
     }
 
+    public Task<AdminServerRestartResponse> RestartServerAsync(CancellationToken ct = default)
+        => client.PostAsync<AdminServerRestartResponse>("/api/v1/admin/server/restart", new { }, ct);
+
     // ===== Node Extras =====
 
     public Task<List<AdminSession>> GetNodeSessionsAsync(CancellationToken ct = default)
@@ -818,4 +860,9 @@ public class AdminApi(SiloApiClient client)
 
     public Task MessageSessionAsync(string sessionId, string message, CancellationToken ct = default)
         => client.PostNoContentAsync($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/message", new { message }, ct);
+}
+
+public sealed class RedetectIntroResponse
+{
+    public string Status { get; set; } = "";
 }

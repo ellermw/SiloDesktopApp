@@ -43,7 +43,14 @@ public sealed partial class CollectionEditorPage : Page
         {
             // Editing existing collection
             await ViewModel.LoadExistingCommand.ExecuteAsync(collectionId);
-            PageTitle.Text = $"Edit {ViewModel.Name}";
+            PageTitle.Text = ViewModel.IsImportedCollection
+                ? ViewModel.Name
+                : $"Edit {ViewModel.Name}";
+            PageSubtitle.Text = ViewModel.IsImportedCollection
+                ? "Edit what's local — name, libraries, sharing. Source-managed details (URL, schedule, item ordering) are locked."
+                : ViewModel.CollectionType == "manual"
+                    ? "Manual collections are curated by adding titles directly."
+                    : "Tune the collection settings and preview its matching titles.";
             SaveButtonText.Text = "Save Collection";
             // Disable type switching when editing
             ManualTypeButton.IsEnabled = false;
@@ -114,7 +121,12 @@ public sealed partial class CollectionEditorPage : Page
         ManualItemsSection.Visibility = ViewModel.CollectionType == "manual" ? Visibility.Visible : Visibility.Collapsed;
         SmartRulesSection.Visibility = ViewModel.CollectionType == "smart" ? Visibility.Visible : Visibility.Collapsed;
         ImportedSourceSection.Visibility = ViewModel.IsImportedCollection ? Visibility.Visible : Visibility.Collapsed;
+        TypeSection.Visibility = ViewModel.IsImportedCollection ? Visibility.Collapsed : Visibility.Visible;
+        BasicInfoTitle.Text = ViewModel.IsImportedCollection ? "Display" : "Basics";
         SourceUrlTextBox.IsEnabled = ViewModel.CollectionType == "mdblist";
+        SourceUrlSection.Visibility = ViewModel.CollectionType == "mdblist"
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     private void BuildImportedOptionsUI()

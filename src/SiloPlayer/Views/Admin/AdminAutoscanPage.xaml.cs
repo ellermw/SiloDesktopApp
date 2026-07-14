@@ -11,12 +11,14 @@ namespace SiloPlayer.Views.Admin;
 public sealed partial class AdminAutoscanPage : Page
 {
     public IReadOnlyList<string> ActivityViews { get; } = ["Scans", "Polls"];
-    public IReadOnlyList<string> ActivityStatuses { get; } = ["All statuses", "Queued", "Running", "Completed", "Failed", "Cancelled", "Success", "Unresolved", "Error"];
+    public IReadOnlyList<string> ScanActivityStatuses { get; } = ["All statuses", "Queued", "Running", "Completed", "Failed", "Cancelled"];
+    public IReadOnlyList<string> PollActivityStatuses { get; } = ["All statuses", "Running", "Success", "Unresolved", "Error"];
+    public IReadOnlyList<int> ActivityPageSizes { get; } = [25, 50, 100];
     private bool _loaded;
     private readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     public AdminAutoscanViewModel ViewModel { get; } = App.Services.GetRequiredService<AdminAutoscanViewModel>();
     public AdminAutoscanPage() { InitializeComponent(); _refreshTimer.Tick += async (_, _) => { if (ViewModel.SelectedTabIndex == 1 && !ViewModel.IsBusy) await ViewModel.RefreshActivityAsync(); }; }
-    private async void Page_Loaded(object sender, RoutedEventArgs e) { await ViewModel.LoadAsync(); _loaded = true; UpdateTabVisuals(); UpdateEnabledBadge(); _refreshTimer.Start(); }
+    private async void Page_Loaded(object sender, RoutedEventArgs e) { await ViewModel.LoadAsync(); _loaded = true; UpdateTabVisuals(); UpdateEnabledBadge(); UpdateActivityViewVisuals(); _refreshTimer.Start(); }
     protected override void OnNavigatedFrom(NavigationEventArgs e) { _refreshTimer.Stop(); ViewModel.Cancel(); base.OnNavigatedFrom(e); }
     private async void Enabled_Toggled(object sender, RoutedEventArgs e) { if (_loaded) { await ViewModel.SaveSettingsAsync(((ToggleSwitch)sender).IsOn); UpdateEnabledBadge(); } }
     private async void SourceEnabled_Toggled(object sender, RoutedEventArgs e)
@@ -25,13 +27,71 @@ public sealed partial class AdminAutoscanPage : Page
         source.Enabled = toggle.IsOn;
         await ViewModel.SaveSourceAsync(source);
     }
+    private async void SourceLabel_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (!_loaded || sender is not TextBox { Tag: AutoscanSource source } text) return;
+        var next = text.Text.Trim();
+        if (string.Equals(source.Label, next, StringComparison.Ordinal)) return;
+        source.Label = next;
+        await ViewModel.SaveSourceAsync(source);
+    }
+    private async void SourceInterval_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (!_loaded || sender is not NumberBox { Tag: AutoscanSource source } number) return;
+        int? next = double.IsNaN(number.Value) || string.IsNullOrWhiteSpace(number.Text) ? null : Math.Max(1, (int)number.Value);
+        if (source.PollIntervalSeconds == next) return;
+        source.PollIntervalSeconds = next;
+        await ViewModel.SaveSourceAsync(source);
+    }
+    private async void SourceConnection_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_loaded || sender is not ComboBox { Tag: AutoscanSource source } combo) return;
+        var next = (combo.SelectedItem as AutoscanConnection)?.Id;
+        if (string.Equals(source.ConnectionId, next, StringComparison.OrdinalIgnoreCase)) return;
+        source.ConnectionId = next;
+        await ViewModel.SaveSourceAsync(source);
+    }
+    private async void UseConfiguredLibraries_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_loaded || sender is not Button { Tag: AutoscanSource source }) return;
+        static bool IsMovie(SiloPlayer.Core.Models.Catalog.Library library) => library.Type.Contains("movie", StringComparison.OrdinalIgnoreCase) || library.Type.Contains("mixed", StringComparison.OrdinalIgnoreCase);
+        static bool IsTv(SiloPlayer.Core.Models.Catalog.Library library) => new[] { "series", "show", "tv", "mixed" }.Any(kind => library.Type.Contains(kind, StringComparison.OrdinalIgnoreCase));
+        var next = new Dictionary<string, string>(source.SourceConfig)
+        {
+            ["movie_flat_paths"] = string.Join(Environment.NewLine, ViewModel.Libraries.Where(IsMovie).SelectMany(library => library.Paths).Distinct(StringComparer.OrdinalIgnoreCase)),
+            ["tv_flat_paths"] = string.Join(Environment.NewLine, ViewModel.Libraries.Where(IsTv).SelectMany(library => library.Paths).Distinct(StringComparer.OrdinalIgnoreCase)),
+        };
+        source.SourceConfig = next;
+        await ViewModel.SaveSourceAsync(source);
+    }
     private async void RunNow_Click(object sender, RoutedEventArgs e) => await ViewModel.TriggerAsync();
     private async void SaveSettings_Click(object sender, RoutedEventArgs e) => await ViewModel.SaveSettingsAsync();
+    private async void SettingsNumber_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_loaded) await ViewModel.SaveSettingsAsync();
+    }
     private async void RefreshActivity_Click(object sender, RoutedEventArgs e) => await ViewModel.RefreshActivityAsync();
     private async void ActivityFilter_Changed(object sender, SelectionChangedEventArgs e) { if (_loaded) await ViewModel.ApplyActivityFiltersAsync(); }
     private async void ActivitySearch_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e) { if (e.Key == Windows.System.VirtualKey.Enter) await ViewModel.ApplyActivityFiltersAsync(); }
     private async void PreviousActivity_Click(object sender, RoutedEventArgs e) => await ViewModel.ChangeActivityPageAsync(-1);
     private async void NextActivity_Click(object sender, RoutedEventArgs e) => await ViewModel.ChangeActivityPageAsync(1);
+    private async void FirstActivity_Click(object sender, RoutedEventArgs e) => await ViewModel.GoToActivityPageAsync(0);
+    private async void LastActivity_Click(object sender, RoutedEventArgs e) => await ViewModel.GoToActivityPageAsync(int.MaxValue);
+    private async void ResetActivity_Click(object sender, RoutedEventArgs e) => await ViewModel.ResetActivityFiltersAsync();
+    private async void ActivityView_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string view } || string.Equals(ViewModel.ActivityView, view, StringComparison.Ordinal)) return;
+        ViewModel.ActivityView = view;
+        ActivityStatusCombo.ItemsSource = view == "Scans" ? ScanActivityStatuses : PollActivityStatuses;
+        ActivityStatusCombo.SelectedIndex = 0;
+        UpdateActivityViewVisuals();
+        await ViewModel.RefreshActivityAsync();
+    }
+    private async void ActivityPageSize_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_loaded || sender is not ComboBox { SelectedItem: int pageSize } || pageSize == ViewModel.ActivityPageSize) return;
+        await ViewModel.SetActivityPageSizeAsync(pageSize);
+    }
     private void Tab_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as Button)?.Tag is not string raw || !int.TryParse(raw, out var index)) return;
@@ -55,6 +115,14 @@ public sealed partial class AdminAutoscanPage : Page
     {
         EnabledBadgeText.Text = ViewModel.Enabled ? "Enabled" : "Disabled";
         EnabledBadgeText.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[ViewModel.Enabled ? "AccentBrush" : "SecondaryTextBrush"];
+    }
+    private void UpdateActivityViewVisuals()
+    {
+        if (ScansActivityButton is null || PollsActivityButton is null) return;
+        var scans = ViewModel.ActivityView == "Scans";
+        var transparent = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        ScansActivityButton.Background = scans ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"] : transparent;
+        PollsActivityButton.Background = scans ? transparent : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"];
     }
 
     private async void AddConnection_Click(object sender, RoutedEventArgs e) => await ShowConnectionDialogAsync(null);
@@ -137,7 +205,15 @@ public sealed partial class AdminAutoscanPage : Page
         {
             source.Label = label.Text.Trim(); source.Enabled = enabled.IsOn; source.DeliveryMode = (string?)mode.SelectedItem ?? "poll"; source.ConnectionId = (connection.SelectedItem as AutoscanConnection)?.Id; source.PollIntervalSeconds = double.IsNaN(interval.Value) ? null : (int)interval.Value;
             if (moviePaths is not null && tvPaths is not null && exclusions is not null)
-                source.SourceConfig = new Dictionary<string, string> { ["movie_flat_paths"] = moviePaths.Text.Trim(), ["tv_flat_paths"] = tvPaths.Text.Trim(), ["exclusions"] = exclusions.Text.Trim() };
+            {
+                var config = new Dictionary<string, string>(source.SourceConfig)
+                {
+                    ["movie_flat_paths"] = moviePaths.Text.Trim(),
+                    ["tv_flat_paths"] = tvPaths.Text.Trim(),
+                    ["exclusions"] = exclusions.Text.Trim(),
+                };
+                source.SourceConfig = config;
+            }
             await ViewModel.SaveSourceAsync(source);
         }
     }

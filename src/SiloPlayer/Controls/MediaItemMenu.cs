@@ -49,7 +49,7 @@ public static class MediaItemMenu
         var authService = App.Services.GetRequiredService<AuthService>();
         var toast = App.Services.GetRequiredService<ToastService>();
 
-        bool isAdmin = authService.CurrentUser?.Role == "admin";
+        bool canCurateMetadata = AuthorizationPolicy.CanCurateMetadata(authService);
         bool isWatched = item.UserState?.Played ?? false;
         bool isFavorite = item.UserState?.IsFavorite ?? false;
         bool inWatchlist = item.UserState?.InWatchlist ?? false;
@@ -139,24 +139,31 @@ public static class MediaItemMenu
             }));
 
         // ─── Dismiss from Continue Watching / Next Up ────────────────
-        if (surface == Surface.ContinueWatching || surface == Surface.NextUp)
+        var canDismiss = surface == Surface.ContinueWatching
+            ? !string.IsNullOrWhiteSpace(item.ProgressUpdatedAt)
+            : surface == Surface.NextUp && !string.IsNullOrWhiteSpace(item.SeriesId);
+        if (canDismiss)
         {
             flyout.Items.Add(new MenuFlyoutSeparator());
             string surfaceKey = surface == Surface.ContinueWatching ? "continue_watching" : "next_up";
             string label = surface == Surface.ContinueWatching
-                ? "Dismiss from Continue Watching"
-                : "Dismiss from Next Up";
+                ? item.Type == "audiobook"
+                    ? "Remove from Continue Listening"
+                    : item.Type == "ebook"
+                        ? "Remove from Continue Reading"
+                        : "Remove from Continue Watching"
+                : "Remove from Next Up";
             flyout.Items.Add(BuildItem(label, "\uE711", async () =>
             {
                 try
                 {
                     var homeApi = App.Services.GetRequiredService<HomeApi>();
                     object body = surfaceKey == "continue_watching"
-                        ? new { progress_updated_at = DateTime.UtcNow.ToString("o") }
-                        : (object)new { series_id = item.SeriesId ?? item.ContentId };
+                        ? new { progress_updated_at = item.ProgressUpdatedAt }
+                        : (object)new { series_id = item.SeriesId! };
                     await homeApi.DismissItemAsync(surfaceKey, item.ContentId, body);
                     WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-                        MediaSurfaceChangeKind.PlaybackProgress, item.ContentId, item.SeriesId));
+                        MediaSurfaceChangeKind.HomeDismissed, item.ContentId, item.SeriesId));
                     toast.Info("Dismissed");
                 }
                 catch (Exception ex) { toast.Error(ex.Message); }
@@ -164,7 +171,7 @@ public static class MediaItemMenu
         }
 
         // ─── Admin-only actions ──────────────────────────────────────
-        if (isAdmin && adminApi != null)
+        if (canCurateMetadata && adminApi != null)
         {
             flyout.Items.Add(new MenuFlyoutSeparator());
             flyout.Items.Add(BuildItem("Refresh Metadata", "\uE72C", async () =>

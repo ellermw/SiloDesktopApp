@@ -50,7 +50,7 @@ public partial class PersonDetailViewModel : ObservableObject
     /// <summary>Whether there are more filmography items to fetch.</summary>
     public bool FilmographyHasMore => Filmography.Count < FilmographyTotal;
 
-    public bool IsAdmin => _authService.CurrentUser?.Role == "admin";
+    public bool IsAdmin => AuthorizationPolicy.IsActingAdmin(_authService);
 
     public string AgeDisplay
     {

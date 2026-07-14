@@ -3,15 +3,18 @@ namespace SiloPlayer.Core.Models.HistoryImport;
 public class HistoryImportRun
 {
     public string Id { get; set; } = "";
+    public int UserId { get; set; }
     public string ProfileId { get; set; } = "";
     public string SourceType { get; set; } = "";
     public string ConnectionMode { get; set; } = "";
     public string Status { get; set; } = "";
+    public int? MappingId { get; set; }
     public int Fetched { get; set; }
     public int Matched { get; set; }
     public int Unmatched { get; set; }
     public int ProgressUpdated { get; set; }
     public int HistoryCreated { get; set; }
+    public int WatchlistAdded { get; set; }
     public int Skipped { get; set; }
     public List<string> Warnings { get; set; } = [];
     public List<HistoryImportUnmatchedSample> UnmatchedSamples { get; set; } = [];

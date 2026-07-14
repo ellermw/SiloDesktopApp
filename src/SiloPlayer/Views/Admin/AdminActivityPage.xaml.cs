@@ -39,6 +39,9 @@ public sealed partial class AdminActivityPage : Page
         this.InitializeComponent();
     }
 
+    private void ContentScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+        => AdminPageContent.Width = Math.Min(1640, Math.Max(0, e.NewSize.Width));
+
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         SizeChanged += ActivityPage_SizeChanged;
@@ -500,6 +503,7 @@ public sealed partial class AdminActivityPage : Page
         var sessions = ViewModel.FilteredSessions;
         if (sessions.Count == 0)
         {
+            StreamsTable.Visibility = Visibility.Collapsed;
             EmptyState.Visibility = Visibility.Visible;
 
             // Contextual empty state: Filter icon when filters active, Play icon otherwise
@@ -516,6 +520,7 @@ public sealed partial class AdminActivityPage : Page
             return;
         }
 
+        StreamsTable.Visibility = Visibility.Visible;
         EmptyState.Visibility = Visibility.Collapsed;
 
         for (int i = 0; i < sessions.Count; i++)

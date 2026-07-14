@@ -81,7 +81,7 @@ public partial class AdminCollectionsViewModel : ObservableObject
         }
     }
 
-    public async Task CreateGroupAsync(string name)
+    public async Task CreateGroupAsync(string name, string defaultSortMode = "manual")
     {
         if (!SelectedLibraryId.HasValue)
         {
@@ -93,18 +93,18 @@ public partial class AdminCollectionsViewModel : ObservableObject
         StatusMessage = null;
         await _adminApi.CreateCollectionGroupAsync(
             SelectedLibraryId.Value,
-            new CreateLibraryCollectionGroupRequest { Name = name.Trim(), DefaultSortMode = "manual" });
+            new CreateLibraryCollectionGroupRequest { Name = name.Trim(), DefaultSortMode = defaultSortMode });
         StatusMessage = "Collection group created.";
         await LoadAsync();
     }
 
-    public async Task UpdateGroupAsync(LibraryCollectionGroup group, string name)
+    public async Task UpdateGroupAsync(LibraryCollectionGroup group, string name, string defaultSortMode)
     {
         ErrorMessage = null;
         StatusMessage = null;
         await _adminApi.UpdateCollectionGroupAsync(
             group.Id,
-            new UpdateLibraryCollectionGroupRequest { Name = name.Trim(), DefaultSortMode = group.DefaultSortMode });
+            new UpdateLibraryCollectionGroupRequest { Name = name.Trim(), DefaultSortMode = defaultSortMode });
         StatusMessage = "Collection group updated.";
         await LoadAsync();
     }
@@ -130,6 +130,28 @@ public partial class AdminCollectionsViewModel : ObservableObject
 
         (ordered[index], ordered[target]) = (ordered[target], ordered[index]);
         await _adminApi.ReorderCollectionGroupsAsync(SelectedLibraryId.Value, ordered.Select(g => g.Id).ToList());
+        await LoadAsync();
+    }
+
+    public async Task MoveGroupSectionToAsync(string sourceId, string targetId)
+    {
+        if (!SelectedLibraryId.HasValue || sourceId == targetId) return;
+
+        var sections = CollectionGroups
+            .Select(group => (Id: group.Id, Order: group.SortOrder, Name: group.Name))
+            .Append((Id: "ungrouped", Order: UngroupedSortOrder, Name: "\uffff"))
+            .OrderBy(section => section.Order)
+            .ThenBy(section => section.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(section => section.Id)
+            .ToList();
+        var sourceIndex = sections.IndexOf(sourceId);
+        var targetIndex = sections.IndexOf(targetId);
+        if (sourceIndex < 0 || targetIndex < 0) return;
+
+        sections.RemoveAt(sourceIndex);
+        targetIndex = sections.IndexOf(targetId);
+        sections.Insert(targetIndex, sourceId);
+        await _adminApi.ReorderCollectionGroupsAsync(SelectedLibraryId.Value, sections);
         await LoadAsync();
     }
 
@@ -159,6 +181,37 @@ public partial class AdminCollectionsViewModel : ObservableObject
             await _adminApi.ReorderCollectionsInGroupAsync(groupId, orderedIds);
         }
 
+        await LoadAsync();
+    }
+
+    public async Task MoveCollectionToAsync(string sourceId, string targetGroupId, string? targetCollectionId = null)
+        => await MoveCollectionsToAsync([sourceId], targetGroupId, targetCollectionId);
+
+    public async Task MoveCollectionsToAsync(
+        IReadOnlyList<string> sourceIds,
+        string targetGroupId,
+        string? targetCollectionId = null)
+    {
+        if (!SelectedLibraryId.HasValue || sourceIds.Count == 0) return;
+
+        var normalizedTarget = targetGroupId == "ungrouped" ? null : targetGroupId;
+        var sourceSet = sourceIds.ToHashSet(StringComparer.Ordinal);
+        var ordered = Collections
+            .Where(collection => string.Equals(collection.GroupId, normalizedTarget, StringComparison.Ordinal))
+            .OrderBy(collection => collection.SortOrder)
+            .ThenBy(collection => collection.Title)
+            .Select(collection => collection.Id)
+            .Where(id => !sourceSet.Contains(id))
+            .ToList();
+
+        var targetIndex = targetCollectionId == null ? ordered.Count : ordered.IndexOf(targetCollectionId);
+        if (targetIndex < 0) targetIndex = ordered.Count;
+        ordered.InsertRange(targetIndex, sourceIds);
+
+        await _adminApi.ReorderCollectionsInGroupAsync(
+            targetGroupId,
+            ordered,
+            targetGroupId == "ungrouped" ? SelectedLibraryId.Value : null);
         await LoadAsync();
     }
 

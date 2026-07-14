@@ -16,6 +16,7 @@ public class PlaybackStartResponse
 
 public class SubtitleTrackInfo
 {
+    public int? Id { get; set; }
     public int Index { get; set; }
     public int MediaFileId { get; set; }
     public string Language { get; set; } = "";

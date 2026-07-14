@@ -90,13 +90,18 @@
         <!-- Main content -->
         <ScrollViewer
             x:Name="ContentScrollViewer"
-            IsScrollInertiaEnabled="True">
+            IsScrollInertiaEnabled="True"
+            HorizontalScrollMode="Disabled"
+            HorizontalScrollBarVisibility="Disabled"
+            HorizontalContentAlignment="Center"
+            SizeChanged="ContentScrollViewer_SizeChanged">
 
             <StackPanel
+                x:Name="AdminPageContent"
                 Padding="40,32,40,40"
                 Spacing="24"
                 MaxWidth="1640"
-                HorizontalAlignment="Stretch">
+                HorizontalAlignment="Center">
 
                 <!-- ===== Header: title + subtitle left, stream state right ===== -->
                 <Grid>
