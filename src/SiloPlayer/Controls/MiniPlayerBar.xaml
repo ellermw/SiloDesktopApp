@@ -8,59 +8,148 @@
     mc:Ignorable="d"
     Height="132">
 
-    <Border Background="{StaticResource CardBackgroundBrush}"
-            BorderBrush="{StaticResource SidebarBorderBrush}"
-            BorderThickness="0,1,0,0">
-        <Grid ColumnSpacing="12" Padding="12,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />  <!-- Video thumbnail -->
-                <ColumnDefinition Width="*" />      <!-- Title + progress -->
-                <ColumnDefinition Width="Auto" />   <!-- Transport controls -->
-                <ColumnDefinition Width="Auto" />   <!-- Volume -->
-                <ColumnDefinition Width="Auto" />   <!-- Close -->
-            </Grid.ColumnDefinitions>
-
-            <!-- Live video thumbnail — mpv popup window renders here, click to expand -->
-            <Grid Grid.Column="0" Width="200" Height="112" Margin="0,10"
-                  Tapped="VideoThumbnail_Tapped" Background="Transparent" CornerRadius="6" />
-
-            <!-- Title + thin seek bar -->
-            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
-                <TextBlock x:Name="TitleText" FontSize="13" FontWeight="SemiBold"
-                           Foreground="{StaticResource PrimaryTextBrush}"
-                           TextTrimming="CharacterEllipsis" MaxLines="1" />
-                <TextBlock x:Name="SubtitleText" FontSize="11"
-                           Foreground="{StaticResource SecondaryTextBrush}"
-                           TextTrimming="CharacterEllipsis" MaxLines="1" />
-                <Slider x:Name="SeekSlider" Minimum="0" Maximum="1" Height="28"
-                        Margin="0,0,0,0" ValueChanged="SeekSlider_ValueChanged" />
-            </StackPanel>
-
-            <!-- Transport controls -->
-            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
-                <Button Click="Expand_Click" Background="Transparent" BorderThickness="0" Padding="10,8"
-                        ToolTipService.ToolTip="Expand player">
-                    <FontIcon Glyph="&#xE740;" FontSize="16" Foreground="{StaticResource AccentBrush}" />
+    <Grid>
+        <Border x:Name="VideoBar" Background="{StaticResource CardBackgroundBrush}"
+                BorderBrush="{StaticResource SidebarBorderBrush}" BorderThickness="0,1,0,0">
+            <Grid ColumnSpacing="12" Padding="12,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid Grid.Column="0" Width="200" Height="112" Margin="0,10"
+                      Tapped="VideoThumbnail_Tapped" Background="Transparent" CornerRadius="6" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                    <TextBlock x:Name="TitleText" FontSize="13" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}"
+                               TextTrimming="CharacterEllipsis" MaxLines="1" />
+                    <TextBlock x:Name="SubtitleText" FontSize="11"
+                               Foreground="{StaticResource SecondaryTextBrush}"
+                               TextTrimming="CharacterEllipsis" MaxLines="1" />
+                    <Slider x:Name="SeekSlider" Minimum="0" Maximum="1" Height="28"
+                            ValueChanged="SeekSlider_ValueChanged" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Click="Expand_Click" Background="Transparent" BorderThickness="0" Padding="10,8"
+                            ToolTipService.ToolTip="Expand player">
+                        <FontIcon Glyph="&#xE740;" FontSize="16" Foreground="{StaticResource AccentBrush}" />
+                    </Button>
+                    <Button Click="PlayPause_Click" Background="Transparent" BorderThickness="0" Padding="10,8">
+                        <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE768;" FontSize="18"
+                                  Foreground="{StaticResource PrimaryTextBrush}" />
+                    </Button>
+                </StackPanel>
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                    <Button Click="Mute_Click" Background="Transparent" BorderThickness="0" Padding="6">
+                        <FontIcon x:Name="VolumeIcon" Glyph="&#xE767;" FontSize="12"
+                                  Foreground="{StaticResource SecondaryTextBrush}" />
+                    </Button>
+                    <Slider x:Name="VolumeSlider" Width="60" Minimum="0" Maximum="100" Value="100"
+                            VerticalAlignment="Center" ValueChanged="VolumeSlider_ValueChanged" />
+                </StackPanel>
+                <Button Grid.Column="4" Click="Close_Click" Background="Transparent" BorderThickness="0"
+                        Padding="10,8" VerticalAlignment="Center" ToolTipService.ToolTip="Stop playback">
+                    <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
                 </Button>
-                <Button Click="PlayPause_Click" Background="Transparent" BorderThickness="0" Padding="10,8">
-                    <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE768;" FontSize="18" Foreground="{StaticResource PrimaryTextBrush}" />
-                </Button>
-            </StackPanel>
+            </Grid>
+        </Border>
 
-            <!-- Volume -->
-            <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
-                <Button Click="Mute_Click" Background="Transparent" BorderThickness="0" Padding="6">
-                    <FontIcon x:Name="VolumeIcon" Glyph="&#xE767;" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
-                </Button>
-                <Slider x:Name="VolumeSlider" Width="60" Minimum="0" Maximum="100" Value="100"
-                        VerticalAlignment="Center" ValueChanged="VolumeSlider_ValueChanged" />
-            </StackPanel>
+        <!-- Current WebUI audiobook mini player: full-width seek rail above a
+             balanced metadata / transport / utilities row. -->
+        <Border x:Name="AudiobookBar" Visibility="Collapsed"
+                Background="{StaticResource AppBackgroundBrush}"
+                BorderBrush="{StaticResource SidebarBorderBrush}" BorderThickness="0,1,0,0">
+            <Grid Padding="18,6,18,8" RowSpacing="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="24" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Slider x:Name="AudiobookSeekSlider" Grid.Row="0" Minimum="0" Maximum="1"
+                        Height="24" Margin="-4,0" ValueChanged="AudiobookSeekSlider_ValueChanged" />
 
-            <!-- Close -->
-            <Button Grid.Column="4" Click="Close_Click" Background="Transparent" BorderThickness="0"
-                    Padding="10,8" VerticalAlignment="Center" ToolTipService.ToolTip="Stop playback">
-                <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
-            </Button>
-        </Grid>
-    </Border>
+                <Grid Grid.Row="1" ColumnSpacing="18">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MinWidth="220" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" MinWidth="220" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                        <Button Width="56" Height="56" Padding="0" BorderThickness="0"
+                                Background="{StaticResource CardBackgroundBrush}" Click="Expand_Click"
+                                ToolTipService.ToolTip="Open Now Listening">
+                            <Grid CornerRadius="8">
+                                <FontIcon x:Name="AudiobookCoverPlaceholder" Glyph="&#xE82D;" FontSize="24"
+                                          Foreground="{StaticResource SecondaryTextBrush}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                <Image x:Name="AudiobookCoverImage" Stretch="UniformToFill" />
+                            </Grid>
+                        </Button>
+                        <StackPanel VerticalAlignment="Center" Spacing="1" MaxWidth="360">
+                            <TextBlock x:Name="AudiobookTitleText" FontSize="15" FontWeight="SemiBold"
+                                       Foreground="{StaticResource PrimaryTextBrush}"
+                                       TextTrimming="CharacterEllipsis" MaxLines="1" />
+                            <TextBlock x:Name="AudiobookChapterText" FontSize="11"
+                                       Foreground="{StaticResource SecondaryTextBrush}"
+                                       TextTrimming="CharacterEllipsis" MaxLines="1" />
+                            <TextBlock x:Name="AudiobookTimeText" FontSize="11" FontFamily="Consolas"
+                                       CharacterSpacing="80" Foreground="{StaticResource SecondaryTextBrush}" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+                        <Button Style="{StaticResource SubtleButtonStyle}" Width="34" Height="34" Padding="0"
+                                Click="PreviousChapter_Click" ToolTipService.ToolTip="Previous chapter (P)">
+                            <FontIcon Glyph="&#xE892;" FontSize="15" />
+                        </Button>
+                        <Button Style="{StaticResource SubtleButtonStyle}" Width="38" Height="38" Padding="0"
+                                Click="AudiobookSkipBack_Click" ToolTipService.ToolTip="Back 15 seconds (Left)">
+                            <Grid><FontIcon Glyph="&#xE777;" FontSize="23"/><TextBlock x:Name="SkipBackText" Text="15" FontSize="8" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid>
+                        </Button>
+                        <Button Width="46" Height="46" Padding="0" CornerRadius="23" BorderThickness="0"
+                                Background="{StaticResource AccentBrush}" Click="PlayPause_Click">
+                            <FontIcon x:Name="AudiobookPlayPauseIcon" Glyph="&#xE769;" FontSize="20" Foreground="White" />
+                        </Button>
+                        <Button Style="{StaticResource SubtleButtonStyle}" Width="38" Height="38" Padding="0"
+                                Click="AudiobookSkipForward_Click" ToolTipService.ToolTip="Forward 30 seconds (Right)">
+                            <Grid><FontIcon Glyph="&#xE777;" FontSize="23"/><TextBlock x:Name="SkipForwardText" Text="30" FontSize="8" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid>
+                        </Button>
+                        <Button Style="{StaticResource SubtleButtonStyle}" Width="34" Height="34" Padding="0"
+                                Click="NextChapter_Click" ToolTipService.ToolTip="Next chapter (N)">
+                            <FontIcon Glyph="&#xE893;" FontSize="15" />
+                        </Button>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2"
+                                HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Button Click="Mute_Click" Style="{StaticResource SubtleButtonStyle}" Padding="7">
+                            <FontIcon x:Name="AudiobookVolumeIcon" Glyph="&#xE767;" FontSize="14" />
+                        </Button>
+                        <Slider x:Name="AudiobookVolumeSlider" Width="72" Minimum="0" Maximum="100" Value="100"
+                                ValueChanged="AudiobookVolumeSlider_ValueChanged" />
+                        <Button x:Name="AudiobookSleepButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
+                                ToolTipService.ToolTip="Sleep timer">
+                            <FontIcon Glyph="&#xE823;" FontSize="14" />
+                        </Button>
+                        <Button x:Name="AudiobookChaptersButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
+                                ToolTipService.ToolTip="Chapters">
+                            <FontIcon Glyph="&#xE8A9;" FontSize="14" />
+                        </Button>
+                        <Button x:Name="AudiobookSpeedButton" Style="{StaticResource SubtleButtonStyle}" Padding="8,6"
+                                Content="1×" FontSize="12" ToolTipService.ToolTip="Playback speed" />
+                        <Button x:Name="AudiobookSettingsButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
+                                ToolTipService.ToolTip="Audiobook settings">
+                            <FontIcon Glyph="&#xE713;" FontSize="14" />
+                        </Button>
+                        <Button Click="Close_Click" Style="{StaticResource SubtleButtonStyle}" Padding="8"
+                                ToolTipService.ToolTip="Close player">
+                            <FontIcon Glyph="&#xE711;" FontSize="14" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
 </UserControl>

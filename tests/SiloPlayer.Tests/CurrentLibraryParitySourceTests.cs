@@ -7,7 +7,9 @@ public sealed class CurrentLibraryParitySourceTests
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml");
 
-        Assert.Contains("x:Name=\"HeaderGrid\" Grid.Row=\"0\" Height=\"80\"", xaml);
+        Assert.Contains("x:Name=\"HeaderGrid\" Grid.Row=\"0\" Height=\"70\"", xaml);
+        Assert.Contains("x:Name=\"HeaderDivider\"", xaml);
+        Assert.Contains("SizeChanged=\"Page_SizeChanged\"", xaml);
         Assert.Contains("x:Name=\"LibraryTitle\"", xaml);
         Assert.Contains("Visibility=\"Collapsed\"", xaml);
         Assert.Contains("x:Name=\"SortComboBox\"", xaml);
@@ -124,6 +126,8 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("GetLibrarySectionItemsAsync", page);
         Assert.Contains("RetryLibrarySectionAsync", page);
         Assert.Contains("LoadPinnedCollectionRowsAsync", page);
+        Assert.Contains("Grid.SetRow(RecommendedPanel, overlay ? 0 : 3)", page);
+        Assert.Contains("ApplyHeaderPalette", page);
         Assert.Contains("/layout", api);
         Assert.Contains("HomeSectionItemsResponse", api);
         Assert.Contains("GetSidebarPins", shell);

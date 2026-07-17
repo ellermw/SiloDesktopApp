@@ -31,6 +31,7 @@ public sealed partial class ServerActivityButton : UserControl
     private readonly EventChannelClient _events;
     private IDisposable? _subscription;
     private bool _wsConnected;
+    private bool _hostVisibilityAllowed = true;
     private DateTime _lastEventPollAt = DateTime.MinValue;
 
     // Cached snapshot for popover rebuilds
@@ -40,12 +41,18 @@ public sealed partial class ServerActivityButton : UserControl
     private Dictionary<int, string> _libraryNames = [];
 
     /// <summary>
-    /// Kept for backwards compatibility with the admin shell XAML attribute
-    /// <c>HideWhenEmpty="False"</c>. The property is now purely cosmetic —
-    /// visibility is owned by the host shell (MainWindow / AdminShellPage),
-    /// which gates the control in lock-step with the sidebar Admin button.
+    /// Matches the WebUI's hide-when-empty option. Effective visibility
+    /// when <c>HideWhenEmpty</c> is enabled.
+    /// combines badge state with the host navigation/authorization gate, so
+    /// realtime updates cannot resurrect a hidden trigger.
     /// </summary>
     public bool HideWhenEmpty { get; set; } = false;
+
+    public void SetHostVisibility(bool allowed)
+    {
+        _hostVisibilityAllowed = allowed;
+        UpdateBadgeState();
+    }
 
     /// <summary>
     /// Route click handlers. Must be provided by the host (MainWindow or
@@ -61,9 +68,8 @@ public sealed partial class ServerActivityButton : UserControl
         _events = App.Services.GetRequiredService<EventChannelClient>();
         this.InitializeComponent();
 
-        // Visibility is owned by the HOST, not this control. MainWindow flips
-        // it in ShowMainNavigation / HideMainNavigation (same gate as the
-        // sidebar Admin button), and AdminShellPage sets it once from XAML.
+        // The host supplies navigation/authorization visibility. Badge state
+        // supplies the optional empty-state visibility.
 
         this.Loaded += OnLoaded;
         this.Unloaded += OnUnloaded;
@@ -239,11 +245,11 @@ public sealed partial class ServerActivityButton : UserControl
 
     private void UpdateBadgeState()
     {
-        // Visibility is owned by the host (MainWindow / AdminShellPage) and
-        // tied to the same admin-gate as the sidebar Admin button. This method
-        // only updates the count badge and icon tint — it never touches the
-        // outer control's Visibility.
+        // Recompute from both host and badge state on every realtime update.
         var total = _lastSessions.Count + _lastRunningTasks.Count + _lastActiveScans.Count;
+        Visibility = _hostVisibilityAllowed && (!HideWhenEmpty || total > 0)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
         if (total > 0)
         {

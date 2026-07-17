@@ -124,8 +124,8 @@
                         CornerRadius="20"
                         Click="PlayButton_Click">
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon Glyph="&#xE768;" FontSize="16" FontFamily="{ThemeResource SymbolThemeFontFamily}" />
-                        <TextBlock Text="Play" VerticalAlignment="Center" />
+                        <FontIcon x:Name="PlayButtonIcon" Glyph="&#xE768;" FontSize="16" FontFamily="{ThemeResource SymbolThemeFontFamily}" />
+                        <TextBlock x:Name="PlayButtonText" Text="Play" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
                 <!-- Secondary CTA: More Info (pill-glass) -->
@@ -133,7 +133,7 @@
                         CornerRadius="20"
                         Background="#44FFFFFF" BorderThickness="1"
                         BorderBrush="#33FFFFFF"
-                        Click="PlayButton_Click">
+                        Click="MoreInfoButton_Click">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE946;" FontSize="14" Foreground="White" />
                         <TextBlock Text="More Info" Foreground="White" VerticalAlignment="Center" />
@@ -163,7 +163,8 @@
             HorizontalAlignment="Right"
             VerticalAlignment="Bottom"
             Margin="0,0,24,20"
-            Spacing="8">
+            Orientation="Horizontal"
+            Spacing="12">
             <!-- Slide counter: "01 / 04" monospace -->
             <TextBlock
                 x:Name="SlideCounterText"
@@ -172,13 +173,14 @@
                 FontFamily="Consolas"
                 CharacterSpacing="120"
                 Foreground="#AAFFFFFF"
-                HorizontalAlignment="Right" />
+                VerticalAlignment="Center" />
             <!-- Progress rail: animated fill bar (8s duration) -->
             <Border
                 Width="100"
                 Height="3"
                 CornerRadius="2"
-                Background="#33FFFFFF">
+                Background="#33FFFFFF"
+                VerticalAlignment="Center">
                 <Border
                     x:Name="ProgressRailFill"
                     HorizontalAlignment="Left"
@@ -187,6 +189,18 @@
                     CornerRadius="2"
                     Background="{StaticResource AccentBrush}" />
             </Border>
+            <Button
+                x:Name="PauseCarouselButton"
+                Width="28"
+                Height="28"
+                Padding="0"
+                CornerRadius="14"
+                Background="Transparent"
+                BorderThickness="0"
+                ToolTipService.ToolTip="Pause slideshow"
+                Click="PauseCarouselButton_Click">
+                <FontIcon x:Name="PauseCarouselIcon" Glyph="&#xE769;" FontSize="12" Foreground="#CCFFFFFF" />
+            </Button>
         </StackPanel>
 
         <!-- Dots (hidden, kept for backward compat) -->

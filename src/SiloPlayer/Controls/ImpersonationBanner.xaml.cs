@@ -61,6 +61,16 @@ public sealed partial class ImpersonationBanner : UserControl
     /// </summary>
     public event EventHandler? EndImpersonationRequested;
 
+    public bool IsEnding
+    {
+        get => !EndImpersonationButton.IsEnabled;
+        set
+        {
+            EndImpersonationButton.IsEnabled = !value;
+            EndSessionText.Text = value ? "Restoring…" : "End session";
+        }
+    }
+
     private void EndImpersonation_Click(object sender, RoutedEventArgs e)
     {
         EndImpersonationRequested?.Invoke(this, EventArgs.Empty);

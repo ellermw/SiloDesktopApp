@@ -16,11 +16,53 @@ public sealed partial class AdminAccessGroupsPage : Page
     public AdminAccessGroupsPage()
     {
         InitializeComponent();
+        SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout();
         await ViewModel.LoadAsync();
+        ApplyResponsiveLayout();
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        var width = ActualWidth;
+        var compact = width < 640;
+        var side = compact ? 16 : width < 1024 ? 24 : 32;
+        AccessGroupsPageShell.Padding = new Thickness(side, compact ? 16 : 24, side, 48);
+
+        Grid.SetColumn(NewGroupButton, compact ? 0 : 1);
+        Grid.SetRow(NewGroupButton, compact ? 1 : 0);
+        NewGroupButton.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        CreateGroupPanel.Orientation = compact ? Orientation.Vertical : Orientation.Horizontal;
+        NewGroupNameBox.HorizontalAlignment = compact ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+
+        ConfigureTwoColumnGrid(GroupIdentityGrid, compact);
+        ConfigureTwoColumnGrid(StreamLimitsGrid, compact);
+        Grid.SetColumn(SaveGroupButton, compact ? 0 : 1);
+        Grid.SetRow(SaveGroupButton, compact ? 1 : 0);
+        SaveGroupButton.HorizontalAlignment = compact ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+
+        if (GroupsGridView.ItemsPanelRoot is ItemsWrapGrid wrapGrid)
+        {
+            var available = Math.Max(280, GroupsGridView.ActualWidth);
+            var columns = width >= 1200 ? 3 : width >= 720 ? 2 : 1;
+            wrapGrid.MaximumRowsOrColumns = columns;
+            wrapGrid.ItemWidth = Math.Max(280, Math.Floor(available / columns) - 14);
+        }
+    }
+
+    private static void ConfigureTwoColumnGrid(Grid grid, bool compact)
+    {
+        if (grid.Children.Count < 2) return;
+        var first = (FrameworkElement)grid.Children[0];
+        var second = (FrameworkElement)grid.Children[1];
+        Grid.SetColumnSpan(first, compact ? 2 : 1);
+        Grid.SetColumn(second, compact ? 0 : 1);
+        Grid.SetRow(second, compact ? 1 : 0);
+        Grid.SetColumnSpan(second, compact ? 2 : 1);
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)

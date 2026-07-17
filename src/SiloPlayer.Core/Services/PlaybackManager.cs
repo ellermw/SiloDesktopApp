@@ -79,12 +79,12 @@ public class PlaybackManager : IDisposable
         bool forceStartPosition = false,
         int? audioTrackIndex = null,
         bool forceDirectAudioSelection = false,
+        bool disableProgressPersistence = false,
         CancellationToken ct = default)
     {
         // Declare full codec capabilities so the server chooses direct play for HEVC/HDR/lossless
         // audio content. This is the whole point of the native mpv player — without these caps
         // the server falls back to forcing H.264 transcoding for HEVC content.
-        // (Per CLAUDE.md lines 223-230: containers=[mp4,mkv], 4K HDR, all audio codecs.)
         var request = new PlaybackStartRequest
         {
             FileId = fileId,
@@ -98,6 +98,7 @@ public class PlaybackManager : IDisposable
             StartPosition = forceStartPosition ? startPosition : (startPosition > 0 ? startPosition : null),
             AudioTrackIndex = audioTrackIndex,
             PreserveDirectAudioSelection = true,
+            DisableProgressPersistence = disableProgressPersistence,
         };
 
         // Keep the request synchronized with the exact libmpv/FFmpeg binary
@@ -155,7 +156,7 @@ public class PlaybackManager : IDisposable
             forceStartPosition,
             audioTrackIndex,
             forceDirectAudioSelection,
-            ct).ConfigureAwait(false);
+            ct: ct).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(previousSessionId) &&
             !string.Equals(previousSessionId, response.SessionId, StringComparison.Ordinal))

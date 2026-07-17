@@ -18,10 +18,12 @@ public sealed partial class AdminApiKeysPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminApiKeysViewModel>();
         this.InitializeComponent();
+        SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout();
         ViewModel.ApiKeys.CollectionChanged += (_, _) => ScheduleRebuild();
 
         try
@@ -32,6 +34,20 @@ public sealed partial class AdminApiKeysPage : Page
         {
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        var compact = ActualWidth < 720;
+        ApiKeysPageShell.Padding = new Thickness(
+            ActualWidth < 640 ? 16 : ActualWidth < 1024 ? 24 : 40,
+            ActualWidth < 640 ? 16 : 24,
+            ActualWidth < 640 ? 16 : ActualWidth < 1024 ? 24 : 40,
+            24);
+
+        Grid.SetColumn(CreateKeyButton, compact ? 0 : 1);
+        Grid.SetRow(CreateKeyButton, compact ? 1 : 0);
+        CreateKeyButton.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
     }
 
     private void ScheduleRebuild()

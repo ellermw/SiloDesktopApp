@@ -159,6 +159,28 @@ public sealed class CollectionsParitySourceTests
     }
 
     [Fact]
+    public void AdminCollectionsUsesCurrentAdminTemplatesAndBundleApplyFlow()
+    {
+        var root = FindRepositoryRoot();
+        var page = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "Admin", "AdminCollectionsPage.xaml.cs"));
+        var api = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Api", "AdminApi.cs"));
+        var models = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Models", "Collections", "CollectionImports.cs"));
+
+        Assert.Contains("ShowAdminTemplateGalleryAsync", page);
+        Assert.Contains("ShowBundleApplyViewAsync", page);
+        Assert.Contains("ShowAdminTemplateConfigAsync", page);
+        Assert.Contains("RenderBundleResult", page);
+        Assert.DoesNotContain("Navigate<CollectionsPage>(new CollectionsNavigationArgs(OpenTemplates", page);
+
+        Assert.Contains("/api/v1/admin/collections/templates", api);
+        Assert.Contains("/api/v1/admin/collections/template-bundles", api);
+        Assert.Contains("/apply-job", api);
+        Assert.Contains("CollectionTemplateBundleCatalog", models);
+        Assert.Contains("ApplyCollectionTemplateBundleFeaturedRequest", models);
+        Assert.Contains("CollectionTemplateTmdbDiscoverSpec", models);
+    }
+
+    [Fact]
     public void SmartCollectionWizardIsAvailableForUserAndAdminCollections()
     {
         var root = FindRepositoryRoot();

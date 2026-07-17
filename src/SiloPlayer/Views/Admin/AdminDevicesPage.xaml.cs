@@ -21,16 +21,87 @@ public sealed partial class AdminDevicesPage : Page
     public AdminDevicesPage()
     {
         InitializeComponent();
+        SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout();
         if (!_settingsSubscribed)
         {
             ViewModel.Settings.CollectionChanged += Settings_CollectionChanged;
             _settingsSubscribed = true;
         }
         await ViewModel.LoadAsync();
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        var width = ActualWidth;
+        var side = width < 640 ? 16 : width < 1024 ? 24 : 40;
+        DevicesPageShell.Padding = new Thickness(side, width < 640 ? 16 : 24, side, 48);
+
+        var compactHeader = width < 720;
+        DevicesHeaderGrid.ColumnDefinitions.Clear();
+        DevicesHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        if (!compactHeader) DevicesHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(340) });
+        Grid.SetColumn(DeviceSearchHost, compactHeader ? 0 : 1);
+        Grid.SetRow(DeviceSearchHost, compactHeader ? 1 : 0);
+        Grid.SetColumnSpan(DeviceSearchHost, 1);
+        DeviceSearchHost.HorizontalAlignment = compactHeader ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+
+        var stats = new FrameworkElement[] { FleetUsersStat, FleetDevicesStat, FleetProfilesStat, FleetOverridesStat };
+        FleetDensityPanel.Margin = width >= 1100 ? new Thickness(18, 0, 0, 0) : new Thickness(0);
+        var pulseColumns = width >= 1100 ? 6 : width >= 640 ? 4 : 2;
+        FleetPulseGrid.ColumnDefinitions.Clear(); FleetPulseGrid.RowDefinitions.Clear();
+        for (var i = 0; i < pulseColumns; i++)
+            FleetPulseGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = i < 4 ? GridLength.Auto : new GridLength(1, GridUnitType.Star) });
+        var pulseRows = width >= 1100 ? 1 : width >= 640 ? 2 : 4;
+        for (var i = 0; i < pulseRows; i++) FleetPulseGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        for (var i = 0; i < stats.Length; i++) { Grid.SetColumn(stats[i], i % Math.Min(4, pulseColumns)); Grid.SetRow(stats[i], i / Math.Min(4, pulseColumns)); }
+        if (width >= 1100)
+        {
+            Grid.SetColumn(FleetDensityPanel, 4); Grid.SetRow(FleetDensityPanel, 0); Grid.SetColumnSpan(FleetDensityPanel, 1);
+            Grid.SetColumn(FleetGroupPanel, 5); Grid.SetRow(FleetGroupPanel, 0); Grid.SetColumnSpan(FleetGroupPanel, 1);
+        }
+        else if (width >= 640)
+        {
+            Grid.SetColumn(FleetDensityPanel, 0); Grid.SetRow(FleetDensityPanel, 1); Grid.SetColumnSpan(FleetDensityPanel, 2);
+            Grid.SetColumn(FleetGroupPanel, 2); Grid.SetRow(FleetGroupPanel, 1); Grid.SetColumnSpan(FleetGroupPanel, 2);
+        }
+        else
+        {
+            Grid.SetColumn(FleetDensityPanel, 0); Grid.SetRow(FleetDensityPanel, 2); Grid.SetColumnSpan(FleetDensityPanel, 2);
+            Grid.SetColumn(FleetGroupPanel, 0); Grid.SetRow(FleetGroupPanel, 3); Grid.SetColumnSpan(FleetGroupPanel, 2);
+            FleetDensityPanel.Margin = new Thickness(0);
+        }
+
+        DeviceWorkspaceGrid.ColumnDefinitions.Clear();
+        if (width >= 1024)
+        {
+            DeviceWorkspaceGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(width >= 1280 ? 220 : 200) });
+            DeviceWorkspaceGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(width >= 1280 ? 380 : 340) });
+            DeviceWorkspaceGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            PlaceWorkspace(DeviceFilterRail, 0, 0); PlaceWorkspace(DeviceListPanel, 1, 0); PlaceWorkspace(DeviceDetailPanel, 2, 0);
+        }
+        else
+        {
+            DeviceWorkspaceGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            PlaceWorkspace(DeviceFilterRail, 0, 0); PlaceWorkspace(DeviceListPanel, 0, 1); PlaceWorkspace(DeviceDetailPanel, 0, 2);
+        }
+
+        var compactDetail = width < 720;
+        Grid.SetColumn(SelectedDeviceActions, compactDetail ? 0 : 1);
+        Grid.SetRow(SelectedDeviceActions, compactDetail ? 1 : 0);
+        SelectedDeviceActions.Orientation = compactDetail ? Orientation.Vertical : Orientation.Horizontal;
+        SelectedDeviceActions.HorizontalAlignment = compactDetail ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+        DeviceProfileComboBox.Width = compactDetail ? double.NaN : 250;
+        DeviceProfileComboBox.HorizontalAlignment = compactDetail ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+    }
+
+    private static void PlaceWorkspace(FrameworkElement element, int column, int row)
+    {
+        Grid.SetColumn(element, column); Grid.SetRow(element, row);
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)

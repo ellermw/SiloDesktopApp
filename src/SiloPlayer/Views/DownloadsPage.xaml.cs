@@ -93,7 +93,7 @@ public sealed partial class DownloadsPage : Page
         // File name
         infoPanel.Children.Add(new TextBlock
         {
-            Text = dl.FileName,
+            Text = string.IsNullOrWhiteSpace(dl.EpisodeId) ? dl.ContentId : dl.EpisodeId,
             FontSize = 14,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
@@ -141,6 +141,14 @@ public sealed partial class DownloadsPage : Page
             });
         }
 
+        metaPanel.Children.Add(new TextBlock
+        {
+            Text = $"{FormatDownloadQuality(dl.EffectiveQuality)} · {FormatDeliveryFormat(dl.DeliveryFormat)}",
+            FontSize = 12,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
         // Date
         if (!string.IsNullOrEmpty(dl.CreatedAt))
         {
@@ -154,6 +162,8 @@ public sealed partial class DownloadsPage : Page
         }
 
         infoPanel.Children.Add(metaPanel);
+        if (dl.FileSize > 0 && dl.BytesSent > 0 && dl.BytesSent < dl.FileSize)
+            infoPanel.Children.Add(new ProgressBar { Minimum = 0, Maximum = dl.FileSize, Value = dl.BytesSent, Height = 3 });
         Grid.SetColumn(infoPanel, 1);
         grid.Children.Add(infoPanel);
 
@@ -214,7 +224,7 @@ public sealed partial class DownloadsPage : Page
 
     private async void SaveButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button btn || btn.Tag is not int downloadId) return;
+        if (sender is not Button btn || btn.Tag is not string downloadId) return;
 
         var dl = ViewModel.Downloads.FirstOrDefault(d => d.Id == downloadId);
         if (dl == null) return;
@@ -228,10 +238,9 @@ public sealed partial class DownloadsPage : Page
             WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
 
             // Determine file extension from file name
-            var ext = Path.GetExtension(dl.FileName);
-            if (string.IsNullOrEmpty(ext)) ext = ".mkv";
+            var ext = dl.DeliveryFormat == "transcode" ? ".mp4" : ".mkv";
 
-            picker.SuggestedFileName = dl.FileName;
+            picker.SuggestedFileName = $"{(string.IsNullOrWhiteSpace(dl.EpisodeId) ? dl.ContentId : dl.EpisodeId)}-{dl.Id[..Math.Min(8, dl.Id.Length)]}{ext}";
             picker.FileTypeChoices.Add("Media File", [ext]);
 
             var file = await picker.PickSaveFileAsync();
@@ -242,7 +251,7 @@ public sealed partial class DownloadsPage : Page
             var downloadPath = DownloadsApi.GetDownloadFilePath(downloadId);
             var url = $"{apiClient.BaseUrl}{downloadPath}";
             if (apiClient.AccessToken != null)
-                url += $"?token={Uri.EscapeDataString(apiClient.AccessToken)}";
+            url += $"?token={Uri.EscapeDataString(apiClient.AccessToken)}";
 
             var httpClient = App.Services.GetRequiredService<HttpClient>();
             using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
@@ -261,7 +270,7 @@ public sealed partial class DownloadsPage : Page
 
     private async void DeleteButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button btn && btn.Tag is int downloadId)
+        if (sender is Button btn && btn.Tag is string downloadId)
         {
             await ViewModel.DeleteDownloadCommand.ExecuteAsync(downloadId);
         }
@@ -281,4 +290,16 @@ public sealed partial class DownloadsPage : Page
             return DateTimeDisplay.FormatDate(new DateTimeOffset(dt), medium: true);
         return dateStr;
     }
+
+    private static string FormatDownloadQuality(string value)
+        => string.IsNullOrWhiteSpace(value) || value == "original"
+            ? "Original"
+            : value.EndsWith("mbps", StringComparison.OrdinalIgnoreCase)
+                ? value[..^4] + " Mbps"
+                : value;
+
+    private static string FormatDeliveryFormat(string value)
+        => string.IsNullOrWhiteSpace(value)
+            ? "Original"
+            : char.ToUpperInvariant(value[0]) + value[1..];
 }

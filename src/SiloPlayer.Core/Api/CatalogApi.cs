@@ -210,6 +210,14 @@ public class CatalogApi(SiloApiClient client)
     public Task<EpisodesResponse> GetEpisodesAsync(string seriesId, int seasonNumber, CancellationToken ct = default)
         => client.GetAsync<EpisodesResponse>($"/api/v1/catalog/series/{seriesId}/seasons/{seasonNumber}/episodes", ct);
 
+    /// <summary>
+    /// Fetches the episodes that belong to a season item. This is the canonical
+    /// endpoint used by the current WebUI and, unlike the legacy series/number
+    /// route, also handles Specials (season zero) without discarding them.
+    /// </summary>
+    public Task<EpisodesResponse> GetItemEpisodesAsync(string seasonContentId, CancellationToken ct = default)
+        => client.GetAsync<EpisodesResponse>($"/api/v1/catalog/items/{Uri.EscapeDataString(seasonContentId)}/episodes", ct);
+
     // ===== Watched State =====
 
     public Task MarkWatchedAsync(string contentId, CancellationToken ct = default)

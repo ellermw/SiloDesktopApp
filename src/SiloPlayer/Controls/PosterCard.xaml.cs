@@ -130,12 +130,15 @@ public sealed partial class PosterCard : UserControl
         _deferredPosterItem = null;
 
         TitleText.Text = "";
+        EpisodeTitleText.Text = "";
+        EpisodeTitleText.Visibility = Visibility.Collapsed;
         SubtitleText.Text = "";
         FallbackTitle.Text = "";
         FallbackTitle.Visibility = Visibility.Collapsed;
         PosterImage.Source = null;
         PosterImage.Opacity = 0;
         ThumbhashImage.Source = null;
+        MoreButton.Opacity = 0;
         ClearOverlayPanels();
     }
 
@@ -158,26 +161,21 @@ public sealed partial class PosterCard : UserControl
         // building ~8 MenuFlyoutItems per card-recycle was the biggest scroll
         // stall in large libraries.
 
-        TitleText.Text = item.Title;
+        TitleText.Text = MediaItemDisplayText.BuildTitle(item);
+        var secondaryTitle = item.UpcomingEvent is { } upcoming
+            ? MediaItemDisplayText.FormatUpcomingSubtitle(upcoming)
+            : MediaItemDisplayText.BuildEpisodeTitle(item);
+        EpisodeTitleText.Text = secondaryTitle ?? "";
+        EpisodeTitleText.Visibility = string.IsNullOrWhiteSpace(secondaryTitle)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
 
         // Build subtitle line — sort-driven. When the hosting surface (Library,
         // Search, etc.) has sorted by a specific key, surface that key's value
         // so the meta line matches what the user is looking at.
-        var parts = new List<string>();
-        if (item.Year > 0) parts.Add(item.Year.ToString());
-        switch (CurrentSortKey)
-        {
-            case "rating_imdb":
-                if (item.RatingImdb.HasValue && item.RatingImdb.Value > 0)
-                    parts.Add($"\u2605 {item.RatingImdb.Value:0.0}");
-                else if (item.Type == "series")
-                    parts.Add("SERIES");
-                break;
-            default:
-                if (item.Type == "series") parts.Add("SERIES");
-                break;
-        }
-        SubtitleText.Text = string.Join("  ", parts);
+        SubtitleText.Text = item.UpcomingEvent is { } upcomingSchedule
+            ? MediaItemDisplayText.FormatUpcomingSchedule(upcomingSchedule)
+            : MediaItemDisplayText.BuildSubtitle(item, CurrentSortKey);
 
         PosterImage.Opacity = 0;
 
@@ -190,7 +188,7 @@ public sealed partial class PosterCard : UserControl
         string? imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
         if (SuppressImageLoading || string.IsNullOrEmpty(imageUrl))
         {
-            FallbackTitle.Text = item.Title;
+            FallbackTitle.Text = MediaItemDisplayText.BuildTitle(item);
             FallbackTitle.Visibility = Visibility.Visible;
             if (SuppressImageLoading)
                 PosterImage.Source = null;
@@ -286,6 +284,68 @@ public sealed partial class PosterCard : UserControl
         var service = App.Services.GetRequiredService<Services.CardOverlayService>();
         // Lazy one-shot load. Subsequent cards hit the cached result.
         _ = service.EnsureLoadedAsync();
+
+        if (item.Status is "pending" or "unmatched" or "ambiguous")
+        {
+            var label = item.Status switch
+            {
+                "pending" => "SCANNING",
+                "unmatched" => "UNMATCHED",
+                _ => "AMBIGUOUS",
+            };
+            OverlayTopLeft.Children.Add(BuildBadge(
+                label,
+                "status",
+                new Services.OverlayItemConfig(true, Services.OverlayPosition.TopLeft),
+                "classic"));
+            return;
+        }
+
+        if (item.Type == "manga")
+        {
+            if (!string.IsNullOrWhiteSpace(item.ShowStatus))
+            {
+                OverlayTopLeft.Children.Add(BuildBadge(
+                    item.ShowStatus,
+                    "show_status",
+                    new Services.OverlayItemConfig(true, Services.OverlayPosition.TopLeft),
+                    service.Preset));
+            }
+
+            var counts = new List<string>();
+            if (item.MangaVolumeCount > 0) counts.Add($"{item.MangaVolumeCount} Vol");
+            if (item.MangaChapterCount > 0) counts.Add($"{item.MangaChapterCount} Ch");
+            if (counts.Count > 0)
+            {
+                OverlayTopRight.Children.Add(BuildBadge(
+                    string.Join(" \u00b7 ", counts),
+                    "manga_counts",
+                    new Services.OverlayItemConfig(true, Services.OverlayPosition.TopRight),
+                    service.Preset));
+            }
+            return;
+        }
+
+        // Upcoming rows carry server-computed premiere/finale badges that are
+        // independent of the user's generic overlay preferences.
+        if (item.UpcomingEvent is { Badges.Count: > 0 } upcoming)
+        {
+            foreach (var badge in upcoming.Badges)
+            {
+                var label = badge switch
+                {
+                    "series_premiere" => "Series Premiere",
+                    "season_premiere" => "Season Premiere",
+                    "finale" => "Finale",
+                    _ => badge,
+                };
+                OverlayTopLeft.Children.Add(BuildBadge(
+                    label,
+                    "upcoming_event",
+                    new Services.OverlayItemConfig(true, Services.OverlayPosition.TopLeft),
+                    "classic"));
+            }
+        }
 
         var prefs = service.GetPrefs();
         if (prefs == null) return; // Admin kill switch engaged → no badges.
@@ -550,7 +610,8 @@ public sealed partial class PosterCard : UserControl
             _hoverActive = true;
             PosterBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
                 Application.Current.Resources["SurfaceHoverBrush"];
-            AnimateHover(scale: 1.04, borderOpacity: 1.0, dimOpacity: 1.0, playOpacity: 1.0, playScale: 1.0);
+            MoreButton.Opacity = 1;
+            AnimateHover(scale: 1.06, translateY: -4.0, brightenOpacity: 1.0);
         };
         _hoverEnterTimer.Start();
     }
@@ -565,15 +626,43 @@ public sealed partial class PosterCard : UserControl
         _hoverActive = false;
         PosterBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["CardBackgroundBrush"];
-        AnimateHover(scale: 1.0, borderOpacity: 0.0, dimOpacity: 0.0, playOpacity: 0.0, playScale: 0.7);
+        MoreButton.Opacity = 0;
+        AnimateHover(scale: 1.0, translateY: 0.0, brightenOpacity: 0.0);
+    }
+
+    private void MoreButton_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        e.Handled = true;
+    }
+
+    private void MoreButton_GotFocus(object sender, RoutedEventArgs e)
+    {
+        MoreButton.Opacity = 1;
+    }
+
+    private void MoreButton_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (!_hoverActive)
+            MoreButton.Opacity = 0;
+    }
+
+    private void MoreButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (MediaItem == null)
+            return;
+
+        var flyout = MediaItemMenu.Build(MediaItem, MediaItemMenu.Surface.Default);
+        flyout.ShowAt(MoreButton, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions
+        {
+            Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.TopEdgeAlignedRight,
+        });
     }
 
     /// <summary>
-    /// Mirrors the webui ContinueWatchingCard hover: subtle card scale, accent
-    /// border glow, dark tint overlay, and a centered Play circle that fades
-    /// and scales in. Short ease-out curve matching the webui transition timing.
+    /// Mirrors the current WebUI ItemCard hover: lift the complete card four
+    /// pixels, brighten it, and scale only the poster image inside its clip.
     /// </summary>
-    private void AnimateHover(double scale, double borderOpacity, double dimOpacity, double playOpacity, double playScale)
+    private void AnimateHover(double scale, double translateY, double brightenOpacity)
     {
         var storyboard = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
         var duration = new Duration(TimeSpan.FromMilliseconds(180));
@@ -589,11 +678,8 @@ public sealed partial class PosterCard : UserControl
 
         Add(HoverTransform, "ScaleX", scale);
         Add(HoverTransform, "ScaleY", scale);
-        Add(HoverBorder, "Opacity", borderOpacity);
-        Add(HoverDim, "Opacity", dimOpacity);
-        Add(HoverPlayButton, "Opacity", playOpacity);
-        Add(HoverPlayButtonTransform, "ScaleX", playScale);
-        Add(HoverPlayButtonTransform, "ScaleY", playScale);
+        Add(CardHoverTransform, "TranslateY", translateY);
+        Add(HoverBrighten, "Opacity", brightenOpacity);
 
         storyboard.Begin();
     }

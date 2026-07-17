@@ -6,6 +6,9 @@ public class AdminPluginsCurrentParitySourceTests
     private static string Markup => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminPluginsPage.xaml"));
     private static string CodeBehind => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminPluginsPage.xaml.cs"));
     private static string Api => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer.Core", "Api", "PluginsApi.cs"));
+    private static string MainWindow => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer", "MainWindow.xaml.cs"));
+    private static string PluginRoutePage => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer", "Views", "PluginRoutePage.xaml.cs"));
+    private static string SettingsModel => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer.Core", "Models", "Plugins", "PluginSettings.cs"));
 
     [Fact]
     public void PluginsUsesCurrentPageGeometryAndTabs()
@@ -44,5 +47,17 @@ public class AdminPluginsCurrentParitySourceTests
         Assert.Contains("/api/v1/admin/plugins/uploads/chunked", Api, StringComparison.Ordinal);
         Assert.Contains("DefaultUploadChunkSize", Api, StringComparison.Ordinal);
         Assert.Contains("This plugin has no additional configuration.", CodeBehind, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UserPluginAppsAreGroupedAndOpenAuthenticatedRoutes()
+    {
+        Assert.Contains("public string? Category", SettingsModel, StringComparison.Ordinal);
+        Assert.Contains("route.NavigationKind.Equals(\"user\"", MainWindow, StringComparison.Ordinal);
+        Assert.Contains("BuildPluginApps", MainWindow, StringComparison.Ordinal);
+        Assert.Contains("PluginRoutePage", MainWindow, StringComparison.Ordinal);
+        Assert.Contains("/api/v1/plugins/{args.InstallationId}{path}", PluginRoutePage, StringComparison.Ordinal);
+        Assert.Contains("Authorization", PluginRoutePage, StringComparison.Ordinal);
+        Assert.Contains("X-Profile-Id", PluginRoutePage, StringComparison.Ordinal);
     }
 }

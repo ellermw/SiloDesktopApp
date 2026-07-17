@@ -12,6 +12,21 @@ public sealed class ItemDetailCurrentParityTests
     };
 
     [Fact]
+    public void DetailMetadataOverviewAndActionsAreComposedInsideArtworkHero()
+    {
+        var code = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var xaml = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml");
+
+        Assert.Contains("ComposeHeroLayout();", code);
+        Assert.Contains("MoveIntoHero(HeroMetadataRow)", code);
+        Assert.Contains("MoveIntoHero(OverviewText)", code);
+        Assert.Contains("MoveIntoHero(HeroActionsRow)", code);
+        Assert.Contains("ViewModel.Item?.Type == \"season\" ? 0.35 : 0.60", code);
+        Assert.Contains("x:Name=\"HeroInfoPanel\"", xaml);
+        Assert.Contains("x:Name=\"HeroActionsRow\"", xaml);
+    }
+
+    [Fact]
     public void ItemDetailDeserializesRemoteVideosAndLocalExtras()
     {
         const string json = """
@@ -158,6 +173,45 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("startPositionOverride: seconds", page);
         Assert.Contains("GetMangaSeriesFilesAsync", api);
         Assert.Contains("MangaDetailExtension", model);
+        Assert.Contains("LoadMangaChapterPosterAsync", page);
+        Assert.Contains("new Expander", page);
+        Assert.Contains("MangaDownload_Click", page);
+        Assert.Contains("GetItemVersionsAsync(chapter.ContentId)", page);
+        Assert.Contains("Mark chapter unread", page);
+        Assert.Contains("MangaJumpButton", xaml);
+        Assert.Contains("StartBringIntoView", page);
+    }
+
+    [Fact]
+    public void DetailAndEpisodeCardsUseSelectedVersionAndCurrentOverlayMetadata()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var episodeModel = Read("src", "SiloPlayer.Core", "Models", "Catalog", "EpisodesResponse.cs");
+
+        Assert.Contains("UpdateSelectedVersionUi", page);
+        Assert.Contains("MediaVideoRange.Label", page);
+        Assert.Contains(": version.Duration", page);
+        Assert.Contains("VersionRanking.PickBestAttributes([selectedVersion]", page);
+        Assert.Contains("episode.OverlaySummary", page);
+        Assert.Contains("AddEpisodeCardOverlays", page);
+        Assert.Contains("public SiloPlayer.Core.Models.Home.OverlaySummary? OverlaySummary", episodeModel);
+    }
+
+    [Fact]
+    public void SeasonDetailTargetsFirstEpisodeThroughCanonicalItemEndpoint()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var api = Read("src", "SiloPlayer.Core", "Api", "CatalogApi.cs");
+
+        Assert.Contains("LoadSeasonEpisodesAsync(ViewModel.Item.ContentId", page);
+        Assert.Contains("GetItemEpisodesAsync(seasonContentId)", page);
+        Assert.Contains("PlayButtonText.Text = \"Play First Episode\"", page);
+        Assert.Contains("_playableContentId = firstEpisode?.ContentId", page);
+        Assert.Contains("BuildSeasonBreadcrumb(item, seasonLabel)", page);
+        Assert.Contains("EpisodesHeader.Text = \"Episodes\"", page);
+        Assert.Contains("x:Name=\"EpisodesTotalText\"", Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml"));
+        Assert.Contains("/api/v1/catalog/items/{Uri.EscapeDataString(seasonContentId)}/episodes", api);
+        Assert.DoesNotContain("LoadSeasonEpisodesAsync(ViewModel.Item.SeriesId", page);
     }
 
     private static string Read(params string[] parts)

@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="SiloPlayer.Controls.AudiobookNowListening"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+    <Grid Background="{StaticResource AppBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Padding="24,16">
+            <Button HorizontalAlignment="Left" Style="{StaticResource SubtleButtonStyle}"
+                    Padding="10,7" Click="Collapse_Click">
+                <StackPanel Orientation="Horizontal" Spacing="7">
+                    <FontIcon Glyph="&#xE70D;" FontSize="16" />
+                    <TextBlock Text="Back to player" FontSize="14" FontWeight="SemiBold" />
+                </StackPanel>
+            </Button>
+            <Button x:Name="SettingsButton" HorizontalAlignment="Right"
+                    Style="{StaticResource SubtleButtonStyle}" Padding="9">
+                <FontIcon Glyph="&#xE713;" FontSize="16" />
+            </Button>
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <Grid MaxWidth="1180" Margin="48,0,48,48" HorizontalAlignment="Center"
+                  VerticalAlignment="Center" ColumnSpacing="72">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="360" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Width="360" Height="360" CornerRadius="16"
+                        Background="{StaticResource CardBackgroundBrush}">
+                    <Grid>
+                        <FontIcon x:Name="CoverPlaceholder" Glyph="&#xE82D;" FontSize="72"
+                                  Foreground="{StaticResource SecondaryTextBrush}"
+                                  HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Image x:Name="CoverImage" Stretch="UniformToFill" />
+                    </Grid>
+                </Border>
+
+                <StackPanel Grid.Column="1" MaxWidth="620" Spacing="26" VerticalAlignment="Center">
+                    <StackPanel Spacing="4">
+                        <TextBlock x:Name="TitleText" FontSize="32" FontWeight="SemiBold"
+                                   TextWrapping="Wrap" Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock x:Name="AuthorText" FontSize="16"
+                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBlock x:Name="NarratorText" FontSize="14"
+                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="ChapterPanel" Spacing="3">
+                        <TextBlock x:Name="ChapterNumberText" FontSize="11" FontWeight="SemiBold"
+                                   CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBlock x:Name="ChapterTitleText" FontSize="19" FontWeight="SemiBold"
+                                   TextWrapping="Wrap" Foreground="{StaticResource PrimaryTextBrush}" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="5">
+                        <Slider x:Name="SeekSlider" Minimum="0" Maximum="1" Height="28"
+                                Margin="-4,0" ValueChanged="SeekSlider_ValueChanged" />
+                        <Grid>
+                            <TextBlock x:Name="CurrentTimeText" FontSize="12" FontFamily="Consolas"
+                                       Foreground="{StaticResource SecondaryTextBrush}" />
+                            <Button x:Name="RightTimeButton" HorizontalAlignment="Right"
+                                    Style="{StaticResource SubtleButtonStyle}" Padding="4,1"
+                                    FontSize="12" FontFamily="Consolas" Click="RightTime_Click" />
+                        </Grid>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+                        <Button Style="{StaticResource SubtleButtonStyle}" Width="40" Height="40" Padding="0"
+                                Click="PreviousChapter_Click" ToolTipService.ToolTip="Previous chapter (P)">
+                            <FontIcon Glyph="&#xE892;" FontSize="17" />
+                        </Button>
+                        <Button Style="{StaticResource SubtleButtonStyle}" Width="48" Height="48" Padding="0"
+                                Click="SkipBack_Click" ToolTipService.ToolTip="Skip back">
+                            <Grid><FontIcon Glyph="&#xE777;" FontSize="28"/><TextBlock x:Name="SkipBackText" Text="15" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid>
+                        </Button>
+                        <Button Width="64" Height="64" Padding="0" CornerRadius="32" BorderThickness="0"
+                                Background="{StaticResource AccentBrush}" Click="PlayPause_Click">
+                            <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE769;" FontSize="29" Foreground="White" />
+                        </Button>
+                        <Button Style="{StaticResource SubtleButtonStyle}" Width="48" Height="48" Padding="0"
+                                Click="SkipForward_Click" ToolTipService.ToolTip="Skip forward">
+                            <Grid><FontIcon Glyph="&#xE777;" FontSize="28"/><TextBlock x:Name="SkipForwardText" Text="30" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid>
+                        </Button>
+                        <Button Style="{StaticResource SubtleButtonStyle}" Width="40" Height="40" Padding="0"
+                                Click="NextChapter_Click" ToolTipService.ToolTip="Next chapter (N)">
+                            <FontIcon Glyph="&#xE893;" FontSize="17" />
+                        </Button>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+                        <Button Click="Mute_Click" Style="{StaticResource SubtleButtonStyle}" Padding="8">
+                            <FontIcon x:Name="VolumeIcon" Glyph="&#xE767;" FontSize="15" />
+                        </Button>
+                        <Slider x:Name="VolumeSlider" Width="94" Minimum="0" Maximum="100" Value="100"
+                                ValueChanged="VolumeSlider_ValueChanged" />
+                        <Button x:Name="SleepButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
+                                ToolTipService.ToolTip="Sleep timer">
+                            <FontIcon Glyph="&#xE823;" FontSize="15" />
+                        </Button>
+                        <Button x:Name="ChaptersButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
+                                ToolTipService.ToolTip="Chapters">
+                            <FontIcon Glyph="&#xE8A9;" FontSize="15" />
+                        </Button>
+                        <Button x:Name="SpeedButton" Style="{StaticResource SubtleButtonStyle}"
+                                Padding="9,7" Content="1×" FontSize="13" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

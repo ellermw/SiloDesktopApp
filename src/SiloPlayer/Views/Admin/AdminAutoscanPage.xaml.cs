@@ -18,6 +18,23 @@ public sealed partial class AdminAutoscanPage : Page
     private readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     public AdminAutoscanViewModel ViewModel { get; } = App.Services.GetRequiredService<AdminAutoscanViewModel>();
     public AdminAutoscanPage() { InitializeComponent(); _refreshTimer.Tick += async (_, _) => { if (ViewModel.SelectedTabIndex == 1 && !ViewModel.IsBusy) await ViewModel.RefreshActivityAsync(); }; }
+    private void ContentScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var width = Math.Max(0, e.NewSize.Width);
+        AdminPageContent.Width = Math.Min(1640, width);
+        var horizontalPadding = width >= 1280 ? 40 : width >= 1024 ? 32 : width >= 640 ? 24 : 16;
+        var verticalPadding = width >= 1024 ? 32 : 16;
+        AdminPageContent.Padding = new Thickness(horizontalPadding, verticalPadding, horizontalPadding, 56);
+        var contentWidth = Math.Max(0, width - (horizontalPadding * 2));
+        var wrapHeader = contentWidth < 820;
+        Grid.SetColumn(PageHeaderCopy, 0);
+        Grid.SetColumnSpan(PageHeaderCopy, wrapHeader ? 2 : 1);
+        Grid.SetColumn(PageHeaderActions, wrapHeader ? 0 : 1);
+        Grid.SetColumnSpan(PageHeaderActions, wrapHeader ? 2 : 1);
+        Grid.SetRow(PageHeaderActions, wrapHeader ? 1 : 0);
+        PageHeaderActions.HorizontalAlignment = wrapHeader ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        PageTitleText.FontSize = contentWidth < 640 ? 30 : 36;
+    }
     private async void Page_Loaded(object sender, RoutedEventArgs e) { await ViewModel.LoadAsync(); _loaded = true; UpdateTabVisuals(); UpdateEnabledBadge(); UpdateActivityViewVisuals(); _refreshTimer.Start(); }
     protected override void OnNavigatedFrom(NavigationEventArgs e) { _refreshTimer.Stop(); ViewModel.Cancel(); base.OnNavigatedFrom(e); }
     private async void Enabled_Toggled(object sender, RoutedEventArgs e) { if (_loaded) { await ViewModel.SaveSettingsAsync(((ToggleSwitch)sender).IsOn); UpdateEnabledBadge(); } }

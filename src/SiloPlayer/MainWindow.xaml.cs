@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Plugins;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
@@ -82,7 +83,7 @@ public sealed partial class MainWindow : Window
         // Server Activity button follows the same admin-gate as AdminButton and
         // stays hidden until ShowMainNavigation() fires post-login.
         NavView.IsPaneVisible = false;
-        MainServerActivityButton.Visibility = Visibility.Collapsed;
+        MainServerActivityButton.SetHostVisibility(false);
 
         // Wire Server Activity "View all" callbacks. Routes navigate through
         // AdminShellPage so the admin sidebar stays present — passing the target
@@ -92,26 +93,26 @@ public sealed partial class MainWindow : Window
         // HideWhenEmpty=false keeps the button visible for admins on every page
         // (not just when something is active). Non-admin users never see it
         // regardless — the role check inside the control handles that.
-        MainServerActivityButton.HideWhenEmpty = false;
+        MainServerActivityButton.HideWhenEmpty = true;
         MainServerActivityButton.OnViewStreams = () =>
         {
             // Hide the main sidebar BEFORE navigating — same as Admin_Click —
             // otherwise the user sees two navigation panes side-by-side
             // (main nav + AdminShellPage's own admin nav).
             NavView.IsPaneVisible = false;
-            MainServerActivityButton.Visibility = Visibility.Collapsed;
+        MainServerActivityButton.SetHostVisibility(false);
             _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminActivityPage));
         };
         MainServerActivityButton.OnViewTasks = () =>
         {
             NavView.IsPaneVisible = false;
-            MainServerActivityButton.Visibility = Visibility.Collapsed;
+        MainServerActivityButton.SetHostVisibility(false);
             _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminTasksPage));
         };
         MainServerActivityButton.OnViewScans = () =>
         {
             NavView.IsPaneVisible = false;
-            MainServerActivityButton.Visibility = Visibility.Collapsed;
+        MainServerActivityButton.SetHostVisibility(false);
             _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminLibrariesPage));
         };
 
@@ -119,6 +120,7 @@ public sealed partial class MainWindow : Window
         _playerService = App.Services.GetRequiredService<PlayerService>();
         _playerService.StateChanged += OnPlayerStateChanged;
         _authService.LoggedOut += OnAuthLoggedOut;
+        _authService.UserChanged += OnAuthUserChanged;
         _authService.ProfileVerificationRequired += OnProfileVerificationRequired;
         _authService.CredentialStoreFailed += OnCredentialStoreFailed;
 
@@ -161,6 +163,7 @@ public sealed partial class MainWindow : Window
     {
         _playerService.StateChanged -= OnPlayerStateChanged;
         _authService.LoggedOut -= OnAuthLoggedOut;
+        _authService.UserChanged -= OnAuthUserChanged;
         _authService.ProfileVerificationRequired -= OnProfileVerificationRequired;
         _authService.CredentialStoreFailed -= OnCredentialStoreFailed;
         _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
@@ -572,124 +575,221 @@ public sealed partial class MainWindow : Window
         _autoLoginAttempted = true;
 
         var settings = _settingsService.Load();
+        HideMainNavigation();
+        LocalLog.AppendLine("auth_startup.txt", $"restore_start | saved_servers={settings.Servers.Count}");
 
-        // If there's exactly one server with saved tokens, try auto-login
-        if (settings.Servers.Count == 1)
+        var resolver = new SavedSessionCredentialResolver(_credentialStore);
+        ServerEntry? server = null;
+        ResolvedSavedSession? savedSession = null;
+        foreach (var candidate in settings.Servers.OrderByDescending(entry => entry.LastUsed))
         {
-            var server = settings.Servers[0];
-            // Clean up any previously-persisted access token (B1 security fix — we no
-            // longer write access tokens to disk; this removes stale ones from old installs).
-            _credentialStore.DeleteCredential(server.Url, "access_token");
-            var refreshToken = _credentialStore.LoadCredential(server.Url, "refresh_token");
-
-            if (!string.IsNullOrEmpty(refreshToken))
+            try
             {
-                // Configure API client base URL
-                _authService.ConfigureServer(server.Url);
-                var restoreGeneration = _authService.SetTokens(
-                    "",
-                    refreshToken,
-                    0,
-                    preserveStoredProfile: true,
-                    expectedServerUrl: server.Url);
-
-                try
-                {
-                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-                    var success = await _authService.TryRefreshAsync(timeout.Token);
-                    if (success)
-                    {
-                        // Save updated tokens
-                        // Restore user info — prefer JWT-parsed role (from TryRefreshAsync),
-                        // only fall back to saved settings if JWT didn't have user info
-                        var user = await _authApi.GetMeAsync(timeout.Token);
-                        if (!_authService.SetCurrentUser(user, restoreGeneration))
-                            return;
-                        settings.LastUsername = user.Username;
-                        settings.LastUserRole = user.Role;
-
-                        var profilesResponse = await _authApi.GetProfilesAsync(timeout.Token);
-                        var selectedProfile = !string.IsNullOrEmpty(settings.LastProfileId)
-                            ? profilesResponse.Profiles.FirstOrDefault(p => p.Id == settings.LastProfileId)
-                            : null;
-
-                        selectedProfile ??= profilesResponse.Profiles.Count == 1 &&
-                            !profilesResponse.Profiles[0].HasPin
-                                ? profilesResponse.Profiles[0]
-                                : null;
-
-                        // Auto-select last profile if available
-                        if (selectedProfile != null)
-                        {
-                            if (selectedProfile.HasPin)
-                            {
-                                var persistedProfile = _authService.LoadPersistedProfileSession(server.Url);
-                                if (persistedProfile is null ||
-                                    !string.Equals(persistedProfile.Value.ProfileId, selectedProfile.Id, StringComparison.Ordinal))
-                                {
-                                    _settingsService.Save(settings);
-                                    HideMainNavigation();
-                                    _navigationService.Navigate<ProfileSelectPage>();
-                                    return;
-                                }
-
-                                _authService.SelectProfile(
-                                    selectedProfile.Id,
-                                    persistedProfile.Value.ProfileToken,
-                                    selectedProfile);
-                                _catalogApi.InvalidateLibraryCache();
-                                try
-                                {
-                                    await _catalogApi.GetLibrariesAsync(timeout.Token);
-                                }
-                                catch (ApiException ex) when (ex.ErrorCode == "profile_unverified")
-                                {
-                                    HideMainNavigation();
-                                    _navigationService.Navigate<ProfileSelectPage>();
-                                    return;
-                                }
-                            }
-                            else
-                            {
-                                _authService.SelectProfile(selectedProfile.Id, profile: selectedProfile);
-                                _catalogApi.InvalidateLibraryCache();
-                            }
-
-                            settings.LastProfileId = selectedProfile.Id;
-                            _settingsService.Save(settings);
-                            await _themeService.SyncFromServerAsync(timeout.Token);
-                            ShowMainNavigation();
-                            NavigateToHome();
-                            return;
-                        }
-
-                        _settingsService.Save(settings);
-                        HideMainNavigation();
-                        _navigationService.Navigate<ProfileSelectPage>();
-                        return;
-                    }
-
-                    _authService.AbandonRestoreAttempt(restoreGeneration);
-                }
-                catch (OperationCanceledException)
-                {
-                    _authService.AbandonRestoreAttempt(restoreGeneration);
-                }
-                catch
-                {
-                    _authService.AbandonRestoreAttempt(restoreGeneration);
-                }
+                savedSession = resolver.Resolve(candidate.Url);
+                if (savedSession == null)
+                    continue;
+                server = candidate;
+                break;
+            }
+            catch (Exception ex)
+            {
+                LocalLog.AppendLine("auth_startup.txt", $"credential_read_failed | type={ex.GetType().Name}");
             }
         }
 
-        // No auto-login possible, show server select
+        if (server == null || savedSession == null)
+        {
+            LocalLog.AppendLine("auth_startup.txt", "restore_unavailable | reason=no_saved_refresh");
+            _navigationService.Navigate<ServerSelectPage>();
+            return;
+        }
+
+        if (!string.Equals(server.Url, savedSession.ServerUrl, StringComparison.Ordinal))
+        {
+            server.Url = savedSession.ServerUrl;
+            _settingsService.Save(settings);
+        }
+        LocalLog.AppendLine(
+            "auth_startup.txt",
+            $"restore_candidate | migrated={savedSession.MigratedLegacyCredential}");
+
+        _authService.ConfigureServer(savedSession.ServerUrl);
+        var restoreGeneration = _authService.SetTokens(
+            "",
+            savedSession.RefreshToken,
+            0,
+            preserveStoredProfile: true,
+            expectedServerUrl: savedSession.ServerUrl);
+
+        var refreshed = false;
+        for (var attempt = 1; attempt <= 2 && !refreshed; attempt++)
+        {
+            try
+            {
+                using var timeout = new CancellationTokenSource(
+                    attempt == 1 ? TimeSpan.FromSeconds(12) : TimeSpan.FromSeconds(8));
+                refreshed = await _authService.TryRefreshAsync(timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                LocalLog.AppendLine("auth_startup.txt", $"refresh_timeout | attempt={attempt}");
+            }
+            catch (Exception ex)
+            {
+                LocalLog.AppendLine("auth_startup.txt", $"refresh_failed | attempt={attempt} | type={ex.GetType().Name}");
+            }
+
+            if (refreshed)
+                break;
+
+            string? persistedRefresh = null;
+            try
+            {
+                persistedRefresh = _credentialStore.LoadCredential(savedSession.ServerUrl, "refresh_token");
+            }
+            catch (Exception ex)
+            {
+                LocalLog.AppendLine("auth_startup.txt", $"credential_recheck_failed | type={ex.GetType().Name}");
+            }
+
+            if (string.IsNullOrWhiteSpace(persistedRefresh))
+            {
+                LocalLog.AppendLine("auth_startup.txt", $"refresh_terminal | attempt={attempt}");
+                break;
+            }
+
+            if (attempt < 2)
+                await Task.Delay(TimeSpan.FromMilliseconds(750));
+        }
+
+        if (refreshed)
+        {
+            for (var attempt = 1; attempt <= 2; attempt++)
+            {
+                try
+                {
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+                    if (await CompleteAutoLoginAsync(server, settings, restoreGeneration, timeout.Token))
+                    {
+                        LocalLog.AppendLine("auth_startup.txt", $"restore_complete | attempt={attempt}");
+                        return;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    LocalLog.AppendLine("auth_startup.txt", $"bootstrap_timeout | attempt={attempt}");
+                }
+                catch (Exception ex)
+                {
+                    LocalLog.AppendLine("auth_startup.txt", $"bootstrap_failed | attempt={attempt} | type={ex.GetType().Name}");
+                }
+
+                if (attempt < 2)
+                    await Task.Delay(TimeSpan.FromMilliseconds(750));
+            }
+        }
+
+        _authService.AbandonRestoreAttempt(restoreGeneration);
+        HideMainNavigation();
+        LocalLog.AppendLine("auth_startup.txt", "restore_abandoned");
         _navigationService.Navigate<ServerSelectPage>();
+    }
+
+    private async Task<bool> CompleteAutoLoginAsync(
+        ServerEntry server,
+        AppSettings settings,
+        long restoreGeneration,
+        CancellationToken cancellationToken)
+    {
+        var user = _authService.CurrentUser ?? await _authApi.GetMeAsync(cancellationToken);
+        if (!_authService.SetCurrentUser(user, restoreGeneration))
+            return false;
+        settings.LastUsername = user.Username;
+        settings.LastUserRole = user.Role;
+
+        var profilesResponse = await _authApi.GetProfilesAsync(cancellationToken);
+        var selectedProfile = !string.IsNullOrEmpty(settings.LastProfileId)
+            ? profilesResponse.Profiles.FirstOrDefault(profile => profile.Id == settings.LastProfileId)
+            : null;
+
+        selectedProfile ??= profilesResponse.Profiles.Count == 1 && !profilesResponse.Profiles[0].HasPin
+            ? profilesResponse.Profiles[0]
+            : null;
+
+        if (selectedProfile == null)
+        {
+            _settingsService.Save(settings);
+            HideMainNavigation();
+            _navigationService.Navigate<ProfileSelectPage>();
+            return true;
+        }
+
+        if (selectedProfile.HasPin)
+        {
+            var persistedProfile = _authService.LoadPersistedProfileSession(server.Url);
+            if (persistedProfile is null ||
+                !string.Equals(persistedProfile.Value.ProfileId, selectedProfile.Id, StringComparison.Ordinal))
+            {
+                _settingsService.Save(settings);
+                HideMainNavigation();
+                _navigationService.Navigate<ProfileSelectPage>();
+                return true;
+            }
+
+            _authService.SelectProfile(
+                selectedProfile.Id,
+                persistedProfile.Value.ProfileToken,
+                selectedProfile);
+            _catalogApi.InvalidateLibraryCache();
+            try
+            {
+                await _catalogApi.GetLibrariesAsync(cancellationToken);
+            }
+            catch (ApiException ex) when (ex.ErrorCode == "profile_unverified")
+            {
+                HideMainNavigation();
+                _navigationService.Navigate<ProfileSelectPage>();
+                return true;
+            }
+        }
+        else
+        {
+            _authService.SelectProfile(selectedProfile.Id, profile: selectedProfile);
+            _catalogApi.InvalidateLibraryCache();
+        }
+
+        settings.LastProfileId = selectedProfile.Id;
+        server.LastUsed = DateTime.UtcNow;
+        _settingsService.Save(settings);
+        try
+        {
+            await _themeService.SyncFromServerAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LocalLog.AppendLine("auth_startup.txt", $"theme_sync_skipped | type={ex.GetType().Name}");
+        }
+        ShowMainNavigation();
+        NavigateToHome();
+        return true;
     }
 
     private bool _navInitialized;
 
+    private sealed record PluginAppNavTag(int InstallationId, string RoutePath, string Label);
+
+    private bool CanExposeAuthenticatedNavigation =>
+        _authService.IsLoggedIn &&
+        !string.IsNullOrWhiteSpace(_authService.SelectedProfileId);
+
     public void ShowMainNavigation()
     {
+        if (!CanExposeAuthenticatedNavigation)
+        {
+            HideMainNavigation();
+            return;
+        }
+
         NavView.IsPaneVisible = true;
 
         // Always update admin button and profile display for current user
@@ -699,9 +799,18 @@ public sealed partial class MainWindow : Window
         // button — whatever decision is made here for AdminButton applies to
         // MainServerActivityButton too. Keeps the two controls in lock-step
         // regardless of login/logout/navigation timing.
-        MainServerActivityButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
+        MainServerActivityButton.SetHostVisibility(isAdmin);
         _ = UpdateProfileDisplayAsync();
         BuildThemeDots();
+        _ = RefreshPluginAppsAsync();
+
+        // Build the hidden native video host only after authentication and
+        // profile selection, at low dispatcher priority. This keeps the first
+        // page paint responsive while removing libmpv cold-start work from the
+        // user's first Play click.
+        DispatcherQueue.TryEnqueue(
+            Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+            () => _playerService.Prewarm());
 
         if (!_navInitialized)
         {
@@ -731,6 +840,76 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void AudiobookAccelerator_Invoked(
+        Microsoft.UI.Xaml.Input.KeyboardAccelerator sender,
+        Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (!_playerService.IsAudiobook || _playerService.State == PlayerState.Idle)
+            return;
+        var focused = Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(Content.XamlRoot);
+        if (focused is TextBox or PasswordBox or ComboBox)
+            return;
+
+        var settings = App.Services.GetRequiredService<SettingsService>().Load();
+        switch (sender.Key)
+        {
+            case Windows.System.VirtualKey.Space:
+            case Windows.System.VirtualKey.K:
+                _playerService.ToggleAudiobookPlayback();
+                break;
+            case Windows.System.VirtualKey.Left:
+                _playerService.SeekTo(Math.Max(0, _playerService.Position - settings.AudiobookSkipBackSeconds));
+                break;
+            case Windows.System.VirtualKey.Right:
+                _playerService.SeekTo(Math.Min(_playerService.Duration, _playerService.Position + settings.AudiobookSkipForwardSeconds));
+                break;
+            case Windows.System.VirtualKey.Up:
+                SetAudiobookVolume(Math.Min(100, _playerService.Volume + 5));
+                break;
+            case Windows.System.VirtualKey.Down:
+                SetAudiobookVolume(Math.Max(0, _playerService.Volume - 5));
+                break;
+            case Windows.System.VirtualKey.M:
+                if (_playerService.Mpv != null)
+                {
+                    _playerService.IsMuted = !_playerService.Mpv.GetMute();
+                    _playerService.Mpv.SetMute(_playerService.IsMuted);
+                    _playerService.SaveVolumeState();
+                }
+                break;
+            case Windows.System.VirtualKey.N:
+                _playerService.SeekToNextAudiobookChapter();
+                break;
+            case Windows.System.VirtualKey.P:
+                _playerService.SeekToPreviousAudiobookChapter();
+                break;
+            case Windows.System.VirtualKey.E:
+                if (_playerService.State == PlayerState.Minimized) _playerService.Expand();
+                else _playerService.Minimize();
+                break;
+            case Windows.System.VirtualKey.Escape:
+                if (_playerService.State == PlayerState.Expanded) _playerService.Minimize();
+                else return;
+                break;
+            default:
+                return;
+        }
+        args.Handled = true;
+    }
+
+    private void SetAudiobookVolume(double volume)
+    {
+        if (_playerService.Mpv == null) return;
+        _playerService.Volume = volume;
+        _playerService.Mpv.SetVolume(volume);
+        if (volume > 0 && _playerService.IsMuted)
+        {
+            _playerService.IsMuted = false;
+            _playerService.Mpv.SetMute(false);
+        }
+        _playerService.SaveVolumeState();
+    }
+
     private void OnNavigated_ApplyAccessibility(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
@@ -748,7 +927,7 @@ public sealed partial class MainWindow : Window
         if (e.SourcePageType != typeof(Views.Admin.AdminShellPage)) return;
 
         NavView.IsPaneVisible = false;
-        MainServerActivityButton.Visibility = Visibility.Collapsed;
+        MainServerActivityButton.SetHostVisibility(false);
     }
 
     private Task UpdateProfileDisplayAsync()
@@ -789,19 +968,27 @@ public sealed partial class MainWindow : Window
 
     public void HideMainNavigation()
     {
+        NavView.IsPaneOpen = false;
         NavView.IsPaneVisible = false;
+        RemoveDynamicLibraryNavItems();
+        BuildPluginApps([]);
+        _sidebarPins = [];
         // Keep the Server Activity button in sync with the rest of the shell —
         // while the nav is hidden (login / profile select / setup), no admin
         // chrome should be visible.
-        MainServerActivityButton.Visibility = Visibility.Collapsed;
+        MainServerActivityButton.SetHostVisibility(false);
     }
 
     public void RestoreMainPane()
     {
+        if (!CanExposeAuthenticatedNavigation)
+        {
+            HideMainNavigation();
+            return;
+        }
+
         NavView.IsPaneVisible = true;
-        MainServerActivityButton.Visibility = AuthorizationPolicy.IsActingAdmin(_authService)
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        MainServerActivityButton.SetHostVisibility(AuthorizationPolicy.IsActingAdmin(_authService));
     }
 
     private void OnPlayerStateChanged(PlayerState state)
@@ -824,9 +1011,12 @@ public sealed partial class MainWindow : Window
             case PlayerState.Idle:
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
                 PlayerOverlayControl.Deactivate();
+                AudiobookNowListeningControl.Visibility = Visibility.Collapsed;
+                AudiobookNowListeningControl.Deactivate();
                 MiniPlayerBarControl.Visibility = Visibility.Collapsed;
                 MiniPlayerBarControl.Deactivate();
-                if (_navInitialized) NavView.IsPaneVisible = true;
+                MiniPlayerBarControl.ResetSleepTimer();
+                NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
                 NavView.Margin = new Thickness(0);
                 LogState($"  -> Idle: NavView.IsPaneVisible={NavView.IsPaneVisible} _navInitialized={_navInitialized}");
                 break;
@@ -837,25 +1027,39 @@ public sealed partial class MainWindow : Window
                 MiniPlayerBarControl.Visibility = Visibility.Collapsed;
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
                 PlayerOverlayControl.Deactivate();
+                if (_playerService.IsAudiobook)
+                {
+                    AudiobookNowListeningControl.Visibility = Visibility.Visible;
+                    AudiobookNowListeningControl.Activate();
+                }
+                else
+                {
+                    AudiobookNowListeningControl.Visibility = Visibility.Collapsed;
+                    AudiobookNowListeningControl.Deactivate();
+                }
                 // Do NOT hide NavView — the popup window covers it.
                 // Hiding it caused the sidebar to disappear and not come back.
                 LogState($"  -> Expanded/Fullscreen: NavView untouched");
                 break;
 
             case PlayerState.PictureInPicture:
+                AudiobookNowListeningControl.Visibility = Visibility.Collapsed;
+                AudiobookNowListeningControl.Deactivate();
                 PlayerOverlayControl.Deactivate();
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
                 MiniPlayerBarControl.Deactivate();
                 MiniPlayerBarControl.Visibility = Visibility.Collapsed;
-                if (_navInitialized) NavView.IsPaneVisible = true;
+                NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
                 NavView.Margin = new Thickness(0);
                 break;
 
             case PlayerState.Minimized:
+                AudiobookNowListeningControl.Visibility = Visibility.Collapsed;
+                AudiobookNowListeningControl.Deactivate();
                 PlayerOverlayControl.Deactivate();
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
-                if (_navInitialized) NavView.IsPaneVisible = true;
-                NavView.Margin = new Thickness(0, 0, 0, 132);
+                NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
+                NavView.Margin = new Thickness(0, 0, 0, _playerService.IsAudiobook ? 108 : 132);
                 MiniPlayerBarControl.Visibility = Visibility.Visible;
                 MiniPlayerBarControl.Activate();
                 break;
@@ -938,6 +1142,9 @@ public sealed partial class MainWindow : Window
             NavView.MenuItems.RemoveAt(removeStart);
         }
 
+        if (!CanExposeAuthenticatedNavigation)
+            return;
+
         // Filter out hidden libraries
         var appSettings = _settingsService.Load();
         var hiddenIds = new HashSet<int>(appSettings.HiddenLibraryIds);
@@ -983,6 +1190,20 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void RemoveDynamicLibraryNavItems()
+    {
+        var headerIndex = NavView.MenuItems.IndexOf(LibrariesHeader);
+        if (headerIndex < 0)
+            return;
+
+        var removeIndex = headerIndex + 1;
+        while (removeIndex < NavView.MenuItems.Count &&
+               NavView.MenuItems[removeIndex] is not NavigationViewItemHeader)
+        {
+            NavView.MenuItems.RemoveAt(removeIndex);
+        }
+    }
+
     // ===== Sidebar pins (webui parity: sidebar_pins user setting) =====
 
     private sealed class SidebarPinRow
@@ -1008,6 +1229,83 @@ public sealed partial class MainWindow : Window
             && pins.Any(pin =>
                 string.Equals(pin.Type, pinType, StringComparison.OrdinalIgnoreCase)
              && string.Equals(pin.Id, pinId, StringComparison.Ordinal));
+    }
+
+    private async Task RefreshPluginAppsAsync()
+    {
+        if (!CanExposeAuthenticatedNavigation)
+        {
+            BuildPluginApps([]);
+            return;
+        }
+
+        try
+        {
+            var response = await _settingsApi.GetPluginSettingsListAsync();
+            DispatcherQueue.TryEnqueue(() => BuildPluginApps(response.Installations));
+        }
+        catch
+        {
+            DispatcherQueue.TryEnqueue(() => BuildPluginApps([]));
+        }
+    }
+
+    private void BuildPluginApps(IReadOnlyList<PluginSettingsSummary> installations)
+    {
+        var headerIndex = NavView.MenuItems.IndexOf(AppsHeader);
+        if (headerIndex < 0) return;
+        while (NavView.MenuItems.Count > headerIndex + 1)
+            NavView.MenuItems.RemoveAt(headerIndex + 1);
+
+        if (!CanExposeAuthenticatedNavigation)
+        {
+            AppsHeader.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var links = installations
+            .SelectMany(installation => installation.Routes
+                .Where(route => route.Navigable &&
+                    route.NavigationKind.Equals("user", StringComparison.OrdinalIgnoreCase))
+                .Select(route => new
+                {
+                    Installation = installation,
+                    Route = route,
+                    Category = installation.Category?.Split('/')[0].Trim(),
+                }))
+            .ToList();
+        AppsHeader.Visibility = links.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (links.Count == 0) return;
+
+        var distinctCategories = links
+            .Select(link => string.IsNullOrWhiteSpace(link.Category) ? "Other" : link.Category!)
+            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        var grouped = distinctCategories.Count >= 2;
+        var insertIndex = headerIndex + 1;
+        var orderedGroups = links
+            .GroupBy(link => string.IsNullOrWhiteSpace(link.Category) ? "Other" : link.Category!,
+                StringComparer.CurrentCultureIgnoreCase)
+            .OrderBy(group => group.Key.Equals("Other", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ThenBy(group => group.Key, StringComparer.CurrentCultureIgnoreCase);
+
+        foreach (var group in orderedGroups)
+        {
+            if (grouped)
+                NavView.MenuItems.Insert(insertIndex++, new NavigationViewItemHeader { Content = group.Key.ToUpperInvariant() });
+            foreach (var link in group)
+            {
+                var label = string.IsNullOrWhiteSpace(link.Route.NavigationLabel)
+                    ? link.Installation.PluginId
+                    : link.Route.NavigationLabel;
+                NavView.MenuItems.Insert(insertIndex++, new NavigationViewItem
+                {
+                    Content = label,
+                    Tag = new PluginAppNavTag(link.Installation.Id, link.Route.Path, label),
+                    Icon = new FontIcon { Glyph = "\uEA86" },
+                });
+            }
+        }
     }
 
     public IReadOnlyList<(string Id, string Label)> GetSidebarPins(int libraryId, string pinType)
@@ -1070,6 +1368,13 @@ public sealed partial class MainWindow : Window
     /// </summary>
     public async Task RefreshSidebarPinsAsync()
     {
+        if (!CanExposeAuthenticatedNavigation)
+        {
+            _sidebarPins = [];
+            UpdateLibraryNavItems();
+            return;
+        }
+
         try
         {
             var settingsApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.SettingsApi>();
@@ -1080,6 +1385,8 @@ public sealed partial class MainWindow : Window
         {
             _sidebarPins = [];
         }
+        if (!CanExposeAuthenticatedNavigation)
+            _sidebarPins = [];
         UpdateLibraryNavItems();
     }
 
@@ -1216,7 +1523,7 @@ public sealed partial class MainWindow : Window
     private void Admin_Click(object sender, RoutedEventArgs e)
     {
         NavView.IsPaneVisible = false;
-        MainServerActivityButton.Visibility = Visibility.Collapsed;
+        MainServerActivityButton.SetHostVisibility(false);
         _navigationService.Navigate<Views.Admin.AdminShellPage>();
     }
 
@@ -1302,6 +1609,14 @@ public sealed partial class MainWindow : Window
                 });
             }
         }
+        else if (args.InvokedItemContainer is NavigationViewItem pluginItem &&
+                 pluginItem.Tag is PluginAppNavTag pluginTag)
+        {
+            _navigationService.Navigate<PluginRoutePage>(new PluginRoutePage.NavigationArgs(
+                pluginTag.InstallationId,
+                pluginTag.RoutePath,
+                pluginTag.Label));
+        }
     }
 
     private void SwitchProfile_Click(object sender, RoutedEventArgs e)
@@ -1379,6 +1694,24 @@ public sealed partial class MainWindow : Window
 
     // ===== Impersonation =====
 
+    private void OnAuthUserChanged()
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var user = _authService.CurrentUser;
+            if (user?.Impersonation?.Active == true)
+            {
+                ShowImpersonationBanner(
+                    user.Username,
+                    user.Impersonation.ImpersonatorUsername);
+            }
+            else
+            {
+                HideImpersonationBanner();
+            }
+        });
+    }
+
     public void ShowImpersonationBanner(string username, string impersonatorUsername = "")
     {
         _viewModel.IsImpersonating = true;
@@ -1398,8 +1731,42 @@ public sealed partial class MainWindow : Window
 
     private async void ImpersonationBanner_EndRequested(object? sender, EventArgs e)
     {
-        // End impersonation: restore original admin tokens
-        // For now, the simplest approach is to log out and require re-login
-        await _authService.LogoutAsync();
+        ImpersonationBannerControl.IsEnding = true;
+        try
+        {
+            // Stop user-scoped playback before replacing its authentication context.
+            await _playerService.CloseAsync();
+            var returnPath = await _authService.EndImpersonationAsync();
+            HideImpersonationBanner();
+
+            NavView.IsPaneVisible = false;
+        MainServerActivityButton.SetHostVisibility(false);
+
+            const string userPrefix = "/admin/users/";
+            if (returnPath.StartsWith(userPrefix, StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(returnPath[userPrefix.Length..].Trim('/'), out var userId))
+            {
+                _navigationService.Navigate<Views.Admin.AdminShellPage>(
+                    new Views.Admin.AdminShellNavigation(
+                        typeof(Views.Admin.AdminUserDetailPage),
+                        userId));
+            }
+            else
+            {
+                _navigationService.Navigate<Views.Admin.AdminShellPage>(
+                    typeof(Views.Admin.AdminUsersPage));
+            }
+
+            App.Services.GetRequiredService<ToastService>()
+                .Success("Administrator session restored.");
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<ToastService>().Error(ex.Message);
+        }
+        finally
+        {
+            ImpersonationBannerControl.IsEnding = false;
+        }
     }
 }

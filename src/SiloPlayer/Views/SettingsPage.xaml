@@ -57,7 +57,7 @@
     </Page.Resources>
 
     <ScrollViewer IsScrollInertiaEnabled="True">
-        <StackPanel MaxWidth="1424" Margin="48,24,48,48">
+        <StackPanel x:Name="SettingsPageShell" MaxWidth="1424" Margin="48,24,48,48">
 
             <!-- The WebUI keeps the back action floating above a wide page header. -->
             <Button Style="{StaticResource GhostButtonStyle}"
@@ -68,18 +68,22 @@
             </Button>
 
             <!-- ===== Header ===== -->
-            <Grid Margin="0,40,0,0" ColumnSpacing="32">
+            <Grid x:Name="SettingsHeaderGrid" Margin="0,40,0,0" ColumnSpacing="32" RowSpacing="20">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
                 <StackPanel Spacing="12">
                     <TextBlock Text="Settings" FontSize="48" FontWeight="Bold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock Text="Manage your playback preferences, libraries, and display options."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" Width="384" VerticalAlignment="Bottom" Spacing="8">
+                <StackPanel x:Name="SettingsSearchPanel" Grid.Column="1" Width="384" VerticalAlignment="Bottom" Spacing="8">
                     <TextBox x:Name="SettingsSearchBox" PlaceholderText="Search settings"
                              Height="40" CornerRadius="12" TextChanged="SettingsSearchBox_TextChanged"
                              AutomationProperties.Name="Search settings">
@@ -115,15 +119,21 @@
 
             <!-- ===== Settings Navigation: Two-column layout (sidebar + content) ===== -->
             <!-- Webui: SettingsLayout.tsx — grouped sidebar (220px) on desktop -->
-            <Grid Margin="0,40,0,0">
+            <Grid x:Name="SettingsLayoutGrid" Margin="0,40,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="220" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
                 <!-- Left sidebar navigation (grouped) -->
-                <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="0,0,12,0">
-                    <StackPanel Spacing="20">
+                <ScrollViewer x:Name="SettingsNavigationScroller" Grid.Column="0"
+                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                              Padding="0,0,12,0">
+                    <StackPanel x:Name="SettingsNavigationGroups" Spacing="20">
                         <!-- Playback group -->
                         <StackPanel x:Name="PlaybackNavGroup" Spacing="2">
                             <TextBlock Text="PLAYBACK" FontSize="10" FontWeight="SemiBold"
@@ -265,7 +275,8 @@
 
                 <!-- Right column: all content panels stack here; only the
                      active one is Visible (Tab_Click toggles visibility). -->
-                <StackPanel Grid.Column="1" Padding="40,0,0,0">
+                <StackPanel x:Name="SettingsContentPanel" Grid.Column="1" Padding="40,0,0,0"
+                            MaxWidth="808" HorizontalAlignment="Stretch">
 
             <!-- ===================================================================== -->
             <!-- ===== Appearance Panel ===== -->
@@ -401,22 +412,7 @@
                             </StackPanel>
                             <ComboBox x:Name="SpokenLanguageComboBox" Grid.Column="1" Width="220"
                                       VerticalAlignment="Center"
-                                      SelectionChanged="SpokenLanguageComboBox_SelectionChanged">
-                                <ComboBoxItem Content="No preference" Tag="" />
-                                <ComboBoxItem Content="Original" Tag="original" />
-                                <ComboBoxItem Content="English" Tag="en" />
-                                <ComboBoxItem Content="Spanish" Tag="es" />
-                                <ComboBoxItem Content="French" Tag="fr" />
-                                <ComboBoxItem Content="German" Tag="de" />
-                                <ComboBoxItem Content="Italian" Tag="it" />
-                                <ComboBoxItem Content="Portuguese" Tag="pt" />
-                                <ComboBoxItem Content="Japanese" Tag="ja" />
-                                <ComboBoxItem Content="Korean" Tag="ko" />
-                                <ComboBoxItem Content="Chinese" Tag="zh" />
-                                <ComboBoxItem Content="Russian" Tag="ru" />
-                                <ComboBoxItem Content="Arabic" Tag="ar" />
-                                <ComboBoxItem Content="Hindi" Tag="hi" />
-                            </ComboBox>
+                                      SelectionChanged="SpokenLanguageComboBox_SelectionChanged" />
                         </Grid>
 
                         <Border Style="{StaticResource SettingsSeparator}" />
@@ -428,10 +424,7 @@
                                 <TextBlock Text="Metadata language" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
                                 <TextBlock Text="Show titles and descriptions in this language when available. Descriptions can be translated automatically when the server has AI translation enabled." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                             </StackPanel>
-                            <ComboBox x:Name="MetadataLanguageComboBox" Grid.Column="1" Width="220" VerticalAlignment="Center" SelectionChanged="MetadataLanguageComboBox_SelectionChanged">
-                                <ComboBoxItem Content="Library default" Tag="" />
-                                <ComboBoxItem Content="English" Tag="en" /><ComboBoxItem Content="Spanish" Tag="es" /><ComboBoxItem Content="French" Tag="fr" /><ComboBoxItem Content="German" Tag="de" /><ComboBoxItem Content="Italian" Tag="it" /><ComboBoxItem Content="Portuguese" Tag="pt" /><ComboBoxItem Content="Japanese" Tag="ja" /><ComboBoxItem Content="Korean" Tag="ko" /><ComboBoxItem Content="Chinese" Tag="zh" /><ComboBoxItem Content="Russian" Tag="ru" /><ComboBoxItem Content="Arabic" Tag="ar" /><ComboBoxItem Content="Hindi" Tag="hi" />
-                            </ComboBox>
+                            <ComboBox x:Name="MetadataLanguageComboBox" Grid.Column="1" Width="220" VerticalAlignment="Center" SelectionChanged="MetadataLanguageComboBox_SelectionChanged" />
                         </Grid>
 
                         <Border Style="{StaticResource SettingsSeparator}" />
@@ -661,9 +654,7 @@
                                 <TextBlock Text="Subtitle language" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
                                 <TextBlock Text="Pick a subtitle language or leave subtitles off by default." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
                             </StackPanel>
-                            <ComboBox x:Name="SubtitleLanguageComboBox" Grid.Column="1" Width="220" SelectionChanged="SubtitleLanguageComboBox_SelectionChanged">
-                                <ComboBoxItem Content="None" Tag="" /><ComboBoxItem Content="English" Tag="en" /><ComboBoxItem Content="Spanish" Tag="es" /><ComboBoxItem Content="French" Tag="fr" /><ComboBoxItem Content="German" Tag="de" /><ComboBoxItem Content="Italian" Tag="it" /><ComboBoxItem Content="Portuguese" Tag="pt" /><ComboBoxItem Content="Japanese" Tag="ja" /><ComboBoxItem Content="Korean" Tag="ko" /><ComboBoxItem Content="Chinese" Tag="zh" /><ComboBoxItem Content="Russian" Tag="ru" /><ComboBoxItem Content="Arabic" Tag="ar" /><ComboBoxItem Content="Hindi" Tag="hi" />
-                            </ComboBox>
+                            <ComboBox x:Name="SubtitleLanguageComboBox" Grid.Column="1" Width="220" SelectionChanged="SubtitleLanguageComboBox_SelectionChanged" />
                         </Grid>
                         <Border Style="{StaticResource SettingsSeparator}" />
                         <Grid>
@@ -1496,29 +1487,76 @@
                 <StackPanel Spacing="4">
                     <TextBlock Text="Webhook Sync" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="Connect Plex, Emby, or Jellyfin servers to sync watch state in real-time via webhooks."
+                    <TextBlock Text="Receive watched, stop, and progress events from Plex, Emby, and Jellyfin."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 </StackPanel>
+
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
+                    <StackPanel Spacing="14">
+                        <StackPanel Spacing="3">
+                            <TextBlock Text="Add a connection" FontSize="16" FontWeight="Medium" />
+                            <TextBlock Text="Create a provider-specific webhook endpoint and choose the default Silo profile."
+                                       FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Provider" FontSize="13" FontWeight="Medium" />
+                            <ComboBox x:Name="WebhookProviderCombo" Width="260" HorizontalAlignment="Left"
+                                      SelectionChanged="WebhookProviderCombo_SelectionChanged">
+                                <ComboBoxItem Content="Plex" Tag="plex" IsSelected="True" />
+                                <ComboBoxItem Content="Emby" Tag="emby" />
+                                <ComboBoxItem Content="Jellyfin" Tag="jellyfin" />
+                            </ComboBox>
+                        </StackPanel>
+                        <StackPanel x:Name="WebhookPlexAuthPanel" Spacing="10">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Plex account" FontSize="13" FontWeight="Medium" />
+                                    <TextBlock x:Name="WebhookPlexAuthStatus" Text="Authorize via plex.tv to discover your servers"
+                                               FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                </StackPanel>
+                                <Button x:Name="WebhookPlexSignInButton" Grid.Column="1" Content="Sign in to Plex"
+                                        Style="{StaticResource AccentButtonStyle}" Click="WebhookPlexSignIn_Click" />
+                            </Grid>
+                            <Grid x:Name="WebhookPlexServerRow" ColumnSpacing="12" Visibility="Collapsed">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="240" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Server" FontSize="13" FontWeight="Medium" />
+                                    <TextBlock Text="The Plex Media Server that will send webhook events."
+                                               FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                </StackPanel>
+                                <ComboBox x:Name="WebhookPlexServerCombo" Grid.Column="1" HorizontalAlignment="Stretch" />
+                            </Grid>
+                        </StackPanel>
+                        <StackPanel x:Name="WebhookManualServerPanel" Spacing="6" Visibility="Collapsed">
+                            <TextBlock Text="Connection name" FontSize="13" FontWeight="Medium" />
+                            <TextBox x:Name="WebhookManualServerName" PlaceholderText="My Emby Server" />
+                        </StackPanel>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="240" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Default profile" FontSize="13" FontWeight="Medium" />
+                                <TextBlock Text="The signed-in external user is linked to this profile when the connection is created."
+                                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ComboBox x:Name="WebhookDefaultProfileCombo" Grid.Column="1" HorizontalAlignment="Stretch"
+                                      PlaceholderText="Choose a profile" />
+                        </Grid>
+                        <Button x:Name="WebhookCreateConnectionButton" Content="Create connection"
+                                HorizontalAlignment="Right" Style="{StaticResource AccentButtonStyle}"
+                                Click="WebhookCreateConnection_Click" />
+                    </StackPanel>
+                </Border>
 
                 <!-- Connections list -->
                 <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
                     <StackPanel Spacing="12">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="3">
                             <TextBlock Text="Connected servers" FontSize="16" FontWeight="Medium"
                                        Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
-                            <Button x:Name="AddConnectionBtn" Grid.Column="1"
-                                    Style="{StaticResource AccentButtonStyle}" FontSize="13"
-                                    Click="AddConnectionBtn_Click">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <FontIcon Glyph="&#xE710;" FontSize="12" />
-                                    <TextBlock Text="Add a connection" />
-                                </StackPanel>
-                            </Button>
-                        </Grid>
+                            <TextBlock Text="Manage webhook endpoints, provider setup instructions, and profile mappings."
+                                       FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
                         <StackPanel x:Name="WebhookConnectionsPanel" Spacing="8" />
                         <TextBlock x:Name="NoConnectionsText"
                                    Text="No webhook connections configured. Add a connection to start syncing watch state."
@@ -1528,43 +1566,81 @@
                     </StackPanel>
                 </Border>
 
-                <Border x:Name="WebhookConnectionDetail" Style="{StaticResource SettingsGroupStyle}" Visibility="Collapsed">
+                <StackPanel x:Name="WebhookConnectionDetail" Spacing="24" Visibility="Collapsed">
+                    <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="16">
                         <Grid>
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock x:Name="WebhookDetailName" FontSize="18" FontWeight="SemiBold" />
                                 <TextBlock x:Name="WebhookDetailHealth" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                                <Button Content="Edit" Style="{StaticResource SecondaryButtonStyle}" Click="WebhookEdit_Click" />
-                                <Button Content="Rotate URL" Style="{StaticResource SecondaryButtonStyle}" Click="WebhookRotate_Click" />
-                                <Button Content="Delete" Style="{StaticResource SecondaryButtonStyle}" Click="WebhookDelete_Click" />
                             </StackPanel>
                         </Grid>
                         <StackPanel Spacing="6">
                             <TextBlock Text="Webhook URL" FontSize="13" FontWeight="Medium" />
                             <Grid ColumnSpacing="8">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <TextBox x:Name="WebhookUrlBox" IsReadOnly="True" FontFamily="Consolas" FontSize="12" />
                                 <Button Grid.Column="1" Content="Copy" Click="WebhookCopyUrl_Click" />
+                                <Button Grid.Column="2" Content="Rotate" Click="WebhookRotate_Click" />
+                                <Button Grid.Column="3" Content="Delete" Click="WebhookDelete_Click" />
                             </Grid>
                         </StackPanel>
-                        <TextBlock Text="Actor routing" FontSize="16" FontWeight="SemiBold" />
-                        <TextBlock Text="Map external server users to Silo profiles." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Connection name" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBox x:Name="WebhookConnectionNameBox" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Spacing="6">
+                                <TextBlock Text="Default profile" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <ComboBox x:Name="WebhookConnectionProfileCombo" HorizontalAlignment="Stretch" />
+                            </StackPanel>
+                        </Grid>
+                        <Button Content="Save connection" HorizontalAlignment="Right" Style="{StaticResource AccentButtonStyle}"
+                                Click="WebhookSaveConnection_Click" />
+                        <TextBlock Text="Profile mappings" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="Route each external user to a Silo profile. Unmapped users are ignored." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                         <StackPanel x:Name="WebhookActorsHost" Spacing="8" />
-                        <Button x:Name="WebhookSaveActorsButton" Content="Save actor routing" HorizontalAlignment="Left"
+                        <Button x:Name="WebhookSaveActorsButton" Content="Save mappings" HorizontalAlignment="Right"
                                 Style="{StaticResource AccentButtonStyle}" Click="WebhookSaveActors_Click" />
+                        <StackPanel x:Name="WebhookSetupInstructionsHost" />
+                    </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="16">
                         <TextBlock Text="Recent deliveries" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="Latest webhook requests for this connection." FontSize="12"
+                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="160" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="WebhookEventSearchBox" PlaceholderText="Search events..."
+                                     TextChanged="WebhookEventFilter_Changed" />
+                            <ComboBox x:Name="WebhookEventOutcomeFilter" Grid.Column="1"
+                                      HorizontalAlignment="Stretch" SelectionChanged="WebhookEventFilter_Changed">
+                                <ComboBoxItem Content="All outcomes" Tag="all" IsSelected="True" />
+                                <ComboBoxItem Content="Applied" Tag="applied" />
+                                <ComboBoxItem Content="Ignored" Tag="ignored" />
+                                <ComboBoxItem Content="Unmatched" Tag="unmatched" />
+                                <ComboBoxItem Content="Skipped" Tag="skipped" />
+                                <ComboBoxItem Content="Rejected" Tag="rejected" />
+                                <ComboBoxItem Content="Error" Tag="error" />
+                            </ComboBox>
+                        </Grid>
                         <StackPanel x:Name="WebhookEventsHost" Spacing="8" />
                         <Grid>
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <Button x:Name="WebhookEventsPrevious" Content="Previous" Click="WebhookEventsPrevious_Click" />
-                            <TextBlock x:Name="WebhookEventsPageLabel" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                            <Button x:Name="WebhookEventsNext" Grid.Column="2" Content="Next" Click="WebhookEventsNext_Click" />
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <Button x:Name="WebhookEventsFirst" Content="First" Click="WebhookEventsFirst_Click" />
+                            <Button x:Name="WebhookEventsPrevious" Grid.Column="1" Content="Previous" Click="WebhookEventsPrevious_Click" />
+                            <TextBlock x:Name="WebhookEventsPageLabel" Grid.Column="2" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <Button x:Name="WebhookEventsNext" Grid.Column="3" Content="Next" Click="WebhookEventsNext_Click" />
+                            <Button x:Name="WebhookEventsLast" Grid.Column="4" Content="Last" Click="WebhookEventsLast_Click" />
                         </Grid>
                     </StackPanel>
-                </Border>
+                    </Border>
+                </StackPanel>
             </StackPanel>
 
             <!-- ===== Watch Providers Panel ===== -->

@@ -52,6 +52,12 @@ public sealed class MpvOscScriptTests
         Assert.Contains("silo-pip-override", script);
         Assert.Contains("silo-seek-back", script);
         Assert.Contains("silo-seek-fwd", script);
+        Assert.Contains("silo-menu-home", script);
+        Assert.Contains("silo-menu-end", script);
+        Assert.Contains("silo-menu-activate", script);
+        Assert.Contains("silo-menu-escape", script);
+        Assert.Contains("move_keyboard_menu_focus", script);
+        Assert.Contains("state.keyboard_menu_index == keyboard_row", script);
         Assert.Contains("silo-vol-up", script);
         Assert.Contains("silo-vol-down", script);
     }
@@ -80,7 +86,16 @@ public sealed class MpvOscScriptTests
         Assert.Contains("osc-set-marker-edit-available", script);
         Assert.Contains("L.btn_marker_edit", script);
         Assert.Contains("draw_marker_tags_icon", script);
-        Assert.Contains("silo-marker-edit", script);
+        Assert.Contains("open_marker_editor", script);
+        Assert.Contains("render_marker_editor_panel", script);
+        Assert.Contains("Drag the timeline handles, or set points to the playhead.", script);
+        Assert.Contains("state.marker_editor_handle_rects", script);
+        Assert.Contains("state.dragging_marker_edge", script);
+        Assert.Contains("state.dragging_marker_panel", script);
+        Assert.Contains("update_marker_panel_drag", script);
+        Assert.Contains("Embedded libmpv sends pointer motion through this script message", script);
+        Assert.Contains("silo-marker-save", script);
+        Assert.Contains("Reset all", script);
     }
 
     [Fact]

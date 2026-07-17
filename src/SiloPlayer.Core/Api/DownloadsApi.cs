@@ -10,13 +10,19 @@ public class DownloadsApi(SiloApiClient client)
     public Task<DownloadsResponse> GetDownloadsAsync(CancellationToken ct = default)
         => client.GetAsync<DownloadsResponse>("/api/v1/downloads", ct);
 
-    public Task DeleteDownloadAsync(int id, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/downloads/{id}", ct);
+    public Task<DownloadCapability> GetCapabilityAsync(CancellationToken ct = default)
+        => client.GetAsync<DownloadCapability>("/api/v1/downloads/capability", ct);
+
+    public Task DeleteDownloadAsync(string id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/downloads/{Uri.EscapeDataString(id)}", ct);
 
     /// <summary>
     /// Returns the download file URL path for the given download ID.
     /// Use this with an HttpClient directly for streaming the binary content,
     /// since SiloApiClient.GetAsync deserializes JSON.
     /// </summary>
-    public static string GetDownloadFilePath(int id) => $"/api/v1/downloads/{id}/file";
+    public static string GetDownloadFilePath(string id) => $"/api/v1/downloads/{Uri.EscapeDataString(id)}/file";
+
+    public static string GetDirectDownloadPath(int fileId)
+        => $"/api/v1/direct-download?file_id={fileId}";
 }

@@ -14,6 +14,17 @@
         <Grid.KeyboardAccelerators>
             <!-- Ctrl+K opens the global search palette (webui parity). -->
             <KeyboardAccelerator Modifiers="Control" Key="K" Invoked="GlobalSearchAccelerator_Invoked" />
+            <KeyboardAccelerator Key="Space" Invoked="AudiobookAccelerator_Invoked" />
+            <KeyboardAccelerator Key="K" Invoked="AudiobookAccelerator_Invoked" />
+            <KeyboardAccelerator Key="Left" Invoked="AudiobookAccelerator_Invoked" />
+            <KeyboardAccelerator Key="Right" Invoked="AudiobookAccelerator_Invoked" />
+            <KeyboardAccelerator Key="Up" Invoked="AudiobookAccelerator_Invoked" />
+            <KeyboardAccelerator Key="Down" Invoked="AudiobookAccelerator_Invoked" />
+            <KeyboardAccelerator Key="M" Invoked="AudiobookAccelerator_Invoked" />
+            <KeyboardAccelerator Key="N" Invoked="AudiobookAccelerator_Invoked" />
+            <KeyboardAccelerator Key="P" Invoked="AudiobookAccelerator_Invoked" />
+            <KeyboardAccelerator Key="E" Invoked="AudiobookAccelerator_Invoked" />
+            <KeyboardAccelerator Key="Escape" Invoked="AudiobookAccelerator_Invoked" />
         </Grid.KeyboardAccelerators>
         <NavigationView
             x:Name="NavView"
@@ -138,6 +149,9 @@
                         <FontIcon Glyph="&#xE896;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
+
+                <!-- Plugin-supplied user navigation is inserted below this header. -->
+                <NavigationViewItemHeader x:Name="AppsHeader" Content="APPS" Visibility="Collapsed" />
             </NavigationView.MenuItems>
 
             <NavigationView.PaneFooter>
@@ -305,6 +319,7 @@
                 <!-- Server Activity button (overlay on top of ContentFrame). -->
                 <controls:ServerActivityButton
                     x:Name="MainServerActivityButton"
+                    HideWhenEmpty="True"
                     Grid.Row="1"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Top"
@@ -338,6 +353,10 @@
         <!-- Layer 3: Full-window player overlay (above nav, initially hidden) -->
         <controls:PlayerOverlay x:Name="PlayerOverlayControl" Visibility="Collapsed"
                                  HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+
+        <controls:AudiobookNowListening x:Name="AudiobookNowListeningControl"
+                                        Visibility="Collapsed" Canvas.ZIndex="55"
+                                        HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
 
         <!-- Layer 3: Mini player bar (bottom-docked, initially hidden) -->
         <controls:MiniPlayerBar x:Name="MiniPlayerBarControl"

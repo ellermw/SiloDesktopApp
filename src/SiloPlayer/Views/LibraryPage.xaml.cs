@@ -203,6 +203,36 @@ public sealed partial class LibraryPage : Page
         };
     }
 
+    private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        // Tailwind breakpoints used by LibraryPage/LibraryHeader in the current
+        // WebUI: px-4, sm:px-6, lg:px-10, xl:px-12.
+        var width = e.NewSize.Width;
+        var horizontalGutter = width >= 1280 ? 48d : width >= 1024 ? 40d : width >= 640 ? 24d : 16d;
+
+        HeaderGrid.Margin = new Thickness(horizontalGutter, 0, horizontalGutter, 0);
+        FilterBar.Margin = new Thickness(horizontalGutter, 8, horizontalGutter, 16);
+        ActiveFiltersBar.Margin = new Thickness(horizontalGutter, 0, horizontalGutter, 12);
+        LibrarySkeletonScroll.Padding = new Thickness(horizontalGutter, 0, horizontalGutter, 24);
+        LibraryViewportHost.Padding = new Thickness(horizontalGutter, 0, horizontalGutter, 24);
+        AudiobookGroupsPanel.Padding = new Thickness(horizontalGutter, 0, horizontalGutter, 24);
+
+        var compact = width < 640;
+        LibraryEyebrow.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        if (compact)
+        {
+            Grid.SetColumn(TabBarBorder, 0);
+            Grid.SetColumnSpan(TabBarBorder, 2);
+            TabBarBorder.HorizontalAlignment = HorizontalAlignment.Center;
+        }
+        else
+        {
+            Grid.SetColumn(TabBarBorder, 1);
+            Grid.SetColumnSpan(TabBarBorder, 1);
+            TabBarBorder.HorizontalAlignment = HorizontalAlignment.Right;
+        }
+    }
+
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
@@ -1903,10 +1933,16 @@ public sealed partial class LibraryPage : Page
     {
         _overlayMode = overlay;
 
+        // The current WebUI hero bleeds behind its marquee header. Span the
+        // recommendations scroller from row zero only while a hero is present.
+        Grid.SetRow(RecommendedPanel, overlay ? 0 : 3);
+        Grid.SetRowSpan(RecommendedPanel, overlay ? 4 : 1);
+
         if (overlay)
         {
             // Transparent background — header floats over hero
             HeaderGrid.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            ApplyHeaderPalette(overlay: true, glass: false);
 
             // Attach scroll listener for glass transition
             if (!_scrollListenerAttached)
@@ -1919,6 +1955,7 @@ public sealed partial class LibraryPage : Page
         {
             // Solid background — normal header
             HeaderGrid.Background = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AppBackgroundBrush"];
+            ApplyHeaderPalette(overlay: false, glass: false);
         }
     }
 
@@ -1933,13 +1970,51 @@ public sealed partial class LibraryPage : Page
         {
             // Glass mode: semi-transparent background
             HeaderGrid.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                Windows.UI.Color.FromArgb(0xDD, 0x10, 0x17, 0x22)); // AppBackgroundColor at ~87% opacity
+                Windows.UI.Color.FromArgb(0xB8, 0x10, 0x17, 0x22));
+            ApplyHeaderPalette(overlay: true, glass: true);
         }
         else
         {
             // Transparent mode: floating over hero
             HeaderGrid.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            ApplyHeaderPalette(overlay: true, glass: false);
         }
+    }
+
+    private void ApplyHeaderPalette(bool overlay, bool glass)
+    {
+        var secondary = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
+        var tertiary = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"];
+        var primary = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
+        var surface = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"];
+        var surfaceHover = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceHoverBrush"];
+        var border = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BorderBrush"];
+
+        static Microsoft.UI.Xaml.Media.SolidColorBrush Color(byte alpha, byte red, byte green, byte blue) =>
+            new(Windows.UI.Color.FromArgb(alpha, red, green, blue));
+
+        LibraryEyebrowPrefix.Foreground = overlay ? Color(0xB3, 0xFF, 0xFF, 0xFF) : tertiary;
+        LibraryEyebrowDivider.Foreground = overlay ? Color(0x73, 0xFF, 0xFF, 0xFF) : tertiary;
+        LibraryEyebrowName.Foreground = overlay ? Color(0xEB, 0xFF, 0xFF, 0xFF) : secondary;
+        TabBarBorder.Background = overlay ? Color(0x14, 0xFF, 0xFF, 0xFF) : surface;
+        TabBarBorder.BorderBrush = overlay ? Color(0x1A, 0xFF, 0xFF, 0xFF) : border;
+        HeaderDivider.Opacity = overlay && !glass ? 0 : 0.55;
+
+        var tabs = new[] { RecommendedTab, LibraryTab, CollectionsTab };
+        foreach (var tab in tabs)
+        {
+            tab.Foreground = overlay ? Color(0xAD, 0xFF, 0xFF, 0xFF) : secondary;
+            tab.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        }
+
+        var activeTab = _currentTab switch
+        {
+            "Library" => LibraryTab,
+            "Collections" => CollectionsTab,
+            _ => RecommendedTab,
+        };
+        activeTab.Foreground = overlay ? Color(0xFF, 0x0A, 0x0A, 0x0B) : primary;
+        activeTab.Background = overlay ? Color(0xEB, 0xFF, 0xFF, 0xFF) : surfaceHover;
     }
 
     private async void Tab_Click(object sender, RoutedEventArgs e)
@@ -2038,6 +2113,7 @@ public sealed partial class LibraryPage : Page
         RecommendedHeroCarousel.Visibility = Visibility.Collapsed;
         RecommendedNowListeningHero.Visibility = Visibility.Collapsed;
         RecommendedHeroSkeleton.Visibility = Visibility.Collapsed;
+        UpdateHeaderOverlayMode(false);
 
         // Clear any previous section rows (keep loading ring, error text, hero carousel)
         for (int i = RecommendedSectionsPanel.Children.Count - 1; i >= 0; i--)

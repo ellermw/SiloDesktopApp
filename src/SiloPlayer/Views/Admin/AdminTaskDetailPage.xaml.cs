@@ -19,6 +19,7 @@ public sealed partial class AdminTaskDetailPage : Page
     private EventChannelClient? _eventChannel;
     private IDisposable? _eventSubscription;
     private DateTime _lastEventRefresh = DateTime.MinValue;
+    private int _layoutBand = -1;
 
     public AdminTaskDetailPage()
     {
@@ -28,11 +29,13 @@ public sealed partial class AdminTaskDetailPage : Page
         BackButton.Click   += (_, _) => GoBack();
         RetryButton.Click  += async (_, _) => await LoadAsync();
         EditScheduleButton.Click += async (_, _) => await OpenEditScheduleDialogAsync();
+        SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        ApplyResponsiveLayout();
 
         // Accept either a raw key string, or "Task: <key>" from AdminTasksPage
         _taskKey = e.Parameter switch
@@ -51,6 +54,24 @@ public sealed partial class AdminTaskDetailPage : Page
             _eventSubscription = _eventChannel.Subscribe("tasks");
         }
         catch { }
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        var band = ActualWidth < 640 ? 0 : ActualWidth < 1024 ? 1 : 2;
+        var side = band == 0 ? 16 : band == 1 ? 24 : 40;
+        TaskDetailPageShell.Padding = new Thickness(side, band == 0 ? 16 : 24, side, 40);
+
+        var compact = ActualWidth < 720;
+        Grid.SetColumn(ActionButton, compact ? 0 : 1);
+        Grid.SetRow(ActionButton, compact ? 1 : 0);
+        ActionButton.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        TitleBadgeRow.Orientation = compact ? Orientation.Vertical : Orientation.Horizontal;
+        TitleBadgeRow.HorizontalAlignment = HorizontalAlignment.Left;
+
+        if (_layoutBand == band) return;
+        _layoutBand = band;
+        if (ViewModel.TaskDetail is not null) RebuildPage();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -140,7 +161,7 @@ public sealed partial class AdminTaskDetailPage : Page
         TitleBadgeRow.Children.Add(new TextBlock
         {
             Text       = task.Name,
-            FontSize   = 48,
+            FontSize   = ActualWidth < 640 ? 32 : 48,
             FontWeight = FontWeights.Bold,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center
@@ -210,8 +231,8 @@ public sealed partial class AdminTaskDetailPage : Page
         if (!isActive) return;
 
         // Web: Math.max(task.progress, 2)% where task.progress is 0-100
-        // Our model: Progress is 0.0-1.0, so multiply by 100
-        double pct = Math.Max(task.Progress * 100, 2);
+        // The task API reports percentage points in the same 0-100 scale used by the WebUI.
+        double pct = Math.Clamp(Math.Max(task.Progress, 2), 0, 100);
         TaskProgressBar.Value = pct;
 
         // Cancelling → yellow-500, else accent (primary)
@@ -238,16 +259,18 @@ public sealed partial class AdminTaskDetailPage : Page
         MetricsSection.Visibility = Visibility.Visible;
         MetricsCardsPanel.Children.Clear();
 
-        // Top row: 5 metric cards in a grid
-        var topGrid = new Grid { ColumnSpacing = 12 };
-        for (int i = 0; i < 5; i++)
+        var metricColumns = ActualWidth < 640 ? 1 : ActualWidth < 1024 ? 2 : 5;
+        var topGrid = new Grid { ColumnSpacing = 12, RowSpacing = 12 };
+        for (int i = 0; i < metricColumns; i++)
             topGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        for (int i = 0; i < (int)Math.Ceiling(5d / metricColumns); i++)
+            topGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        topGrid.Children.Add(BuildMetricCard("QUEUE", metrics.Total.ToString("N0"), 0));
-        topGrid.Children.Add(BuildMetricCard("DUE NOW", metrics.Due.ToString("N0"), 1));
-        topGrid.Children.Add(BuildMetricCard("LEASED", metrics.Leased.ToString("N0"), 2));
-        topGrid.Children.Add(BuildMetricCard("OLDEST DUE", FormatOptionalDateTime(metrics.OldestDueAt), 3, small: true));
-        topGrid.Children.Add(BuildMetricCard("OLDEST LEASE", FormatOptionalDateTime(metrics.OldestLeaseExpiresAt), 4, small: true));
+        topGrid.Children.Add(BuildMetricCard("QUEUE", metrics.Total.ToString("N0"), 0, metricColumns));
+        topGrid.Children.Add(BuildMetricCard("DUE NOW", metrics.Due.ToString("N0"), 1, metricColumns));
+        topGrid.Children.Add(BuildMetricCard("LEASED", metrics.Leased.ToString("N0"), 2, metricColumns));
+        topGrid.Children.Add(BuildMetricCard("OLDEST DUE", FormatOptionalDateTime(metrics.OldestDueAt), 3, metricColumns, small: true));
+        topGrid.Children.Add(BuildMetricCard("OLDEST LEASE", FormatOptionalDateTime(metrics.OldestLeaseExpiresAt), 4, metricColumns, small: true));
         MetricsCardsPanel.Children.Add(topGrid);
 
         // Reason breakdown badges
@@ -257,7 +280,7 @@ public sealed partial class AdminTaskDetailPage : Page
             Text = "Reason breakdown", FontSize = 13, FontWeight = FontWeights.Medium,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
         });
-        var badgesWrap = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var badgesWrap = new StackPanel { Orientation = ActualWidth < 640 ? Orientation.Vertical : Orientation.Horizontal, Spacing = 6 };
         var reasons = metrics.ReasonCounts.Where(r => r.Count > 0).ToList();
         if (reasons.Count == 0)
         {
@@ -372,7 +395,7 @@ public sealed partial class AdminTaskDetailPage : Page
         }
     }
 
-    private static FrameworkElement BuildMetricCard(string label, string value, int column, bool small = false)
+    private static FrameworkElement BuildMetricCard(string label, string value, int index, int columnCount, bool small = false)
     {
         var card = new Border
         {
@@ -393,7 +416,8 @@ public sealed partial class AdminTaskDetailPage : Page
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
         });
         card.Child = inner;
-        Grid.SetColumn(card, column);
+        Grid.SetColumn(card, index % columnCount);
+        Grid.SetRow(card, index / columnCount);
         return card;
     }
 

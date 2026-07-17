@@ -22,9 +22,26 @@ public class AdminLibrariesRegressionSourceTests
             RepoRoot, "src", "SiloPlayer", "MainWindow.xaml.cs"));
         var adminClick = source[source.IndexOf("private void Admin_Click", StringComparison.Ordinal)..];
 
-        Assert.Contains("MainServerActivityButton.Visibility = Visibility.Collapsed", adminClick, StringComparison.Ordinal);
+        Assert.Contains("MainServerActivityButton.SetHostVisibility(false)", adminClick, StringComparison.Ordinal);
         Assert.Contains("OnNavigated_SynchronizeShellChrome", source, StringComparison.Ordinal);
         Assert.Contains("e.SourcePageType != typeof(Views.Admin.AdminShellPage)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ActivityTriggerUsesOneHostGateAndCurrentWebUiIdleBehavior()
+    {
+        var windowMarkup = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "MainWindow.xaml"));
+        var controlMarkup = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "Controls", "ServerActivityButton.xaml"));
+        var control = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "Controls", "ServerActivityButton.xaml.cs"));
+
+        Assert.Contains("HideWhenEmpty=\"True\"", windowMarkup, StringComparison.Ordinal);
+        Assert.Contains("SetHostVisibility(bool allowed)", control, StringComparison.Ordinal);
+        Assert.Contains("_hostVisibilityAllowed && (!HideWhenEmpty || total > 0)", control, StringComparison.Ordinal);
+        Assert.Contains("Width=\"36\"", controlMarkup, StringComparison.Ordinal);
+        Assert.Contains("Margin=\"0,-2,-2,0\"", controlMarkup, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -119,5 +136,36 @@ public class AdminLibrariesRegressionSourceTests
         Assert.Contains("if (SkippedContent.Visibility != Visibility.Visible)", page, StringComparison.Ordinal);
         Assert.Contains("private const int SKIPPED_ROOTS_PAGE_SIZE = 10;", page, StringComparison.Ordinal);
         Assert.Contains(".Take(SKIPPED_ROOTS_PAGE_SIZE)", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LibrariesCarriesCurrentUnreachableRootSafetyContract()
+    {
+        var page = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminLibrariesPage.xaml.cs"));
+        var model = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer.Core", "Models", "Catalog", "Library.cs"));
+
+        Assert.Contains("library.ScanWarningCode is \"empty_root\" or \"dead_root\"", page, StringComparison.Ordinal);
+        Assert.Contains("Root unreachable", page, StringComparison.Ordinal);
+        Assert.Contains("Check Mount", page, StringComparison.Ordinal);
+        Assert.Contains("Confirm Cleanup", page, StringComparison.Ordinal);
+        Assert.Contains("r.SuspectEmpty", page, StringComparison.Ordinal);
+        Assert.Contains("public bool SuspectEmpty", model, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LibrariesMatchesWebUiResponsiveHeaderAndScrollableTable()
+    {
+        var markup = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminLibrariesPage.xaml"));
+        var page = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminLibrariesPage.xaml.cs"));
+
+        Assert.Contains("x:Name=\"PageHeaderActions\"", markup, StringComparison.Ordinal);
+        Assert.Contains("HorizontalScrollMode=\"Auto\"", markup, StringComparison.Ordinal);
+        Assert.Contains("MinWidth=\"1160\"", markup, StringComparison.Ordinal);
+        Assert.Contains("contentWidth < 1080", page, StringComparison.Ordinal);
+        Assert.Contains("width >= 1280 ? 40", page, StringComparison.Ordinal);
     }
 }

@@ -8,6 +8,7 @@ public class PluginSettingsSummary
     public List<PluginConfigSchema> UserConfigSchema { get; set; } = [];
     public List<PluginRoute> Routes { get; set; } = [];
     public List<PluginAsset> Assets { get; set; } = [];
+    public string? Category { get; set; }
 }
 
 public class PluginSettingsListResponse

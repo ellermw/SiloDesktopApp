@@ -23,7 +23,7 @@
             IsScrollInertiaEnabled="True">
 
             <!-- webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
-            <StackPanel Padding="40,24,40,24" Spacing="32" MaxWidth="1400" HorizontalAlignment="Center">
+            <StackPanel x:Name="NodesPageShell" Padding="40,24,40,24" Spacing="32" MaxWidth="1400" HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
                 <StackPanel Spacing="12">
@@ -55,11 +55,12 @@
                 <StackPanel Spacing="14">
 
                     <!-- Section header row -->
-                    <Grid>
+                    <Grid x:Name="ProxySectionHeader" RowSpacing="10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
 
                         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <TextBlock
@@ -116,11 +117,13 @@
                     </Border>
 
                     <!-- Table card (surface-panel: CardBackgroundBrush, CornerRadius=26, border-0) -->
+                    <ScrollViewer x:Name="ProxyNodesTableScroll" HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled" VerticalScrollBarVisibility="Disabled">
                     <Border
                         Background="{StaticResource CardBackgroundBrush}"
                         CornerRadius="16"
                         BorderThickness="0"
-                        Padding="0">
+                        Padding="0"
+                        MinWidth="1180">
                         <StackPanel>
                             <!-- Table header -->
                             <Grid Padding="20,14,20,14" ColumnSpacing="12">
@@ -200,17 +203,19 @@
                             </Border>
                         </StackPanel>
                     </Border>
+                    </ScrollViewer>
                 </StackPanel>
 
                 <!-- ===== Transcode Nodes section ===== -->
                 <StackPanel Spacing="14">
 
                     <!-- Section header row -->
-                    <Grid>
+                    <Grid x:Name="TranscodeSectionHeader" RowSpacing="10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
 
                         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <TextBlock
@@ -273,11 +278,13 @@
                     </Border>
 
                     <!-- Table card (surface-panel: CardBackgroundBrush, CornerRadius=26, border-0) -->
+                    <ScrollViewer x:Name="TranscodeNodesTableScroll" HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled" VerticalScrollBarVisibility="Disabled">
                     <Border
                         Background="{StaticResource CardBackgroundBrush}"
                         CornerRadius="16"
                         BorderThickness="0"
-                        Padding="0">
+                        Padding="0"
+                        MinWidth="1080">
                         <StackPanel>
                             <!-- Table header -->
                             <Grid Padding="20,14,20,14" ColumnSpacing="12">
@@ -327,6 +334,7 @@
                             </Border>
                         </StackPanel>
                     </Border>
+                    </ScrollViewer>
                 </StackPanel>
 
             </StackPanel>

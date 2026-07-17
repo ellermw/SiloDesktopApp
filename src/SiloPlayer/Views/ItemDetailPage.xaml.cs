@@ -25,6 +25,7 @@ public sealed partial class ItemDetailPage : Page
     private FileVersion? _selectedVersion;
     private string? _readerTargetContentId;
     private int? _readerTargetFileId;
+    private FrameworkElement? _mangaResumeRow;
     /// <summary>
     /// Pre-play audio track selection (Phase 2a). Null = auto (server picks based
     /// on effective_audio_track_index or default flag). Otherwise an explicit track
@@ -49,6 +50,7 @@ public sealed partial class ItemDetailPage : Page
     {
         ViewModel = App.Services.GetRequiredService<ItemDetailViewModel>();
         this.InitializeComponent();
+        ComposeHeroLayout();
 
         // Listen for async property changes (e.g., rating loaded after initial UI update)
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
@@ -58,9 +60,51 @@ public sealed partial class ItemDetailPage : Page
 
     private void UpdateBackdropHeight()
     {
-        // Match web UI: min-h-[60dvh] -- 60% of viewport height
+        // Current WebUI uses a compact 35vh hero for season pages and the
+        // standard 60dvh hero for full item detail pages. MinHeight (rather
+        // than a fixed Height) lets wrapped actions and long metadata expand
+        // naturally on smaller windows.
         if (XamlRoot?.Content is FrameworkElement root && root.ActualHeight > 0)
-            BackdropContainer.Height = Math.Max(300, root.ActualHeight * 0.60);
+        {
+            var factor = ViewModel.Item?.Type == "season" ? 0.35 : 0.60;
+            BackdropContainer.Height = double.NaN;
+            BackdropContainer.MinHeight = Math.Max(300, root.ActualHeight * factor);
+        }
+    }
+
+    private void ComposeHeroLayout()
+    {
+        // DetailHero keeps metadata, scores, overview, credits, genres, and
+        // actions inside the artwork hero. Earlier desktop builds rendered
+        // everything except the title below the backdrop, which made the page
+        // visibly unlike the WebUI even though all controls were functional.
+        if (ScoresPanel.Children.Count > 0)
+            ScoresPanel.Children[0].Visibility = Visibility.Collapsed;
+        HeroMetadataRow.Children.Remove(ScoresPanel);
+
+        MoveIntoHero(HeroMetadataRow);
+        MoveIntoHero(ScoresPanel);
+        MoveIntoHero(OverviewText);
+        MoveIntoHero(TranslateOverviewButton);
+        MoveIntoHero(HeroCrewLine);
+        MoveIntoHero(GenresBadgesPanel);
+        MoveIntoHero(HeroActionsRow);
+
+        HeroMetadataRow.Margin = new Thickness(0, 6, 0, 0);
+        ScoresPanel.Margin = new Thickness(0, 2, 0, 0);
+        OverviewText.Margin = new Thickness(0, 4, 0, 0);
+        TranslateOverviewButton.Margin = new Thickness(0, 2, 0, 0);
+        HeroCrewLine.Margin = new Thickness(0, 2, 0, 0);
+        GenresBadgesPanel.Margin = new Thickness(0, 4, 0, 0);
+        HeroActionsRow.Margin = new Thickness(0, 8, 0, 0);
+    }
+
+    private void MoveIntoHero(UIElement element)
+    {
+        var index = DetailContentPanel.Children.IndexOf(element);
+        if (index >= 0)
+            DetailContentPanel.Children.RemoveAt(index);
+        HeroInfoPanel.Children.Add(element);
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
@@ -140,9 +184,9 @@ public sealed partial class ItemDetailPage : Page
             }
 
             // If this is a season, load its episodes for display
-            if (ViewModel.Item?.Type == "season" && !string.IsNullOrEmpty(ViewModel.Item.SeriesId))
+            if (ViewModel.Item?.Type == "season")
             {
-                await LoadSeasonEpisodesAsync(ViewModel.Item.SeriesId, ViewModel.Item.SeasonNumber ?? 0);
+                await LoadSeasonEpisodesAsync(ViewModel.Item.ContentId, ViewModel.Item.SeasonNumber ?? 0);
             }
 
             UpdateUI();
@@ -178,6 +222,10 @@ public sealed partial class ItemDetailPage : Page
                 SeasonsLoadingRing.IsActive = false;
                 SeasonsLoadingRing.Visibility = Visibility.Collapsed;
 
+                var primaryAction = SeriesPrimaryActionResolver.Resolve(ViewModel.Seasons);
+                if (!string.IsNullOrEmpty(primaryAction.TargetSeasonId))
+                    await LoadSeriesPrimaryEpisodesAsync(primaryAction.TargetSeasonId);
+
                 // Inline episodes for single-season series — skip the season picker
                 // entirely and show the flat episode list directly. Matches WebUI
                 // SeriesContent's single-season-collapse behavior (commit 7da3620).
@@ -191,15 +239,41 @@ public sealed partial class ItemDetailPage : Page
                 }
                 BuildEpisodeRows();
 
-                // For series, find the next episode to play and load its watch detail
-                // so the play button shows "Resume" with quality info
-                var nextEpisode = ViewModel.Episodes.FirstOrDefault(ep => ep.UserData?.Played != true)
-                                  ?? ViewModel.Episodes.FirstOrDefault();
-                if (nextEpisode != null)
-                {
-                    _playableContentId = nextEpisode.ContentId;
-                    _ = LoadWatchDetailAsync(nextEpisode.ContentId);
-                }
+                var targetIndex = Math.Clamp(
+                    (primaryAction.TargetEpisodeNumber ?? 1) - 1,
+                    0,
+                    Math.Max(ViewModel.Episodes.Count - 1, 0));
+                var targetEpisode = ViewModel.Episodes.Count > 0
+                    ? ViewModel.Episodes[targetIndex]
+                    : null;
+                _playableContentId = targetEpisode?.ContentId;
+                PlayButtonText.Text = targetEpisode?.UserData?.PositionSeconds > 0
+                    ? "Resume"
+                    : primaryAction.Label;
+                SplitPlayButton.Visibility = targetEpisode == null
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
+                VersionDropdownButton.Visibility = Visibility.Collapsed;
+                VersionSeparator.Visibility = Visibility.Collapsed;
+                AudioTracksButton.Visibility = Visibility.Collapsed;
+                SubtitlesPopoverButton.Visibility = Visibility.Collapsed;
+            }
+            else if (ViewModel.Item?.Type == "season")
+            {
+                // A season is a collection, not a playable catalog leaf. The
+                // current WebUI targets its first episode and labels the action
+                // "Play First Episode". Never request /watch/{season-id}.
+                BuildEpisodeRows();
+                var firstEpisode = ViewModel.Episodes.FirstOrDefault();
+                _playableContentId = firstEpisode?.ContentId;
+                PlayButtonText.Text = "Play First Episode";
+                SplitPlayButton.Visibility = firstEpisode == null
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
+                VersionDropdownButton.Visibility = Visibility.Collapsed;
+                VersionSeparator.Visibility = Visibility.Collapsed;
+                AudioTracksButton.Visibility = Visibility.Collapsed;
+                SubtitlesPopoverButton.Visibility = Visibility.Collapsed;
             }
             else if (!IsReaderItem(ViewModel.Item))
             {
@@ -321,6 +395,24 @@ public sealed partial class ItemDetailPage : Page
         }
     }
 
+    private void BuildSeasonBreadcrumb(MediaItemDetail item, string seasonLabel)
+    {
+        BreadcrumbPanel.Children.Clear();
+        if (!string.IsNullOrWhiteSpace(item.SeriesId) && !string.IsNullOrWhiteSpace(item.SeriesTitle))
+        {
+            BreadcrumbPanel.Children.Add(MakeBreadcrumbLink(item.SeriesTitle!, item.SeriesId));
+            BreadcrumbPanel.Children.Add(MakeBreadcrumbSeparator());
+        }
+        BreadcrumbPanel.Children.Add(new TextBlock
+        {
+            Text = seasonLabel,
+            FontSize = 13,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        BreadcrumbPanel.Visibility = Visibility.Visible;
+    }
+
     private async Task EnrichEpisodeWithSeriesDataAsync(string seriesId)
     {
         try
@@ -362,6 +454,8 @@ public sealed partial class ItemDetailPage : Page
         var item = ViewModel.Item;
         if (item == null) return;
 
+        UpdateBackdropHeight();
+
         WatchedButton.Visibility = Visibility.Visible;
         FavoriteButton.Visibility = Visibility.Visible;
         StarRatingContainer.Visibility = Visibility.Visible;
@@ -383,6 +477,12 @@ public sealed partial class ItemDetailPage : Page
         StarRatingContainer.Visibility = item.Type == "season"
             ? Visibility.Collapsed
             : Visibility.Visible;
+        if (item.Type == "season")
+        {
+            // SeasonContent exposes watched + curator actions, but not the
+            // series/movie favorite action in the current WebUI.
+            FavoriteButton.Visibility = Visibility.Collapsed;
+        }
 
         // ─── Hero poster / logo / kicker (webui DetailHero parity) ───
 
@@ -463,6 +563,22 @@ public sealed partial class ItemDetailPage : Page
 
             TitleText.Text = item.Title;
         }
+        else if (item.Type == "season")
+        {
+            var seasonLabel = item.IsSpecials == true || item.SeasonNumber == 0
+                ? "Specials"
+                : string.IsNullOrWhiteSpace(item.Title)
+                    ? $"Season {item.SeasonNumber ?? 0}"
+                    : item.Title;
+            TitleText.Text = string.IsNullOrWhiteSpace(item.SeriesTitle)
+                ? seasonLabel
+                : $"{item.SeriesTitle}: {seasonLabel}";
+            TaglineText.Visibility = Visibility.Collapsed;
+            YearText.Text = !string.IsNullOrWhiteSpace(item.AirDate) && item.AirDate.Length >= 4
+                ? item.AirDate[..4]
+                : item.Year > 0 ? item.Year.ToString() : "";
+            BuildSeasonBreadcrumb(item, seasonLabel);
+        }
         else
         {
             TitleText.Text = item.Title;
@@ -491,9 +607,15 @@ public sealed partial class ItemDetailPage : Page
         }
 
         RuntimeText.Text = ViewModel.RuntimeDisplay;
+        if (item.Type == "season")
+            RuntimeText.Text = $"{item.EpisodeCount ?? ViewModel.Episodes.Count} episodes";
         MetaDot2.Visibility = !string.IsNullOrEmpty(ViewModel.RuntimeDisplay) &&
             (item.Year > 0 || !string.IsNullOrEmpty(item.ContentRating))
             ? Visibility.Visible : Visibility.Collapsed;
+        if (item.Type == "season")
+            MetaDot2.Visibility = !string.IsNullOrEmpty(YearText.Text)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
         OverviewText.Text = item.Overview ?? "";
         if (string.IsNullOrWhiteSpace(item.PendingTranslationLanguage))
@@ -698,6 +820,7 @@ public sealed partial class ItemDetailPage : Page
 
         if (item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase))
         {
+            App.Services.GetRequiredService<Services.PlayerService>().SetAudiobookPresentation(item);
             var position = Math.Max(0, item.UserData?.PositionSeconds ?? 0);
             var duration = Math.Max(0, item.Audiobook?.TotalDurationSeconds ?? item.UserData?.DurationSeconds ?? 0);
             HeroPosterContainer.Height = 170;
@@ -742,7 +865,8 @@ public sealed partial class ItemDetailPage : Page
             _selectedVersion = ChooseReadableBookVersion(item.Versions, item.UserData?.LastFileId);
             _readerTargetFileId = _selectedVersion?.FileId;
             SplitPlayButton.Visibility = _selectedVersion != null ? Visibility.Visible : Visibility.Collapsed;
-            BookDownloadButton.Visibility = item.Versions.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            BookDownloadButton.Visibility = item.Versions.Count > 0 && CanCurrentUserDownload()
+                ? Visibility.Visible : Visibility.Collapsed;
             PlayButtonIcon.Glyph = "\uE736";
             PlayButtonText.Text = "Read";
             var authors = PeopleNames(item.Ebook?.Authors, item.Crew, "Author");
@@ -902,6 +1026,7 @@ public sealed partial class ItemDetailPage : Page
     private void BuildMangaChapters(MediaItemDetail item)
     {
         MangaChaptersPanel.Children.Clear();
+        _mangaResumeRow = null;
         var chapters = item.Manga?.Chapters
             .OrderBy(chapter => MangaVolumeSort(chapter.Volume))
             .ThenBy(chapter => chapter.ChapterIndex ?? double.MaxValue)
@@ -919,60 +1044,236 @@ public sealed partial class ItemDetailPage : Page
                     ? $"Read Again  {MangaChapterLabel(target)}"
                     : $"Start Reading  {MangaChapterLabel(target)}";
         MangaProgressText.Text = chapters.Count == 0 ? "" : $"{chapters.Count(chapter => chapter.Read == true)} of {chapters.Count} read";
+        MangaJumpButton.Visibility = chapters.Count > 10 && target != null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        MangaJumpButtonText.Text = target == null ? "" : $"Jump to {MangaChapterLabel(target)}";
 
-        string? currentVolume = null;
-        foreach (var chapter in chapters)
+        foreach (var group in chapters.GroupBy(
+                     chapter => string.IsNullOrWhiteSpace(chapter.Volume) ? "" : chapter.Volume.Trim(),
+                     StringComparer.OrdinalIgnoreCase))
         {
-            var volume = string.IsNullOrWhiteSpace(chapter.Volume) ? "Chapters" : $"Volume {chapter.Volume}";
-            if (!string.Equals(currentVolume, volume, StringComparison.OrdinalIgnoreCase))
+            var groupedChapters = group.ToList();
+            if (group.Key.Length == 0 || groupedChapters.Count == 1)
             {
-                currentVolume = volume;
-                MangaChaptersPanel.Children.Add(new TextBlock
+                foreach (var chapter in groupedChapters)
                 {
-                    Text = volume,
-                    FontSize = 13,
-                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-                    Margin = new Thickness(12, MangaChaptersPanel.Children.Count == 0 ? 4 : 18, 12, 4),
-                });
+                    var row = CreateMangaChapterRow(chapter);
+                    if (chapter.ContentId == target?.ContentId) _mangaResumeRow = row;
+                    MangaChaptersPanel.Children.Add(row);
+                }
+                continue;
             }
-            MangaChaptersPanel.Children.Add(CreateMangaChapterRow(chapter));
+
+            var allRead = groupedChapters.All(chapter => chapter.Read == true);
+            var header = new Grid { Margin = new Thickness(14, 8, 10, 8), ColumnSpacing = 10 };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.Children.Add(new TextBlock
+            {
+                Text = $"Volume {group.Key}",
+                FontSize = 13,
+                FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                CharacterSpacing = 35,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            var summary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            if (allRead)
+                summary.Children.Add(new FontIcon
+                {
+                    Glyph = "\uE73E",
+                    FontSize = 13,
+                    Foreground = (Brush)Application.Current.Resources["AccentBrush"],
+                });
+            summary.Children.Add(new TextBlock
+            {
+                Text = $"{groupedChapters.Count} chapters",
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+            Grid.SetColumn(summary, 1);
+            header.Children.Add(summary);
+
+            var rows = new StackPanel { Spacing = 0, Margin = new Thickness(16, 0, 0, 0) };
+            foreach (var chapter in groupedChapters)
+            {
+                var row = CreateMangaChapterRow(chapter);
+                if (chapter.ContentId == target?.ContentId) _mangaResumeRow = row;
+                rows.Children.Add(row);
+            }
+
+            MangaChaptersPanel.Children.Add(new Expander
+            {
+                Header = header,
+                Content = rows,
+                IsExpanded = !allRead,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            });
         }
         if (chapters.Count == 0)
             MangaChaptersPanel.Children.Add(new TextBlock { Text = "No chapters found. Chapters appear here once the library scan completes.", Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
         MangaChaptersSection.Visibility = Visibility.Visible;
     }
 
+    private void MangaJumpButton_Click(object sender, RoutedEventArgs e)
+    {
+        _mangaResumeRow?.StartBringIntoView(new BringIntoViewOptions
+        {
+            AnimationDesired = true,
+            VerticalAlignmentRatio = 0.5,
+        });
+    }
+
     private Border CreateMangaChapterRow(MangaChapter chapter)
     {
-        var row = new Grid { ColumnSpacing = 10 };
+        var row = new Grid { ColumnSpacing = 10, Margin = new Thickness(10, 7, 6, 7) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var imageHost = new Grid { Width = 32, Height = 48 };
+        var placeholder = new FontIcon
+        {
+            Glyph = "\uE736",
+            FontSize = 17,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var image = new Image { Stretch = Stretch.UniformToFill };
+        imageHost.Children.Add(placeholder);
+        imageHost.Children.Add(image);
+        row.Children.Add(new Border
+        {
+            Width = 32,
+            Height = 48,
+            CornerRadius = new CornerRadius(4),
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            Child = imageHost,
+        });
+        if (!string.IsNullOrWhiteSpace(chapter.PosterUrl))
+            _ = LoadMangaChapterPosterAsync(image, placeholder, chapter);
+
+        var labels = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        labels.Children.Add(new TextBlock
+        {
+            Text = MangaChapterLabel(chapter),
+            FontSize = 15,
+            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            Foreground = (Brush)Application.Current.Resources[chapter.Read == true ? "SecondaryTextBrush" : "PrimaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        if (chapter.Read != true && chapter.Progress is > 0 and < 1)
+        {
+            var progressRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
+            var track = new Grid { Width = 64, Height = 4, VerticalAlignment = VerticalAlignment.Center };
+            track.Children.Add(new Border
+            {
+                Background = (Brush)Application.Current.Resources["BorderBrush"],
+                CornerRadius = new CornerRadius(2),
+            });
+            track.Children.Add(new Border
+            {
+                Width = 64 * Math.Clamp(chapter.Progress.Value, 0, 1),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Background = (Brush)Application.Current.Resources["AccentBrush"],
+                CornerRadius = new CornerRadius(2),
+            });
+            progressRow.Children.Add(track);
+            progressRow.Children.Add(new TextBlock
+            {
+                Text = $"{Math.Round(chapter.Progress.Value * 100):0}%",
+                FontSize = 11,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+            labels.Children.Add(progressRow);
+        }
+
         var readButton = new Button
         {
             Style = (Style)Application.Current.Resources["GhostButtonStyle"],
             HorizontalContentAlignment = HorizontalAlignment.Left,
-            Padding = new Thickness(12, 10, 12, 10),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Padding = new Thickness(0),
             Tag = chapter.ContentId,
-            Content = new TextBlock
-            {
-                Text = MangaChapterLabel(chapter) + (chapter.Progress is > 0 and < 1 ? $"   {Math.Round(chapter.Progress.Value * 100):0}%" : ""),
-                FontSize = 14,
-                Foreground = (Brush)Application.Current.Resources[chapter.Read == true ? "SecondaryTextBrush" : "PrimaryTextBrush"],
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            },
+            Content = labels,
         };
         readButton.Click += MangaRead_Click;
+        Grid.SetColumn(readButton, 1);
         row.Children.Add(readButton);
-        var state = new TextBlock { Text = chapter.Read == true ? "\uE73E" : "", FontFamily = new FontFamily("Segoe Fluent Icons"), VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)Application.Current.Resources["AccentBrush"] };
-        Grid.SetColumn(state, 1);
+        var state = new FontIcon
+        {
+            Glyph = chapter.Read == true ? "\uE73E" : "",
+            FontSize = 15,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (Brush)Application.Current.Resources["AccentBrush"],
+        };
+        Grid.SetColumn(state, 2);
         row.Children.Add(state);
-        var toggle = new Button { Content = chapter.Read == true ? "Mark unread" : "Mark read", Tag = chapter, Style = (Style)Application.Current.Resources["GhostButtonStyle"], FontSize = 12 };
+        var toggle = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE73E", FontSize = 14 },
+            Tag = chapter,
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Width = 34,
+            Height = 34,
+            Padding = new Thickness(0),
+        };
+        ToolTipService.SetToolTip(toggle, chapter.Read == true ? "Mark chapter unread" : "Mark chapter read");
         toggle.Click += MangaWatched_Click;
-        Grid.SetColumn(toggle, 2);
+        Grid.SetColumn(toggle, 3);
         row.Children.Add(toggle);
-        return new Border { BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], BorderThickness = new Thickness(0, 0, 0, 1), Child = row };
+
+        if (CanCurrentUserDownload())
+        {
+            var download = new Button
+            {
+                Content = new FontIcon { Glyph = "\uE896", FontSize = 14 },
+                Tag = chapter,
+                Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+                Width = 34,
+                Height = 34,
+                Padding = new Thickness(0),
+            };
+            ToolTipService.SetToolTip(download, "Download chapter");
+            download.Click += MangaDownload_Click;
+            Grid.SetColumn(download, 4);
+            row.Children.Add(download);
+        }
+
+        return new Border
+        {
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Child = row,
+        };
+    }
+
+    private async Task LoadMangaChapterPosterAsync(Image image, FrameworkElement placeholder, MangaChapter chapter)
+    {
+        try
+        {
+            var bytes = await App.Services.GetRequiredService<ImageService>().GetImageAsync(
+                chapter.ContentId,
+                "poster",
+                chapter.PosterUrl!,
+                App.Services.GetRequiredService<HttpClient>(),
+                CancellationToken.None);
+            if (bytes == null) return;
+            var bitmap = new BitmapImage
+            {
+                DecodePixelWidth = 64,
+                DecodePixelType = DecodePixelType.Logical,
+            };
+            using var stream = new MemoryStream(bytes);
+            await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+            image.Source = bitmap;
+            placeholder.Visibility = Visibility.Collapsed;
+        }
+        catch { }
     }
 
     private void MangaRead_Click(object sender, RoutedEventArgs e)
@@ -989,6 +1290,32 @@ public sealed partial class ItemDetailPage : Page
         else await api.MarkWatchedAsync(chapter.ContentId);
         await ViewModel.LoadCommand.ExecuteAsync(ViewModel.Item.ContentId);
         UpdateUI();
+    }
+
+    private async void MangaDownload_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: MangaChapter chapter } button || !CanCurrentUserDownload()) return;
+        button.IsEnabled = false;
+        try
+        {
+            var versions = await App.Services.GetRequiredService<CatalogApi>()
+                .GetItemVersionsAsync(chapter.ContentId);
+            if (versions.Count == 0)
+            {
+                App.Services.GetRequiredService<Services.ToastService>()
+                    .Error("No downloadable files for this chapter.");
+                return;
+            }
+            await ShowDownloadDialogAsync(MangaChapterLabel(chapter), versions);
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<Services.ToastService>().Error(ex.Message);
+        }
+        finally
+        {
+            button.IsEnabled = true;
+        }
     }
 
     private static string MangaChapterLabel(MangaChapter chapter)
@@ -1182,7 +1509,7 @@ public sealed partial class ItemDetailPage : Page
         }
 
         var manager = App.Services.GetRequiredService<PlaybackManager>();
-        var best = manager.SelectBestVersion(_watchDetail.Versions, userData: _watchDetail.UserData);
+        var best = _selectedVersion ?? manager.SelectBestVersion(_watchDetail.Versions, userData: _watchDetail.UserData);
         if (best == null)
         {
             QualityBadgesPanel.Visibility = Visibility.Collapsed;
@@ -1197,11 +1524,11 @@ public sealed partial class ItemDetailPage : Page
                 (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeResolutionBrush"]));
         }
 
-        // HDR badge
-        if (best.Hdr)
+        var videoRange = MediaVideoRange.Label(best);
+        if (!string.IsNullOrEmpty(videoRange))
         {
             QualityBadgesPanel.Children.Add(CreateQualityBadge(
-                "HDR",
+                videoRange,
                 (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeHdrBrush"]));
         }
 
@@ -1413,13 +1740,16 @@ public sealed partial class ItemDetailPage : Page
 
         if (_selectedVersion != null)
         {
-            var download = new MenuFlyoutItem
+            if (CanCurrentUserDownload())
             {
-                Text = "Download",
-                Icon = new FontIcon { Glyph = "\uE896" },
-            };
-            download.Click += DownloadButton_Click;
-            MoreFlyout.Items.Add(download);
+                var download = new MenuFlyoutItem
+                {
+                    Text = "Download",
+                    Icon = new FontIcon { Glyph = "\uE896" },
+                };
+                download.Click += DownloadButton_Click;
+                MoreFlyout.Items.Add(download);
+            }
 
             var searchSubtitles = new MenuFlyoutItem
             {
@@ -2165,32 +2495,119 @@ public sealed partial class ItemDetailPage : Page
 
     // ===== Download =====
 
+    private static bool CanCurrentUserDownload()
+        => App.Services.GetRequiredService<AuthService>().CurrentUser?.DownloadAllowed == true;
+
     private async void DownloadButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedVersion == null) return;
+        var item = ViewModel.Item;
+        if (item == null || item.Versions.Count == 0 || !CanCurrentUserDownload()) return;
 
+        await ShowDownloadDialogAsync(item.Title, item.Versions);
+    }
+
+    private async Task ShowDownloadDialogAsync(string title, IReadOnlyCollection<FileVersion> versions)
+    {
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = $"Download: {title}",
+            CloseButtonText = "Cancel",
+        };
+        var content = new StackPanel { Width = 410, Spacing = 10 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "Choose a file to download. Make sure you have enough disk space.",
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+        foreach (var version in versions
+                     .OrderByDescending(version => ResolutionRank(version.Resolution))
+                     .ThenByDescending(version => version.Bitrate))
+        {
+            var quality = BuildQualitySummary(version);
+            var versionButton = new Button
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(14, 11, 14, 11),
+            };
+            var row = new Grid { ColumnSpacing = 12 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.Children.Add(new Border
+            {
+                Width = 36,
+                Height = 36,
+                CornerRadius = new CornerRadius(18),
+                Background = (Brush)Application.Current.Resources["SidebarAccentBrush"],
+                Child = new FontIcon { Glyph = "\uE896", FontSize = 15, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+            });
+            var labels = new StackPanel { Spacing = 2 };
+            labels.Children.Add(new TextBlock { Text = string.IsNullOrWhiteSpace(quality) ? version.FileName ?? "Media file" : quality, FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+            if (version.FileSize > 0)
+                labels.Children.Add(new TextBlock { Text = FormatFileSize(version.FileSize), FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+            Grid.SetColumn(labels, 1);
+            row.Children.Add(labels);
+            versionButton.Content = row;
+            var selected = version;
+            versionButton.Click += async (_, _) =>
+            {
+                dialog.Hide();
+                await SaveDirectDownloadAsync(selected, title);
+            };
+            content.Children.Add(versionButton);
+        }
+        if (versions.Count > 1)
+            content.Children.Add(new TextBlock { Text = "Larger files require more storage space.", FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        dialog.Content = content;
+        await dialog.ShowAsync();
+    }
+
+    private async Task SaveDirectDownloadAsync(FileVersion version, string title)
+    {
+        var toast = App.Services.GetRequiredService<Services.ToastService>();
         try
         {
-            var downloadsApi = App.Services.GetRequiredService<DownloadsApi>();
-            await downloadsApi.CreateDownloadAsync(new Core.Models.Downloads.DownloadRequest
-            {
-                MediaFileId = _selectedVersion.FileId
-            });
+            var picker = new Windows.Storage.Pickers.FileSavePicker();
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance!);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+            var extension = Path.GetExtension(version.FileName);
+            if (string.IsNullOrWhiteSpace(extension))
+                extension = string.IsNullOrWhiteSpace(version.Container) ? ".mkv" : $".{version.Container.TrimStart('.')}";
+            picker.SuggestedFileName = string.IsNullOrWhiteSpace(version.FileName)
+                ? $"{title}{extension}"
+                : version.FileName;
+            picker.FileTypeChoices.Add("Media file", [extension]);
+            var file = await picker.PickSaveFileAsync();
+            if (file == null) return;
 
-            // Visual feedback: change button text briefly
-            DownloadButton.IsEnabled = false;
-            if (DownloadButton.Content is StackPanel sp && sp.Children.Count > 1
-                && sp.Children[1] is TextBlock tb)
-            {
-                tb.Text = "Requested!";
-                await Task.Delay(2000);
-                tb.Text = "Download";
-            }
-            DownloadButton.IsEnabled = true;
+            var apiClient = App.Services.GetRequiredService<SiloApiClient>();
+            var path = DownloadsApi.GetDirectDownloadPath(version.FileId);
+            var token = apiClient.AccessToken;
+            var url = apiClient.BaseUrl + path +
+                      (string.IsNullOrWhiteSpace(token) ? "" : $"&token={Uri.EscapeDataString(token)}");
+            var http = App.Services.GetRequiredService<HttpClient>();
+            using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                throw new InvalidOperationException("You are not allowed to download this file.");
+            if ((int)response.StatusCode == 429)
+                throw new InvalidOperationException("Download limit reached. Try again later.");
+            response.EnsureSuccessStatusCode();
+            await using var source = await response.Content.ReadAsStreamAsync();
+            await using var destination = await file.OpenStreamForWriteAsync();
+            destination.SetLength(0);
+            await source.CopyToAsync(destination);
+            toast.Success("Download saved");
         }
-        catch
+        catch (Exception ex)
         {
-            // Download request failure is non-fatal
+            toast.Error(ex.Message);
         }
     }
 
@@ -2273,89 +2690,14 @@ public sealed partial class ItemDetailPage : Page
     {
         var item = ViewModel.Item;
         if (item == null) return;
+        var dialog = new Controls.EditMetadataDialog(item) { XamlRoot = XamlRoot };
+        await dialog.ShowAsync();
+        if (!dialog.HasAppliedChanges) return;
 
-        var titleBox = new TextBox { Text = item.Title, PlaceholderText = "Title", CornerRadius = new CornerRadius(6), FontSize = 13 };
-        var sortTitleBox = new TextBox { Text = item.SortTitle ?? "", PlaceholderText = "Sort title (optional)", CornerRadius = new CornerRadius(6), FontSize = 13 };
-        var originalTitleBox = new TextBox { Text = item.OriginalTitle ?? "", PlaceholderText = "Original title (optional)", CornerRadius = new CornerRadius(6), FontSize = 13 };
-        var taglineBox = new TextBox { Text = item.Tagline ?? "", PlaceholderText = "Tagline (optional)", CornerRadius = new CornerRadius(6), FontSize = 13 };
-        var yearBox = new NumberBox
-        {
-            Value = item.Year > 0 ? item.Year : double.NaN,
-            Minimum = 1850, Maximum = 2100,
-            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
-            CornerRadius = new CornerRadius(6), FontSize = 13,
-        };
-        var overviewBox = new TextBox
-        {
-            Text = item.Overview, PlaceholderText = "Overview",
-            AcceptsReturn = true, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-            MinHeight = 120, MaxHeight = 220,
-            CornerRadius = new CornerRadius(6), FontSize = 13,
-        };
-        var contentRatingBox = new TextBox { Text = item.ContentRating ?? "", PlaceholderText = "e.g. PG-13, TV-MA", CornerRadius = new CornerRadius(6), FontSize = 13 };
-
-        var form = new StackPanel { Width = 520, Spacing = 14 };
-        void AddField(string label, FrameworkElement control)
-        {
-            var group = new StackPanel { Spacing = 6 };
-            group.Children.Add(new TextBlock
-            {
-                Text = label, FontSize = 14,
-                FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-                Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            });
-            group.Children.Add(control);
-            form.Children.Add(group);
-        }
-        AddField("Title", titleBox);
-        AddField("Sort Title", sortTitleBox);
-        AddField("Original Title", originalTitleBox);
-        AddField("Tagline", taglineBox);
-        AddField("Year", yearBox);
-        AddField("Overview", overviewBox);
-        AddField("Content Rating", contentRatingBox);
-
-        var dialog = new ContentDialog
-        {
-            Title = item.Type == "series" ? "Edit Series Metadata" : "Edit Movie Metadata",
-            PrimaryButtonText = "Save",
-            CloseButtonText = "Cancel",
-            XamlRoot = this.XamlRoot,
-            Content = new ScrollViewer { Content = form, MaxHeight = 540 },
-            DefaultButton = ContentDialogButton.Primary,
-        };
-
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-        {
-            try
-            {
-                EditMetadataButton.IsEnabled = false;
-                var adminApi = App.Services.GetRequiredService<AdminApi>();
-                var payload = new Dictionary<string, object?>
-                {
-                    ["title"] = titleBox.Text.Trim(),
-                    ["sort_title"] = string.IsNullOrWhiteSpace(sortTitleBox.Text) ? null : sortTitleBox.Text.Trim(),
-                    ["original_title"] = string.IsNullOrWhiteSpace(originalTitleBox.Text) ? null : originalTitleBox.Text.Trim(),
-                    ["tagline"] = string.IsNullOrWhiteSpace(taglineBox.Text) ? null : taglineBox.Text.Trim(),
-                    ["year"] = double.IsNaN(yearBox.Value) ? null : (int?)yearBox.Value,
-                    ["overview"] = string.IsNullOrWhiteSpace(overviewBox.Text) ? null : overviewBox.Text.Trim(),
-                    ["content_rating"] = string.IsNullOrWhiteSpace(contentRatingBox.Text) ? null : contentRatingBox.Text.Trim(),
-                };
-                await adminApi.UpdateItemMetadataAsync(item.ContentId, payload);
-
-                // Reload to pick up the saved metadata.
-                await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
-                UpdateUI();
-            }
-            catch (Exception ex)
-            {
-                ViewModel.ErrorMessage = $"Failed to update metadata: {ex.Message}";
-            }
-            finally
-            {
-                EditMetadataButton.IsEnabled = true;
-            }
-        }
+        // Image changes are immediate and metadata saves can alter any detail
+        // surface, so reload the complete item after the dialog closes.
+        await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+        UpdateUI();
     }
 
     // ===== Media Locations (admin-only) =====
@@ -2524,7 +2866,8 @@ public sealed partial class ItemDetailPage : Page
     {
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(v.Resolution)) parts.Add(v.Resolution);
-        if (v.Hdr) parts.Add("HDR");
+        var rangeLabel = MediaVideoRange.Label(v);
+        if (!string.IsNullOrWhiteSpace(rangeLabel)) parts.Add(rangeLabel);
         if (!string.IsNullOrWhiteSpace(v.CodecVideo)) parts.Add(v.CodecVideo.ToUpperInvariant());
         return parts.Count == 0 ? null : string.Join(" · ", parts);
     }
@@ -2977,16 +3320,15 @@ public sealed partial class ItemDetailPage : Page
             return;
         }
 
-        // For series, play the first unwatched or in-progress episode if available
-        if (ViewModel.IsSeries && ViewModel.Episodes.Count > 0)
+        // Series and season pages resolve their collection action to a concrete
+        // episode. Movies and episode detail pages already point at themselves.
+        if (!string.IsNullOrEmpty(_playableContentId))
         {
-            var episode = ViewModel.Episodes.FirstOrDefault(ep => ep.UserData?.Played != true)
-                          ?? ViewModel.Episodes[0];
-            NavigateToPlayer(episode.ContentId, fileId: _selectedVersion?.FileId);
+            NavigateToPlayer(_playableContentId, fileId: _selectedVersion?.FileId);
         }
         else
         {
-            // For movies, play the item directly
+            // Leaf fallback for older servers that did not return watch detail.
             NavigateToPlayer(ViewModel.Item.ContentId, fileId: _selectedVersion?.FileId);
         }
     }
@@ -3015,11 +3357,9 @@ public sealed partial class ItemDetailPage : Page
 
         // For series, restart the current/next episode from position 0
         // (same episode selection as the Play button)
-        if (ViewModel.IsSeries && ViewModel.Episodes.Count > 0)
+        if (!string.IsNullOrEmpty(_playableContentId))
         {
-            var episode = ViewModel.Episodes.FirstOrDefault(ep => ep.UserData?.Played != true)
-                          ?? ViewModel.Episodes[0];
-            NavigateToPlayer(episode.ContentId, fromStart: true, fileId: _selectedVersion?.FileId);
+            NavigateToPlayer(_playableContentId, fromStart: true, fileId: _selectedVersion?.FileId);
         }
         else
         {
@@ -3138,9 +3478,11 @@ public sealed partial class ItemDetailPage : Page
                 preferredEditionKey: item.EffectiveVersionEditionKey)
                 ?? item.Versions[0];
             _selectedVersion = best;
+            UpdateSelectedVersionHeroSummary(best);
             if (qualityParts.Count == 0 && !string.IsNullOrEmpty(best.Resolution))
                 qualityParts.Add(best.Resolution);
-            if (best.Hdr) qualityParts.Add("HDR");
+            var rangeLabel = MediaVideoRange.Label(best);
+            if (!string.IsNullOrEmpty(rangeLabel)) qualityParts.Add(rangeLabel);
         }
         // Quality/HDR summary shows beside the version dropdown chevron
         // (webui commit a42f46b — no longer duplicated on the Play button).
@@ -3199,47 +3541,43 @@ public sealed partial class ItemDetailPage : Page
     {
         QualityBadgesPanel.Children.Clear();
 
-        // Prefer OverlaySummary (available immediately from item detail)
-        if (item.OverlaySummary != null)
+        var selectedVersion = _selectedVersion ?? (item.Versions?.Count > 0
+            ? VersionRanking.SelectDefaultPlaybackVariantVersion(
+                item.Versions,
+                item.PlaybackVariants,
+                ToWatchUserData(item.UserData),
+                qualityPreference: null,
+                preferredEditionKey: item.EffectiveVersionEditionKey)
+            : null);
+
+        // The current WebUI summarizes the selected version. It no longer
+        // combines the best attributes found across unrelated versions.
+        if (selectedVersion != null)
         {
-            // Resolution badge (e.g., "2160p", "1080p")
-            if (!string.IsNullOrEmpty(item.OverlaySummary.Resolution))
+            if (!string.IsNullOrEmpty(selectedVersion.Resolution))
             {
                 QualityBadgesPanel.Children.Add(CreateQualityBadge(
-                    item.OverlaySummary.Resolution,
+                    selectedVersion.Resolution,
                     (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeResolutionBrush"]));
             }
 
-            // Audio badge (e.g., "Atmos", "DTS-HD MA")
-            if (!string.IsNullOrEmpty(item.OverlaySummary.Audio))
+            var videoRange = MediaVideoRange.Label(selectedVersion);
+            if (!string.IsNullOrEmpty(videoRange))
             {
                 QualityBadgesPanel.Children.Add(CreateQualityBadge(
-                    item.OverlaySummary.Audio,
-                    (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeBackgroundBrush"],
-                    (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeTextBrush"]));
-            }
-        }
-
-        // Check Versions for HDR info
-        if (item.Versions?.Count > 0)
-        {
-            var bestVersion = item.Versions.OrderByDescending(v => v.Resolution switch {
-                "2160p" => 4, "1080p" => 3, "720p" => 2, _ => 1
-            }).First();
-
-            if (bestVersion.Hdr)
-            {
-                QualityBadgesPanel.Children.Add(CreateQualityBadge(
-                    "HDR",
+                    videoRange,
                     (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeHdrBrush"]));
             }
-
-            // If no OverlaySummary, fall back to version resolution
-            if (item.OverlaySummary == null && !string.IsNullOrEmpty(bestVersion.Resolution))
+            // The current WebUI resolves the hero audio badge from every audio
+            // track on the selected file, then displays the highest-ranked codec
+            // family without a channel-count suffix.
+            var audioLabel = VersionRanking.PickBestAttributes([selectedVersion], qualityPreference: null)?.AudioLabel;
+            if (!string.IsNullOrEmpty(audioLabel))
             {
-                QualityBadgesPanel.Children.Insert(0, CreateQualityBadge(
-                    bestVersion.Resolution,
-                    (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeResolutionBrush"]));
+                QualityBadgesPanel.Children.Add(CreateQualityBadge(
+                    audioLabel,
+                    (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeBackgroundBrush"],
+                    (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeTextBrush"]));
             }
         }
 
@@ -3338,6 +3676,8 @@ public sealed partial class ItemDetailPage : Page
             _selectedVersion = best;
             BuildAudioTracksFlyout(best);
             BuildSubtitlesPopoverFlyout(best);
+            if (best != null)
+                UpdateSelectedVersionHeroSummary(best);
 
             bool hasQualitySummary = false;
             if (best != null)
@@ -3345,8 +3685,9 @@ public sealed partial class ItemDetailPage : Page
                 var qualityParts = new List<string>();
                 if (!string.IsNullOrEmpty(best.Resolution))
                     qualityParts.Add(best.Resolution);
-                if (best.Hdr)
-                    qualityParts.Add("HDR");
+                var rangeLabel = MediaVideoRange.Label(best);
+                if (!string.IsNullOrEmpty(rangeLabel))
+                    qualityParts.Add(rangeLabel);
 
                 if (qualityParts.Count > 0)
                 {
@@ -3848,9 +4189,45 @@ public sealed partial class ItemDetailPage : Page
         VersionSummaryText.Text = string.Join(" ", new[]
         {
             version.Resolution,
-            version.Hdr ? "HDR" : null,
+            MediaVideoRange.Label(version),
         }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        UpdateSelectedVersionHeroSummary(version);
         BuildMoreFlyout();
+    }
+
+    private void UpdateSelectedVersionHeroSummary(FileVersion version)
+    {
+        var item = ViewModel.Item;
+        if (item == null)
+            return;
+
+        UpdateQualityBadgesFromItemData(item);
+
+        var variants = _watchDetail?.PlaybackVariants ?? item.PlaybackVariants;
+        var selectedVariant = variants?.FirstOrDefault(variant =>
+            variant.Parts.Any(part => part.Versions.Any(candidate => candidate.FileId == version.FileId)));
+        var multipart = selectedVariant != null &&
+            (selectedVariant.PartCount > 1 || selectedVariant.Parts.Count > 1);
+        var durationSeconds = multipart && selectedVariant?.TotalDuration is > 0
+            ? selectedVariant.TotalDuration.Value
+            : version.Duration;
+
+        if (durationSeconds > 0)
+        {
+            var minutes = (int)Math.Round(durationSeconds / 60d, MidpointRounding.AwayFromZero);
+            RuntimeText.Text = minutes >= 60
+                ? $"{minutes / 60}h {minutes % 60}m"
+                : $"{minutes}m";
+        }
+        else
+        {
+            RuntimeText.Text = ViewModel.RuntimeDisplay;
+        }
+
+        MetaDot2.Visibility = !string.IsNullOrEmpty(RuntimeText.Text) &&
+            (item.Year > 0 || !string.IsNullOrEmpty(item.ContentRating))
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     private void BuildVersionFlyout(
@@ -3933,8 +4310,9 @@ public sealed partial class ItemDetailPage : Page
             parts.Add(version.Resolution);
         if (!string.IsNullOrEmpty(version.CodecVideo))
             parts.Add(version.CodecVideo.ToUpperInvariant());
-        if (version.Hdr)
-            parts.Add("HDR");
+        var rangeLabel = MediaVideoRange.Label(version);
+        if (!string.IsNullOrEmpty(rangeLabel))
+            parts.Add(rangeLabel);
         var audio = NormalizeAudioCodec(version.CodecAudio, version.AudioChannels);
         if (!string.IsNullOrEmpty(audio))
             parts.Add(audio!);
@@ -4087,13 +4465,12 @@ public sealed partial class ItemDetailPage : Page
 
     // ===== Season Episode Loading =====
 
-    private async Task LoadSeasonEpisodesAsync(string seriesId, int seasonNumber)
+    private async Task LoadSeasonEpisodesAsync(string seasonContentId, int seasonNumber)
     {
-        if (seasonNumber <= 0) return;
         try
         {
             var catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
-            var response = await catalogApi.GetEpisodesAsync(seriesId, seasonNumber);
+            var response = await catalogApi.GetItemEpisodesAsync(seasonContentId);
             if (response?.Episodes != null && response.Episodes.Count > 0)
             {
                 ViewModel.SelectedSeasonNumber = seasonNumber;
@@ -4836,7 +5213,18 @@ public sealed partial class ItemDetailPage : Page
         }
 
         EpisodesSection.Visibility = Visibility.Visible;
-        EpisodesHeader.Text = $"Season {ViewModel.SelectedSeasonNumber} Episodes";
+        if (ViewModel.Item?.Type == "season")
+        {
+            EpisodesHeader.Text = "Episodes";
+            EpisodesTotalText.Text = $"{ViewModel.Item.EpisodeCount ?? ViewModel.Episodes.Count} total";
+        }
+        else
+        {
+            EpisodesHeader.Text = ViewModel.SelectedSeasonNumber == 0
+                ? "Specials"
+                : $"Season {ViewModel.SelectedSeasonNumber} Episodes";
+            EpisodesTotalText.Text = $"{ViewModel.Episodes.Count} total";
+        }
 
         LayoutEpisodeGrid();
     }
@@ -4931,6 +5319,7 @@ public sealed partial class ItemDetailPage : Page
             if (s is Grid g) g.Height = g.ActualWidth * 9.0 / 16.0;
         };
         stillWrapper.Children.Add(stillBorder);
+        AddEpisodeCardOverlays(stillWrapper, episode);
 
         // Progress bar overlay for in-progress episodes.
         if (isInProgress && episode.UserData!.DurationSeconds > 0)
@@ -4990,10 +5379,13 @@ public sealed partial class ItemDetailPage : Page
         foreach (var file in episode.Files)
         {
             var label = file.Resolution;
-            if (file.Hdr) label += " HDR";
+            var rangeLabel = episode.OverlaySummary?.Hdr;
+            if (string.IsNullOrWhiteSpace(rangeLabel) && file.Hdr)
+                rangeLabel = "HDR";
+            if (!string.IsNullOrEmpty(rangeLabel)) label += $" {rangeLabel}";
             var badge = new Border
             {
-                Background = file.Hdr
+                Background = !string.IsNullOrEmpty(rangeLabel)
                     ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeHdrBrush"]
                     : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BadgeResolutionBrush"],
                 CornerRadius = new CornerRadius(4),
@@ -5054,6 +5446,105 @@ public sealed partial class ItemDetailPage : Page
 
         return cardBorder;
     }
+
+    private void AddEpisodeCardOverlays(Grid host, Episode episode)
+    {
+        var topLeft = MakeEpisodeOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Top);
+        var topRight = MakeEpisodeOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Top);
+        var bottomLeft = MakeEpisodeOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Bottom);
+        var bottomRight = MakeEpisodeOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Bottom);
+        host.Children.Add(topLeft);
+        host.Children.Add(topRight);
+        host.Children.Add(bottomLeft);
+        host.Children.Add(bottomRight);
+
+        void Render()
+        {
+            topLeft.Children.Clear();
+            topRight.Children.Clear();
+            bottomLeft.Children.Clear();
+            bottomRight.Children.Clear();
+
+            var service = App.Services.GetRequiredService<global::SiloPlayer.Services.CardOverlayService>();
+            var prefs = service.GetPrefs();
+            if (prefs == null) return;
+            var summary = episode.OverlaySummary;
+            var data = new global::SiloPlayer.Services.OverlayData
+            {
+                Resolution = summary?.Resolution,
+                Hdr = summary?.Hdr,
+                Audio = summary?.Audio,
+                AudioChannels = summary?.AudioChannels,
+                VideoCodec = summary?.VideoCodec,
+                Container = summary?.Container,
+                AspectRatio = summary?.AspectRatio,
+                ReleaseType = summary?.ReleaseType,
+                Edition = summary?.Edition,
+                MultiAudio = summary?.MultiAudio == true,
+                MultiSub = summary?.MultiSub == true,
+                Runtime = episode.Runtime > 0 ? episode.Runtime : null,
+            };
+            foreach (var definition in global::SiloPlayer.Services.OverlayRegistry.All)
+            {
+                if (!prefs.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
+                if (global::SiloPlayer.Services.OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, prefs)) continue;
+                var value = definition.GetValue(data);
+                if (string.IsNullOrWhiteSpace(value)) continue;
+                var badge = PosterCard.BuildBadge(value, definition.Id, config, service.Preset);
+                var corner = config.Position switch
+                {
+                    global::SiloPlayer.Services.OverlayPosition.TopLeft => topLeft,
+                    global::SiloPlayer.Services.OverlayPosition.TopRight => topRight,
+                    global::SiloPlayer.Services.OverlayPosition.BottomLeft => bottomLeft,
+                    global::SiloPlayer.Services.OverlayPosition.BottomRight => bottomRight,
+                    _ => topLeft,
+                };
+                corner.Children.Add(badge);
+            }
+        }
+
+        Render();
+        _ = EnsureEpisodeCardOverlaysLoadedAsync(Render);
+    }
+
+    private async Task EnsureEpisodeCardOverlaysLoadedAsync(Action render)
+    {
+        try
+        {
+            await App.Services.GetRequiredService<global::SiloPlayer.Services.CardOverlayService>().EnsureLoadedAsync();
+            DispatcherQueue.TryEnqueue(() => render());
+        }
+        catch { }
+    }
+
+    private async Task LoadSeriesPrimaryEpisodesAsync(string seasonContentId)
+    {
+        try
+        {
+            var catalogApi = App.Services.GetRequiredService<CatalogApi>();
+            var response = await catalogApi.GetItemEpisodesAsync(seasonContentId);
+            ViewModel.Episodes.Clear();
+            foreach (var episode in response.Episodes)
+                ViewModel.Episodes.Add(episode);
+            if (response.Episodes.Count > 0)
+                ViewModel.SelectedSeasonNumber = response.Episodes[0].SeasonNumber;
+        }
+        catch
+        {
+            ViewModel.Episodes.Clear();
+        }
+    }
+
+    private static StackPanel MakeEpisodeOverlayHost(
+        HorizontalAlignment horizontal,
+        VerticalAlignment vertical) => new()
+    {
+        Orientation = Orientation.Vertical,
+        Spacing = 3,
+        Margin = new Thickness(6),
+        HorizontalAlignment = horizontal,
+        VerticalAlignment = vertical,
+    };
 
     private async Task LoadEpisodeStillAsync(Border stillBorder, Episode episode)
     {

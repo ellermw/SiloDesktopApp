@@ -24,15 +24,16 @@
     </Page.Resources>
 
     <ScrollViewer IsScrollInertiaEnabled="True">
-        <StackPanel Padding="32,24,32,48" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
+        <StackPanel x:Name="AccessGroupsPageShell" Padding="32,24,32,48" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
             <StackPanel
                 Spacing="12"
                 Visibility="{x:Bind ViewModel.IsListVisible, Mode=OneWay, Converter={StaticResource BoolToVis}}">
-                <Grid ColumnSpacing="24">
+                <Grid x:Name="AccessGroupsHeaderGrid" ColumnSpacing="24" RowSpacing="14">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <StackPanel Spacing="10">
                         <TextBlock Text="Access Groups" FontSize="48" FontWeight="Bold" />
                         <TextBlock
@@ -44,6 +45,7 @@
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
                     <Button
+                        x:Name="NewGroupButton"
                         Grid.Column="1"
                         Style="{StaticResource AccentButtonStyle}"
                         VerticalAlignment="Center"
@@ -61,10 +63,10 @@
                     CornerRadius="16"
                     Padding="16"
                     Visibility="{x:Bind ViewModel.IsCreating, Mode=OneWay, Converter={StaticResource BoolToVis}}">
-                    <StackPanel Orientation="Horizontal" Spacing="10">
+                    <StackPanel x:Name="CreateGroupPanel" Orientation="Horizontal" Spacing="10">
                         <TextBox
                             x:Name="NewGroupNameBox"
-                            Width="320"
+                            MinWidth="240"
                             PlaceholderText="Group name (e.g. Kids, Guests)"
                             Text="{x:Bind ViewModel.NewGroupName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                             KeyDown="NewGroupNameBox_KeyDown" />
@@ -98,6 +100,7 @@
                 </Border>
 
                 <GridView
+                    x:Name="GroupsGridView"
                     ItemsSource="{x:Bind ViewModel.Groups, Mode=OneWay}"
                     IsItemClickEnabled="True"
                     ItemClick="GroupGrid_ItemClick"
@@ -120,8 +123,8 @@
                     <GridView.ItemTemplate>
                         <DataTemplate x:DataType="vm:AccessGroupCardViewModel">
                             <Border
-                                Width="420"
                                 MinHeight="140"
+                                HorizontalAlignment="Stretch"
                                 Padding="20"
                                 Background="{StaticResource CardBackgroundBrush}"
                                 BorderBrush="Transparent"
@@ -176,8 +179,9 @@
 
                 <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20">
                     <StackPanel Spacing="16">
-                        <Grid ColumnSpacing="16">
+                        <Grid x:Name="GroupIdentityGrid" ColumnSpacing="16" RowSpacing="12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Name" FontWeight="SemiBold" FontSize="13" />
                                 <TextBox Text="{x:Bind ViewModel.Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
@@ -256,8 +260,9 @@
                 <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20">
                     <StackPanel Spacing="14">
                         <TextBlock Text="Concurrent streams" FontSize="14" FontWeight="SemiBold" />
-                        <Grid ColumnSpacing="16">
+                        <Grid x:Name="StreamLimitsGrid" ColumnSpacing="16" RowSpacing="12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <StackPanel Spacing="5">
                                 <Grid><TextBlock Text="Max streams" FontWeight="SemiBold" FontSize="13" /><TextBlock Text="0 = unlimited" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Right" /></Grid>
                                 <NumberBox Minimum="0" SpinButtonPlacementMode="Compact" Value="{x:Bind ViewModel.MaxStreams, Mode=TwoWay}" />
@@ -300,13 +305,14 @@
                     </StackPanel>
                 </Border>
 
-                <Grid ColumnSpacing="16">
+                <Grid x:Name="GroupEditorFooter" ColumnSpacing="16" RowSpacing="12">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <StackPanel Spacing="4">
                         <Button Content="Delete group" Style="{StaticResource DestructiveButtonStyle}" HorizontalAlignment="Left" IsEnabled="{x:Bind ViewModel.CanDelete, Mode=OneWay}" Click="DeleteGroup_Click" />
                         <TextBlock Text="The default group can't be deleted. Make another group the default first." FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" Visibility="{x:Bind ViewModel.IsDefaultLocked, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
                     </StackPanel>
-                    <Button Grid.Column="1" Content="{x:Bind ViewModel.SaveButtonText, Mode=OneWay}" Style="{StaticResource AccentButtonStyle}" Command="{x:Bind ViewModel.SaveCommand}" />
+                    <Button x:Name="SaveGroupButton" Grid.Column="1" Content="{x:Bind ViewModel.SaveButtonText, Mode=OneWay}" Style="{StaticResource AccentButtonStyle}" Command="{x:Bind ViewModel.SaveCommand}" />
                 </Grid>
             </StackPanel>
 

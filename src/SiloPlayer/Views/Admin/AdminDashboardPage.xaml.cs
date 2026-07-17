@@ -24,6 +24,9 @@ public sealed partial class AdminDashboardPage : Page
     private DateTime _lastEventRefresh = DateTime.MinValue;
     private bool _loaded;
     private DispatcherTimer? _autoRefreshTimer;
+    private int _streamColumnCount = 2;
+    private Grid? _traktMetricsGrid;
+    private Grid? _traktFooterGrid;
 
     public AdminDashboardPage()
     {
@@ -32,7 +35,115 @@ public sealed partial class AdminDashboardPage : Page
     }
 
     private void ContentScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
-        => AdminPageContent.Width = Math.Min(1640, Math.Max(0, e.NewSize.Width));
+    {
+        var width = Math.Max(0, e.NewSize.Width);
+        AdminPageContent.Width = Math.Min(1640, width);
+        ApplyResponsiveLayout(width);
+    }
+
+    private void ApplyResponsiveLayout(double width)
+    {
+        // Match the WebUI breakpoints: stats 2 / 3 / 5 columns, stream cards
+        // become two-up at lg, and the Libraries/Users pair becomes two-up at xl.
+        var horizontalPadding = width >= 1280 ? 40 : width >= 1024 ? 32 : width >= 640 ? 24 : 16;
+        var verticalPadding = width >= 1024 ? 32 : 16;
+        AdminPageContent.Padding = new Thickness(horizontalPadding, verticalPadding, horizontalPadding, 40);
+        var contentWidth = Math.Max(0, width - AdminPageContent.Padding.Left - AdminPageContent.Padding.Right);
+        var statColumns = contentWidth >= 1024 ? 5 : contentWidth >= 640 ? 3 : 2;
+        ArrangeGridChildren(StatsGrid, statColumns);
+        ArrangeGridChildren(StatsLoadingGrid, statColumns);
+        StatsGrid.RowSpacing = statColumns == 5 ? 0 : 14;
+        StatsLoadingGrid.RowSpacing = statColumns == 5 ? 0 : 14;
+
+        _streamColumnCount = contentWidth >= 1024 ? 2 : 1;
+        StreamCardsGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+        StreamCardsGrid.ColumnDefinitions[1].Width = _streamColumnCount == 2
+            ? new GridLength(1, GridUnitType.Star)
+            : new GridLength(0);
+        RelayoutStreamChildren();
+
+        if (_traktMetricsGrid != null)
+            ArrangeDynamicGrid(_traktMetricsGrid, contentWidth >= 1024 ? 4 : contentWidth >= 640 ? 2 : 1);
+        if (_traktFooterGrid != null)
+            ArrangeDynamicGrid(_traktFooterGrid, contentWidth >= 640 ? 3 : 1);
+
+        var splitLibraryUsers = contentWidth >= 1280;
+        LibraryUsersGrid.ColumnDefinitions[0].Width = splitLibraryUsers
+            ? new GridLength(1.4, GridUnitType.Star)
+            : new GridLength(1, GridUnitType.Star);
+        LibraryUsersGrid.ColumnDefinitions[1].Width = splitLibraryUsers
+            ? new GridLength(1, GridUnitType.Star)
+            : new GridLength(0);
+        Grid.SetColumn(LibrariesCard, 0);
+        Grid.SetRow(LibrariesCard, 0);
+        Grid.SetColumn(UsersCard, splitLibraryUsers ? 1 : 0);
+        Grid.SetRow(UsersCard, splitLibraryUsers ? 0 : 1);
+
+        var wrapHeader = contentWidth < 760;
+        Grid.SetColumn(PageHeaderCopy, 0);
+        Grid.SetColumnSpan(PageHeaderCopy, wrapHeader ? 2 : 1);
+        Grid.SetColumn(PageHeaderActions, wrapHeader ? 0 : 1);
+        Grid.SetColumnSpan(PageHeaderActions, wrapHeader ? 2 : 1);
+        Grid.SetRow(PageHeaderActions, wrapHeader ? 1 : 0);
+        PageHeaderActions.HorizontalAlignment = wrapHeader ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        PageTitleText.FontSize = contentWidth < 640 ? 32 : contentWidth < 1024 ? 42 : 52;
+        PageTitleText.LineHeight = contentWidth < 640 ? 32 : contentWidth < 1024 ? 41 : 50;
+    }
+
+    private static void ArrangeGridChildren(Grid grid, int columns)
+    {
+        for (var i = 0; i < grid.Children.Count; i++)
+        {
+            if (grid.Children[i] is not FrameworkElement child) continue;
+            Grid.SetColumn(child, i % columns);
+            Grid.SetRow(child, i / columns);
+        }
+    }
+
+    private void RelayoutStreamChildren()
+    {
+        StreamCardsGrid.RowDefinitions.Clear();
+        var cards = StreamCardsGrid.Children
+            .OfType<FrameworkElement>()
+            .Where(element => !Equals(element.Tag, "StreamOverflow"))
+            .ToList();
+        var overflow = StreamCardsGrid.Children
+            .OfType<FrameworkElement>()
+            .FirstOrDefault(element => Equals(element.Tag, "StreamOverflow"));
+        var rows = Math.Max(1, (int)Math.Ceiling(cards.Count / (double)_streamColumnCount));
+        for (var row = 0; row < rows + (overflow != null ? 1 : 0); row++)
+            StreamCardsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        for (var i = 0; i < cards.Count; i++)
+        {
+            Grid.SetColumn(cards[i], i % _streamColumnCount);
+            Grid.SetRow(cards[i], i / _streamColumnCount);
+            Grid.SetColumnSpan(cards[i], 1);
+        }
+        if (overflow != null)
+        {
+            Grid.SetColumn(overflow, 0);
+            Grid.SetRow(overflow, rows);
+            Grid.SetColumnSpan(overflow, _streamColumnCount);
+        }
+    }
+
+    private static void ArrangeDynamicGrid(Grid grid, int columns)
+    {
+        grid.ColumnDefinitions.Clear();
+        grid.RowDefinitions.Clear();
+        for (var column = 0; column < columns; column++)
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var rows = Math.Max(1, (int)Math.Ceiling(grid.Children.Count / (double)columns));
+        for (var row = 0; row < rows; row++)
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowSpacing = columns == grid.Children.Count ? 0 : 10;
+        for (var i = 0; i < grid.Children.Count; i++)
+        {
+            if (grid.Children[i] is not FrameworkElement child) continue;
+            Grid.SetColumn(child, i % columns);
+            Grid.SetRow(child, i / columns);
+        }
+    }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
@@ -270,6 +381,7 @@ public sealed partial class AdminDashboardPage : Page
                 CornerRadius = new CornerRadius(6),
             });
         }
+        ApplyResponsiveLayout(ContentScrollViewer.ActualWidth);
     }
 
     private void UpdateStats()
@@ -307,6 +419,8 @@ public sealed partial class AdminDashboardPage : Page
         var activity = ViewModel.Stats?.WatchProviderActivity;
         if (activity == null || (activity.TraktConnectedProfiles == 0 && activity.SyncRuns24h == 0 && activity.PendingExports == 0 && activity.OpenScrobbles == 0))
         {
+            _traktMetricsGrid = null;
+            _traktFooterGrid = null;
             TraktActivityCard.Visibility = Visibility.Collapsed;
             return;
         }
@@ -321,7 +435,7 @@ public sealed partial class AdminDashboardPage : Page
         header.Children.Add(title); header.Children.Add(details);
         TraktActivityContent.Children.Add(header);
 
-        var metrics = new Grid { ColumnSpacing = 10 };
+        var metrics = new Grid { ColumnSpacing = 10, RowSpacing = 10 };
         for (var i = 0; i < 4; i++) metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var lastSync = string.IsNullOrWhiteSpace(activity.LastSyncCompletedAt) ? "Never" : AdminDashboardViewModel.GetTimeAgo(activity.LastSyncCompletedAt);
         var cards = new[]
@@ -332,6 +446,7 @@ public sealed partial class AdminDashboardPage : Page
             MakeTraktMetric("Exported", activity.ExportedWatched24h.ToString("N0"), $"{activity.PendingExports:N0} pending"),
         };
         for (var i = 0; i < cards.Length; i++) { Grid.SetColumn(cards[i], i); metrics.Children.Add(cards[i]); }
+        _traktMetricsGrid = metrics;
         TraktActivityContent.Children.Add(metrics);
         var errors = activity.SyncErrors24h + activity.FailedExports;
         var footer = new Grid
@@ -343,12 +458,14 @@ public sealed partial class AdminDashboardPage : Page
         footer.Children.Add(MakeTraktFooterMetric("Export enabled:", activity.TraktExportEnabled.ToString("N0"), false, 0));
         footer.Children.Add(MakeTraktFooterMetric("Scrobbling:", activity.TraktScrobbleEnabled.ToString("N0"), false, 1));
         footer.Children.Add(MakeTraktFooterMetric("Errors:", errors.ToString("N0"), errors > 0, 2));
+        _traktFooterGrid = footer;
         TraktActivityContent.Children.Add(new Border
         {
             BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
             BorderThickness = new Thickness(0, 1, 0, 0),
             Child = footer
         });
+        ApplyResponsiveLayout(ContentScrollViewer.ActualWidth);
     }
 
     private static FrameworkElement MakeTraktFooterMetric(string label, string value, bool destructive, int column)
@@ -398,28 +515,19 @@ public sealed partial class AdminDashboardPage : Page
         NowPlayingViewAll.Text = $"View all {sessions.Count} stream{(sessions.Count != 1 ? "s" : "")} \u203a";
 
         var displayed = sessions.Take(4).ToList();
-        int rows = (int)Math.Ceiling(displayed.Count / 2.0);
-        for (int r = 0; r < rows; r++)
-        {
-            StreamCardsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        }
-
         for (int i = 0; i < displayed.Count; i++)
         {
             var session = displayed[i];
             var card = BuildStreamCard(session);
-            Grid.SetColumn(card, i % 2);
-            Grid.SetRow(card, i / 2);
             StreamCardsGrid.Children.Add(card);
         }
 
         // Overflow link: "+X more active streams" when > 4 sessions
         if (sessions.Count > 4)
         {
-            var overflowRow = rows;
-            StreamCardsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var overflowLink = new HyperlinkButton
             {
+                Tag = "StreamOverflow",
                 Content = new TextBlock
                 {
                     Text = $"+{sessions.Count - 4} more active stream{(sessions.Count - 4 != 1 ? "s" : "")}",
@@ -434,10 +542,9 @@ public sealed partial class AdminDashboardPage : Page
                 var nav = App.Services.GetRequiredService<SiloPlayer.Helpers.NavigationService>();
                 nav.Navigate<AdminActivityPage>();
             };
-            Grid.SetRow(overflowLink, overflowRow);
-            Grid.SetColumnSpan(overflowLink, 2);
             StreamCardsGrid.Children.Add(overflowLink);
         }
+        RelayoutStreamChildren();
     }
 
     private Border BuildStreamCard(AdminSession session)

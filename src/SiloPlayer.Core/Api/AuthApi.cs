@@ -178,6 +178,17 @@ public class AuthApi(SiloApiClient client)
     public Task LogoutAsync(CancellationToken ct = default)
         => client.PostNoContentWithoutRefreshAsync("/api/v1/auth/logout", new Dictionary<string, object?>(), ct);
 
+    /// <summary>
+    /// Revokes only the active impersonated session. Automatic 401 refresh is
+    /// deliberately disabled: a revoked impersonation token must never cause the
+    /// client to discard the separately preserved administrator session.
+    /// </summary>
+    public Task EndImpersonationAsync(CancellationToken ct = default)
+        => client.PostNoContentWithoutRefreshAsync(
+            "/api/v1/auth/impersonation/end",
+            new Dictionary<string, object?>(),
+            ct);
+
     public Task LogoutAsync(string baseUrl, string accessToken, CancellationToken ct = default)
         => client.PostNoContentWithBearerAsync(
             baseUrl,

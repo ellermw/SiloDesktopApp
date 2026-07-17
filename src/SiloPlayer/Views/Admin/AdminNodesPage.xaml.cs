@@ -20,10 +20,12 @@ public sealed partial class AdminNodesPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminNodesViewModel>();
         this.InitializeComponent();
+        SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout();
         ViewModel.ProxyNodes.CollectionChanged += (_, _) => ScheduleRebuildProxy();
         ViewModel.TranscodeNodes.CollectionChanged += (_, _) => ScheduleRebuildTranscode();
 
@@ -35,6 +37,22 @@ public sealed partial class AdminNodesPage : Page
         {
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        var compact = ActualWidth < 560;
+        var side = ActualWidth < 640 ? 16 : ActualWidth < 1024 ? 24 : 40;
+        NodesPageShell.Padding = new Thickness(side, ActualWidth < 640 ? 16 : 24, side, 24);
+        PlaceSectionAction(AddProxyNodeButton, compact);
+        PlaceSectionAction(AddTranscodeNodeButton, compact);
+    }
+
+    private static void PlaceSectionAction(Button button, bool compact)
+    {
+        Grid.SetColumn(button, compact ? 0 : 1);
+        Grid.SetRow(button, compact ? 1 : 0);
+        button.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
     }
 
     private void ScheduleRebuildProxy()

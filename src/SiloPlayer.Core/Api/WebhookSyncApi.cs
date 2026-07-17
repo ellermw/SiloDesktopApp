@@ -21,11 +21,11 @@ public sealed class WebhookSyncApi(SiloApiClient client)
     public Task<RotateWebhookSyncResponse> RotateWebhookAsync(string id, CancellationToken ct = default)
         => client.PostAsync<RotateWebhookSyncResponse>($"{Base}/{Uri.EscapeDataString(id)}/webhook/rotate", new Dictionary<string, object?>(), ct);
 
-    public Task<WebhookSyncActorsResponse> GetActorsAsync(string id, CancellationToken ct = default)
-        => client.GetAsync<WebhookSyncActorsResponse>($"{Base}/{Uri.EscapeDataString(id)}/actors", ct);
+    public Task<WebhookSyncProfileMappingsResponse> GetProfileMappingsAsync(string id, CancellationToken ct = default)
+        => client.GetAsync<WebhookSyncProfileMappingsResponse>($"{Base}/{Uri.EscapeDataString(id)}/profile-mappings", ct);
 
-    public Task UpdateActorsAsync(string id, object body, CancellationToken ct = default)
-        => client.PutNoContentAsync($"{Base}/{Uri.EscapeDataString(id)}/actors", body, ct);
+    public Task<WebhookSyncProfileMappingsResponse> UpdateProfileMappingsAsync(string id, object body, CancellationToken ct = default)
+        => client.PutAsync<WebhookSyncProfileMappingsResponse>($"{Base}/{Uri.EscapeDataString(id)}/profile-mappings", body, ct);
 
     public Task<List<WebhookSyncEventLog>> GetEventsAsync(string id, int limit = 200, CancellationToken ct = default)
         => client.GetAsync<List<WebhookSyncEventLog>>($"{Base}/{Uri.EscapeDataString(id)}/events?limit={Math.Clamp(limit, 1, 200)}", ct);

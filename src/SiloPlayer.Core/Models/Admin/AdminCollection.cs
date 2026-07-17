@@ -81,14 +81,20 @@ public class UpdateLibraryCollectionRequest
 
 public class ImportMDBListCollectionRequest
 {
-    public int LibraryId { get; set; }
+    public int? LibraryId { get; set; }
+    public List<int>? LibraryIds { get; set; }
     public string Title { get; set; } = "";
     public string? Description { get; set; }
     public string Url { get; set; } = "";
     public int? Limit { get; set; }
     public bool? Featured { get; set; }
+    public string? PosterUrl { get; set; }
     public string? PosterSourceUrl { get; set; }
     public string? BackdropSourceUrl { get; set; }
+    public string? SyncSchedule { get; set; }
+    public string? ManagementMode { get; set; }
+    public string? ManagementSource { get; set; }
+    public string? ManagementKey { get; set; }
 }
 
 public class ImportMDBListCollectionResponse
@@ -99,7 +105,8 @@ public class ImportMDBListCollectionResponse
 
 public class ImportTMDBCollectionRequest
 {
-    public int LibraryId { get; set; }
+    public int? LibraryId { get; set; }
+    public List<int>? LibraryIds { get; set; }
     public string Title { get; set; } = "";
     public string? Description { get; set; }
     public string Preset { get; set; } = "";
@@ -107,8 +114,13 @@ public class ImportTMDBCollectionRequest
     public string MediaType { get; set; } = "";
     public int? Limit { get; set; }
     public bool? Featured { get; set; }
+    public string? PosterUrl { get; set; }
     public string? PosterSourceUrl { get; set; }
     public string? BackdropSourceUrl { get; set; }
+    public string? SyncSchedule { get; set; }
+    public string? ManagementMode { get; set; }
+    public string? ManagementSource { get; set; }
+    public string? ManagementKey { get; set; }
 }
 
 public class ImportTMDBCollectionResponse
@@ -141,14 +153,20 @@ public class AdminCollectionsResponse
 
 public class ImportTraktCollectionRequest
 {
-    public int LibraryId { get; set; }
+    public int? LibraryId { get; set; }
     public List<int>? LibraryIds { get; set; }
     public string Title { get; set; } = "";
     public string Description { get; set; } = "";
     public string Preset { get; set; } = "";
     public string MediaType { get; set; } = "";
+    public string? ProfileId { get; set; }
+    public string? ListUrl { get; set; }
     public int? Limit { get; set; }
     public bool Featured { get; set; }
+    public string? PosterUrl { get; set; }
+    public string? PosterSourceUrl { get; set; }
+    public string? BackdropSourceUrl { get; set; }
+    public string? SyncSchedule { get; set; }
     public string? ManagementMode { get; set; }
     public string? ManagementSource { get; set; }
     public string? ManagementKey { get; set; }

@@ -63,7 +63,7 @@
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <StackPanel x:Name="TaskDetailPageShell" Padding="40,28,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Stretch">
 
                 <!-- ===== Breadcrumb ===== -->
                 <Button
@@ -84,11 +84,15 @@
 
                 <!-- ===== Page header (flex justify-between items-end) ===== -->
                 <!-- Matches web: page-header gap-5 -->
-                <Grid ColumnSpacing="20">
+                <Grid x:Name="TaskDetailHeader" ColumnSpacing="20" RowSpacing="14">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
                     <!-- Left: title + badge + description (space-y-3) -->
                     <StackPanel Grid.Column="0" Spacing="12">
@@ -209,7 +213,11 @@
                         Foreground="{StaticResource PrimaryTextBrush}" />
 
                     <!-- surface-panel overflow-hidden rounded-[1.6rem] border-0 -->
-                    <Border Style="{StaticResource SurfacePanelStyle}" Padding="0">
+                    <ScrollViewer x:Name="TaskHistoryTableScroll"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  HorizontalScrollMode="Enabled"
+                                  VerticalScrollBarVisibility="Disabled">
+                    <Border Style="{StaticResource SurfacePanelStyle}" Padding="0" MinWidth="720">
                         <StackPanel>
                             <!-- Table column headers: bg-muted/50 border-b, text-left font-medium -->
                             <Grid Padding="16,8,16,8" ColumnSpacing="12">
@@ -242,6 +250,7 @@
                             </Border>
                         </StackPanel>
                     </Border>
+                    </ScrollViewer>
                 </StackPanel>
 
             </StackPanel>

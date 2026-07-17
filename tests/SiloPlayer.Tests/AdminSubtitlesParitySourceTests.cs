@@ -18,6 +18,9 @@ public class AdminSubtitlesParitySourceTests
         Assert.Contains("FontSize=\"48\"", Markup, StringComparison.Ordinal);
         Assert.Contains("Search release name…", Markup, StringComparison.Ordinal);
         Assert.Contains("Content=\"Reset filters\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"SubtitleStatsGrid\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"SubtitlesTableScroll\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("MinWidth=\"1320\"", Markup, StringComparison.Ordinal);
         Assert.DoesNotContain("Content=\"Refresh\"", Markup, StringComparison.Ordinal);
     }
 
@@ -41,5 +44,7 @@ public class AdminSubtitlesParitySourceTests
         Assert.Contains("FormatRelativeDate", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("Navigate<ItemDetailPage>", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("ProviderFilter_Click", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("ApplyResponsiveLayout", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("width >= 1280", CodeBehind, StringComparison.Ordinal);
     }
 }

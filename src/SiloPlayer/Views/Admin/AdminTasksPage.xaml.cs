@@ -19,15 +19,18 @@ public sealed partial class AdminTasksPage : Page
     private EventChannelClient? _eventChannel;
     private IDisposable? _eventSubscription;
     private DateTime _lastEventRefresh = DateTime.MinValue;
+    private bool _compactLayout;
 
     public AdminTasksPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminTasksViewModel>();
         this.InitializeComponent();
+        SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout();
         ViewModel.Tasks.CollectionChanged += Tasks_CollectionChanged;
 
         try
@@ -56,6 +59,16 @@ public sealed partial class AdminTasksPage : Page
             _eventSubscription = _eventChannel.Subscribe("tasks");
         }
         catch { }
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        var compact = ActualWidth < 720;
+        var side = ActualWidth < 640 ? 16 : ActualWidth < 1024 ? 24 : 40;
+        TasksPageShell.Padding = new Thickness(side, ActualWidth < 640 ? 16 : 24, side, 40);
+        if (_compactLayout == compact) return;
+        _compactLayout = compact;
+        if (ViewModel.Tasks.Count > 0) RebuildTaskGroups();
     }
 
     protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
@@ -199,11 +212,17 @@ public sealed partial class AdminTasksPage : Page
         rowButton.Click += (_, _) =>
             Frame.Navigate(typeof(AdminTaskDetailPage), capturedTask.Key);
 
-        // Root layout: left info (flex-1) | center badge | right action button
-        var rootGrid = new Grid { ColumnSpacing = 12 };
+        // Web rows stack their trailing state/actions below the task copy on compact canvases.
+        var rootGrid = new Grid { ColumnSpacing = 12, RowSpacing = 10 };
         rootGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         rootGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        rootGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        if (!_compactLayout)
+            rootGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        else
+        {
+            rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        }
 
         // ===== LEFT: name + metadata/progress =====
         var leftPanel = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
@@ -302,19 +321,23 @@ public sealed partial class AdminTasksPage : Page
         }
 
         Grid.SetColumn(leftPanel, 0);
+        if (_compactLayout) Grid.SetColumnSpan(leftPanel, 2);
         rootGrid.Children.Add(leftPanel);
 
         // ===== CENTER: status badge (idle only, when last_execution exists) =====
         if (!isRunning && task.LastExecution != null)
         {
             var statusBadge = BuildStatusBadge(task.LastExecution.Status);
-            Grid.SetColumn(statusBadge, 1);
+            Grid.SetColumn(statusBadge, _compactLayout ? 0 : 1);
+            Grid.SetRow(statusBadge, _compactLayout ? 1 : 0);
+            if (_compactLayout) statusBadge.HorizontalAlignment = HorizontalAlignment.Left;
             rootGrid.Children.Add(statusBadge);
         }
 
         // ===== RIGHT: action button =====
         var actionBtn = BuildActionButton(task);
-        Grid.SetColumn(actionBtn, 2);
+        Grid.SetColumn(actionBtn, _compactLayout ? 1 : 2);
+        Grid.SetRow(actionBtn, _compactLayout ? 1 : 0);
         rootGrid.Children.Add(actionBtn);
 
         rowButton.Content = rootGrid;
@@ -471,7 +494,7 @@ public sealed partial class AdminTasksPage : Page
         return string.Join(", ", parts);
     }
 
-    private static FrameworkElement BuildRefreshMetricsSummary(MetadataRefreshMetrics metrics)
+    private FrameworkElement BuildRefreshMetricsSummary(MetadataRefreshMetrics metrics)
     {
         var panel = new Border
         {
@@ -483,17 +506,20 @@ public sealed partial class AdminTasksPage : Page
 
         var content = new StackPanel { Spacing = 8 };
 
-        // 5-column metric grid
-        var grid = new Grid { ColumnSpacing = 12 };
-        for (int i = 0; i < 5; i++)
+        var metricColumns = _compactLayout ? 2 : 5;
+        var grid = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
+        for (int i = 0; i < metricColumns; i++)
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        for (int i = 0; i < (int)Math.Ceiling(5d / metricColumns); i++)
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         void AddCell(int col, string label, string value)
         {
             var cell = new StackPanel { Spacing = 2 };
             cell.Children.Add(new TextBlock { Text = label, FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] });
             cell.Children.Add(new TextBlock { Text = value, FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
-            Grid.SetColumn(cell, col);
+            Grid.SetColumn(cell, col % metricColumns);
+            Grid.SetRow(cell, col / metricColumns);
             grid.Children.Add(cell);
         }
 

@@ -24,6 +24,10 @@ public class AppSettings
     /// <summary>Whether the player was last in a muted state.</summary>
     public bool PlayerMuted { get; set; } = false;
 
+    public int AudiobookSkipBackSeconds { get; set; } = 15;
+    public int AudiobookSkipForwardSeconds { get; set; } = 30;
+    public bool AudiobookSmartRewind { get; set; } = true;
+
     /// <summary>Opt-in HDMI/S/PDIF compressed-audio passthrough. Disabled by
     /// default because unsupported speakers and Bluetooth endpoints can be silent.</summary>
     public bool AudioBitstreamPassthrough { get; set; }

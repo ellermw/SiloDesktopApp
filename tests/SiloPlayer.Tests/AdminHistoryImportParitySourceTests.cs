@@ -78,6 +78,9 @@ public class AdminHistoryImportParitySourceTests
         Assert.Contains("No issues.", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("public int UserId", RunModel, StringComparison.Ordinal);
         Assert.Contains("public int WatchlistAdded", RunModel, StringComparison.Ordinal);
+        Assert.Contains("public int FavoritesImported", RunModel, StringComparison.Ordinal);
+        Assert.Contains("Favorites", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("run.FavoritesImported", CodeBehind, StringComparison.Ordinal);
     }
 
     [Fact]

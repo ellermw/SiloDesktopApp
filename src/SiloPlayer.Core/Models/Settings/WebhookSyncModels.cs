@@ -12,6 +12,7 @@ public class WebhookSyncConnection
     [JsonPropertyName("default_profile_id")] public string DefaultProfileId { get; set; } = "";
     [JsonPropertyName("webhook_url")] public string? WebhookUrl { get; set; }
     [JsonPropertyName("actor_count")] public int ActorCount { get; set; }
+    [JsonPropertyName("user_count")] public int UserCount { get; set; }
     [JsonPropertyName("account_discovery_available")] public bool AccountDiscoveryAvailable { get; set; }
     [JsonPropertyName("last_webhook_received_at")] public DateTimeOffset? LastWebhookReceivedAt { get; set; }
     [JsonPropertyName("last_webhook_error_at")] public DateTimeOffset? LastWebhookErrorAt { get; set; }
@@ -60,4 +61,59 @@ public class WebhookSyncActorsResponse
     public List<WebhookSyncActorMapping> Mappings { get; set; } = [];
     [JsonPropertyName("discovered_actors")] public List<WebhookSyncDiscoveredActor> DiscoveredActors { get; set; } = [];
     [JsonPropertyName("account_discovery_available")] public bool AccountDiscoveryAvailable { get; set; }
+}
+
+public class WebhookSyncProfileMapping
+{
+    public long Id { get; set; }
+    [JsonPropertyName("connection_id")] public string? ConnectionId { get; set; }
+    [JsonPropertyName("external_user_id")] public string ExternalUserId { get; set; } = "";
+    [JsonPropertyName("external_user_name")] public string ExternalUserName { get; set; } = "";
+    [JsonPropertyName("silo_profile_id")] public string? SiloProfileId { get; set; }
+    [JsonPropertyName("last_seen_at")] public DateTimeOffset? LastSeenAt { get; set; }
+}
+
+public class WebhookSyncDiscoveredUser
+{
+    [JsonPropertyName("external_user_id")] public string ExternalUserId { get; set; } = "";
+    [JsonPropertyName("external_user_name")] public string ExternalUserName { get; set; } = "";
+}
+
+public class WebhookSyncProfileMappingsResponse
+{
+    public List<WebhookSyncProfileMapping> Mappings { get; set; } = [];
+    [JsonPropertyName("discovered_users")] public List<WebhookSyncDiscoveredUser> DiscoveredUsers { get; set; } = [];
+    [JsonPropertyName("account_discovery_available")] public bool AccountDiscoveryAvailable { get; set; }
+}
+
+public sealed class PlexBrowserPin
+{
+    public int Id { get; set; }
+    public string Code { get; set; } = "";
+    [JsonPropertyName("authToken")] public string? AuthToken { get; set; }
+}
+
+public sealed class PlexBrowserResource
+{
+    public string Name { get; set; } = "";
+    public string Product { get; set; } = "";
+    public string Provides { get; set; } = "";
+    public bool Owned { get; set; }
+    [JsonPropertyName("clientIdentifier")] public string ClientIdentifier { get; set; } = "";
+    [JsonPropertyName("accessToken")] public string AccessToken { get; set; } = "";
+    public List<PlexBrowserConnection> Connections { get; set; } = [];
+
+    public string PreferredUrl
+        => Connections.FirstOrDefault(connection => !connection.Local)?.Uri
+           ?? Connections.FirstOrDefault(connection => connection.Local)?.Uri
+           ?? "";
+}
+
+public sealed class PlexBrowserConnection
+{
+    public string Protocol { get; set; } = "";
+    public string Address { get; set; } = "";
+    public int Port { get; set; }
+    public string Uri { get; set; } = "";
+    public bool Local { get; set; }
 }

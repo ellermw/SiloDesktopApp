@@ -1104,20 +1104,8 @@ public sealed partial class PlayerOverlay : UserControl
 
         var source = new ComboBox { Header = "Track", HorizontalAlignment = HorizontalAlignment.Stretch };
         var target = new ComboBox { Header = "Language", HorizontalAlignment = HorizontalAlignment.Stretch };
-        foreach (var (code, name) in new[]
-        {
-            ("ar", "Arabic"), ("bn", "Bengali"), ("bg", "Bulgarian"), ("zh", "Chinese"),
-            ("hr", "Croatian"), ("cs", "Czech"), ("da", "Danish"), ("nl", "Dutch"),
-            ("en", "English"), ("fa", "Persian"), ("fi", "Finnish"), ("fr", "French"),
-            ("de", "German"), ("el", "Greek"), ("he", "Hebrew"), ("hi", "Hindi"),
-            ("hu", "Hungarian"), ("id", "Indonesian"), ("it", "Italian"), ("ja", "Japanese"),
-            ("ko", "Korean"), ("ms", "Malay"), ("no", "Norwegian"), ("pl", "Polish"),
-            ("pt", "Portuguese"), ("ro", "Romanian"), ("ru", "Russian"), ("sk", "Slovak"),
-            ("sl", "Slovenian"), ("es", "Spanish"), ("sv", "Swedish"), ("ta", "Tamil"),
-            ("te", "Telugu"), ("th", "Thai"), ("tr", "Turkish"), ("uk", "Ukrainian"),
-            ("vi", "Vietnamese")
-        })
-            target.Items.Add(new ComboBoxItem { Content = name, Tag = code });
+        foreach (var language in MediaLanguageCatalog.All)
+            target.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
         target.SelectedIndex = target.Items.Cast<ComboBoxItem>()
             .Select((item, index) => (item, index))
             .FirstOrDefault(pair => string.Equals(pair.item.Tag?.ToString(), "en", StringComparison.Ordinal)).index;
@@ -1378,7 +1366,7 @@ public sealed partial class PlayerOverlay : UserControl
             row.HeaderButton.Click += (_, _) => SelectRow(row);
             row.SetStartButton.Click += (_, _) =>
             {
-                row.SetStart(_playerService.Position);
+                row.SetStart(_playerService.Position, _playerService.Duration);
                 RefreshDirtyState();
             };
             row.SetEndButton.Click += (_, _) =>
@@ -1925,11 +1913,11 @@ public sealed partial class PlayerOverlay : UserControl
             Refresh();
         }
 
-        public void SetStart(double seconds)
+        public void SetStart(double seconds, double duration)
         {
             _start = Math.Max(0, seconds);
             if (!_end.HasValue || _end <= _start)
-                _end = _start + 0.5;
+                _end = Math.Min(Math.Max(0, duration), _start.Value + 60);
             Refresh();
         }
 
@@ -1937,7 +1925,7 @@ public sealed partial class PlayerOverlay : UserControl
         {
             _end = Math.Min(Math.Max(0, duration), Math.Max(0, seconds));
             if (!_start.HasValue || _start >= _end)
-                _start = Math.Max(0, _end.Value - 0.5);
+                _start = Math.Max(0, _end.Value - 60);
             Refresh();
         }
 

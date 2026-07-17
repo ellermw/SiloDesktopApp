@@ -547,6 +547,17 @@ public sealed class MpvPlayer : IDisposable
             Command("loadfile", url);
     }
 
+    /// <summary>Applies a bounded cache profile before the next network load.</summary>
+    public void ConfigureNetworkBuffer(int maxMiB, int backMiB, int readAheadSeconds, int streamMiB)
+    {
+        ThrowIfNotInitialized();
+        SetProperty("demuxer-max-bytes", $"{Math.Clamp(maxMiB, 64, 1024)}MiB");
+        SetProperty("demuxer-max-back-bytes", $"{Math.Clamp(backMiB, 16, 256)}MiB");
+        SetProperty("demuxer-readahead-secs", Math.Clamp(readAheadSeconds, 10, 120).ToString());
+        SetProperty("cache-secs", Math.Clamp(readAheadSeconds, 10, 120).ToString());
+        SetProperty("stream-buffer-size", $"{Math.Clamp(streamMiB, 1, 16)}MiB");
+    }
+
     /// <summary>Stops the current file without triggering end-of-file events.</summary>
     public void Stop()
     {

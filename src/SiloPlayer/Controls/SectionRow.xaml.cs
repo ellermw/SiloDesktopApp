@@ -94,10 +94,17 @@ public sealed partial class SectionRow : UserControl
         UpdatePinAvailability();
         SyncPinState();
 
-        // B44: swap the ItemsRepeater template by section type. Landscape for
-        // continue_watching / next_up; poster for everything else.
-        bool useLandscape = section.SectionType is "continue_watching" or "next_up";
-        string templateKey = section.SectionType == "continue_listening"
+        // Current WebUI keeps episode-based Continue Watching / Next Up rows
+        // wide, but switches Continue Watching to upright covers when every
+        // item is a movie, audiobook, or ebook. A pure audiobook row remains
+        // square like its web counterpart.
+        var isContinueWatching = section.SectionType == "continue_watching";
+        var allCoverMedia = isContinueWatching && section.Items.Count > 0 &&
+            section.Items.All(item => item.Type is "movie" or "audiobook" or "ebook");
+        var allAudiobooks = allCoverMedia && section.Items.All(item => item.Type == "audiobook");
+        var useLandscape = section.SectionType == "next_up" ||
+            (isContinueWatching && !allCoverMedia);
+        string templateKey = section.SectionType == "continue_listening" || allAudiobooks
             ? "AudiobookCardTemplate"
             : useLandscape ? "LandscapeCardTemplate" : "PosterCardTemplate";
         CardsRepeater.ItemTemplate = (DataTemplate)this.Resources[templateKey];

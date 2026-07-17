@@ -54,10 +54,19 @@ public class AdminRequestsParitySourceTests
     [Fact]
     public void SettingsAndOverridesMatchWebUiCardWidthAndControlLayout()
     {
-        Assert.Contains("x:Name=\"SettingsPanel\" Visibility=\"Collapsed\" Width=\"768\"", PageMarkup, StringComparison.Ordinal);
-        Assert.Contains("x:Name=\"OverridesPanel\" Visibility=\"Collapsed\" Width=\"768\"", PageMarkup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"SettingsPanel\" Visibility=\"Collapsed\" MaxWidth=\"768\"", PageMarkup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"OverridesPanel\" Visibility=\"Collapsed\" MaxWidth=\"768\"", PageMarkup, StringComparison.Ordinal);
         Assert.Contains("Always fulfill in both 1080p and 4K", PageMarkup, StringComparison.Ordinal);
         Assert.Contains("HorizontalAlignment=\"Stretch\" SelectionChanged=\"OverrideUserPicker_SelectionChanged\"", PageMarkup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void QueueUsesCurrentResponsiveCanvasAndHorizontalTableOverflow()
+    {
+        Assert.Contains("x:Name=\"RequestsPageShell\"", PageMarkup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"QueueTableScroll\"", PageMarkup, StringComparison.Ordinal);
+        Assert.Contains("MinWidth=\"1120\"", PageMarkup, StringComparison.Ordinal);
+        Assert.Contains("AdminRequestsPage_SizeChanged", PageSource, StringComparison.Ordinal);
     }
 
     [Fact]

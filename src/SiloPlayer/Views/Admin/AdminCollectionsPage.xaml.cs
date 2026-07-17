@@ -10,6 +10,8 @@ using Windows.UI.Core;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Collections;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Helpers;
 using SiloPlayer.Views;
 using SiloPlayer.ViewModels;
@@ -979,11 +981,468 @@ public sealed partial class AdminCollectionsPage : Page
         await dialog.ShowAsync();
     }
 
-    private void BrowseTemplatesButton_Click(object sender, RoutedEventArgs e)
+    private async void BrowseTemplatesButton_Click(object sender, RoutedEventArgs e)
+        => await ShowAdminTemplateGalleryAsync();
+
+    private async Task ShowAdminTemplateGalleryAsync()
     {
-        var nav = App.Services.GetRequiredService<NavigationService>();
-        nav.Navigate<CollectionsPage>(new CollectionsNavigationArgs(OpenTemplates: true, ReturnAfterTemplates: true));
+        var api = App.Services.GetRequiredService<AdminApi>();
+        var dialog = new ContentDialog
+        {
+            Title = "Browse Collection Templates",
+            CloseButtonText = "Close",
+            XamlRoot = XamlRoot,
+            MaxWidth = 960,
+        };
+        dialog.Content = new StackPanel
+        {
+            MinWidth = 760,
+            Height = 320,
+            Children =
+            {
+                new ProgressRing { IsActive = true, Width = 30, Height = 30, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+                new TextBlock { Text = "Loading templates…", HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 12, 0, 0), Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] },
+            }
+        };
+
+        var showTask = dialog.ShowAsync().AsTask();
+        try
+        {
+            var templatesTask = api.GetAdminCollectionTemplatesAsync();
+            var bundlesTask = api.GetAdminCollectionTemplateBundlesAsync();
+            await Task.WhenAll(templatesTask, bundlesTask);
+            var catalog = await templatesTask;
+            var bundles = (await bundlesTask).Bundles;
+            BuildAdminTemplateGalleryRoot(dialog, catalog, bundles);
+        }
+        catch (Exception ex)
+        {
+            dialog.Content = new TextBlock
+            {
+                Text = $"Failed to load templates: {ex.Message}",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+                MinWidth = 560,
+                Margin = new Thickness(0, 16, 0, 16),
+            };
+        }
+        await showTask;
     }
+
+    private void BuildAdminTemplateGalleryRoot(ContentDialog dialog, CollectionTemplateCatalog catalog, IReadOnlyList<CollectionTemplateBundle> bundles)
+    {
+        dialog.Title = "Browse Collection Templates";
+        var search = new TextBox { PlaceholderText = "Search templates", HorizontalAlignment = HorizontalAlignment.Stretch };
+        var results = new StackPanel { Spacing = 20 };
+        var root = new StackPanel { Spacing = 14, MinWidth = 760 };
+        root.Children.Add(new TextBlock
+        {
+            Text = "Pick a curated source — TMDB, Trakt, or MDBList — or apply a complete server template bundle.",
+            FontSize = 13,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+        root.Children.Add(search);
+        root.Children.Add(results);
+
+        void Rebuild()
+        {
+            results.Children.Clear();
+            var term = search.Text.Trim();
+            if (bundles.Count > 0 && term.Length == 0)
+            {
+                results.Children.Add(new TextBlock { Text = "TEMPLATE BUNDLES", FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"] });
+                var bundleGrid = NewTemplateCardGrid();
+                foreach (var bundle in bundles)
+                    bundleGrid.Children.Add(BuildTemplateCard("\uE81E", bundle.Title, bundle.Description, $"{bundle.TemplateIds.Count} templates", async () => await ShowBundleApplyViewAsync(dialog, catalog, bundles, bundle)));
+                results.Children.Add(bundleGrid);
+            }
+
+            var matchCount = 0;
+            foreach (var group in catalog.Categories)
+            {
+                var matches = group.Templates.Where(template => term.Length == 0 ||
+                    template.Title.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    template.Description.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    template.Tags.Any(tag => tag.Contains(term, StringComparison.OrdinalIgnoreCase))).ToList();
+                if (matches.Count == 0) continue;
+                matchCount += matches.Count;
+                results.Children.Add(new TextBlock { Text = group.Label.ToUpperInvariant(), FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"] });
+                var grid = NewTemplateCardGrid();
+                foreach (var template in matches)
+                    grid.Children.Add(BuildTemplateCard(template.Icon, template.Title, template.Description, $"{template.Source.ToUpperInvariant()} · {TemplateMediaLabel(template.MediaKind)}", async () => await ShowAdminTemplateConfigAsync(dialog, catalog, bundles, template)));
+                results.Children.Add(grid);
+            }
+            if (matchCount == 0)
+                results.Children.Add(new TextBlock { Text = "No templates match your filters.", HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 36, 0, 36), Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        }
+
+        search.TextChanged += (_, _) => Rebuild();
+        Rebuild();
+        dialog.Content = new ScrollViewer { Content = root, MaxHeight = 650, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+    }
+
+    private static VariableSizedWrapGrid NewTemplateCardGrid() => new()
+    {
+        Orientation = Orientation.Horizontal,
+        ItemWidth = 236,
+        ItemHeight = 136,
+        MaximumRowsOrColumns = 3,
+    };
+
+    private static Button BuildTemplateCard(string icon, string title, string description, string footer, Func<Task> open)
+    {
+        var button = new Button
+        {
+            Width = 226,
+            Height = 126,
+            Margin = new Thickness(0, 0, 10, 10),
+            Padding = new Thickness(13),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Stretch,
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+        };
+        var stack = new StackPanel { Spacing = 5 };
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        header.Children.Add(new TextBlock { Text = string.IsNullOrWhiteSpace(icon) ? "✦" : icon, FontSize = 18, Width = 24 });
+        header.Children.Add(new TextBlock { Text = title, FontSize = 13, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 170 });
+        stack.Children.Add(header);
+        stack.Children.Add(new TextBlock { Text = description, FontSize = 11, MaxLines = 3, TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        stack.Children.Add(new TextBlock { Text = footer, FontSize = 10, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"], Margin = new Thickness(0, 2, 0, 0) });
+        button.Content = stack;
+        button.Click += async (_, _) => await open();
+        return button;
+    }
+
+    private async Task ShowAdminTemplateConfigAsync(ContentDialog dialog, CollectionTemplateCatalog catalog, IReadOnlyList<CollectionTemplateBundle> bundles, CollectionTemplate template)
+    {
+        dialog.Title = "Template Details";
+        var panel = new StackPanel { Spacing = 14, MinWidth = 700 };
+        panel.Children.Add(BackToTemplateGalleryButton(dialog, catalog, bundles));
+        panel.Children.Add(BuildTemplateSummary(template));
+
+        if (template.Source is "tmdb_collection" or "tmdb_discover")
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "This backend-driven blueprint is applied through Template Bundles so management keys, library scoping, synchronization, and featured sections remain consistent.",
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            });
+            dialog.Content = panel;
+            return;
+        }
+
+        var eligibleLibraries = ViewModel.Libraries.Where(library => TemplateEligibleForLibrary(template, library)).ToList();
+        var libraryChecks = eligibleLibraries.Select(library => (Library: library, Check: new CheckBox
+        {
+            Content = library.Name,
+            IsChecked = ViewModel.SelectedLibraryId.HasValue ? library.Id == ViewModel.SelectedLibraryId.Value : true,
+        })).ToList();
+        var libraryPanel = new StackPanel { Spacing = 4 };
+        foreach (var pair in libraryChecks) libraryPanel.Children.Add(pair.Check);
+        panel.Children.Add(LabeledTemplateField("Libraries", libraryPanel));
+
+        var titleBox = new TextBox { Text = template.Title };
+        var descriptionBox = new TextBox { Text = template.Description };
+        var limitBox = new NumberBox { Value = template.DefaultLimit > 0 ? template.DefaultLimit : double.NaN, Minimum = 1, Maximum = 500, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
+        var schedule = NewTemplateScheduleCombo(template.DefaultSyncSchedule);
+        var featured = new ToggleSwitch { IsOn = template.Featured, OnContent = "Featured", OffContent = "Not featured" };
+        var posterBox = new TextBox { Text = template.PosterPath ?? "", PlaceholderText = "Optional poster URL" };
+        panel.Children.Add(LabeledTemplateField("Collection Title", titleBox));
+        panel.Children.Add(LabeledTemplateField("Description", descriptionBox));
+        TextBox? mdbUrlBox = null;
+        if (template.Source == "mdblist")
+        {
+            mdbUrlBox = new TextBox { Text = template.Mdblist?.Url ?? "", PlaceholderText = "https://mdblist.com/lists/user/slug" };
+            panel.Children.Add(LabeledTemplateField("MDBList URL", mdbUrlBox));
+        }
+
+        ComboBox? profileCombo = null;
+        if (template.RequiresProfile)
+        {
+            profileCombo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+            try
+            {
+                var profiles = (await App.Services.GetRequiredService<AuthApi>().GetProfilesAsync()).Profiles;
+                foreach (var profile in profiles) profileCombo.Items.Add(new ComboBoxItem { Content = profile.Name, Tag = profile.Id });
+                if (profileCombo.Items.Count > 0) profileCombo.SelectedIndex = 0;
+            }
+            catch { }
+            panel.Children.Add(LabeledTemplateField("Profile", profileCombo));
+        }
+
+        var twoColumn = new Grid { ColumnSpacing = 12 };
+        twoColumn.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        twoColumn.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var limitField = LabeledTemplateField("Max Items", limitBox);
+        var featuredField = LabeledTemplateField("Featured", featured);
+        Grid.SetColumn(featuredField, 1);
+        twoColumn.Children.Add(limitField);
+        twoColumn.Children.Add(featuredField);
+        panel.Children.Add(twoColumn);
+        panel.Children.Add(LabeledTemplateField("Auto Refresh", schedule));
+        panel.Children.Add(LabeledTemplateField("Poster", posterBox));
+        var error = new TextBlock { Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["ErrorBrush"], FontSize = 12 };
+        panel.Children.Add(error);
+        var create = new Button { Content = "Create Collection", HorizontalAlignment = HorizontalAlignment.Right, Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+        panel.Children.Add(create);
+        create.Click += async (_, _) =>
+        {
+            var libraryIds = libraryChecks.Where(pair => pair.Check.IsChecked == true).Select(pair => pair.Library.Id).ToList();
+            if (libraryIds.Count == 0) { error.Text = "Choose at least one library."; error.Visibility = Visibility.Visible; return; }
+            create.IsEnabled = false;
+            error.Visibility = Visibility.Collapsed;
+            try
+            {
+                var adminApi = App.Services.GetRequiredService<AdminApi>();
+                var limit = double.IsNaN(limitBox.Value) ? null : (int?)Math.Clamp((int)limitBox.Value, 1, 500);
+                var syncSchedule = (schedule.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+                var poster = string.IsNullOrWhiteSpace(posterBox.Text) ? null : posterBox.Text.Trim();
+                switch (template.Source)
+                {
+                    case "tmdb" when template.Tmdb != null:
+                        await adminApi.ImportTMDBCollectionAsync(new ImportTMDBCollectionRequest
+                        {
+                            LibraryIds = libraryIds, Title = titleBox.Text.Trim(), Description = descriptionBox.Text.Trim(),
+                            Preset = template.Tmdb.Preset, MediaType = template.Tmdb.MediaType, TimeWindow = template.Tmdb.TimeWindow,
+                            Limit = limit, Featured = featured.IsOn, PosterUrl = poster, SyncSchedule = syncSchedule,
+                        });
+                        break;
+                    case "trakt" when template.Trakt != null:
+                        await adminApi.ImportTraktCollectionAsync(new ImportTraktCollectionRequest
+                        {
+                            LibraryIds = libraryIds, Title = titleBox.Text.Trim(), Description = descriptionBox.Text.Trim(),
+                            Preset = template.Trakt.Preset, MediaType = template.Trakt.MediaType, ProfileId = (profileCombo?.SelectedItem as ComboBoxItem)?.Tag?.ToString(),
+                            Limit = limit, Featured = featured.IsOn, PosterUrl = poster, SyncSchedule = syncSchedule,
+                        });
+                        break;
+                    case "mdblist" when template.Mdblist != null:
+                        if (string.IsNullOrWhiteSpace(mdbUrlBox?.Text)) throw new InvalidOperationException("Enter an MDBList URL.");
+                        await adminApi.ImportMDBListCollectionAsync(new ImportMDBListCollectionRequest
+                        {
+                            LibraryIds = libraryIds, Title = titleBox.Text.Trim(), Description = descriptionBox.Text.Trim(), Url = mdbUrlBox.Text.Trim(),
+                            Limit = limit, Featured = featured.IsOn, PosterUrl = poster, SyncSchedule = syncSchedule,
+                        });
+                        break;
+                    default: throw new InvalidOperationException("This template can only be applied through a template bundle.");
+                }
+                dialog.Hide();
+                await ViewModel.LoadCommand.ExecuteAsync(null);
+                BuildCollectionRows();
+            }
+            catch (Exception ex) { error.Text = ex.Message; error.Visibility = Visibility.Visible; }
+            finally { create.IsEnabled = true; }
+        };
+        dialog.Content = new ScrollViewer { Content = panel, MaxHeight = 650, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+    }
+
+    private Task ShowBundleApplyViewAsync(ContentDialog dialog, CollectionTemplateCatalog catalog, IReadOnlyList<CollectionTemplateBundle> bundles, CollectionTemplateBundle bundle)
+    {
+        dialog.Title = "Apply Template Bundle";
+        var panel = new StackPanel { Spacing = 14, MinWidth = 720 };
+        panel.Children.Add(BackToTemplateGalleryButton(dialog, catalog, bundles));
+        panel.Children.Add(new Border
+        {
+            Padding = new Thickness(14), CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1),
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            Child = new StackPanel
+            {
+                Spacing = 5,
+                Children =
+                {
+                    new TextBlock { Text = bundle.Title, FontSize = 15, FontWeight = FontWeights.SemiBold },
+                    new TextBlock { Text = bundle.Description, FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] },
+                    new TextBlock { Text = $"{bundle.TemplateIds.Count} templates", FontSize = 11, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"] },
+                }
+            }
+        });
+        if (bundle.Id == "all_defaults")
+            panel.Children.Add(new TextBlock { Text = "Collections are created first; initial syncs are queued so this large bundle can finish without waiting on every source.", FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+
+        var templateMap = catalog.Categories.SelectMany(group => group.Templates).ToDictionary(template => template.Id, StringComparer.Ordinal);
+        var libraryChecks = ViewModel.Libraries.Select(library => (Library: library, Check: new CheckBox
+        {
+            Content = library.Name,
+            IsChecked = ViewModel.SelectedLibraryId.HasValue ? library.Id == ViewModel.SelectedLibraryId.Value : true,
+        })).ToList();
+        var libraryPanel = new StackPanel { Spacing = 4 };
+        foreach (var pair in libraryChecks) libraryPanel.Children.Add(pair.Check);
+        panel.Children.Add(LabeledTemplateField("Libraries", libraryPanel));
+
+        var featuredPanel = new StackPanel { Spacing = 10 };
+        featuredPanel.Children.Add(new TextBlock { Text = "Featured Sections", FontSize = 14, FontWeight = FontWeights.SemiBold });
+        featuredPanel.Children.Add(new TextBlock { Text = "Create one hero section for Home and one for each selected library.", FontSize = 11, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        var homeCombo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+        homeCombo.Items.Add(new ComboBoxItem { Content = "No home hero", Tag = null });
+        foreach (var pair in libraryChecks)
+            foreach (var template in EligibleBundleTemplates(bundle, templateMap, pair.Library))
+                homeCombo.Items.Add(new ComboBoxItem { Content = $"{pair.Library.Name} / {template.Title}", Tag = new HomeFeatureChoice(pair.Library.Id, template.Id) });
+        homeCombo.SelectedItem = homeCombo.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag is HomeFeatureChoice choice && choice.TemplateId is "tmdb_trending_movies_week" or "tmdb_trending_tv_week") ?? homeCombo.Items[0];
+        featuredPanel.Children.Add(LabeledTemplateField("Home Hero", homeCombo));
+
+        var libraryFeatureCombos = new Dictionary<int, ComboBox>();
+        foreach (var pair in libraryChecks)
+        {
+            var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+            combo.Items.Add(new ComboBoxItem { Content = "No library hero", Tag = null });
+            foreach (var template in EligibleBundleTemplates(bundle, templateMap, pair.Library))
+                combo.Items.Add(new ComboBoxItem { Content = template.Title, Tag = template.Id });
+            combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag is string id && id is "tmdb_trending_movies_week" or "tmdb_trending_tv_week" or "tmdb_popular_movies" or "tmdb_popular_tv") ?? combo.Items[0];
+            combo.IsEnabled = pair.Check.IsChecked == true;
+            pair.Check.Click += (_, _) => combo.IsEnabled = pair.Check.IsChecked == true;
+            libraryFeatureCombos[pair.Library.Id] = combo;
+            featuredPanel.Children.Add(LabeledTemplateField(pair.Library.Name, combo));
+        }
+        panel.Children.Add(new Border { Padding = new Thickness(14), CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], Child = featuredPanel });
+
+        var deleteExisting = new ToggleSwitch { Header = "Delete Existing Server Collections", OffContent = "Keep existing collections", OnContent = "Delete before applying" };
+        panel.Children.Add(deleteExisting);
+        var resultPanel = new StackPanel { Spacing = 6 };
+        panel.Children.Add(resultPanel);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+        var preview = new Button { Content = "Preview" };
+        var apply = new Button { Content = "Apply Defaults", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+        actions.Children.Add(preview);
+        actions.Children.Add(apply);
+        panel.Children.Add(actions);
+
+        ApplyCollectionTemplateBundleRequest Request(bool dryRun)
+        {
+            var ids = libraryChecks.Where(pair => pair.Check.IsChecked == true).Select(pair => pair.Library.Id).ToList();
+            var featured = new ApplyCollectionTemplateBundleFeaturedRequest();
+            if (homeCombo.SelectedItem is ComboBoxItem { Tag: HomeFeatureChoice home })
+                featured.Home = new ApplyCollectionTemplateBundleHomeFeaturedRequest { LibraryId = home.LibraryId, TemplateId = home.TemplateId };
+            var libraryFeatured = new Dictionary<string, string>();
+            foreach (var libraryId in ids)
+                if (libraryFeatureCombos[libraryId].SelectedItem is ComboBoxItem { Tag: string templateId })
+                    libraryFeatured[libraryId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = templateId;
+            featured.Libraries = libraryFeatured.Count > 0 ? libraryFeatured : null;
+            return new ApplyCollectionTemplateBundleRequest
+            {
+                LibraryIds = ids,
+                DryRun = dryRun ? true : null,
+                DeleteExisting = deleteExisting.IsOn,
+                Featured = featured.Home != null || featured.Libraries != null ? featured : null,
+            };
+        }
+
+        preview.Click += async (_, _) =>
+        {
+            var request = Request(true);
+            if (request.LibraryIds.Count == 0) { ShowBundleError(resultPanel, "Choose at least one library."); return; }
+            preview.IsEnabled = apply.IsEnabled = false;
+            resultPanel.Children.Clear();
+            resultPanel.Children.Add(new ProgressRing { IsActive = true, Width = 24, Height = 24, HorizontalAlignment = HorizontalAlignment.Left });
+            try
+            {
+                var result = await App.Services.GetRequiredService<AdminApi>().ApplyCollectionTemplateBundleAsync(bundle.Id, request);
+                RenderBundleResult(resultPanel, result);
+            }
+            catch (Exception ex) { ShowBundleError(resultPanel, ex.Message); }
+            finally { preview.IsEnabled = apply.IsEnabled = true; }
+        };
+        apply.Click += async (_, _) =>
+        {
+            var request = Request(false);
+            if (request.LibraryIds.Count == 0) { ShowBundleError(resultPanel, "Choose at least one library."); return; }
+            preview.IsEnabled = apply.IsEnabled = false;
+            try
+            {
+                await App.Services.GetRequiredService<AdminApi>().QueueCollectionTemplateBundleApplyAsync(bundle.Id, request);
+                dialog.Hide();
+                await ViewModel.LoadCommand.ExecuteAsync(null);
+                BuildCollectionRows();
+            }
+            catch (Exception ex) { ShowBundleError(resultPanel, ex.Message); preview.IsEnabled = apply.IsEnabled = true; }
+        };
+        dialog.Content = new ScrollViewer { Content = panel, MaxHeight = 650, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        return Task.CompletedTask;
+    }
+
+    private Button BackToTemplateGalleryButton(ContentDialog dialog, CollectionTemplateCatalog catalog, IReadOnlyList<CollectionTemplateBundle> bundles)
+    {
+        var back = new Button { Content = "‹ Back", HorizontalAlignment = HorizontalAlignment.Left, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+        back.Click += (_, _) => BuildAdminTemplateGalleryRoot(dialog, catalog, bundles);
+        return back;
+    }
+
+    private static Border BuildTemplateSummary(CollectionTemplate template) => new()
+    {
+        Padding = new Thickness(14), CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1),
+        BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+        Child = new StackPanel
+        {
+            Spacing = 5,
+            Children =
+            {
+                new TextBlock { Text = $"{template.Icon}  {template.Title}", FontSize = 15, FontWeight = FontWeights.SemiBold },
+                new TextBlock { Text = $"{template.Source.ToUpperInvariant()} · {TemplateMediaLabel(template.MediaKind)}", FontSize = 10, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"] },
+                new TextBlock { Text = template.Description, FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] },
+            }
+        }
+    };
+
+    private static StackPanel LabeledTemplateField(string label, FrameworkElement control)
+    {
+        var field = new StackPanel { Spacing = 5 };
+        field.Children.Add(new TextBlock { Text = label, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        field.Children.Add(control);
+        return field;
+    }
+
+    private static ComboBox NewTemplateScheduleCombo(string? selected)
+    {
+        var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (var (label, value) in new[] { ("None", ""), ("Every hour", "0 * * * *"), ("Every 6 hours", "0 */6 * * *"), ("Every 12 hours", "0 */12 * * *"), ("Daily", "0 0 * * *"), ("Weekly", "0 0 * * 0") })
+            combo.Items.Add(new ComboBoxItem { Content = label, Tag = value });
+        combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(item => string.Equals(item.Tag?.ToString(), selected, StringComparison.Ordinal)) ?? combo.Items[0];
+        return combo;
+    }
+
+    private static bool TemplateEligibleForLibrary(CollectionTemplate template, Library library)
+    {
+        var type = library.Type.Trim().ToLowerInvariant();
+        return template.MediaKind switch
+        {
+            "movie" => type is "movie" or "movies" or "mixed",
+            "tv" => type is "series" or "tv" or "shows" or "mixed",
+            _ => true,
+        };
+    }
+
+    private static IEnumerable<CollectionTemplate> EligibleBundleTemplates(CollectionTemplateBundle bundle, IReadOnlyDictionary<string, CollectionTemplate> map, Library library)
+        => bundle.TemplateIds.Select(id => map.GetValueOrDefault(id)).Where(template => template != null && TemplateEligibleForLibrary(template, library))!;
+
+    private static string TemplateMediaLabel(string mediaKind) => mediaKind switch { "tv" => "TV", "movie" => "Movies", _ => "Mixed" };
+
+    private static void ShowBundleError(StackPanel panel, string message)
+    {
+        panel.Children.Clear();
+        panel.Children.Add(new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["ErrorBrush"], FontSize = 12 });
+    }
+
+    private static void RenderBundleResult(StackPanel panel, ApplyCollectionTemplateBundleResponse result)
+    {
+        panel.Children.Clear();
+        var createLabel = result.DryRun ? "Would create" : "Created";
+        var summary = $"{createLabel} {result.Created.Count}; skipped {result.Skipped.Count}; failed {result.Failed.Count}";
+        if (result.DeleteExisting == true)
+            summary = $"{(result.DryRun ? "Would delete" : "Deleted")} {result.Deleted.Count}; delete skipped {result.DeleteSkipped.Count}; delete failed {result.DeleteFailed.Count}; {summary}";
+        panel.Children.Add(new TextBlock { Text = summary, FontSize = 13, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        if (result.SyncQueued.Count > 0)
+            panel.Children.Add(new TextBlock { Text = $"Initial syncs queued: {result.SyncQueued.Count}", FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        foreach (var entry in result.Failed.Take(8))
+            panel.Children.Add(new TextBlock { Text = $"{entry.LibraryName} / {entry.TemplateTitle}: {entry.Reason}", FontSize = 11, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["ErrorBrush"] });
+        foreach (var entry in result.FeaturedFailed.Take(8))
+            panel.Children.Add(new TextBlock { Text = $"Featured {entry.Surface} / {entry.TemplateTitle}: {entry.Reason}", FontSize = 11, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["ErrorBrush"] });
+    }
+
+    private sealed record HomeFeatureChoice(int LibraryId, string TemplateId);
 
     private async void CreateGroupButton_Click(object sender, RoutedEventArgs e)
     {

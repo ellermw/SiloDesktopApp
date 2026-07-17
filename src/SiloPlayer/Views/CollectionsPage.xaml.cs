@@ -33,6 +33,7 @@ public sealed partial class CollectionsPage : Page
             if (args.PropertyName == nameof(ViewModel.IsEmpty))
                 DispatcherQueue.TryEnqueue(UpdateEmptyState);
         };
+        SizeChanged += CollectionsPage_SizeChanged;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
@@ -108,24 +109,28 @@ public sealed partial class CollectionsPage : Page
 
     private ContentDialog BuildTemplateGalleryDialog()
     {
+        var compact = ActualWidth > 0 && ActualWidth < 960;
+        var dialogWidth = compact ? Math.Max(320, ActualWidth - 80) : 860;
         var dialog = new ContentDialog
         {
             Title = "Browse collection templates",
             CloseButtonText = "Close",
             XamlRoot = this.XamlRoot,
             DefaultButton = ContentDialogButton.Close,
-            MaxWidth = 980,
-            MinWidth = 860
+            MaxWidth = compact ? dialogWidth : 980,
+            MinWidth = dialogWidth
         };
         _templateDialog = dialog;
 
         var root = new Grid
         {
             ColumnSpacing = 20,
-            MinHeight = 560
+            MinHeight = compact ? 480 : 560
         };
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(230) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
         var filterPanel = new StackPanel { Spacing = 14 };
         filterPanel.Children.Add(new TextBlock
@@ -170,14 +175,44 @@ public sealed partial class CollectionsPage : Page
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
 
-        Grid.SetColumn(filterPanel, 0);
-        Grid.SetColumn(scroll, 1);
+        if (compact)
+        {
+            root.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+            root.ColumnDefinitions[1].Width = new GridLength(0);
+            Grid.SetColumn(filterPanel, 0);
+            Grid.SetColumnSpan(filterPanel, 2);
+            Grid.SetRow(filterPanel, 0);
+            Grid.SetColumn(scroll, 0);
+            Grid.SetColumnSpan(scroll, 2);
+            Grid.SetRow(scroll, 1);
+        }
+        else
+        {
+            Grid.SetColumn(filterPanel, 0);
+            Grid.SetColumn(scroll, 1);
+        }
         root.Children.Add(filterPanel);
         root.Children.Add(scroll);
 
         dialog.Content = root;
         RenderTemplateCards();
         return dialog;
+    }
+
+    private void CollectionsPage_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var compact = e.NewSize.Width < 760;
+        var gutter = e.NewSize.Width < 600 ? 16 : compact ? 24 : 40;
+        CollectionsPageShell.Padding = new Thickness(gutter, compact ? 20 : 28, gutter, 40);
+        CollectionsHeaderGrid.ColumnDefinitions[1].Width = compact
+            ? new GridLength(0)
+            : GridLength.Auto;
+        Grid.SetRow(CollectionsHeaderActions, compact ? 1 : 0);
+        Grid.SetColumn(CollectionsHeaderActions, compact ? 0 : 1);
+        Grid.SetColumnSpan(CollectionsHeaderActions, compact ? 2 : 1);
+        CollectionsHeaderActions.HorizontalAlignment = compact
+            ? HorizontalAlignment.Left
+            : HorizontalAlignment.Right;
     }
 
     private void BuildTemplateCategoryButtons(StackPanel categoriesPanel)

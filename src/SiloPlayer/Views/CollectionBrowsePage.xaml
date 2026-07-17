@@ -20,16 +20,21 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <!-- Header: back button + title + item count -->
-        <Grid Grid.Row="0" Margin="40,24,40,20">
+        <Grid x:Name="CollectionHeaderGrid" Grid.Row="0" Margin="40,24,40,20" RowSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
             <Button
                 Grid.Column="0"
@@ -108,9 +113,38 @@
             </Border>
         </Grid>
 
+        <Grid x:Name="CollectionToolbar" Grid.Row="1" Margin="40,0,40,16" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="LoadedCountText" Grid.Column="0" VerticalAlignment="Center"
+                       FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
+            <ComboBox x:Name="SortCombo" Grid.Column="1" MinWidth="170" CornerRadius="16"
+                      SelectionChanged="SortCombo_SelectionChanged">
+                <ComboBoxItem Content="Collection Order" Tag="" />
+                <ComboBoxItem Content="Title" Tag="title" />
+                <ComboBoxItem Content="Date Added" Tag="added_at" />
+                <ComboBoxItem Content="Release Date" Tag="release_date" />
+                <ComboBoxItem Content="Year" Tag="year" />
+                <ComboBoxItem Content="IMDb Rating" Tag="rating_imdb" />
+                <ComboBoxItem Content="Runtime" Tag="runtime" />
+            </ComboBox>
+            <Button x:Name="OrderButton" Grid.Column="2" Style="{StaticResource SecondaryButtonStyle}"
+                    Width="40" Height="40" Padding="0" CornerRadius="20"
+                    Click="OrderButton_Click" ToolTipService.ToolTip="Descending">
+                <FontIcon x:Name="OrderIcon" Glyph="&#xE74B;" FontSize="14" />
+            </Button>
+        </Grid>
+
         <!-- Loading -->
         <ProgressRing
-            Grid.Row="1"
+            Grid.Row="2"
             x:Name="LoadingRing"
             IsActive="True"
             Visibility="Collapsed"
@@ -120,7 +154,7 @@
 
         <!-- Error -->
         <TextBlock
-            Grid.Row="1"
+            Grid.Row="2"
             x:Name="ErrorText"
             Visibility="Collapsed"
             Foreground="{StaticResource ErrorBrush}"
@@ -131,28 +165,33 @@
             MaxWidth="500" />
 
         <!-- Content grid -->
-        <ScrollViewer Grid.Row="1" x:Name="ContentScroll" Padding="40,0,40,24">
-            <ItemsRepeater x:Name="PosterRepeater">
-                <ItemsRepeater.Layout>
-                    <UniformGridLayout
-                        MinItemWidth="{StaticResource PosterCardWidth}"
-                        MinItemHeight="{StaticResource PosterCardTotalHeight}"
-                        MinColumnSpacing="12"
-                        MinRowSpacing="16"
-                        ItemsStretch="None" />
-                </ItemsRepeater.Layout>
-                <ItemsRepeater.ItemTemplate>
-                    <DataTemplate x:DataType="models:MediaItem">
-                        <controls:PosterCard MediaItem="{x:Bind}" />
-                    </DataTemplate>
-                </ItemsRepeater.ItemTemplate>
-            </ItemsRepeater>
+        <ScrollViewer Grid.Row="2" x:Name="ContentScroll" Padding="40,0,40,24"
+                      ViewChanged="ContentScroll_ViewChanged">
+            <StackPanel Spacing="16">
+                <ItemsRepeater x:Name="PosterRepeater">
+                    <ItemsRepeater.Layout>
+                        <UniformGridLayout
+                            MinItemWidth="{StaticResource PosterCardWidth}"
+                            MinItemHeight="{StaticResource PosterCardTotalHeight}"
+                            MinColumnSpacing="12"
+                            MinRowSpacing="16"
+                            ItemsStretch="None" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="models:MediaItem">
+                            <controls:PosterCard MediaItem="{x:Bind}" />
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+                <ProgressRing x:Name="LoadMoreRing" IsActive="False" Visibility="Collapsed"
+                              HorizontalAlignment="Center" Width="24" Height="24" />
+            </StackPanel>
         </ScrollViewer>
 
         <!-- Empty state -->
         <StackPanel
             x:Name="EmptyState"
-            Grid.Row="1"
+            Grid.Row="2"
             VerticalAlignment="Center"
             HorizontalAlignment="Center"
             Spacing="12"

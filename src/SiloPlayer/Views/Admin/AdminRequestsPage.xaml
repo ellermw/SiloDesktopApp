@@ -25,7 +25,7 @@
     </Page.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <StackPanel Padding="40,32,40,40" Spacing="20" MaxWidth="1640" HorizontalAlignment="Stretch">
+            <StackPanel x:Name="RequestsPageShell" Padding="40,32,40,40" Spacing="20" MaxWidth="1640" HorizontalAlignment="Stretch">
             <StackPanel Spacing="8">
                 <TextBlock Text="Requests" FontSize="36" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
                 <TextBlock Text="Review media requests, set limits, and manage Radarr or Sonarr routing."
@@ -47,7 +47,7 @@
 
             <StackPanel x:Name="QueuePanel" Spacing="16">
                 <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="12" Padding="12">
-                    <StackPanel Orientation="Horizontal" Spacing="10">
+                    <StackPanel x:Name="QueueFilterBar" Orientation="Horizontal" Spacing="10">
                         <ComboBox x:Name="StatusFilterComboBox" Width="170" SelectionChanged="Filter_Changed">
                             <ComboBoxItem Content="All statuses" Tag="all" IsSelected="True" />
                             <ComboBoxItem Content="Pending" Tag="pending" /><ComboBoxItem Content="Approved" Tag="approved" />
@@ -65,7 +65,10 @@
                     </StackPanel>
                 </Border>
                 <StackPanel x:Name="QueueSkeleton" Spacing="8" Visibility="Collapsed" />
-                <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8">
+                <ScrollViewer x:Name="QueueTableScroll" HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled"
+                              VerticalScrollBarVisibility="Disabled">
+                <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8"
+                        MinWidth="1120">
                     <StackPanel>
                         <Grid Padding="12,11" ColumnSpacing="12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="2.6*" /><ColumnDefinition Width="0.85*" /><ColumnDefinition Width="0.8*" /><ColumnDefinition Width="0.75*" /><ColumnDefinition Width="3*" /><ColumnDefinition Width="240" /></Grid.ColumnDefinitions>
@@ -77,9 +80,10 @@
                         <StackPanel x:Name="RequestRows" />
                     </StackPanel>
                 </Border>
+                </ScrollViewer>
             </StackPanel>
 
-            <StackPanel x:Name="SettingsPanel" Visibility="Collapsed" Width="768" HorizontalAlignment="Left">
+            <StackPanel x:Name="SettingsPanel" Visibility="Collapsed" MaxWidth="768" HorizontalAlignment="Stretch">
                 <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="20">
                     <StackPanel Spacing="18">
                         <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE713;" Foreground="{StaticResource AccentBrush}" /><TextBlock Text="Global Settings" FontSize="18" FontWeight="SemiBold" /></StackPanel>
@@ -120,7 +124,7 @@
                 <StackPanel x:Name="IntegrationRows" Spacing="12" />
             </StackPanel>
 
-            <StackPanel x:Name="OverridesPanel" Visibility="Collapsed" Width="768" HorizontalAlignment="Left">
+            <StackPanel x:Name="OverridesPanel" Visibility="Collapsed" MaxWidth="768" HorizontalAlignment="Stretch">
                 <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="20">
                     <StackPanel Spacing="16">
                         <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE713;" Foreground="{StaticResource AccentBrush}"/><TextBlock Text="User Overrides" FontSize="18" FontWeight="SemiBold" /></StackPanel>

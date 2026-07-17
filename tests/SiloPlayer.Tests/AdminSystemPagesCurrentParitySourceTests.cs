@@ -31,6 +31,9 @@ public class AdminSystemPagesCurrentParitySourceTests
         Assert.Contains("OpenCreateDialogAsync", code, StringComparison.Ordinal);
         Assert.Contains("OpenEditDialogAsync", code, StringComparison.Ordinal);
         Assert.Contains("OpenDeleteDialogAsync", code, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"ProxyNodesTableScroll\"", markup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"TranscodeNodesTableScroll\"", markup, StringComparison.Ordinal);
+        Assert.Contains("ApplyResponsiveLayout", code, StringComparison.Ordinal);
     }
 
     [Fact]

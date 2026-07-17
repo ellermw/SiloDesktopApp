@@ -68,15 +68,16 @@
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <StackPanel x:Name="UserDetailPageShell" Padding="40,28,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Stretch">
 
                 <!-- ===== Header ===== -->
-                <Grid ColumnSpacing="20">
+                <Grid x:Name="UserDetailHeader" ColumnSpacing="20" RowSpacing="14">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
 
                     <!-- Back button (ghost, 32x32) -->
                     <Button
@@ -104,7 +105,7 @@
                     </StackPanel>
 
                     <!-- Action buttons -->
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <StackPanel x:Name="UserDetailActions" Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <Button
                             x:Name="ImpersonateButton"
                             Style="{StaticResource SecondaryButtonStyle}"
@@ -129,8 +130,10 @@
                 </Grid>
 
                 <!-- ===== Line-style Tab bar ===== -->
-                <StackPanel x:Name="TabBar" Orientation="Horizontal" Spacing="2"
-                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,0" />
+                <ScrollViewer x:Name="UserTabsScroll" HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="TabBar" Orientation="Horizontal" Spacing="2"
+                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,0" />
+                </ScrollViewer>
 
                 <!-- ===== Tab panels ===== -->
 
@@ -141,9 +144,10 @@
                         <ColumnDefinition Width="24" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
 
                     <!-- Account card -->
-                    <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                    <Border x:Name="AccountCard" Grid.Column="0" Style="{StaticResource CardStyle}">
                         <StackPanel>
                             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,12,16,12">
                                 <TextBlock Text="Account" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
@@ -153,7 +157,7 @@
                     </Border>
 
                     <!-- Permissions card -->
-                    <Border Grid.Column="2" Style="{StaticResource CardStyle}">
+                    <Border x:Name="PermissionsCard" Grid.Column="2" Style="{StaticResource CardStyle}">
                         <StackPanel>
                             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,12,16,12">
                                 <TextBlock Text="Permissions &amp; Limits" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
@@ -163,13 +167,34 @@
                     </Border>
                 </Grid>
 
+                <!-- Account-wide settings -->
+                <Border x:Name="SettingsPanel" Visibility="Collapsed" Style="{StaticResource CardStyle}" Padding="0">
+                    <StackPanel>
+                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="20,16">
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="User Playback Settings" FontSize="14" FontWeight="SemiBold" />
+                                <TextBlock Text="Account-wide playback preferences that follow this user across devices."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                        <StackPanel x:Name="UserSettingsRows" Padding="20,4,20,16" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Per-profile device overrides -->
+                <StackPanel x:Name="DevicesPanel" Visibility="Collapsed" Spacing="12">
+                    <TextBlock x:Name="DeviceOverridesSummary" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                    <StackPanel x:Name="DeviceOverridesHost" Spacing="12" />
+                </StackPanel>
+
                 <!-- Profiles -->
                 <Grid x:Name="ProfilesPanel" Visibility="Collapsed">
                     <StackPanel x:Name="ProfilesContent" />
                 </Grid>
 
                 <!-- Watch History -->
-                <Border x:Name="HistoryPanel" Visibility="Collapsed" Style="{StaticResource CardStyle}" Padding="0">
+                <ScrollViewer x:Name="HistoryPanel" Visibility="Collapsed" HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled" VerticalScrollBarVisibility="Disabled">
+                <Border Style="{StaticResource CardStyle}" Padding="0" MinWidth="920">
                     <StackPanel>
                         <!-- History table header -->
                         <Grid Padding="16,12,16,12" ColumnSpacing="12">
@@ -199,9 +224,11 @@
                         </Border>
                     </StackPanel>
                 </Border>
+                </ScrollViewer>
 
                 <!-- IP History -->
-                <Border x:Name="IPPanel" Visibility="Collapsed" Style="{StaticResource CardStyle}" Padding="0">
+                <ScrollViewer x:Name="IPPanel" Visibility="Collapsed" HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled" VerticalScrollBarVisibility="Disabled">
+                <Border Style="{StaticResource CardStyle}" Padding="0" MinWidth="620">
                     <StackPanel>
                         <!-- IP table header -->
                         <Grid Padding="16,12,16,12" ColumnSpacing="12">
@@ -227,6 +254,7 @@
                         </Border>
                     </StackPanel>
                 </Border>
+                </ScrollViewer>
 
             </StackPanel>
         </ScrollViewer>

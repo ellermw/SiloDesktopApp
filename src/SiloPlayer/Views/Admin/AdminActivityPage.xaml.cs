@@ -40,7 +40,23 @@ public sealed partial class AdminActivityPage : Page
     }
 
     private void ContentScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
-        => AdminPageContent.Width = Math.Min(1640, Math.Max(0, e.NewSize.Width));
+    {
+        var width = Math.Max(0, e.NewSize.Width);
+        AdminPageContent.Width = Math.Min(1640, width);
+        var horizontalPadding = width >= 1280 ? 40 : width >= 1024 ? 32 : width >= 640 ? 24 : 16;
+        var verticalPadding = width >= 1024 ? 32 : 16;
+        AdminPageContent.Padding = new Thickness(horizontalPadding, verticalPadding, horizontalPadding, 40);
+        var contentWidth = Math.Max(0, width - (horizontalPadding * 2));
+
+        var wrapHeader = contentWidth < 760;
+        Grid.SetColumn(PageHeaderCopy, 0);
+        Grid.SetColumnSpan(PageHeaderCopy, wrapHeader ? 2 : 1);
+        Grid.SetColumn(PageHeaderActions, wrapHeader ? 0 : 1);
+        Grid.SetColumnSpan(PageHeaderActions, wrapHeader ? 2 : 1);
+        Grid.SetRow(PageHeaderActions, wrapHeader ? 1 : 0);
+        PageHeaderActions.HorizontalAlignment = wrapHeader ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        UpdateResponsiveTitle(contentWidth);
+    }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {

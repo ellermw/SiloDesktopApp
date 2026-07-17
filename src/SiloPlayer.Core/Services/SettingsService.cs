@@ -53,8 +53,10 @@ public class SettingsService
 
     public void AddServer(string url, string name)
     {
+        url = ServerUrlIdentity.Normalize(url);
         var settings = Load();
-        if (settings.Servers.Any(s => s.Url == url))
+        if (settings.Servers.Any(s =>
+                string.Equals(ServerUrlIdentity.Normalize(s.Url), url, StringComparison.OrdinalIgnoreCase)))
             return;
         settings.Servers.Add(new ServerEntry { Url = url, Name = name, LastUsed = DateTime.UtcNow });
         Save(settings);
@@ -62,15 +64,19 @@ public class SettingsService
 
     public void RemoveServer(string url)
     {
+        var normalized = ServerUrlIdentity.Normalize(url);
         var settings = Load();
-        settings.Servers.RemoveAll(s => s.Url == url);
+        settings.Servers.RemoveAll(s =>
+            string.Equals(ServerUrlIdentity.Normalize(s.Url), normalized, StringComparison.OrdinalIgnoreCase));
         Save(settings);
     }
 
     public void UpdateLastUsed(string url)
     {
+        var normalized = ServerUrlIdentity.Normalize(url);
         var settings = Load();
-        var server = settings.Servers.FirstOrDefault(s => s.Url == url);
+        var server = settings.Servers.FirstOrDefault(s =>
+            string.Equals(ServerUrlIdentity.Normalize(s.Url), normalized, StringComparison.OrdinalIgnoreCase));
         if (server != null)
         {
             server.LastUsed = DateTime.UtcNow;

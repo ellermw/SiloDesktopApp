@@ -39,6 +39,36 @@ public sealed class PlaybackManagerTests
     }
 
     [Fact]
+    public async Task StartSessionAsync_CanDisablePerFileProgressForMultipartAudiobooks()
+    {
+        var handler = new BlockingPlaybackHandler();
+        var apiClient = new SiloApiClient(new HttpClient(handler));
+        apiClient.SetBaseUrl("https://example.test");
+        using var manager = new PlaybackManager(
+            new PlaybackApi(apiClient),
+            new CatalogApi(apiClient),
+            new AuthService(apiClient, new AuthApi(apiClient)),
+            apiClient);
+
+        try
+        {
+            await manager.StartSessionAsync(
+                123,
+                startPosition: 17,
+                forceStartPosition: true,
+                disableProgressPersistence: true);
+
+            Assert.Contains("\"start_position\":17", handler.LastStartBody);
+            Assert.Contains("\"disable_progress_persistence\":true", handler.LastStartBody);
+        }
+        finally
+        {
+            handler.ReleaseProgress();
+            await manager.StopSessionAsync();
+        }
+    }
+
+    [Fact]
     public async Task StopSessionAsync_CancelsInFlightProgressBeforeReturning()
     {
         var handler = new BlockingPlaybackHandler();

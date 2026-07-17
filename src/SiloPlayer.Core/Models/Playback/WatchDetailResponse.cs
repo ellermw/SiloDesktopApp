@@ -234,6 +234,19 @@ public class WatchTogetherRoomSnapshot
     public bool SelfIgnoreWait { get; set; }
     public string? AttachedSessionId { get; set; }
     public string? InvitePath { get; set; }
+    public List<WatchTogetherRoomMember> Members { get; set; } = [];
+}
+
+public class WatchTogetherRoomMember
+{
+    public int UserId { get; set; }
+    public string ProfileId { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public bool IsHost { get; set; }
+    public bool IsSelf { get; set; }
+    public bool Connected { get; set; }
+    public string DisplayLabel => DisplayName + (IsSelf ? " (you)" : "");
+    public string HostLabel => IsHost ? "HOST" : "";
 }
 
 public class WatchTogetherRoomResponse

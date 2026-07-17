@@ -59,7 +59,27 @@ public sealed partial class AdminLibrariesPage : Page
     }
 
     private void ContentScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
-        => AdminPageContent.Width = Math.Min(1640, Math.Max(0, e.NewSize.Width));
+    {
+        var width = Math.Max(0, e.NewSize.Width);
+        AdminPageContent.Width = Math.Min(1640, width);
+
+        // AdminLayout.tsx: px-4 / sm:px-6 / lg:px-8 / xl:px-10 and a wrapping
+        // page-header. The table itself uses overflow-x-auto in the WebUI.
+        var horizontalPadding = width >= 1280 ? 40 : width >= 1024 ? 32 : width >= 640 ? 24 : 16;
+        var verticalPadding = width >= 1024 ? 32 : 16;
+        AdminPageContent.Padding = new Thickness(horizontalPadding, verticalPadding, horizontalPadding, 40);
+        var contentWidth = Math.Max(0, width - (horizontalPadding * 2));
+
+        var wrapHeader = contentWidth < 1080;
+        Grid.SetColumn(PageHeaderCopy, 0);
+        Grid.SetColumnSpan(PageHeaderCopy, wrapHeader ? 2 : 1);
+        Grid.SetColumn(PageHeaderActions, wrapHeader ? 0 : 1);
+        Grid.SetColumnSpan(PageHeaderActions, wrapHeader ? 2 : 1);
+        Grid.SetRow(PageHeaderActions, wrapHeader ? 1 : 0);
+        PageHeaderActions.HorizontalAlignment = wrapHeader ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        PageTitleText.FontSize = contentWidth < 640 ? 32 : contentWidth < 1024 ? 40 : 48;
+        PageTitleText.LineHeight = contentWidth < 640 ? 31 : contentWidth < 1024 ? 38 : 46;
+    }
 
     // Event channel subscription for realtime refresh
     private IDisposable? _eventSubscription;
@@ -364,7 +384,8 @@ public sealed partial class AdminLibrariesPage : Page
         }
 
         // The WebUI keeps warnings in a distinct block below the library/work rows.
-        foreach (var lib in ViewModel.Libraries.Where(library => library.ScanWarningCode == "empty_root"))
+        foreach (var lib in ViewModel.Libraries.Where(library =>
+                     library.ScanWarningCode is "empty_root" or "dead_root"))
             LibrariesPanel.Children.Add(BuildEmptyRootWarningRow(lib));
     }
 
@@ -559,6 +580,8 @@ public sealed partial class AdminLibrariesPage : Page
 
         if (lib.ScanWarningCode == "empty_root")
             statusColumn.Children.Add(MakeBadge("Empty root guarded", "destructive"));
+        if (lib.ScanWarningCode == "dead_root")
+            statusColumn.Children.Add(MakeBadge("Root unreachable", "destructive"));
         Grid.SetColumn(statusColumn, 4);
         row.Children.Add(statusColumn);
 
@@ -654,9 +677,9 @@ public sealed partial class AdminLibrariesPage : Page
         actionsPanel.Children.Add(deleteBtn);
 
         // The current WebUI places the guarded destructive confirmation last.
-        if (lib.ScanWarningCode == "empty_root")
+        if (lib.ScanWarningCode is "empty_root" or "dead_root")
         {
-            var confirmCleanupBtn = MakeIconButton28("\uE74D", "Confirm deletion for the next empty-root scan", DestructiveColor);
+            var confirmCleanupBtn = MakeIconButton28("\uE74D", "Confirm cleanup for missing or empty roots", DestructiveColor);
             confirmCleanupBtn.Click += async (_, _) => await OpenConfirmEmptyRootDialogAsync(capturedLib);
             actionsPanel.Children.Add(confirmCleanupBtn);
         }
@@ -861,7 +884,7 @@ public sealed partial class AdminLibrariesPage : Page
     }
 
     // ===================================================================
-    //  Empty Root Warning Row (colSpan=6, bg-destructive/5)
+    //  Guarded Root Warning Row (colSpan=6, bg-destructive/5)
     // ===================================================================
 
     private FrameworkElement BuildEmptyRootWarningRow(Library lib)
@@ -876,9 +899,12 @@ public sealed partial class AdminLibrariesPage : Page
 
         var content = new StackPanel { Spacing = 8 };
 
+        var deadRoot = lib.ScanWarningCode == "dead_root";
         content.Children.Add(new TextBlock
         {
-            Text = "Scan found 0 media files for this library. Cleanup was paused to avoid accidental deletion.",
+            Text = deadRoot
+                ? "One or more library roots are unreachable or mounted but returned no files. Their files are hidden, but nothing will be deleted until the root is back or cleanup is confirmed."
+                : "Scan found 0 media files for this library. Cleanup was paused to avoid accidental deletion.",
             FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = new SolidColorBrush(DestructiveColor),
@@ -888,7 +914,9 @@ public sealed partial class AdminLibrariesPage : Page
         content.Children.Add(new TextBlock
         {
             Text = lib.ScanWarningMessage
-                   ?? "Run another scan after storage returns, or confirm deletion before the next empty-root scan.",
+                   ?? (deadRoot
+                       ? "Run another scan after storage returns, or use Check Mount to verify connectivity."
+                       : "Run another scan after storage returns, or confirm deletion before the next empty-root scan."),
             FontSize = 13,
             Foreground = _secondaryText,
             TextWrapping = TextWrapping.Wrap
@@ -910,7 +938,35 @@ public sealed partial class AdminLibrariesPage : Page
             BuildLibraryRows();
         };
 
-        content.Children.Add(checkMountBtn);
+        var warningActions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+        };
+        warningActions.Children.Add(checkMountBtn);
+
+        if (deadRoot)
+        {
+            var confirmCleanupBtn = new Button
+            {
+                Style = (Style)Application.Current.Resources["SecondaryButtonStyle"],
+                Padding = new Thickness(10, 6, 10, 6),
+                Content = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 4,
+                    Children =
+                    {
+                        new FontIcon { Glyph = "\uE74D", FontSize = 13 },
+                        new TextBlock { Text = "Confirm Cleanup", FontSize = 12 },
+                    },
+                },
+            };
+            confirmCleanupBtn.Click += async (_, _) => await OpenConfirmEmptyRootDialogAsync(capturedLib);
+            warningActions.Children.Add(confirmCleanupBtn);
+        }
+
+        content.Children.Add(warningActions);
 
         if (ViewModel.MountCheckResults.TryGetValue(lib.Id, out var mountCheck))
         {
@@ -966,7 +1022,7 @@ public sealed partial class AdminLibrariesPage : Page
 
         if (!healthy)
         {
-            foreach (var root in result.Roots.Where(r => !r.Reachable))
+            foreach (var root in result.Roots.Where(r => !r.Reachable || r.SuspectEmpty))
             {
                 var rootLine = new TextBlock
                 {
@@ -984,6 +1040,13 @@ public sealed partial class AdminLibrariesPage : Page
                     rootLine.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
                     {
                         Text = $": {root.ErrorMessage}"
+                    });
+                }
+                else if (root.SuspectEmpty)
+                {
+                    rootLine.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
+                    {
+                        Text = ": mounted, but the root returned no files"
                     });
                 }
                 stack.Children.Add(rootLine);
@@ -2870,7 +2933,7 @@ public sealed partial class AdminLibrariesPage : Page
         var dialog = new ContentDialog
         {
             Title = "Confirm empty root cleanup",
-            Content = $"If the next scan still finds 0 media files for \"{lib.Name}\", remove the library items?",
+            Content = $"On the next scan of \"{lib.Name}\", remove items from roots that are reachable but still empty? Unreachable roots remain protected.",
             PrimaryButtonText = "Confirm",
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
@@ -3447,16 +3510,10 @@ public sealed partial class AdminLibrariesPage : Page
             CornerRadius = new CornerRadius(8), FontSize = 13, Width = 200,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        foreach (var (code, name) in new[] {
-            ("en", "English"), ("es", "Spanish"), ("fr", "French"), ("de", "German"),
-            ("it", "Italian"), ("pt", "Portuguese"), ("nl", "Dutch"), ("ja", "Japanese"),
-            ("ko", "Korean"), ("zh", "Chinese"), ("ru", "Russian"), ("ar", "Arabic"),
-            ("sv", "Swedish"), ("da", "Danish"), ("no", "Norwegian"), ("fi", "Finnish"),
-            ("pl", "Polish"), ("cs", "Czech"), ("hu", "Hungarian"), ("ro", "Romanian"),
-            ("tr", "Turkish"), ("th", "Thai"), ("vi", "Vietnamese"), ("id", "Indonesian") })
+        foreach (var language in MediaLanguageCatalog.All)
         {
-            var item = new ComboBoxItem { Content = name, Tag = code };
-            if (code == (editingLib?.MetadataLanguage ?? "en")) item.IsSelected = true;
+            var item = new ComboBoxItem { Content = language.Label, Tag = language.Code };
+            if (language.Code == (editingLib?.MetadataLanguage ?? "en")) item.IsSelected = true;
             langCombo.Items.Add(item);
         }
         if (langCombo.SelectedIndex < 0) langCombo.SelectedIndex = 0;

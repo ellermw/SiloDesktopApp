@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
+using Microsoft.UI.Xaml.Shapes;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
@@ -20,12 +22,15 @@ public sealed partial class WatchTogetherRoomPage : Page
     public WatchTogetherRoomViewModel ViewModel { get; }
     private bool _subscribed;
     private string? _nowPlayingContentId;
+    private readonly DispatcherTimer _searchDebounce = new() { Interval = TimeSpan.FromMilliseconds(350) };
+    private bool _suppressSearchTextChanged;
 
     public WatchTogetherRoomPage()
     {
         ViewModel = App.Services.GetRequiredService<WatchTogetherRoomViewModel>();
         this.InitializeComponent();
         SuggestionsRepeater.ItemsSource = ViewModel.Suggestions;
+        _searchDebounce.Tick += SearchDebounce_Tick;
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -95,6 +100,7 @@ public sealed partial class WatchTogetherRoomPage : Page
         }
         catch { }
         ViewModel.Dispose();
+        _searchDebounce.Stop();
     }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -137,14 +143,21 @@ public sealed partial class WatchTogetherRoomPage : Page
         CopyInviteButton.Visibility = hasInvite ? Visibility.Visible : Visibility.Collapsed;
         PolicyButton.Visibility = isHost ? Visibility.Visible : Visibility.Collapsed;
         EndButton.Visibility = isHost ? Visibility.Visible : Visibility.Collapsed;
+        LeaveButton.Visibility = hasRoom && !isHost ? Visibility.Visible : Visibility.Collapsed;
+        UpdateMembers(room?.Members);
 
         // Host content-search section — only for hosts during lobby (not
         // already playing). Hidden for guests and vote-mode rooms.
         HostPickSection.Visibility = (hasRoom && (isHost || isVoteMode))
             ? Visibility.Visible : Visibility.Collapsed;
-        HostSearchBox.PlaceholderText = isVoteMode ? "Search to suggest something…" : isPlaying ? "Search to switch what everyone is watching…" : "Search movies and series…";
-        if (CandidatePlayBtn.Content is StackPanel candidateContent && candidateContent.Children.LastOrDefault() is TextBlock candidateLabel)
-            candidateLabel.Text = isVoteMode ? "Suggest This" : isPlaying ? "Switch Everyone" : "Start for Everyone";
+        HostSearchBox.PlaceholderText = isVoteMode ? "Search to suggest something…" : "Search movies and series…";
+        CandidateActionLabel.Text = isVoteMode ? "Suggest This" : isPlaying ? "Switch Everyone" : "Start for Everyone";
+        CandidateKindLabel.Text = isVoteMode ? "YOUR SUGGESTION" : "READY TO PLAY";
+        SearchEmptyText.Text = isPlaying
+            ? "Search to switch what everyone is watching."
+            : isVoteMode
+                ? "Search for something to suggest to the room."
+                : "Find something for everyone to watch.";
 
         if (isHost && room != null)
         {
@@ -156,7 +169,6 @@ public sealed partial class WatchTogetherRoomPage : Page
         if (isPlaying && !string.IsNullOrEmpty(room?.SelectedContentId))
         {
             NowPlayingPanel.Visibility = Visibility.Visible;
-            NowPlayingSubtitle.Text = "Synchronized playback";
             _ = ResolveNowPlayingAsync(room!.SelectedContentId);
         }
         else
@@ -164,28 +176,11 @@ public sealed partial class WatchTogetherRoomPage : Page
             NowPlayingPanel.Visibility = Visibility.Collapsed;
         }
 
-        // Lobby: host panel vs guest waiting panel
-        if (hasRoom && !isPlaying)
-        {
-            if (isHost)
-            {
-                HostPanel.Visibility = Visibility.Visible;
-                WaitingPanel.Visibility = Visibility.Collapsed;
-            }
-            else
-            {
-                HostPanel.Visibility = Visibility.Collapsed;
-                WaitingPanel.Visibility = Visibility.Visible;
-                WaitingSubtitle.Text = isVoteMode
-                    ? "The room is voting on what to watch next."
-                    : "The host will choose a movie or episode for the room.";
-            }
-        }
-        else
-        {
-            HostPanel.Visibility = Visibility.Collapsed;
-            WaitingPanel.Visibility = Visibility.Collapsed;
-        }
+        // Vote-mode guests can search and suggest. Host-pick guests wait for the host.
+        WaitingPanel.Visibility = hasRoom && !isHost && !isVoteMode ? Visibility.Visible : Visibility.Collapsed;
+        WaitingSubtitle.Text = isPlaying
+            ? "The host already started playback. You'll enter together."
+            : "The host will choose a movie or episode for the room.";
 
         // Suggestions visible in vote mode only
         SuggestionsPanel.Visibility = hasRoom && isVoteMode ? Visibility.Visible : Visibility.Collapsed;
@@ -207,6 +202,59 @@ public sealed partial class WatchTogetherRoomPage : Page
                 catch { }
             }
         }
+    }
+
+    private void UpdateMembers(IReadOnlyList<WatchTogetherRoomMember>? members)
+    {
+        MembersWrapPanel.Children.Clear();
+        if (members == null || members.Count == 0)
+        {
+            MembersPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        foreach (var member in members)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
+            row.Children.Add(new Ellipse
+            {
+                Width = 7,
+                Height = 7,
+                VerticalAlignment = VerticalAlignment.Center,
+                Fill = new SolidColorBrush(member.Connected
+                    ? Microsoft.UI.Colors.MediumSpringGreen
+                    : Microsoft.UI.Colors.DimGray),
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = member.DisplayLabel,
+                FontSize = 13,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            if (member.IsHost)
+            {
+                row.Children.Add(new TextBlock
+                {
+                    Text = "HOST",
+                    FontSize = 9,
+                    CharacterSpacing = 80,
+                    Opacity = 0.65,
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+            }
+
+            MembersWrapPanel.Children.Add(new Border
+            {
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(16),
+                Padding = new Thickness(11, 6, 11, 6),
+                Child = row,
+            });
+        }
+
+        MembersPanel.Visibility = Visibility.Visible;
     }
 
     private void UpdateConnectionUi()
@@ -244,7 +292,7 @@ public sealed partial class WatchTogetherRoomPage : Page
     {
         int n = ViewModel.Suggestions.Count;
         SuggestionsSubtitle.Text = n == 0
-            ? "No suggestions yet."
+            ? "No suggestions yet — search for something to add."
             : $"{n} suggestion{(n == 1 ? "" : "s")} from the room";
     }
 
@@ -253,18 +301,36 @@ public sealed partial class WatchTogetherRoomPage : Page
         var room = ViewModel.Room;
         if (room == null || string.IsNullOrEmpty(room.InvitePath)) return;
 
-        // The invite_path is a relative URL; the web UI resolves it against
-        // window.location.origin. On desktop we don't have a canonical origin for the
-        // web UI — so copy the room code as a fallback and the path as a hint.
         try
         {
+            var apiClient = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>();
+            var baseUri = new Uri(apiClient.BaseUrl.TrimEnd('/') + "/");
+            var inviteUri = new Uri(baseUri, room.InvitePath.TrimStart('/'));
             var pkg = new DataPackage();
-            pkg.SetText(room.Code + "  " + room.InvitePath);
+            pkg.SetText(inviteUri.ToString());
             Clipboard.SetContent(pkg);
         }
         catch { }
         await Task.CompletedTask;
     }
+
+    private async void EndButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "End watch party?",
+            Content = "This closes the room for everyone. This action cannot be undone.",
+            PrimaryButtonText = "End watch party",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            await ViewModel.CloseRoomCommand.ExecuteAsync(null);
+    }
+
+    private void LeaveButton_Click(object sender, RoutedEventArgs e)
+        => Frame?.Navigate(typeof(WatchTogetherJoinPage));
 
     private async void SuggestionVoteButton_Click(object sender, RoutedEventArgs e)
     {
@@ -308,11 +374,44 @@ public sealed partial class WatchTogetherRoomPage : Page
 
     // ── Host content search ──────────────────────────────────────────────
 
-    private async void HostSearchBtn_Click(object sender, RoutedEventArgs e) => await RunHostSearchAsync();
-
     private async void HostSearchBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
         if (e.Key == Windows.System.VirtualKey.Enter) await RunHostSearchAsync();
+    }
+
+    private void HostSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_suppressSearchTextChanged) return;
+        ClearSearchButton.Visibility = string.IsNullOrWhiteSpace(HostSearchBox.Text)
+            ? Visibility.Collapsed : Visibility.Visible;
+        _searchDebounce.Stop();
+        _searchDebounce.Start();
+    }
+
+    private async void SearchDebounce_Tick(object? sender, object e)
+    {
+        _searchDebounce.Stop();
+        await RunHostSearchAsync();
+    }
+
+    private void ClearSearchButton_Click(object sender, RoutedEventArgs e)
+    {
+        _suppressSearchTextChanged = true;
+        HostSearchBox.Text = "";
+        _suppressSearchTextChanged = false;
+        ClearSearchButton.Visibility = Visibility.Collapsed;
+        HostSearchResults.ItemsSource = null;
+        HostSearchResults.Visibility = Visibility.Visible;
+        DrillDownPanel.Visibility = Visibility.Collapsed;
+        CandidateSpotlight.Visibility = Visibility.Collapsed;
+        SearchEmptyState.Visibility = Visibility.Visible;
+        HostSearchBox.Focus(FocusState.Programmatic);
+    }
+
+    private void SuggestButton_Click(object sender, RoutedEventArgs e)
+    {
+        HostSearchBox.StartBringIntoView();
+        HostSearchBox.Focus(FocusState.Programmatic);
     }
 
     private async Task RunHostSearchAsync()
@@ -321,18 +420,24 @@ public sealed partial class WatchTogetherRoomPage : Page
         if (string.IsNullOrEmpty(query))
         {
             HostSearchResults.ItemsSource = null;
+            SearchEmptyState.Visibility = Visibility.Visible;
             return;
         }
+        SearchEmptyState.Visibility = Visibility.Collapsed;
         try
         {
             var catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
             var result = await catalogApi.SearchAsync(query, limit: 20);
-            HostSearchResults.ItemsSource = result?.Items.Where(item => item.Type is "movie" or "series").ToList();
+            var items = result?.Items.Where(item => item.Type is "movie" or "series").ToList() ?? [];
+            HostSearchResults.ItemsSource = items;
+            SearchEmptyState.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (items.Count == 0) SearchEmptyText.Text = "No matches found. Try a different search.";
         }
         catch
         {
-            // Keep the UI usable on transient errors — empty list is fine.
             HostSearchResults.ItemsSource = null;
+            SearchEmptyState.Visibility = Visibility.Visible;
+            SearchEmptyText.Text = "Search is temporarily unavailable.";
         }
     }
 
@@ -385,9 +490,11 @@ public sealed partial class WatchTogetherRoomPage : Page
             var seasonItems = seasonsResp.Seasons.Select(s => new SiloPlayer.Core.Models.Home.MediaItem
             {
                 ContentId = s.ContentId,
-                Title = $"Season {s.SeasonNumber}",
+                Title = s.SeasonNumber == 0 ? "Specials" : $"Season {s.SeasonNumber}",
                 Type = "season",
                 PosterUrl = s.PosterUrl,
+                Overview = $"{s.EpisodeCount} episode{(s.EpisodeCount == 1 ? "" : "s")}",
+                Year = s.SeasonNumber,
             }).ToList();
             DrillDownItems.ItemsSource = seasonItems;
         }
@@ -402,13 +509,12 @@ public sealed partial class WatchTogetherRoomPage : Page
         _showingEpisodes = true;
         try
         {
-            var numberText = new string(season.Title.Where(char.IsDigit).ToArray());
-            if (!int.TryParse(numberText, out var seasonNumber)) return;
+            var seasonNumber = season.Year;
             var catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
             var response = await catalogApi.GetEpisodesAsync(_drillDownSeriesId, seasonNumber);
             DrillDownItems.ItemsSource = response.Episodes.Select(ep => new SiloPlayer.Core.Models.Home.MediaItem
             {
-                ContentId = ep.ContentId, Title = ep.Title, Type = "episode", Overview = ep.Overview ?? "", PosterUrl = ep.StillUrl,
+                ContentId = ep.ContentId, Title = $"{ep.EpisodeNumber}. {ep.Title}", Type = "episode", Overview = ep.Overview ?? "", PosterUrl = ep.StillUrl,
                 Year = DateTime.TryParse(ep.AirDate, out var airDate) ? airDate.Year : 0
             }).ToList();
         }
@@ -444,6 +550,8 @@ public sealed partial class WatchTogetherRoomPage : Page
         CandidateMeta.Text = $"{item.Year}  ·  {item.Type}";
         CandidateOverview.Text = item.Overview ?? "";
         CandidatePlayBtn.Tag = item;
+        SetImageSource(CandidatePoster, item.PosterUrl);
+        SetImageSource(CandidateBackdrop, item.BackdropUrl);
     }
 
     private async void CandidatePlay_Click(object sender, RoutedEventArgs e)
@@ -468,7 +576,7 @@ public sealed partial class WatchTogetherRoomPage : Page
                 ViewModel.Room = resp.Room;
             }
             CandidateSpotlight.Visibility = Visibility.Collapsed;
-            HostSearchBox.Text = "";
+            ClearSearchButton_Click(this, new RoutedEventArgs());
         }
         catch { }
     }
@@ -487,8 +595,18 @@ public sealed partial class WatchTogetherRoomPage : Page
         try
         {
             var item = await App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>().GetItemDetailAsync(contentId);
-            if (_nowPlayingContentId == contentId) NowPlayingTitle.Text = item.Title;
+            if (_nowPlayingContentId == contentId)
+            {
+                NowPlayingTitle.Text = item.Title;
+                NowPlayingSubtitle.Text = item.Type == "episode" ? "Episode" : "Movie";
+                SetImageSource(NowPlayingBackdrop, item.BackdropUrl);
+            }
         }
         catch { if (_nowPlayingContentId == contentId) NowPlayingTitle.Text = "Now playing"; }
+    }
+
+    private static void SetImageSource(Image target, string? url)
+    {
+        target.Source = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? new BitmapImage(uri) : null;
     }
 }

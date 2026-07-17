@@ -46,4 +46,12 @@ public class AdminUsersParitySourceTests
         Assert.Contains("OpenEditDialogAsync", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("OpenDeleteDialogAsync", CodeBehind, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void UserAndInviteTablesKeepCurrentGeometryAtNarrowWidths()
+    {
+        Assert.Contains("x:Name=\"UsersTableScroll\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"InviteCodesTableScroll\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("AdminUsersPage_SizeChanged", CodeBehind, StringComparison.Ordinal);
+    }
 }

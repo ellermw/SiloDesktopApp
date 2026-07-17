@@ -36,6 +36,15 @@ public sealed partial class AdminRequestsPage : Page
         _pluginsApi = App.Services.GetRequiredService<PluginsApi>();
         _toasts = App.Services.GetRequiredService<ToastService>();
         InitializeComponent();
+        SizeChanged += AdminRequestsPage_SizeChanged;
+    }
+
+    private void AdminRequestsPage_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var compact = e.NewSize.Width < 760;
+        var gutter = e.NewSize.Width < 600 ? 16 : compact ? 24 : 40;
+        RequestsPageShell.Padding = new Thickness(gutter, compact ? 24 : 32, gutter, 40);
+        QueueFilterBar.Orientation = e.NewSize.Width < 560 ? Orientation.Vertical : Orientation.Horizontal;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)

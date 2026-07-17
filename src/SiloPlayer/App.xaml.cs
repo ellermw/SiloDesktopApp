@@ -14,6 +14,7 @@ public partial class App : Application
     private DispatcherTimer? _uiLagTimer;
     private long _lastUiLagTick;
     private int _uiLagSample;
+    private Mutex? _singleInstanceMutex;
 
     public static IServiceProvider Services =>
         _services ?? throw new InvalidOperationException("Service provider not initialized.");
@@ -36,6 +37,19 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs e)
     {
+        _singleInstanceMutex = new Mutex(
+            initiallyOwned: true,
+            name: @"Local\SiloDesktopPlayer-6F4EE0EA-4DA3-49D0-940D-461F977BA343",
+            createdNew: out var isPrimaryInstance);
+        if (!isPrimaryInstance)
+        {
+            LocalLog.AppendLine("auth_startup.txt", "secondary_instance_blocked");
+            _singleInstanceMutex.Dispose();
+            _singleInstanceMutex = null;
+            Exit();
+            return;
+        }
+
         // Global unhandled exception handler -- write to crash log instead of silently dying.
         // Walks the entire InnerException chain so XamlParseException reasons (which are
         // usually nested) are captured, not just the top-level "RangeBase.Value" message.
@@ -160,6 +174,7 @@ public partial class App : Application
         services.AddSingleton<CatalogApi>(sp => new CatalogApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<SettingsApi>(sp => new SettingsApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<WebhookSyncApi>(sp => new WebhookSyncApi(sp.GetRequiredService<SiloApiClient>()));
+        services.AddSingleton<PlexBrowserAuthApi>();
         services.AddSingleton<PlaybackApi>(sp => new PlaybackApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<AdminApi>(sp => new AdminApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<PeopleApi>(sp => new PeopleApi(sp.GetRequiredService<SiloApiClient>()));

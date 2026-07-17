@@ -40,6 +40,9 @@ public sealed class AdminAccessGroupsParitySourceTests
         Assert.Contains("LibraryIds = AllLibraries", viewModel);
         Assert.Contains("DownloadAllowed && DownloadTranscodeAllowed", viewModel);
         Assert.Contains("AllowedPermissions = AllPermissions", viewModel);
+        Assert.Contains("x:Name=\"GroupsGridView\"", page);
+        Assert.Contains("x:Name=\"GroupIdentityGrid\"", page);
+        Assert.Contains("ApplyResponsiveLayout", ReadRepoFile("src", "SiloPlayer", "Views", "Admin", "AdminAccessGroupsPage.xaml.cs"));
     }
 
     [Fact]

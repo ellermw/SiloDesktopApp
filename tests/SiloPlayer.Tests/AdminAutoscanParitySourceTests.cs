@@ -43,4 +43,16 @@ public class AdminAutoscanParitySourceTests
         Assert.Contains("ActiveScans", ViewModel, StringComparison.Ordinal);
         Assert.Contains("HasRunningPolls", ViewModel, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void AutoscanUsesTheSharedResponsiveAdminCanvas()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminAutoscanPage.xaml.cs"));
+        Assert.Contains("x:Name=\"AdminPageContent\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"PageHeaderActions\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("HorizontalContentAlignment=\"Center\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("width >= 1280 ? 40", source, StringComparison.Ordinal);
+        Assert.Contains("contentWidth < 820", source, StringComparison.Ordinal);
+    }
 }

@@ -60,11 +60,12 @@ public partial class ServerSelectViewModel : ObservableObject
             return;
         }
 
-        var url = NewServerUrl.Trim().TrimEnd('/');
+        var url = NewServerUrl.Trim();
         if (!url.StartsWith("http://") && !url.StartsWith("https://"))
         {
             url = "https://" + url;
         }
+        url = ServerUrlIdentity.Normalize(url);
 
         var name = string.IsNullOrWhiteSpace(NewServerName) ? url : NewServerName.Trim();
 

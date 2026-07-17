@@ -54,7 +54,7 @@ public partial class DownloadsViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private async Task DeleteDownloadAsync(int id)
+    private async Task DeleteDownloadAsync(string id)
     {
         try
         {

@@ -14,6 +14,7 @@ public class HistoryImportRun
     public int Unmatched { get; set; }
     public int ProgressUpdated { get; set; }
     public int HistoryCreated { get; set; }
+    public int FavoritesImported { get; set; }
     public int WatchlistAdded { get; set; }
     public int Skipped { get; set; }
     public List<string> Warnings { get; set; } = [];

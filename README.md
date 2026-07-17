@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.42**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.42/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.43**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.43/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `805505547F6ADE2ACC944B2F23C9380789CA49B8DF7D804241263B1F8A2AEA62`
+SHA-256: `E877D7FBFABD5594D66CBC066504FEF8A5E9C9E32A45CED52A1B0397E8E47B84`
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -48,6 +48,14 @@ Status meanings:
 | Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
 
 ## Recent release work
+
+### 1.1.43
+
+- Fixed upgrade session restoration so saved refresh credentials survive server URL formatting changes and are considered across all saved servers by most-recent use.
+- Added bounded retries for transient startup refresh/bootstrap failures without deleting a still-valid saved session.
+- Enforced an authenticated-shell invariant: library names, pinned collections, plugin routes, and the navigation pane are removed and cannot reappear until both authentication and profile selection succeed.
+- Prevented concurrent desktop instances from racing rotating refresh tokens, and configured installer upgrades to close the old running version before launching the replacement.
+- Added secret-safe startup authentication diagnostics and upgrade/security regressions; the release passes 449 tests and a zero-warning x64 build.
 
 ### 1.1.42
 

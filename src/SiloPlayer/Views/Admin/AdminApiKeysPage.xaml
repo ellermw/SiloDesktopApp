@@ -23,14 +23,18 @@
             IsScrollInertiaEnabled="True">
 
             <!-- WebUI .page-shell: centered, bounded content with responsive page padding. -->
-            <StackPanel Padding="40,24,40,24" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
+            <StackPanel x:Name="ApiKeysPageShell" Padding="40,24,40,24" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
-                <Grid>
+                <Grid x:Name="ApiKeysHeader" RowSpacing="14">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
                     <StackPanel Grid.Column="0" Spacing="12">
                         <TextBlock
@@ -72,12 +76,17 @@
 
                 <!-- ===== API Keys Table ===== -->
                 <!-- surface-panel overflow-x-auto rounded-[1.6rem] border-0 -->
-                <Border
-                    Background="{StaticResource CardBackgroundBrush}"
-                    CornerRadius="16"
-                    BorderThickness="0"
-                    Padding="0">
-                    <StackPanel>
+                <ScrollViewer x:Name="ApiKeysTableScroll"
+                              HorizontalScrollBarVisibility="Auto"
+                              HorizontalScrollMode="Enabled"
+                              VerticalScrollBarVisibility="Disabled">
+                    <Border
+                        Background="{StaticResource CardBackgroundBrush}"
+                        CornerRadius="16"
+                        BorderThickness="0"
+                        Padding="0"
+                        MinWidth="1080">
+                        <StackPanel>
                         <!-- Table header -->
                         <Grid Padding="20,12,20,12" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
@@ -145,8 +154,9 @@
                                 HorizontalAlignment="Center"
                                 TextAlignment="Center" />
                         </Border>
-                    </StackPanel>
-                </Border>
+                        </StackPanel>
+                    </Border>
+                </ScrollViewer>
 
             </StackPanel>
         </ScrollViewer>

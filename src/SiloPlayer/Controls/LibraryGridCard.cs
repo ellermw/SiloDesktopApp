@@ -14,8 +14,12 @@ public sealed class LibraryGridCard : Canvas
 {
     private readonly Border _posterBackground;
     private readonly Image _posterImage;
+    private readonly Border _hoverBrighten;
+    private readonly CompositeTransform _cardHoverTransform;
+    private readonly CompositeTransform _posterHoverTransform;
     private readonly TextBlock _fallbackTitle;
     private readonly TextBlock _titleText;
+    private readonly TextBlock _episodeTitleText;
     private readonly TextBlock _subtitleText;
     private readonly Button _moreButton;
     private readonly StackPanel _overlayTopLeft;
@@ -42,6 +46,9 @@ public sealed class LibraryGridCard : Canvas
         Width = cardWidth;
         Height = cardHeight;
         Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
+        _cardHoverTransform = new CompositeTransform();
+        RenderTransform = _cardHoverTransform;
 
         _fallbackTitle = new TextBlock
         {
@@ -64,7 +71,10 @@ public sealed class LibraryGridCard : Canvas
             Height = posterHeight,
             Stretch = Stretch.UniformToFill,
             Opacity = 0,
+            RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5),
         };
+        _posterHoverTransform = new CompositeTransform();
+        _posterImage.RenderTransform = _posterHoverTransform;
 
         var posterHost = new Grid();
         posterHost.Children.Add(_posterImage);
@@ -78,12 +88,22 @@ public sealed class LibraryGridCard : Canvas
         posterHost.Children.Add(_overlayTopRight);
         posterHost.Children.Add(_overlayBottomLeft);
         posterHost.Children.Add(_overlayBottomRight);
+        _hoverBrighten = new Border
+        {
+            Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(24, 255, 255, 255)),
+            CornerRadius = (CornerRadius)Application.Current.Resources["PosterCornerRadius"],
+            Opacity = 0,
+            IsHitTestVisible = false,
+        };
+        posterHost.Children.Add(_hoverBrighten);
 
         _posterBackground = new Border
         {
             Width = cardWidth,
             Height = posterHeight,
             Background = Brush("CardBackgroundBrush"),
+            BorderBrush = Brush("BorderBrush"),
+            BorderThickness = new Thickness(1),
             CornerRadius = (CornerRadius)Application.Current.Resources["PosterCornerRadius"],
             Child = posterHost,
         };
@@ -135,9 +155,23 @@ public sealed class LibraryGridCard : Canvas
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxLines = 1,
         };
+        _episodeTitleText = new TextBlock
+        {
+            Width = Math.Max(0, cardWidth - 8),
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            Foreground = Brush("SecondaryTextBrush"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 1,
+            Visibility = Visibility.Collapsed,
+        };
         SetLeft(_titleText, 4);
         SetTop(_titleText, posterHeight + 12);
         Children.Add(_titleText);
+
+        SetLeft(_episodeTitleText, 4);
+        SetTop(_episodeTitleText, posterHeight + 34);
+        Children.Add(_episodeTitleText);
 
         SetLeft(_subtitleText, 4);
         SetTop(_subtitleText, posterHeight + 34);
@@ -158,11 +192,17 @@ public sealed class LibraryGridCard : Canvas
         IsHitTestVisible = true;
         Opacity = 1;
 
-        var title = string.IsNullOrWhiteSpace(item.Title) ? "Untitled" : item.Title;
+        var title = string.IsNullOrWhiteSpace(item.Title)
+            ? "Untitled"
+            : MediaItemDisplayText.BuildTitle(item);
         _fallbackTitle.Text = title;
         _fallbackTitle.Visibility = Visibility.Visible;
-        _titleText.Text = title;
+        _titleText.Text = MediaItemDisplayText.BuildTitle(item);
+        var episodeTitle = MediaItemDisplayText.BuildEpisodeTitle(item);
+        _episodeTitleText.Text = episodeTitle ?? "";
+        _episodeTitleText.Visibility = episodeTitle is null ? Visibility.Collapsed : Visibility.Visible;
         _subtitleText.Text = MediaItemDisplayText.BuildSubtitle(item, sortKey);
+        SetTop(_subtitleText, _posterHeight + (episodeTitle is null ? 34 : 56));
         UpdateOverlays(item);
 
         var imageUrl = !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
@@ -188,9 +228,12 @@ public sealed class LibraryGridCard : Canvas
         _posterImage.Height = posterHeight;
         _fallbackTitle.MaxWidth = Math.Max(80, cardWidth - 28);
         _titleText.Width = Math.Max(0, cardWidth - 8);
+        _episodeTitleText.Width = Math.Max(0, cardWidth - 8);
         _subtitleText.Width = Math.Max(0, cardWidth - 8);
         SetTop(_titleText, posterHeight + 12);
-        SetTop(_subtitleText, posterHeight + 34);
+        SetTop(_episodeTitleText, posterHeight + 34);
+        SetTop(_subtitleText, posterHeight +
+            (_episodeTitleText.Visibility == Visibility.Visible ? 56 : 34));
         SetLeft(_moreButton, cardWidth - 42);
         SetTop(_moreButton, posterHeight - 42);
     }
@@ -205,9 +248,12 @@ public sealed class LibraryGridCard : Canvas
         _fallbackTitle.Text = "";
         _fallbackTitle.Visibility = Visibility.Visible;
         _titleText.Text = "";
+        _episodeTitleText.Text = "";
+        _episodeTitleText.Visibility = Visibility.Collapsed;
         _subtitleText.Text = "";
         _posterBackground.Background = Brush("CardBackgroundBrush");
         _moreButton.Opacity = 0;
+        ResetHoverVisuals();
         ClearOverlays();
     }
 
@@ -221,9 +267,12 @@ public sealed class LibraryGridCard : Canvas
         _fallbackTitle.Text = "";
         _fallbackTitle.Visibility = Visibility.Visible;
         _titleText.Text = "";
+        _episodeTitleText.Text = "";
+        _episodeTitleText.Visibility = Visibility.Collapsed;
         _subtitleText.Text = "";
         _posterBackground.Background = Brush("CardBackgroundBrush");
         _moreButton.Opacity = 0;
+        ResetHoverVisuals();
         ClearOverlays();
     }
 
@@ -307,14 +356,25 @@ public sealed class LibraryGridCard : Canvas
 
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
     {
-        _posterBackground.Background = Brush("SurfaceHoverBrush");
+        _posterHoverTransform.ScaleX = 1.06;
+        _posterHoverTransform.ScaleY = 1.06;
+        _cardHoverTransform.TranslateY = -4;
+        _hoverBrighten.Opacity = 1;
         _moreButton.Opacity = 1;
     }
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
     {
-        _posterBackground.Background = Brush("CardBackgroundBrush");
+        ResetHoverVisuals();
         _moreButton.Opacity = 0;
+    }
+
+    private void ResetHoverVisuals()
+    {
+        _posterHoverTransform.ScaleX = 1;
+        _posterHoverTransform.ScaleY = 1;
+        _cardHoverTransform.TranslateY = 0;
+        _hoverBrighten.Opacity = 0;
     }
 
     private void MoreButton_Click(object sender, RoutedEventArgs e)

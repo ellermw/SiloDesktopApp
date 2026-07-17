@@ -27,5 +27,7 @@ public class AdminMaintenanceCurrentParitySourceTests
         Assert.Contains("pipeline_failed", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("image_cleanup_queued", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("Refresh job history", Markup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"CatalogMaintenanceActions\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("ApplyResponsiveLayout", CodeBehind, StringComparison.Ordinal);
     }
 }

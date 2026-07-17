@@ -31,6 +31,14 @@
                 Background="{StaticResource CardBackgroundBrush}"
                 CornerRadius="12" />
 
+            <TextBlock
+                x:Name="NoImageText"
+                Text="No Image"
+                FontSize="13"
+                Foreground="{StaticResource SecondaryTextBrush}"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center" />
+
             <!-- Actual backdrop image — hover zoom on image only (not the
                  whole card) so the rounded clip frame stays still. -->
             <Image
@@ -105,24 +113,30 @@
                 IsHitTestVisible="False" />
 
             <!-- Circular Play button — fades and scales in on hover. -->
-            <Grid
+            <Button
                 x:Name="HoverPlayButton"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"
                 Width="48" Height="48"
+                Padding="0"
+                Background="Transparent"
+                BorderThickness="0"
                 Opacity="0"
-                IsHitTestVisible="False"
+                Tapped="OnPlayTapped"
                 RenderTransformOrigin="0.5,0.5">
-                <Grid.RenderTransform>
+                <Button.RenderTransform>
                     <CompositeTransform x:Name="HoverPlayButtonTransform" ScaleX="0.7" ScaleY="0.7" />
-                </Grid.RenderTransform>
-                <Ellipse Fill="{StaticResource AccentBrush}" />
-                <FontIcon
-                    Glyph="&#xE768;"
-                    FontSize="18"
-                    Foreground="{StaticResource AccentForegroundBrush}"
-                    Margin="3,0,0,0" />
-            </Grid>
+                </Button.RenderTransform>
+                <Grid Width="48" Height="48">
+                    <Ellipse Fill="{StaticResource AccentBrush}" />
+                    <FontIcon
+                        x:Name="HoverPlayIcon"
+                        Glyph="&#xE768;"
+                        FontSize="18"
+                        Foreground="{StaticResource AccentForegroundBrush}"
+                        Margin="3,0,0,0" />
+                </Grid>
+            </Button>
 
             <!-- Current WebUI MediaItemMenu trigger: translucent ellipsis in
                  the top-right, revealed on hover. -->

@@ -9,6 +9,7 @@
     xmlns:converters="using:SiloPlayer.Converters"
     xmlns:models="using:SiloPlayer.Core.Models.Home"
     mc:Ignorable="d"
+    SizeChanged="Page_SizeChanged"
     Background="{StaticResource AppBackgroundBrush}">
 
     <Page.Resources>
@@ -93,7 +94,7 @@
         </Grid.RowDefinitions>
 
         <!-- Header: overlays hero in Recommended tab (webui: LibraryHeader with overlay prop) -->
-        <Grid x:Name="HeaderGrid" Grid.Row="0" Height="80" Margin="48,0" Canvas.ZIndex="10"
+        <Grid x:Name="HeaderGrid" Grid.Row="0" Height="70" Margin="48,0" Canvas.ZIndex="10"
               Background="{StaticResource AppBackgroundBrush}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
@@ -101,7 +102,7 @@
             </Grid.RowDefinitions>
 
             <!-- Title and tabs row (web: page-header gap-5) -->
-            <Grid Grid.Row="0">
+            <Grid x:Name="HeaderContentGrid" Grid.Row="0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -110,11 +111,11 @@
                 <!-- Eyebrow breadcrumb (webui: hero-eyebrow "Library / {name}") -->
                 <StackPanel Grid.Column="0" Spacing="6" VerticalAlignment="Center">
                     <StackPanel x:Name="LibraryEyebrow" Orientation="Horizontal" Spacing="6">
-                        <TextBlock Text="LIBRARY" FontSize="11" FontWeight="SemiBold"
+                        <TextBlock x:Name="LibraryEyebrowPrefix" Text="LIBRARY" FontSize="11" FontWeight="SemiBold"
                                    CharacterSpacing="200"
                                    Foreground="{StaticResource TertiaryTextBrush}"
                                    VerticalAlignment="Center" />
-                        <TextBlock Text="/" FontSize="11"
+                        <TextBlock x:Name="LibraryEyebrowDivider" Text="/" FontSize="11"
                                    Foreground="{StaticResource TertiaryTextBrush}"
                                    VerticalAlignment="Center" />
                         <TextBlock x:Name="LibraryEyebrowName" FontSize="11" FontWeight="Bold"
@@ -137,8 +138,9 @@
 
                 <!-- Pill tab bar (web: surface-panel-subtle rounded-[1.2rem] gap-1 p-1) -->
                 <Border
+                    x:Name="TabBarBorder"
                     Grid.Column="1"
-                    CornerRadius="20"
+                    CornerRadius="999"
                     Padding="4"
                     Background="{StaticResource SurfaceBrush}"
                     BorderBrush="{StaticResource BorderBrush}"
@@ -166,6 +168,9 @@
                     </StackPanel>
                 </Border>
             </Grid>
+            <Border x:Name="HeaderDivider" Grid.RowSpan="2" Height="1"
+                    VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
+                    Background="{StaticResource BorderBrush}" Opacity="0.55" />
         </Grid>
 
         <!-- Current WebUI toolbar: sort, order, Filters. Secondary facets live in the right sheet. -->

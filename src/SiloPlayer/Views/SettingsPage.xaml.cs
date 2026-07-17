@@ -14,6 +14,7 @@ using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Plugins;
 using SiloPlayer.Core.Models.Settings;
 using SiloPlayer.Core.Models.WatchProviders;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
@@ -41,41 +42,13 @@ public sealed partial class SettingsPage : Page
 
     // Language options for preferred audio language.
     private static readonly (string Tag, string Label)[] AudioLanguageOptions =
-    [
-        ("", "Profile default"),
-        ("original", "Original"),
-        ("en", "English"),
-        ("es", "Spanish"),
-        ("fr", "French"),
-        ("de", "German"),
-        ("it", "Italian"),
-        ("pt", "Portuguese"),
-        ("ja", "Japanese"),
-        ("ko", "Korean"),
-        ("zh", "Chinese"),
-        ("ru", "Russian"),
-        ("ar", "Arabic"),
-        ("hi", "Hindi"),
-    ];
+        [("", "Profile default"), ("original", "Original Language"),
+         .. MediaLanguageCatalog.All.Select(language => (language.Code, language.Label))];
 
     // Language options for subtitles (includes "None")
     private static readonly (string Tag, string Label)[] SubtitleLanguageOptions =
-    [
-        ("", "Profile default"),
-        ("none", "None"),
-        ("en", "English"),
-        ("es", "Spanish"),
-        ("fr", "French"),
-        ("de", "German"),
-        ("it", "Italian"),
-        ("pt", "Portuguese"),
-        ("ja", "Japanese"),
-        ("ko", "Korean"),
-        ("zh", "Chinese"),
-        ("ru", "Russian"),
-        ("ar", "Arabic"),
-        ("hi", "Hindi"),
-    ];
+        [("", "Profile default"), ("none", "None"),
+         .. MediaLanguageCatalog.All.Select(language => (language.Code, language.Label))];
 
     private static readonly (string Tag, string Label)[] SubtitleModeOptions =
     [
@@ -119,6 +92,7 @@ public sealed partial class SettingsPage : Page
         ViewModel = App.Services.GetRequiredService<SettingsViewModel>();
         _cardOverlayService = App.Services.GetRequiredService<CardOverlayService>();
         this.InitializeComponent();
+        PopulateProfileLanguageChoices();
 
         ViewModel.LibraryCards.CollectionChanged += LibraryCards_CollectionChanged;
         ViewModel.HomeSections.CollectionChanged += HomeSections_CollectionChanged;
@@ -132,6 +106,98 @@ public sealed partial class SettingsPage : Page
         };
 
         BuildSubtitleColorSwatches();
+        SizeChanged += SettingsPage_SizeChanged;
+    }
+
+    private void SettingsPage_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        // SettingsLayout.tsx switches from the grouped 220 px rail to a horizontal
+        // pill strip at Tailwind's `lg` breakpoint. Keep the native page on the same
+        // responsive geometry instead of squeezing the desktop rail into narrow windows.
+        var isCompact = e.NewSize.Width < 1024;
+        var isPhoneWidth = e.NewSize.Width < 640;
+
+        SettingsPageShell.Margin = isPhoneWidth
+            ? new Thickness(16, 16, 16, 32)
+            : isCompact
+                ? new Thickness(24, 24, 24, 40)
+                : new Thickness(48, 24, 48, 48);
+
+        SettingsHeaderGrid.ColumnDefinitions[0].Width = isPhoneWidth
+            ? new GridLength(1, GridUnitType.Star)
+            : new GridLength(1, GridUnitType.Star);
+        SettingsHeaderGrid.ColumnDefinitions[1].Width = isPhoneWidth
+            ? new GridLength(0)
+            : GridLength.Auto;
+        Grid.SetRow(SettingsSearchPanel, isPhoneWidth ? 1 : 0);
+        Grid.SetColumn(SettingsSearchPanel, isPhoneWidth ? 0 : 1);
+        SettingsSearchPanel.Width = isPhoneWidth ? double.NaN : 384;
+        SettingsSearchPanel.HorizontalAlignment = isPhoneWidth
+            ? HorizontalAlignment.Stretch
+            : HorizontalAlignment.Right;
+
+        SettingsLayoutGrid.ColumnDefinitions[0].Width = isCompact
+            ? new GridLength(1, GridUnitType.Star)
+            : new GridLength(220);
+        SettingsLayoutGrid.ColumnDefinitions[1].Width = isCompact
+            ? new GridLength(0)
+            : new GridLength(1, GridUnitType.Star);
+
+        Grid.SetRow(SettingsNavigationScroller, 0);
+        Grid.SetColumn(SettingsNavigationScroller, 0);
+        Grid.SetColumnSpan(SettingsNavigationScroller, isCompact ? 2 : 1);
+        Grid.SetRow(SettingsContentPanel, isCompact ? 1 : 0);
+        Grid.SetColumn(SettingsContentPanel, isCompact ? 0 : 1);
+        Grid.SetColumnSpan(SettingsContentPanel, isCompact ? 2 : 1);
+
+        SettingsNavigationScroller.VerticalScrollBarVisibility = isCompact
+            ? ScrollBarVisibility.Disabled
+            : ScrollBarVisibility.Auto;
+        SettingsNavigationScroller.HorizontalScrollBarVisibility = isCompact
+            ? ScrollBarVisibility.Auto
+            : ScrollBarVisibility.Disabled;
+        SettingsNavigationScroller.Padding = isCompact
+            ? new Thickness(4)
+            : new Thickness(0, 0, 12, 0);
+        SettingsNavigationScroller.Background = isCompact
+            ? (Brush)Application.Current.Resources["CardBackgroundBrush"]
+            : new SolidColorBrush(Colors.Transparent);
+
+        SettingsNavigationGroups.Orientation = isCompact ? Orientation.Horizontal : Orientation.Vertical;
+        SettingsNavigationGroups.Spacing = isCompact ? 4 : 20;
+        SetSettingsNavigationGroupLayout(PlaybackNavGroup, isCompact);
+        SetSettingsNavigationGroupLayout(AppearanceNavGroup, isCompact);
+        SetSettingsNavigationGroupLayout(LibraryDataNavGroup, isCompact);
+        SetSettingsNavigationGroupLayout(AccountNavGroup, isCompact);
+
+        SettingsContentPanel.Padding = isCompact
+            ? new Thickness(0, 32, 0, 0)
+            : new Thickness(40, 0, 0, 0);
+        SettingsContentPanel.MaxWidth = isCompact ? double.PositiveInfinity : 808;
+    }
+
+    private static void SetSettingsNavigationGroupLayout(StackPanel group, bool isCompact)
+    {
+        group.Orientation = isCompact ? Orientation.Horizontal : Orientation.Vertical;
+        group.Spacing = isCompact ? 4 : 2;
+        if (group.Children.Count > 0)
+            group.Children[0].Visibility = isCompact ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void PopulateProfileLanguageChoices()
+    {
+        PopulateLanguageCombo(SpokenLanguageComboBox, "No preference");
+        PopulateLanguageCombo(MetadataLanguageComboBox, "Library default");
+        PopulateLanguageCombo(SubtitleLanguageComboBox, "None");
+    }
+
+    private static void PopulateLanguageCombo(ComboBox combo, string emptyLabel)
+    {
+        combo.Items.Clear();
+        combo.Items.Add(new ComboBoxItem { Content = emptyLabel, Tag = "" });
+        foreach (var language in MediaLanguageCatalog.All)
+            combo.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
+        combo.SelectedIndex = 0;
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -184,6 +250,10 @@ public sealed partial class SettingsPage : Page
         _themeCssSaveCts?.Cancel();
         _themeCssSaveCts?.Dispose();
         _themeCssSaveCts = null;
+        _webhookPlexAuthCts?.Cancel();
+        _webhookPlexAuthCts?.Dispose();
+        _webhookPlexAuthCts = null;
+        _webhookRefreshTimer?.Stop();
         base.OnNavigatedFrom(e);
     }
 
@@ -712,6 +782,7 @@ public sealed partial class SettingsPage : Page
         ThemeEditorPanel.Visibility = tag == "ThemeEditor" ? Visibility.Visible : Visibility.Collapsed;
         AccessibilityPanel.Visibility = tag == "Accessibility" ? Visibility.Visible : Visibility.Collapsed;
         SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
+        if (tag != "WebhookSync") _webhookRefreshTimer?.Stop();
 
         if (tag == "Profiles")
         {
@@ -3810,42 +3881,85 @@ public sealed partial class SettingsPage : Page
     private List<Profile> _webhookProfiles = [];
     private List<WebhookSyncEventLog> _webhookEvents = [];
     private int _webhookEventsPage;
+    private List<PlexBrowserResource> _webhookPlexServers = [];
+    private CancellationTokenSource? _webhookPlexAuthCts;
+    private readonly Dictionary<string, Button> _webhookConnectionCards = new(StringComparer.Ordinal);
+    private DispatcherTimer? _webhookRefreshTimer;
+    private bool _webhookRefreshBusy;
 
     private async Task LoadWebhookConnectionsAsync()
     {
         WebhookConnectionsPanel.Children.Clear();
+        _webhookConnectionCards.Clear();
         try
         {
+            if (_webhookProfiles.Count == 0)
+            {
+                _webhookProfiles = (await App.Services.GetRequiredService<AuthApi>().GetProfilesAsync()).Profiles;
+                WebhookDefaultProfileCombo.Items.Clear();
+                foreach (var profile in _webhookProfiles)
+                    WebhookDefaultProfileCombo.Items.Add(new ComboBoxItem { Content = profile.Name, Tag = profile.Id });
+                var activeProfileId = App.Services.GetRequiredService<SettingsService>().Load().LastProfileId;
+                SelectComboBoxByTag(WebhookDefaultProfileCombo, activeProfileId ?? "");
+                if (WebhookDefaultProfileCombo.SelectedIndex < 0 && WebhookDefaultProfileCombo.Items.Count > 0)
+                    WebhookDefaultProfileCombo.SelectedIndex = 0;
+            }
             var api = App.Services.GetRequiredService<WebhookSyncApi>();
             var connections = await api.GetConnectionsAsync();
             NoConnectionsText.Visibility = connections.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (connections.Count == 0) WebhookConnectionDetail.Visibility = Visibility.Collapsed;
             foreach (var connection in connections)
             {
+                var isSelected = connection.Id == _selectedWebhookConnection?.Id;
                 var card = new Button
                 {
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                    Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+                    Background = (Brush)Application.Current.Resources[isSelected ? "SidebarAccentBrush" : "SurfaceBrush"],
                     BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
                     BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(14), Padding = new Thickness(14),
                 };
                 var row = new Grid { ColumnSpacing = 12 };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                var identity = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                identity.Children.Add(new Border
+                {
+                    Width = 8,
+                    Height = 8,
+                    CornerRadius = new CornerRadius(4),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Background = (Brush)Application.Current.Resources[WebhookHealth(connection) switch
+                    {
+                        "Healthy" => "SuccessBrush",
+                        "Needs attention" => "ErrorBrush",
+                        _ => "WarningBrush",
+                    }],
+                });
+                identity.Children.Add(new TextBlock { Text = connection.ServerName, FontWeight = FontWeights.SemiBold, FontSize = 14 });
+                identity.Children.Add(new TextBlock { Text = FormatWebhookProvider(connection.Provider), FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], VerticalAlignment = VerticalAlignment.Center });
                 var info = new StackPanel { Spacing = 3 };
-                info.Children.Add(new TextBlock { Text = connection.ServerName, FontWeight = FontWeights.SemiBold, FontSize = 14 });
+                info.Children.Add(identity);
                 info.Children.Add(new TextBlock
                 {
-                    Text = $"{char.ToUpperInvariant(connection.Provider[0]) + connection.Provider[1..]} · {WebhookHealth(connection)} · {connection.ActorCount} actors",
+                    Text = $"{connection.UserCount} user{(connection.UserCount == 1 ? "" : "s")}" +
+                           (connection.LastWebhookReceivedAt.HasValue ? $" · last event {DateTimeDisplay.FormatDateTime(connection.LastWebhookReceivedAt.Value)}" : ""),
                     FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                 });
                 row.Children.Add(info);
-                var chevron = new FontIcon { Glyph = "\uE76C", FontSize = 12 };
-                Grid.SetColumn(chevron, 1); row.Children.Add(chevron);
+                var health = BuildWebhookHealthBadge(connection);
+                Grid.SetColumn(health, 1); row.Children.Add(health);
                 card.Content = row;
                 card.Click += async (_, _) => await SelectWebhookConnectionAsync(connection);
+                _webhookConnectionCards[connection.Id] = card;
                 WebhookConnectionsPanel.Children.Add(card);
             }
+            if (connections.Count > 0)
+            {
+                var selected = connections.FirstOrDefault(connection => connection.Id == _selectedWebhookConnection?.Id) ?? connections[0];
+                await SelectWebhookConnectionAsync(selected);
+            }
+            EnsureWebhookRefreshTimer();
         }
         catch (Exception ex)
         {
@@ -3859,7 +3973,172 @@ public sealed partial class SettingsPage : Page
         if (connection.LastWebhookErrorAt.HasValue &&
             (!connection.LastWebhookReceivedAt.HasValue || connection.LastWebhookErrorAt > connection.LastWebhookReceivedAt)) return "Needs attention";
         if (connection.LastWebhookReceivedAt.HasValue) return "Healthy";
+        if (!string.IsNullOrWhiteSpace(connection.LastWebhookErrorMessage)) return "Needs attention";
         return "Waiting for first delivery";
+    }
+
+    private void EnsureWebhookRefreshTimer()
+    {
+        if (_webhookRefreshTimer == null)
+        {
+            _webhookRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+            _webhookRefreshTimer.Tick += async (_, _) =>
+            {
+                if (_webhookRefreshBusy || _selectedWebhookConnection == null) return;
+                _webhookRefreshBusy = true;
+                try
+                {
+                    _webhookEvents = await App.Services.GetRequiredService<WebhookSyncApi>()
+                        .GetEventsAsync(_selectedWebhookConnection.Id);
+                    BuildWebhookEvents();
+                }
+                catch
+                {
+                    // Keep the last successful table visible; the next interval retries.
+                }
+                finally { _webhookRefreshBusy = false; }
+            };
+        }
+        _webhookRefreshTimer.Stop();
+        _webhookRefreshTimer.Start();
+    }
+
+    private static string FormatWebhookProvider(string provider)
+        => string.IsNullOrWhiteSpace(provider)
+            ? "Unknown"
+            : char.ToUpperInvariant(provider[0]) + provider[1..];
+
+    private static Border BuildWebhookHealthBadge(WebhookSyncConnection connection)
+    {
+        var health = WebhookHealth(connection);
+        var brushKey = health switch
+        {
+            "Healthy" => "SuccessBrush",
+            "Needs attention" => "ErrorBrush",
+            _ => "WarningBrush",
+        };
+        var foreground = (Brush)Application.Current.Resources[brushKey];
+        return new Border
+        {
+            BorderBrush = foreground,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(8, 3, 8, 3),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock { Text = health, FontSize = 10, Foreground = foreground },
+        };
+    }
+
+    private void WebhookProviderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (WebhookPlexAuthPanel == null) return;
+        var provider = (WebhookProviderCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "plex";
+        var isPlex = provider == "plex";
+        WebhookPlexAuthPanel.Visibility = isPlex ? Visibility.Visible : Visibility.Collapsed;
+        WebhookManualServerPanel.Visibility = isPlex ? Visibility.Collapsed : Visibility.Visible;
+        WebhookManualServerName.PlaceholderText = provider == "emby" ? "My Emby Server" : "My Jellyfin Server";
+    }
+
+    private async void WebhookPlexSignIn_Click(object sender, RoutedEventArgs e)
+    {
+        _webhookPlexAuthCts?.Cancel();
+        _webhookPlexAuthCts?.Dispose();
+        _webhookPlexAuthCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var ct = _webhookPlexAuthCts.Token;
+        WebhookPlexSignInButton.IsEnabled = false;
+        WebhookPlexAuthStatus.Text = "Starting Plex sign-in…";
+        WebhookPlexServerRow.Visibility = Visibility.Collapsed;
+        try
+        {
+            var auth = App.Services.GetRequiredService<PlexBrowserAuthApi>();
+            var pin = await auth.CreatePinAsync(ct);
+            if (!await Windows.System.Launcher.LaunchUriAsync(auth.BuildAuthenticationUri(pin)))
+                throw new InvalidOperationException("Windows could not open the Plex sign-in page.");
+            WebhookPlexAuthStatus.Text = "Complete sign-in in your browser. Waiting for Plex…";
+
+            string? token = null;
+            while (!ct.IsCancellationRequested && string.IsNullOrWhiteSpace(token))
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                token = await auth.CheckPinAsync(pin, ct);
+            }
+            if (string.IsNullOrWhiteSpace(token)) throw new TimeoutException("Plex sign-in expired.");
+
+            _webhookPlexServers = await auth.GetServersAsync(token, ct);
+            WebhookPlexServerCombo.Items.Clear();
+            foreach (var server in _webhookPlexServers)
+                WebhookPlexServerCombo.Items.Add(new ComboBoxItem { Content = server.Name, Tag = server });
+            if (WebhookPlexServerCombo.Items.Count > 0) WebhookPlexServerCombo.SelectedIndex = 0;
+            WebhookPlexServerRow.Visibility = _webhookPlexServers.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            WebhookPlexAuthStatus.Text = _webhookPlexServers.Count == 0
+                ? "Plex sign-in succeeded, but no media servers were found."
+                : $"{_webhookPlexServers.Count} server{(_webhookPlexServers.Count == 1 ? "" : "s")} available";
+            WebhookPlexSignInButton.Content = "Re-authenticate";
+        }
+        catch (OperationCanceledException)
+        {
+            WebhookPlexAuthStatus.Text = "Plex sign-in expired or was cancelled. Please try again.";
+        }
+        catch (Exception ex)
+        {
+            WebhookPlexAuthStatus.Text = $"Plex sign-in failed: {ex.Message}";
+        }
+        finally
+        {
+            WebhookPlexSignInButton.IsEnabled = true;
+        }
+    }
+
+    private async void WebhookCreateConnection_Click(object sender, RoutedEventArgs e)
+    {
+        var provider = (WebhookProviderCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "plex";
+        var profileId = (WebhookDefaultProfileCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+        var plexServer = (WebhookPlexServerCombo.SelectedItem as ComboBoxItem)?.Tag as PlexBrowserResource;
+        if (string.IsNullOrWhiteSpace(profileId) ||
+            (provider == "plex" && plexServer == null) ||
+            (provider != "plex" && string.IsNullOrWhiteSpace(WebhookManualServerName.Text)))
+        {
+            ViewModel.ErrorMessage = provider == "plex"
+                ? "Sign in to Plex, select a server, and choose a default profile."
+                : "Enter a connection name and choose a default profile.";
+            return;
+        }
+
+        var body = new Dictionary<string, object?>
+        {
+            ["provider"] = provider,
+            ["server_name"] = provider == "plex" ? plexServer!.Name : WebhookManualServerName.Text.Trim(),
+            ["default_profile_id"] = profileId,
+        };
+        if (plexServer != null)
+        {
+            body["server_id"] = plexServer.ClientIdentifier;
+            body["base_url"] = plexServer.PreferredUrl;
+            body["access_token"] = plexServer.AccessToken;
+        }
+
+        WebhookCreateConnectionButton.IsEnabled = false;
+        var oldContent = WebhookCreateConnectionButton.Content;
+        WebhookCreateConnectionButton.Content = "Creating…";
+        try
+        {
+            var created = await App.Services.GetRequiredService<WebhookSyncApi>().CreateConnectionAsync(body);
+            _selectedWebhookConnection = created.Connection;
+            await LoadWebhookConnectionsAsync();
+            await SelectWebhookConnectionAsync(created.Connection);
+            WebhookUrlBox.Text = created.WebhookUrl;
+            WebhookManualServerName.Text = "";
+            ViewModel.StatusMessage = "Webhook connection created";
+        }
+        catch (Exception ex)
+        {
+            ViewModel.ErrorMessage = $"Failed to create webhook connection: {ex.Message}";
+        }
+        finally
+        {
+            WebhookCreateConnectionButton.Content = oldContent;
+            WebhookCreateConnectionButton.IsEnabled = true;
+        }
     }
 
     private async void AddConnectionBtn_Click(object sender, RoutedEventArgs e)
@@ -3912,17 +4191,30 @@ public sealed partial class SettingsPage : Page
     private async Task SelectWebhookConnectionAsync(WebhookSyncConnection connection)
     {
         _selectedWebhookConnection = connection;
+        foreach (var pair in _webhookConnectionCards)
+            pair.Value.Background = (Brush)Application.Current.Resources[
+                pair.Key == connection.Id ? "SidebarAccentBrush" : "SurfaceBrush"];
         WebhookConnectionDetail.Visibility = Visibility.Visible;
         WebhookDetailName.Text = connection.ServerName;
-        WebhookDetailHealth.Text = $"{connection.Provider.ToUpperInvariant()} · {WebhookHealth(connection)}";
+        WebhookDetailHealth.Text = !string.IsNullOrWhiteSpace(connection.LastWebhookErrorMessage) && WebhookHealth(connection) == "Needs attention"
+            ? $"{FormatWebhookProvider(connection.Provider)} webhook endpoint · {connection.LastWebhookErrorMessage}"
+            : $"{FormatWebhookProvider(connection.Provider)} webhook endpoint · Ready to receive webhook traffic";
         WebhookUrlBox.Text = connection.WebhookUrl ?? "";
+        WebhookConnectionNameBox.Text = connection.ServerName;
+        WebhookConnectionProfileCombo.Items.Clear();
+        WebhookConnectionProfileCombo.Items.Add(new ComboBoxItem { Content = "No default profile", Tag = "" });
+        foreach (var profile in _webhookProfiles)
+            WebhookConnectionProfileCombo.Items.Add(new ComboBoxItem { Content = profile.Name, Tag = profile.Id });
+        SelectComboBoxByTag(WebhookConnectionProfileCombo, connection.DefaultProfileId);
+        if (WebhookConnectionProfileCombo.SelectedIndex < 0) WebhookConnectionProfileCombo.SelectedIndex = 0;
         WebhookActorsHost.Children.Clear();
         WebhookEventsHost.Children.Clear();
+        BuildWebhookSetupInstructions(connection.Provider);
         try
         {
             var api = App.Services.GetRequiredService<WebhookSyncApi>();
             if (_webhookProfiles.Count == 0) _webhookProfiles = (await App.Services.GetRequiredService<AuthApi>().GetProfilesAsync()).Profiles;
-            var actorsTask = api.GetActorsAsync(connection.Id);
+            var actorsTask = api.GetProfileMappingsAsync(connection.Id);
             var eventsTask = api.GetEventsAsync(connection.Id);
             await Task.WhenAll(actorsTask, eventsTask);
             BuildWebhookActors(actorsTask.Result);
@@ -3933,18 +4225,19 @@ public sealed partial class SettingsPage : Page
         catch (Exception ex) { ViewModel.ErrorMessage = $"Could not load connection details: {ex.Message}"; }
     }
 
-    private void BuildWebhookActors(WebhookSyncActorsResponse response)
+    private void BuildWebhookActors(WebhookSyncProfileMappingsResponse response)
     {
         _webhookActorSelectors.Clear();
-        var actors = response.Mappings.Select(mapping => (ExternalActorId: mapping.ExternalActorId, ExternalActorName: mapping.ExternalActorName, ProfileId: mapping.ProfileId))
-            .Concat(response.DiscoveredActors
-                .Where(actor => response.Mappings.All(mapping => mapping.ExternalActorId != actor.ExternalActorId))
-                .Select(actor => (ExternalActorId: actor.ExternalActorId, ExternalActorName: actor.ExternalActorName, ProfileId: (string?)null)))
+        var actors = response.Mappings.Select(mapping => (ExternalActorId: mapping.ExternalUserId, ExternalActorName: mapping.ExternalUserName, ProfileId: mapping.SiloProfileId))
+            .Concat(response.DiscoveredUsers
+                .Where(actor => response.Mappings.All(mapping => mapping.ExternalUserId != actor.ExternalUserId))
+                .Select(actor => (ExternalActorId: actor.ExternalUserId, ExternalActorName: actor.ExternalUserName, ProfileId: (string?)null)))
+            .OrderBy(actor => actor.ExternalActorName, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
         WebhookSaveActorsButton.Visibility = actors.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         if (actors.Count == 0)
         {
-            WebhookActorsHost.Children.Add(new TextBlock { Text = "No external actors discovered yet.", FontSize = 12 });
+            WebhookActorsHost.Children.Add(new TextBlock { Text = "No users discovered yet. Send a webhook event first, then map them here.", FontSize = 12 });
             return;
         }
         foreach (var actor in actors)
@@ -3954,7 +4247,7 @@ public sealed partial class SettingsPage : Page
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
             row.Children.Add(new TextBlock { Text = actor.ExternalActorName, VerticalAlignment = VerticalAlignment.Center, FontSize = 13 });
             var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-            combo.Items.Add(new ComboBoxItem { Content = "Ignore", Tag = "" });
+            combo.Items.Add(new ComboBoxItem { Content = "Ignore this user", Tag = "" });
             foreach (var profile in _webhookProfiles) combo.Items.Add(new ComboBoxItem { Content = profile.Name, Tag = profile.Id });
             SelectComboBoxByTag(combo, actor.ProfileId ?? "");
             Grid.SetColumn(combo, 1); row.Children.Add(combo);
@@ -3967,30 +4260,264 @@ public sealed partial class SettingsPage : Page
     private void BuildWebhookEvents()
     {
         WebhookEventsHost.Children.Clear();
-        const int pageSize = 10;
-        var pageCount = Math.Max(1, (int)Math.Ceiling(_webhookEvents.Count / (double)pageSize));
+        const int pageSize = 15;
+        var outcome = (WebhookEventOutcomeFilter.SelectedItem as ComboBoxItem)?.Tag as string ?? "all";
+        var query = WebhookEventSearchBox.Text.Trim();
+        var filtered = _webhookEvents
+            .Where(item => outcome == "all" || string.Equals(item.Outcome, outcome, StringComparison.OrdinalIgnoreCase))
+            .Where(item => string.IsNullOrWhiteSpace(query) ||
+                           item.Summary.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                           (item.ErrorMessage?.Contains(query, StringComparison.CurrentCultureIgnoreCase) ?? false) ||
+                           WebhookEventUserLabel(item).Contains(query, StringComparison.CurrentCultureIgnoreCase))
+            .ToList();
+        var pageCount = Math.Max(1, (int)Math.Ceiling(filtered.Count / (double)pageSize));
         _webhookEventsPage = Math.Clamp(_webhookEventsPage, 0, pageCount - 1);
-        WebhookEventsPageLabel.Text = $"Page {_webhookEventsPage + 1} of {pageCount}";
+        var rangeStart = filtered.Count == 0 ? 0 : (_webhookEventsPage * pageSize) + 1;
+        var rangeEnd = Math.Min((_webhookEventsPage + 1) * pageSize, filtered.Count);
+        WebhookEventsPageLabel.Text = $"{rangeStart}–{rangeEnd} of {filtered.Count}";
         WebhookEventsPrevious.IsEnabled = _webhookEventsPage > 0;
         WebhookEventsNext.IsEnabled = _webhookEventsPage + 1 < pageCount;
-        if (_webhookEvents.Count == 0)
+        WebhookEventsFirst.IsEnabled = _webhookEventsPage > 0;
+        WebhookEventsLast.IsEnabled = _webhookEventsPage + 1 < pageCount;
+        if (filtered.Count == 0)
         {
-            WebhookEventsHost.Children.Add(new TextBlock { Text = "No deliveries received yet.", FontSize = 12 });
+            WebhookEventsHost.Children.Add(new TextBlock
+            {
+                Text = _webhookEvents.Count == 0
+                    ? "No deliveries yet. Send a test event from the provider to confirm the connection."
+                    : "No deliveries match the current filters.",
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 12, 0, 12),
+            });
             return;
         }
-        foreach (var item in _webhookEvents.Skip(_webhookEventsPage * pageSize).Take(pageSize))
+        foreach (var item in filtered.Skip(_webhookEventsPage * pageSize).Take(pageSize))
         {
-            var card = new Border { Background = (Brush)Application.Current.Resources["SurfaceBrush"], CornerRadius = new CornerRadius(10), Padding = new Thickness(12) };
-            var stack = new StackPanel { Spacing = 3 };
-            stack.Children.Add(new TextBlock { Text = $"{item.Outcome.ToUpperInvariant()} · HTTP {item.HttpStatus} · {DateTimeDisplay.FormatDateTime(item.ReceivedAt)}", FontSize = 11, FontWeight = FontWeights.SemiBold });
-            stack.Children.Add(new TextBlock { Text = item.Summary, FontSize = 12, TextWrapping = TextWrapping.Wrap });
-            if (!string.IsNullOrWhiteSpace(item.ErrorMessage)) stack.Children.Add(new TextBlock { Text = item.ErrorMessage, FontSize = 11, Foreground = (Brush)Application.Current.Resources["ErrorBrush"], TextWrapping = TextWrapping.Wrap });
-            card.Child = stack; WebhookEventsHost.Children.Add(card);
+            var row = new Grid { ColumnSpacing = 12 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(92) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+
+            var badge = BuildWebhookOutcomeBadge(item.Outcome);
+            row.Children.Add(badge);
+            var eventStack = new StackPanel { Spacing = 2 };
+            eventStack.Children.Add(new TextBlock { Text = item.Summary, FontSize = 12, TextWrapping = TextWrapping.Wrap });
+            if (!string.IsNullOrWhiteSpace(item.ErrorMessage))
+                eventStack.Children.Add(new TextBlock { Text = item.ErrorMessage, FontSize = 11, Foreground = (Brush)Application.Current.Resources["ErrorBrush"], TextWrapping = TextWrapping.Wrap });
+            Grid.SetColumn(eventStack, 1);
+            row.Children.Add(eventStack);
+            var itemText = new TextBlock { Text = WebhookEventAttribute(item, "matched_media_item_title") ?? "—", FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(itemText, 2);
+            row.Children.Add(itemText);
+            var userText = new TextBlock { Text = WebhookEventUserLabel(item), FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(userText, 3);
+            row.Children.Add(userText);
+            var timeText = new TextBlock { Text = DateTimeDisplay.FormatDateTime(item.ReceivedAt), FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(timeText, 4);
+            row.Children.Add(timeText);
+
+            var card = new Button
+            {
+                Content = row,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(0, 0, 0, 1),
+                CornerRadius = new CornerRadius(0),
+                Padding = new Thickness(10, 9, 10, 9),
+            };
+            card.Click += async (_, _) => await ShowWebhookEventDetailAsync(item);
+            WebhookEventsHost.Children.Add(card);
         }
+    }
+
+    private void WebhookEventFilter_Changed(object sender, RoutedEventArgs e)
+    {
+        if (WebhookEventsHost == null) return;
+        _webhookEventsPage = 0;
+        BuildWebhookEvents();
+    }
+
+    private static Border BuildWebhookOutcomeBadge(string outcome)
+    {
+        var brushKey = outcome.ToLowerInvariant() switch
+        {
+            "applied" => "SuccessBrush",
+            "unmatched" => "WarningBrush",
+            "rejected" or "error" => "ErrorBrush",
+            _ => "SecondaryTextBrush",
+        };
+        var foreground = (Brush)Application.Current.Resources[brushKey];
+        return new Border
+        {
+            BorderBrush = foreground,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(7, 2, 7, 2),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(outcome) ? "Unknown" : char.ToUpperInvariant(outcome[0]) + outcome[1..],
+                FontSize = 10,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = foreground,
+            },
+        };
+    }
+
+    private static string? WebhookEventAttribute(WebhookSyncEventLog item, string key)
+    {
+        if (item.Attrs == null || !item.Attrs.TryGetValue(key, out var value)) return null;
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => value.ToString(),
+            _ => null,
+        };
+    }
+
+    private static string WebhookEventUserLabel(WebhookSyncEventLog item)
+    {
+        var name = WebhookEventAttribute(item, "external_user_name");
+        var id = WebhookEventAttribute(item, "external_user_id");
+        return !string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(id)
+            ? $"{name} ({id})"
+            : name ?? id ?? "Unknown user";
+    }
+
+    private void BuildWebhookSetupInstructions(string provider)
+    {
+        WebhookSetupInstructionsHost.Children.Clear();
+        var instructions = new StackPanel { Spacing = 7, Margin = new Thickness(0, 8, 0, 0) };
+        void AddStep(string text) => instructions.Children.Add(new TextBlock
+        {
+            Text = text,
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+
+        if (string.Equals(provider, "plex", StringComparison.OrdinalIgnoreCase))
+        {
+            AddStep("1. In Plex, open Settings → Webhooks (Plex Pass required).");
+            AddStep("2. Click Add Webhook and paste the URL above.");
+            AddStep("3. Save. Plex sends events automatically—there are no per-event toggles to configure.");
+        }
+        else if (string.Equals(provider, "emby", StringComparison.OrdinalIgnoreCase))
+        {
+            AddStep("1. In the Emby dashboard, open Notifications and add a Webhooks notification.");
+            AddStep("2. Paste the URL above and set Request content type to application/json.");
+            AddStep("3. Required: Playback → Stop. Recommended: favorites and mark played/unplayed. Skip start, pause, and unpause events.");
+        }
+        else
+        {
+            AddStep("1. Install Jellyfin's official Webhook plugin and restart Jellyfin.");
+            AddStep("2. Add a Generic Destination and paste the URL above into Webhook Url.");
+            AddStep("3. Enable Playback Stop only. Leave Playback Progress and User Data Saved disabled.");
+            AddStep("4. Paste the payload template below and save.");
+            var template = """
+            {
+              "provider": "jellyfin",
+              "notification_type": "{{NotificationType}}",
+              "timestamp": "{{UtcTimestamp}}",
+              "server_name": "{{ServerName}}",
+              "user": { "id": "{{UserId}}", "name": "{{{Username}}}" },
+              "item": {
+                "id": "{{ItemId}}", "type": "{{ItemType}}", "name": "{{{Name}}}",
+                "series_name": "{{{SeriesName}}}",
+                "year": {{#if_exist Year}}{{Year}}{{else}}0{{/if_exist}},
+                "season_number": {{#if_exist SeasonNumber}}{{SeasonNumber}}{{else}}0{{/if_exist}},
+                "episode_number": {{#if_exist EpisodeNumber}}{{EpisodeNumber}}{{else}}0{{/if_exist}},
+                "runtime_ticks": {{#if_exist RunTimeTicks}}{{RunTimeTicks}}{{else}}0{{/if_exist}},
+                "provider_ids": { "imdb": "{{Provider_imdb}}", "tmdb": "{{Provider_tmdb}}", "tvdb": "{{Provider_tvdb}}" }
+              },
+              "playback": {
+                "position_ticks": {{#if_exist PlaybackPositionTicks}}{{PlaybackPositionTicks}}{{else}}0{{/if_exist}},
+                "played_to_completion": {{#if_equals PlayedToCompletion 'true'}}true{{else}}false{{/if_equals}},
+                "runtime_ticks": {{#if_exist RunTimeTicks}}{{RunTimeTicks}}{{else}}0{{/if_exist}}
+              }
+            }
+            """;
+            instructions.Children.Add(new TextBox
+            {
+                Header = "Webhook payload template",
+                Text = template,
+                IsReadOnly = true,
+                AcceptsReturn = true,
+                TextWrapping = TextWrapping.NoWrap,
+                MinHeight = 210,
+                MaxHeight = 260,
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 11,
+            });
+            var copy = new Button { Content = "Copy template", HorizontalAlignment = HorizontalAlignment.Left };
+            copy.Click += (_, _) =>
+            {
+                var package = new DataPackage();
+                package.SetText(template);
+                Clipboard.SetContent(package);
+                ViewModel.StatusMessage = "Jellyfin template copied";
+            };
+            instructions.Children.Add(copy);
+        }
+
+        WebhookSetupInstructionsHost.Children.Add(new Expander
+        {
+            Header = "Setup instructions",
+            Content = instructions,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        });
+    }
+
+    private async Task ShowWebhookEventDetailAsync(WebhookSyncEventLog item)
+    {
+        var content = new StackPanel { Width = 500, Spacing = 10 };
+        content.Children.Add(BuildWebhookOutcomeBadge(item.Outcome));
+        content.Children.Add(new TextBlock { Text = $"{DateTimeDisplay.FormatDateTime(item.ReceivedAt)} · HTTP {item.HttpStatus}", FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        if (!string.IsNullOrWhiteSpace(item.ErrorMessage))
+            content.Children.Add(new TextBlock { Text = item.ErrorMessage, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["ErrorBrush"] });
+        if (item.Attrs is { Count: > 0 })
+        {
+            var attrs = new StackPanel { Spacing = 4 };
+            foreach (var pair in item.Attrs.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+                attrs.Children.Add(new TextBlock { Text = $"{pair.Key.Replace('_', ' ')}: {pair.Value}", FontSize = 11, TextWrapping = TextWrapping.Wrap });
+            content.Children.Add(attrs);
+        }
+        if (!string.IsNullOrWhiteSpace(item.BodyExcerpt))
+            content.Children.Add(new TextBox { Header = "Request excerpt", Text = item.BodyExcerpt, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 180, FontFamily = new FontFamily("Consolas"), FontSize = 11 });
+
+        var dialog = new ContentDialog
+        {
+            Title = item.Summary,
+            Content = new ScrollViewer { Content = content, MaxHeight = 560 },
+            CloseButtonText = "Close",
+            XamlRoot = XamlRoot,
+        };
+        await dialog.ShowAsync();
     }
 
     private void WebhookEventsPrevious_Click(object sender, RoutedEventArgs e) { _webhookEventsPage--; BuildWebhookEvents(); }
     private void WebhookEventsNext_Click(object sender, RoutedEventArgs e) { _webhookEventsPage++; BuildWebhookEvents(); }
+    private void WebhookEventsFirst_Click(object sender, RoutedEventArgs e) { _webhookEventsPage = 0; BuildWebhookEvents(); }
+    private void WebhookEventsLast_Click(object sender, RoutedEventArgs e)
+    {
+        const int pageSize = 15;
+        var outcome = (WebhookEventOutcomeFilter.SelectedItem as ComboBoxItem)?.Tag as string ?? "all";
+        var query = WebhookEventSearchBox.Text.Trim();
+        var count = _webhookEvents.Count(item =>
+            (outcome == "all" || string.Equals(item.Outcome, outcome, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrWhiteSpace(query) || item.Summary.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+             (item.ErrorMessage?.Contains(query, StringComparison.CurrentCultureIgnoreCase) ?? false) ||
+             WebhookEventUserLabel(item).Contains(query, StringComparison.CurrentCultureIgnoreCase)));
+        _webhookEventsPage = Math.Max(0, (int)Math.Ceiling(count / (double)pageSize) - 1);
+        BuildWebhookEvents();
+    }
 
     private async void WebhookEdit_Click(object sender, RoutedEventArgs e)
     {
@@ -4017,6 +4544,35 @@ public sealed partial class SettingsPage : Page
             ViewModel.StatusMessage = "Webhook connection updated";
         }
         catch (Exception ex) { ViewModel.ErrorMessage = $"Could not update connection: {ex.Message}"; }
+    }
+
+    private async void WebhookSaveConnection_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedWebhookConnection == null || string.IsNullOrWhiteSpace(WebhookConnectionNameBox.Text)) return;
+        var button = (Button)sender;
+        button.IsEnabled = false;
+        try
+        {
+            var updated = await App.Services.GetRequiredService<WebhookSyncApi>().UpdateConnectionAsync(
+                _selectedWebhookConnection.Id,
+                new Dictionary<string, object?>
+                {
+                    ["server_name"] = WebhookConnectionNameBox.Text.Trim(),
+                    ["default_profile_id"] = (WebhookConnectionProfileCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "",
+                });
+            _selectedWebhookConnection = updated;
+            WebhookDetailName.Text = updated.ServerName;
+            await LoadWebhookConnectionsAsync();
+            ViewModel.StatusMessage = "Webhook connection updated";
+        }
+        catch (Exception ex)
+        {
+            ViewModel.ErrorMessage = $"Could not update connection: {ex.Message}";
+        }
+        finally
+        {
+            button.IsEnabled = true;
+        }
     }
 
     private void WebhookCopyUrl_Click(object sender, RoutedEventArgs e)
@@ -4061,15 +4617,15 @@ public sealed partial class SettingsPage : Page
         if (_selectedWebhookConnection == null) return;
         var mappings = _webhookActorSelectors.Select(pair => new Dictionary<string, object?>
         {
-            ["external_actor_id"] = pair.Key,
-            ["external_actor_name"] = pair.Value.DataContext as string ?? pair.Key,
-            ["continuum_profile_id"] = (pair.Value.SelectedItem as ComboBoxItem)?.Tag as string is { Length: > 0 } id ? id : null,
+            ["external_user_id"] = pair.Key,
+            ["external_user_name"] = pair.Value.DataContext as string ?? pair.Key,
+            ["silo_profile_id"] = (pair.Value.SelectedItem as ComboBoxItem)?.Tag as string is { Length: > 0 } id ? id : null,
         }).ToList();
         try
         {
-            await App.Services.GetRequiredService<WebhookSyncApi>().UpdateActorsAsync(_selectedWebhookConnection.Id,
+            await App.Services.GetRequiredService<WebhookSyncApi>().UpdateProfileMappingsAsync(_selectedWebhookConnection.Id,
                 new Dictionary<string, object?> { ["mappings"] = mappings });
-            ViewModel.StatusMessage = "Actor routing saved";
+            ViewModel.StatusMessage = "Profile mappings saved";
         }
         catch (Exception ex) { ViewModel.ErrorMessage = $"Could not save actor routing: {ex.Message}"; }
     }

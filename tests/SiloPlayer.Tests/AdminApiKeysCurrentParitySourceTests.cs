@@ -12,6 +12,8 @@ public class AdminApiKeysCurrentParitySourceTests
         Assert.Contains("Text=\"API Keys\"", Markup, StringComparison.Ordinal);
         Assert.Contains("FontSize=\"48\"", Markup, StringComparison.Ordinal);
         Assert.Contains("MaxWidth=\"1400\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"ApiKeysTableScroll\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("MinWidth=\"1080\"", Markup, StringComparison.Ordinal);
         foreach (var heading in new[] { "Label", "User", "Key", "Tier", "Created", "Last Used", "Actions" })
             Assert.Contains($"Text=\"{heading}\"", Markup, StringComparison.Ordinal);
     }
@@ -26,5 +28,7 @@ public class AdminApiKeysCurrentParitySourceTests
         Assert.Contains("OpenDeleteDialogAsync", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("Content = \"Previous\"", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("Content = \"Next\"", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("ApplyResponsiveLayout", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("ActualWidth < 720", CodeBehind, StringComparison.Ordinal);
     }
 }

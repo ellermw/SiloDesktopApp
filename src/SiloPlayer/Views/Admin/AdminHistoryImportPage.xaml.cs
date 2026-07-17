@@ -637,8 +637,10 @@ public sealed partial class AdminHistoryImportPage : Page
         }
 
         var metrics = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
-        for (var index = 0; index < 7; index++)
+        for (var index = 0; index < 6; index++)
             metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        metrics.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        metrics.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var metricValues = new (string Label, int Value)[]
         {
             ("Fetched", run.Fetched),
@@ -646,6 +648,7 @@ public sealed partial class AdminHistoryImportPage : Page
             ("Unmatched", run.Unmatched),
             ("Updated", run.ProgressUpdated),
             ("History", run.HistoryCreated),
+            ("Favorites", run.FavoritesImported),
             ("Watchlist", run.WatchlistAdded),
             ("Skipped", run.Skipped),
         };
@@ -665,7 +668,8 @@ public sealed partial class AdminHistoryImportPage : Page
                 FontSize = 11,
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
             });
-            Grid.SetColumn(metric, index);
+            Grid.SetColumn(metric, index % 6);
+            Grid.SetRow(metric, index / 6);
             metrics.Children.Add(metric);
         }
         details.Children.Add(metrics);

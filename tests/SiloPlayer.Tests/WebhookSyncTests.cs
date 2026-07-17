@@ -9,7 +9,7 @@ public sealed class WebhookSyncTests
     public async Task ConnectionsUseCurrentServerContract()
     {
         var handler = new JsonHandler("""
-        [{"id":"c1","provider":"plex","server_id":"machine-1","server_name":"Living Room Plex","default_profile_id":"p1","webhook_url":"https://silo.test/api/v1/webhook-sync/webhooks/secret","actor_count":2,"account_discovery_available":true,"last_webhook_received_at":"2026-07-11T12:00:00Z"}]
+        [{"id":"c1","provider":"plex","server_id":"machine-1","server_name":"Living Room Plex","default_profile_id":"p1","webhook_url":"https://silo.test/api/v1/webhook-sync/webhooks/secret","user_count":2,"account_discovery_available":true,"last_webhook_received_at":"2026-07-11T12:00:00Z"}]
         """);
         var client = new SiloApiClient(new HttpClient(handler));
         client.SetBaseUrl("https://silo.test");
@@ -19,7 +19,7 @@ public sealed class WebhookSyncTests
         Assert.Equal("machine-1", connection.ServerId);
         Assert.Equal("Living Room Plex", connection.ServerName);
         Assert.Equal("p1", connection.DefaultProfileId);
-        Assert.Equal(2, connection.ActorCount);
+        Assert.Equal(2, connection.UserCount);
         Assert.True(connection.AccountDiscoveryAvailable);
     }
 
@@ -32,9 +32,22 @@ public sealed class WebhookSyncTests
         Assert.Contains("UpdateConnectionAsync", code);
         Assert.Contains("RotateWebhookAsync", code);
         Assert.Contains("DeleteConnectionAsync", code);
-        Assert.Contains("UpdateActorsAsync", code);
+        Assert.Contains("UpdateProfileMappingsAsync", code);
+        Assert.Contains("GetProfileMappingsAsync", code);
         Assert.Contains("GetEventsAsync", code);
+        Assert.Contains("PlexBrowserAuthApi", code);
+        Assert.Contains("WebhookEventUserLabel", code);
+        Assert.Contains("ShowWebhookEventDetailAsync", code);
         Assert.DoesNotContain("Connection name (e.g. Living Room Plex)", code);
+
+        var api = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Api", "WebhookSyncApi.cs"));
+        Assert.Contains("/profile-mappings", api);
+        Assert.DoesNotContain("/actors", api);
+
+        var xaml = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "SettingsPage.xaml"));
+        Assert.Contains("WebhookPlexSignInButton", xaml);
+        Assert.Contains("WebhookEventSearchBox", xaml);
+        Assert.Contains("Save mappings", xaml);
     }
 
     private sealed class JsonHandler(string json) : HttpMessageHandler

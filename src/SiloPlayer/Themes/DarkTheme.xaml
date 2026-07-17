@@ -191,10 +191,9 @@
     <!-- Web UI: w-[140px] sm:w-[160px] lg:w-[185px]; aspect-[2/3] -->
     <x:Double x:Key="PosterCardWidth">178</x:Double>
     <x:Double x:Key="PosterCardHeight">267</x:Double>
-    <!-- Total card height = poster (267) + title margin (12) + title line (~20)
-         + subtitle margin (4) + subtitle line (~16) + breathing room. Was 310,
-         which clipped the year/subtitle on search results. -->
-    <x:Double x:Key="PosterCardTotalHeight">330</x:Double>
+    <!-- Accommodates the WebUI's optional episode-title line between series
+         title and SxxExx metadata without clipping uniform grid rows. -->
+    <x:Double x:Key="PosterCardTotalHeight">346</x:Double>
 
     <!-- ===== Text Styles ===== -->
     <Style x:Key="DisplayTextStyle" TargetType="TextBlock">

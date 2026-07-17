@@ -137,7 +137,7 @@
                          webui DetailHero layout (lib/detailHero.tsx). -->
                     <Grid
                         VerticalAlignment="Bottom"
-                        HorizontalAlignment="Left"
+                        HorizontalAlignment="Stretch"
                         Margin="48,0,48,24"
                         ColumnSpacing="24">
                         <Grid.ColumnDefinitions>
@@ -162,9 +162,11 @@
 
                         <!-- Title / metadata column -->
                         <StackPanel
+                            x:Name="HeroInfoPanel"
                             Grid.Column="1"
                             VerticalAlignment="Bottom"
-                            MaxWidth="720"
+                            HorizontalAlignment="Left"
+                            MaxWidth="900"
                             Spacing="6">
 
                             <!-- Parent navigation breadcrumbs (episodes: Series › Season › Episode).
@@ -215,10 +217,10 @@
                 </Grid>
 
                 <!-- Detail content below backdrop -->
-                <StackPanel Padding="48,0,48,48" Spacing="16">
+                <StackPanel x:Name="DetailContentPanel" Padding="48,32,48,48" Spacing="16">
 
                     <!-- Metadata row: year · content rating pill · runtime · TMDB score + quality badges -->
-                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <StackPanel x:Name="HeroMetadataRow" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                         <StackPanel x:Name="MetaPanel" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
                             <TextBlock x:Name="YearText" Foreground="{StaticResource SecondaryTextBrush}" FontSize="15" VerticalAlignment="Center" />
                             <TextBlock x:Name="MetaDot1" Text=" · " Foreground="{StaticResource TertiaryTextBrush}" FontSize="15" VerticalAlignment="Center" Visibility="Collapsed" />
@@ -285,7 +287,7 @@
                     <TextBlock x:Name="GenresText" Visibility="Collapsed" />
 
                     <!-- Action buttons row -->
-                    <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                    <controls:WrapPanel x:Name="HeroActionsRow" HorizontalSpacing="12" VerticalSpacing="10">
 
                         <!-- Split play button: [Play / Resume ... | dropdown] -->
                         <Grid x:Name="SplitPlayButton" CornerRadius="22" HorizontalAlignment="Left">
@@ -542,7 +544,7 @@
                                 <TextBlock Text="Edit metadata" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
-                    </StackPanel>
+                    </controls:WrapPanel>
 
                     <!-- Overview -->
                     <TextBlock
@@ -596,8 +598,18 @@
                     <StackPanel x:Name="MangaChaptersSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">
                         <Grid>
                             <TextBlock Text="Chapters" Style="{StaticResource TitleTextStyle}" FontSize="20" />
-                            <TextBlock x:Name="MangaProgressText" HorizontalAlignment="Right"
-                                       Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
+                            <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="10">
+                                <TextBlock x:Name="MangaProgressText" VerticalAlignment="Center"
+                                           Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
+                                <Button x:Name="MangaJumpButton" Visibility="Collapsed"
+                                        Style="{StaticResource GhostButtonStyle}"
+                                        Padding="8,4" Click="MangaJumpButton_Click">
+                                    <StackPanel Orientation="Horizontal" Spacing="5">
+                                        <FontIcon Glyph="&#xE74B;" FontSize="13" />
+                                        <TextBlock x:Name="MangaJumpButtonText" FontSize="12" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
                         </Grid>
                         <StackPanel x:Name="MangaChaptersPanel" Spacing="1" />
                     </StackPanel>
@@ -695,7 +707,14 @@
 
                     <!-- Episodes (shown when a season is selected) -->
                     <StackPanel x:Name="EpisodesSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">
-                        <TextBlock x:Name="EpisodesHeader" Style="{StaticResource TitleTextStyle}" FontSize="18" />
+                        <Grid>
+                            <TextBlock x:Name="EpisodesHeader" Style="{StaticResource TitleTextStyle}" FontSize="18" />
+                            <TextBlock x:Name="EpisodesTotalText"
+                                       HorizontalAlignment="Right"
+                                       VerticalAlignment="Center"
+                                       FontSize="14"
+                                       Foreground="{StaticResource SecondaryTextBrush}" />
+                        </Grid>
                         <ProgressRing
                             x:Name="EpisodesLoadingRing"
                             IsActive="False"

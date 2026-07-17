@@ -6,7 +6,10 @@ using Microsoft.UI.Xaml.Navigation;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels.Admin;
+using SiloPlayer.Views;
 
 namespace SiloPlayer.Views.Admin;
 
@@ -790,22 +793,24 @@ public sealed partial class AdminUserDetailPage : Page
             {
                 var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
                 var impResult = await adminApi.ImpersonateUserAsync(ViewModel.User.Id);
-
-                // Store impersonation token and navigate back
                 var authService = App.Services.GetRequiredService<SiloPlayer.Core.Services.AuthService>();
-                if (impResult.AccessToken != null)
-                {
-                    var apiClient = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>();
-                    apiClient.SetAccessToken(impResult.AccessToken);
-                }
+                var playerService = App.Services.GetRequiredService<SiloPlayer.Services.PlayerService>();
+                await playerService.CloseAsync();
+                authService.BeginImpersonation(
+                    impResult,
+                    $"/admin/users/{ViewModel.User.Id}");
 
                 if (App.MainWindowInstance != null)
                 {
-                    App.MainWindowInstance.RestoreMainPane();
-                    App.MainWindowInstance.NavigateToHome();
+                    App.MainWindowInstance.HideMainNavigation();
+                    App.Services.GetRequiredService<NavigationService>()
+                        .Navigate<ProfileSelectPage>();
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                App.Services.GetRequiredService<ToastService>().Error(ex.Message);
+            }
         }
     }
 

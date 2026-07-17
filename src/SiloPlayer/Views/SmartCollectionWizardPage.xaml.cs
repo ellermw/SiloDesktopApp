@@ -16,8 +16,13 @@ public sealed partial class SmartCollectionWizardPage : Page
     private SmartCollectionWizardNavigationArgs? _args;
     private bool _loaded;
     private bool _suppressSelectionChanges;
+    private bool _compactLayout;
+    private DispatcherTimer? _previewDebounceTimer;
+    private CancellationTokenSource? _previewCts;
+    private int _currentStep = 1;
 
-    public bool CanSave => !ViewModel.IsSaving && !ViewModel.IsLoading;
+    public bool CanSave => !ViewModel.IsSaving && !ViewModel.IsLoading
+        && !ViewModel.IsReadOnly && !string.IsNullOrWhiteSpace(ViewModel.Title);
     public string PreviewCountText
         => ViewModel.PreviewTotal > 0
             ? $"{ViewModel.PreviewTotal:N0} matched"
@@ -35,11 +40,16 @@ public sealed partial class SmartCollectionWizardPage : Page
         {
             if (args.PropertyName is nameof(ViewModel.IsSaving)
                 or nameof(ViewModel.IsLoading)
-                or nameof(ViewModel.PreviewTotal))
+                or nameof(ViewModel.IsPreviewing)
+                or nameof(ViewModel.PreviewTotal)
+                or nameof(ViewModel.IsReadOnly)
+                or nameof(ViewModel.Title))
             {
                 Bindings.Update();
+                UpdateContinueState();
             }
         };
+        SizeChanged += SmartCollectionWizardPage_SizeChanged;
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -57,8 +67,10 @@ public sealed partial class SmartCollectionWizardPage : Page
         PopulateStaticCombos();
         ApplyModeVisibility();
         BuildLibrariesPanel();
+        BuildProfilesPanel();
         BuildRulesPanel();
         BuildPreviewItemsPanel();
+        UpdateContinueState();
         WizardTitle.Text = string.IsNullOrWhiteSpace(_args?.CollectionId)
             ? "New Collection"
             : ViewModel.Title;
@@ -67,7 +79,7 @@ public sealed partial class SmartCollectionWizardPage : Page
             : "Save Collection";
         ShowStep(1);
         Bindings.Update();
-        await ViewModel.PreviewAsync();
+        await RunPreviewAsync();
     }
 
     private void PopulateStaticCombos()
@@ -75,18 +87,43 @@ public sealed partial class SmartCollectionWizardPage : Page
         _suppressSelectionChanges = true;
 
         AddComboItems(MediaScopeCombo, [
+            ("All Media", ""),
+            ("Movies & Series", "video"),
             ("Movies", "movie"),
             ("Series", "series"),
-            ("Episodes", "episode")
+            ("Episodes", "episode"),
+            ("Audiobooks", "audiobook"),
+            ("Ebooks", "ebook"),
+            ("Manga", "manga")
         ], ViewModel.MediaScope);
 
-        AddComboItems(SortFieldCombo, [
-            ("Recently Added", "added_at"),
+        var sortOptions = new List<(string Label, string Value)>
+        {
+            ("Date Added", "added_at"),
             ("Title", "title"),
+            ("Release Date", "release_date"),
+            ("Latest Episode Air Date", "last_air_date"),
+            ("Latest Episode Added", "latest_episode_added"),
             ("Year", "year"),
+            ("Content Rating", "content_rating"),
+            ("Duration", "runtime"),
             ("IMDb Rating", "rating_imdb"),
-            ("Runtime", "runtime")
-        ], ViewModel.SortField);
+            ("TMDB Rating", "rating_tmdb"),
+            ("RT Critic Rating", "rating_rt_critic"),
+            ("RT Audience Rating", "rating_rt_audience"),
+            ("Resolution", "resolution"),
+            ("Bitrate", "bitrate"),
+            ("Author", "author"),
+            ("Narrator", "narrator"),
+            ("Series", "series")
+        };
+        if (!ViewModel.IsAdmin)
+        {
+            sortOptions.Add(("Progress", "progress"));
+            sortOptions.Add(("Date Viewed", "date_viewed"));
+            sortOptions.Add(("Plays", "plays"));
+        }
+        AddComboItems(SortFieldCombo, sortOptions, ViewModel.SortField);
 
         AddComboItems(SortOrderCombo, [
             ("Descending", "desc"),
@@ -121,6 +158,46 @@ public sealed partial class SmartCollectionWizardPage : Page
         SharedToggle.Visibility = ViewModel.IsAdmin ? Visibility.Collapsed : Visibility.Visible;
         IncludeServerToggle.Visibility = ViewModel.IsAdmin ? Visibility.Collapsed : Visibility.Visible;
         FeaturedToggle.Visibility = ViewModel.IsAdmin ? Visibility.Visible : Visibility.Collapsed;
+        ProfileAccessSection.Visibility = !ViewModel.IsAdmin && ViewModel.IsShared
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        AdminVisibilityPanel.Visibility = ViewModel.IsAdmin ? Visibility.Visible : Visibility.Collapsed;
+        AdminBackdropPanel.Visibility = ViewModel.IsAdmin ? Visibility.Visible : Visibility.Collapsed;
+        VisibilityCombo.SelectedIndex = string.Equals(ViewModel.Visibility, "hidden", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        SetDescendantControlsEnabled(DetailsStepPanel, !ViewModel.IsReadOnly);
+    }
+
+    private void BuildProfilesPanel()
+    {
+        ProfilesPanel.Children.Clear();
+        foreach (var profile in ViewModel.Profiles)
+        {
+            var check = new CheckBox
+            {
+                Content = profile.IsPrimary ? $"{profile.Name} · Primary" : profile.Name,
+                Tag = profile.Id,
+                IsChecked = ViewModel.AllowedProfileIds.Contains(profile.Id),
+                FontSize = 13,
+                IsEnabled = !ViewModel.IsReadOnly
+            };
+            check.Checked += ProfileCheck_Changed;
+            check.Unchecked += ProfileCheck_Changed;
+            ProfilesPanel.Children.Add(check);
+        }
+    }
+
+    private void ProfileCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { Tag: string profileId } check) return;
+        if (check.IsChecked == true)
+        {
+            if (!ViewModel.AllowedProfileIds.Contains(profileId))
+                ViewModel.AllowedProfileIds.Add(profileId);
+        }
+        else
+        {
+            ViewModel.AllowedProfileIds.Remove(profileId);
+        }
     }
 
     private void BuildLibrariesPanel()
@@ -156,6 +233,8 @@ public sealed partial class SmartCollectionWizardPage : Page
         {
             ViewModel.SelectedLibraryIds.Remove(libraryId);
         }
+        SchedulePreview();
+        UpdateContinueState();
     }
 
     private void BuildRulesPanel()
@@ -190,7 +269,13 @@ public sealed partial class SmartCollectionWizardPage : Page
         fieldCombo.SelectionChanged += (_, _) =>
         {
             if (fieldCombo.SelectedItem is ComboBoxItem item && item.Tag is string field)
+            {
                 rule.Field = field;
+                rule.Op = GetRuleOperators(field)[0].Value;
+                rule.Value = IsBooleanField(field) ? false : "";
+                BuildRulesPanel();
+                SchedulePreview();
+            }
         };
 
         var opCombo = new ComboBox
@@ -198,7 +283,7 @@ public sealed partial class SmartCollectionWizardPage : Page
             CornerRadius = new CornerRadius(8),
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
-        foreach (var (label, value) in RuleOperators)
+        foreach (var (label, value) in GetRuleOperators(rule.Field))
         {
             var item = new ComboBoxItem { Content = label, Tag = value };
             opCombo.Items.Add(item);
@@ -210,21 +295,13 @@ public sealed partial class SmartCollectionWizardPage : Page
         opCombo.SelectionChanged += (_, _) =>
         {
             if (opCombo.SelectedItem is ComboBoxItem item && item.Tag is string op)
+            {
                 rule.Op = op;
+                SchedulePreview();
+            }
         };
 
-        var valueBox = new TextBox
-        {
-            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
-            PlaceholderText = "Value",
-            Text = rule.Value?.ToString() ?? ""
-        };
-        valueBox.TextChanged += (_, _) => rule.Value = valueBox.Text;
-        valueBox.KeyDown += (_, args) =>
-        {
-            if (args.Key == Windows.System.VirtualKey.Enter)
-                _ = ViewModel.PreviewAsync();
-        };
+        var valueEditor = BuildRuleValueEditor(rule);
 
         var removeButton = new Button
         {
@@ -240,15 +317,84 @@ public sealed partial class SmartCollectionWizardPage : Page
 
         Grid.SetColumn(fieldCombo, 0);
         Grid.SetColumn(opCombo, 1);
-        Grid.SetColumn(valueBox, 2);
+        Grid.SetColumn(valueEditor, 2);
         Grid.SetColumn(removeButton, 3);
         row.Children.Add(fieldCombo);
         row.Children.Add(opCombo);
-        row.Children.Add(valueBox);
+        row.Children.Add(valueEditor);
         row.Children.Add(removeButton);
 
         return row;
     }
+
+    private FrameworkElement BuildRuleValueEditor(QueryRule rule)
+    {
+        if (IsBooleanField(rule.Field))
+        {
+            var combo = new ComboBox { CornerRadius = new CornerRadius(8), HorizontalAlignment = HorizontalAlignment.Stretch };
+            combo.Items.Add(new ComboBoxItem { Content = "True", Tag = true });
+            combo.Items.Add(new ComboBoxItem { Content = "False", Tag = false });
+            var current = rule.Value is bool boolean
+                ? boolean
+                : bool.TryParse(rule.Value?.ToString(), out var parsed) && parsed;
+            combo.SelectedIndex = current ? 0 : 1;
+            combo.SelectionChanged += (_, _) =>
+            {
+                if (combo.SelectedItem is ComboBoxItem { Tag: bool value })
+                {
+                    rule.Value = value;
+                    SchedulePreview();
+                }
+            };
+            return combo;
+        }
+
+        var selectValues = GetRuleSelectValues(rule.Field);
+        if (selectValues.Count > 0)
+        {
+            var combo = new ComboBox { CornerRadius = new CornerRadius(8), HorizontalAlignment = HorizontalAlignment.Stretch };
+            foreach (var value in selectValues)
+            {
+                var item = new ComboBoxItem { Content = value.Label, Tag = value.Value };
+                combo.Items.Add(item);
+                if (string.Equals(rule.Value?.ToString(), value.Value, StringComparison.OrdinalIgnoreCase))
+                    combo.SelectedItem = item;
+            }
+            if (combo.SelectedItem == null) combo.SelectedIndex = 0;
+            combo.SelectionChanged += (_, _) =>
+            {
+                if (combo.SelectedItem is ComboBoxItem { Tag: string value })
+                {
+                    rule.Value = value;
+                    SchedulePreview();
+                }
+            };
+            return combo;
+        }
+
+        var valueBox = new TextBox
+        {
+            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
+            PlaceholderText = rule.Op == "between" ? "Start, end" : rule.Op == "in_last" ? "Example: 30 days" : "Value",
+            Text = FormatRuleValue(rule.Value)
+        };
+        valueBox.TextChanged += (_, _) =>
+        {
+            rule.Value = valueBox.Text;
+            SchedulePreview();
+        };
+        valueBox.KeyDown += (_, args) =>
+        {
+            if (args.Key == Windows.System.VirtualKey.Enter)
+                _ = RunPreviewAsync();
+        };
+        return valueBox;
+    }
+
+    private static string FormatRuleValue(object? value)
+        => value is System.Collections.IEnumerable values and not string
+            ? string.Join(", ", values.Cast<object?>().Select(item => item?.ToString()))
+            : value?.ToString() ?? "";
 
     private void BuildPreviewItemsPanel()
     {
@@ -323,34 +469,46 @@ public sealed partial class SmartCollectionWizardPage : Page
     {
         if (!_suppressSelectionChanges && MediaScopeCombo.SelectedItem is ComboBoxItem item && item.Tag is string value)
             ViewModel.MediaScope = value;
+        SchedulePreview();
     }
 
     private void SortFieldCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_suppressSelectionChanges && SortFieldCombo.SelectedItem is ComboBoxItem item && item.Tag is string value)
             ViewModel.SortField = value;
+        SchedulePreview();
     }
 
     private void SortOrderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_suppressSelectionChanges && SortOrderCombo.SelectedItem is ComboBoxItem item && item.Tag is string value)
             ViewModel.SortOrder = value;
+        SchedulePreview();
     }
 
     private void MatchModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_suppressSelectionChanges && MatchModeCombo.SelectedItem is ComboBoxItem item && item.Tag is string value)
             ViewModel.MatchMode = value;
+        SchedulePreview();
     }
 
     private void AddRule_Click(object sender, RoutedEventArgs e)
     {
         ViewModel.AddRule();
+        SchedulePreview();
+    }
+
+    private void UpdateContinueState()
+    {
+        if (ContinueButton == null) return;
+        ContinueButton.IsEnabled = (!ViewModel.IsAdmin || ViewModel.SelectedLibraryIds.Count > 0)
+            && (ViewModel.IsPreviewing || ViewModel.PreviewTotal > 0);
     }
 
     private async void Preview_Click(object sender, RoutedEventArgs e)
     {
-        await ViewModel.PreviewAsync();
+        await RunPreviewAsync();
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
@@ -364,6 +522,7 @@ public sealed partial class SmartCollectionWizardPage : Page
 
     private void ShowStep(int step)
     {
+        _currentStep = step;
         var filtersVisible = step == 1;
         DetailsStepPanel.Visibility = filtersVisible ? Visibility.Collapsed : Visibility.Visible;
         FiltersStepRulesPanel.Visibility = filtersVisible ? Visibility.Visible : Visibility.Collapsed;
@@ -382,6 +541,7 @@ public sealed partial class SmartCollectionWizardPage : Page
             filtersVisible ? "AccentBackgroundBrush" : "SurfaceBrush"];
         DetailsStepBadge.Background = (Brush)Application.Current.Resources[
             filtersVisible ? "SurfaceBrush" : "AccentBackgroundBrush"];
+        UpdateWorkspaceLayout();
     }
 
     private void BackButton_Click(object sender, RoutedEventArgs e)
@@ -395,19 +555,160 @@ public sealed partial class SmartCollectionWizardPage : Page
             App.Services.GetRequiredService<NavigationService>().GoBack());
     }
 
+    private void SharedToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (ProfileAccessSection != null)
+            ProfileAccessSection.Visibility = !ViewModel.IsAdmin && SharedToggle.IsOn
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+    }
+
+    private void VisibilityCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_suppressSelectionChanges && VisibilityCombo.SelectedItem is ComboBoxItem { Tag: string value })
+            ViewModel.Visibility = value;
+    }
+
+    private async void ChoosePoster_Click(object sender, RoutedEventArgs e)
+        => await ChooseArtworkAsync("poster");
+
+    private async void ChooseBackdrop_Click(object sender, RoutedEventArgs e)
+        => await ChooseArtworkAsync("backdrop");
+
+    private async Task ChooseArtworkAsync(string type)
+    {
+        try
+        {
+            var picker = new Windows.Storage.Pickers.FileOpenPicker();
+            foreach (var extension in new[] { ".jpg", ".jpeg", ".png", ".webp" })
+                picker.FileTypeFilter.Add(extension);
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance!);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+            var file = await picker.PickSingleFileAsync();
+            if (file == null) return;
+            var properties = await file.GetBasicPropertiesAsync();
+            if (properties.Size > 20 * 1024 * 1024)
+            {
+                SetArtworkStatus(type, "Image must be smaller than 20 MB.");
+                return;
+            }
+            var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
+            var bytes = System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(buffer);
+            if (type == "poster") ViewModel.SetPosterFile(file.Name, bytes, file.ContentType);
+            else ViewModel.SetBackdropFile(file.Name, bytes, file.ContentType);
+            SetArtworkStatus(type, file.Name);
+        }
+        catch (Exception ex)
+        {
+            SetArtworkStatus(type, ex.Message);
+        }
+    }
+
+    private void SetArtworkStatus(string type, string message)
+    {
+        if (type == "poster") PosterFileStatusText.Text = message;
+        else BackdropFileStatusText.Text = message;
+    }
+
+    private void SchedulePreview()
+    {
+        if (!_loaded || _suppressSelectionChanges) return;
+        _previewDebounceTimer?.Stop();
+        _previewDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _previewDebounceTimer.Tick += async (_, _) =>
+        {
+            _previewDebounceTimer?.Stop();
+            _previewDebounceTimer = null;
+            await RunPreviewAsync();
+        };
+        _previewDebounceTimer.Start();
+    }
+
+    private async Task RunPreviewAsync()
+    {
+        _previewCts?.Cancel();
+        _previewCts?.Dispose();
+        _previewCts = new CancellationTokenSource();
+        try
+        {
+            await ViewModel.PreviewAsync(_previewCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        _previewDebounceTimer?.Stop();
+        _previewDebounceTimer = null;
+        _previewCts?.Cancel();
+        _previewCts?.Dispose();
+        _previewCts = null;
+        ViewModel.Saved -= OnSaved;
+        base.OnNavigatedFrom(e);
+    }
+
+    private void SmartCollectionWizardPage_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        _compactLayout = e.NewSize.Width < 900;
+        var horizontalPadding = e.NewSize.Width < 600 ? 16 : _compactLayout ? 24 : 48;
+        WizardPageShell.Padding = new Thickness(horizontalPadding, _compactLayout ? 20 : 24, horizontalPadding, _compactLayout ? 36 : 48);
+        UpdateWorkspaceLayout();
+    }
+
+    private void UpdateWorkspaceLayout()
+    {
+        var filtersVisible = _currentStep == 1;
+        WizardWorkspaceGrid.ColumnDefinitions[0].Width = _compactLayout
+            ? new GridLength(1, GridUnitType.Star)
+            : new GridLength(1.05, GridUnitType.Star);
+        WizardWorkspaceGrid.ColumnDefinitions[1].Width = _compactLayout
+            ? new GridLength(0)
+            : new GridLength(0.95, GridUnitType.Star);
+        Grid.SetColumn(WizardPrimaryPanel, 0);
+        Grid.SetRow(WizardPrimaryPanel, 0);
+        Grid.SetColumnSpan(WizardPrimaryPanel, !filtersVisible || _compactLayout ? 2 : 1);
+        Grid.SetColumn(FiltersStepPreviewPanel, _compactLayout ? 0 : 1);
+        Grid.SetRow(FiltersStepPreviewPanel, _compactLayout ? 1 : 0);
+        Grid.SetColumnSpan(FiltersStepPreviewPanel, _compactLayout ? 2 : 1);
+    }
+
+    private static void SetDescendantControlsEnabled(DependencyObject root, bool enabled)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is Control control) control.IsEnabled = enabled;
+            SetDescendantControlsEnabled(child, enabled);
+        }
+    }
+
     private static readonly (string Label, string Value)[] RuleFields =
     [
-        ("Title", "title"),
         ("Genre", "genre"),
         ("Year", "year"),
         ("Studio", "studio"),
+        ("Actor", "actor"),
+        ("Director", "director"),
+        ("Writer", "writer"),
+        ("Producer", "producer"),
         ("Network", "network"),
         ("Country", "country"),
         ("Content Rating", "content_rating"),
         ("Type", "type"),
-        ("Runtime", "runtime"),
+        ("Match Status", "status"),
         ("IMDb Rating", "rating_imdb"),
-        ("Added Date", "added_at")
+        ("Added", "added_at"),
+        ("Release Date", "release_date"),
+        ("Watched", "watched"),
+        ("Favorited", "favorited"),
+        ("In Watchlist", "in_watchlist"),
+        ("In Progress", "in_progress"),
+        ("Resolution", "resolution"),
+        ("HDR", "hdr"),
+        ("Dolby Vision", "dolby_vision"),
+        ("Bitrate", "bitrate")
     ];
 
     private static readonly (string Label, string Value)[] RuleOperators =
@@ -415,7 +716,34 @@ public sealed partial class SmartCollectionWizardPage : Page
         ("is", "is"),
         ("is not", "is_not"),
         ("contains", "contains"),
-        ("greater than", "greater_than"),
-        ("less than", "less_than")
+        (">=", "gte"),
+        ("<=", "lte"),
+        (">", "gt"),
+        ("<", "lt"),
+        ("between", "between"),
+        ("in the last", "in_last")
     ];
+
+    private static IReadOnlyList<(string Label, string Value)> GetRuleOperators(string field) => field switch
+    {
+        "type" or "studio" or "network" or "country" or "content_rating" or "actor" or "director" or "writer" or "producer" or "resolution" or "status"
+            => [("is", "is"), ("is not", "is_not")],
+        "genre" => [("is", "is"), ("is not", "is_not"), ("contains", "contains")],
+        "year" => [("equals", "is"), (">=", "gte"), ("<=", "lte"), (">", "gt"), ("<", "lt"), ("between", "between")],
+        "rating_imdb" or "bitrate" => [(">=", "gte"), ("<=", "lte"), (">", "gt"), ("<", "lt"), ("between", "between")],
+        "added_at" or "release_date" => [("after", "gt"), ("before", "lt"), ("between", "between"), ("in the last", "in_last")],
+        "watched" or "favorited" or "in_watchlist" or "in_progress" or "hdr" or "dolby_vision" => [("is", "is")],
+        _ => RuleOperators,
+    };
+
+    private static bool IsBooleanField(string field)
+        => field is "watched" or "favorited" or "in_watchlist" or "in_progress" or "hdr" or "dolby_vision";
+
+    private static IReadOnlyList<(string Label, string Value)> GetRuleSelectValues(string field) => field switch
+    {
+        "type" => [("Movie", "movie"), ("Series", "series")],
+        "status" => [("Pending", "pending"), ("Matched", "matched"), ("Unmatched", "unmatched")],
+        "resolution" => [("480p", "480p"), ("720p", "720p"), ("1080p", "1080p"), ("2160p", "2160p"), ("4320p", "4320p")],
+        _ => [],
+    };
 }

@@ -2,10 +2,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using System.Text.Json;
 using Windows.UI;
 using Windows.ApplicationModel.DataTransfer;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Api;
 using SiloPlayer.ViewModels.Admin;
 
 namespace SiloPlayer.Views.Admin;
@@ -21,6 +23,8 @@ public sealed partial class AdminSectionsPage : Page
     private AdminSection? _editingSection;
     private Func<object?>? _sectionEditorGetBody;
     private TaskCompletionSource<GalleryRecipeChoice?>? _galleryCompletion;
+    private DispatcherTimer? _sectionPreviewTimer;
+    private Func<Task>? _sectionPreviewAction;
 
     // Section type labels — matches sectionTypes.ts exactly
     private static readonly Dictionary<string, string> SectionTypeLabels = new()
@@ -1706,6 +1710,8 @@ public sealed partial class AdminSectionsPage : Page
 
     private void CloseSectionEditor()
     {
+        _sectionPreviewTimer?.Stop();
+        _sectionPreviewAction = null;
         if (_adminShell is not null)
             _adminShell.SetPageOverlayVisible(SectionEditorOverlay, false);
         else
@@ -1713,6 +1719,25 @@ public sealed partial class AdminSectionsPage : Page
         SectionEditorContent.Content = null;
         _editingSection = null;
         _sectionEditorGetBody = null;
+    }
+
+    private void ConfigureSectionPreview(Func<Task> action)
+    {
+        _sectionPreviewTimer?.Stop();
+        _sectionPreviewAction = action;
+        _sectionPreviewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        _sectionPreviewTimer.Tick += async (_, _) =>
+        {
+            _sectionPreviewTimer?.Stop();
+            if (_sectionPreviewAction != null) await _sectionPreviewAction();
+        };
+    }
+
+    private void ScheduleSectionPreview()
+    {
+        if (_sectionPreviewTimer == null || _sectionPreviewAction == null) return;
+        _sectionPreviewTimer.Stop();
+        _sectionPreviewTimer.Start();
     }
 
     private async void SaveSectionEditor_Click(object sender, RoutedEventArgs e)
@@ -2829,6 +2854,89 @@ public sealed partial class AdminSectionsPage : Page
         RecipeParameterEditor? activeRecipeEditor = null;
         string? activeRecipeType = null;
 
+        var previewStatus = new TextBlock
+        {
+            Text = "Preview · waiting for configuration",
+            FontSize = 10,
+            CharacterSpacing = 80,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        };
+        var previewItems = new TextBlock
+        {
+            Text = "",
+            FontSize = 11,
+            FontFamily = new FontFamily("Consolas"),
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        };
+        var refreshPreview = new Button
+        {
+            Content = "Refresh preview",
+            FontSize = 11,
+            Padding = new Thickness(8, 4, 8, 4),
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        var previewHeader = new Grid();
+        previewHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        previewHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        previewHeader.Children.Add(previewStatus);
+        Grid.SetColumn(refreshPreview, 1);
+        previewHeader.Children.Add(refreshPreview);
+        var previewContent = new StackPanel { Spacing = 6 };
+        previewContent.Children.Add(previewHeader);
+        previewContent.Children.Add(previewItems);
+        var previewBox = new Border
+        {
+            Padding = new Thickness(12, 9, 12, 9),
+            CornerRadius = new CornerRadius(6),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0xCC, 0x63, 0x66, 0xF1)),
+            BorderThickness = new Thickness(2, 0, 0, 0),
+            Background = new SolidColorBrush(Color.FromArgb(0x16, 0x63, 0x66, 0xF1)),
+            Child = previewContent,
+        };
+        form.Children.Add(previewBox);
+
+        async Task RunPreviewAsync()
+        {
+            if (GetBody() is not Dictionary<string, object?> body) return;
+            var sectionType = body.GetValueOrDefault("section_type")?.ToString() ?? "";
+            if (sectionType == "collection")
+            {
+                previewBox.Visibility = Visibility.Collapsed;
+                return;
+            }
+            previewBox.Visibility = Visibility.Visible;
+            previewStatus.Text = "Loading…";
+            previewItems.Text = "";
+            previewItems.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
+            refreshPreview.IsEnabled = false;
+            try
+            {
+                var config = body.GetValueOrDefault("config") as Dictionary<string, object?> ?? [];
+                var libraryId = body.GetValueOrDefault("library_id") is int selectedLibraryId ? selectedLibraryId : (int?)null;
+                var preview = await App.Services.GetRequiredService<AdminApi>().PreviewSectionAsync(new AdminSectionPreviewRequest
+                {
+                    SectionType = sectionType,
+                    Config = config,
+                    ItemLimit = body.GetValueOrDefault("item_limit") is int limit ? limit : null,
+                    LibraryId = libraryId,
+                    LibraryIds = ExtractPreviewLibraryIds(config),
+                });
+                previewStatus.Text = $"Preview · {preview.TotalCount} items match";
+                previewItems.Text = string.Join(" · ", preview.Items.Take(10).Select(item => string.IsNullOrWhiteSpace(item.Title) ? item.ContentId : item.Title));
+                if (string.IsNullOrWhiteSpace(previewItems.Text)) previewItems.Text = "no matches";
+            }
+            catch (Exception ex)
+            {
+                previewStatus.Text = "Error";
+                previewItems.Text = ex.Message;
+                previewItems.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
+            }
+            finally { refreshPreview.IsEnabled = true; }
+        }
+        ConfigureSectionPreview(RunPreviewAsync);
+        refreshPreview.Click += async (_, _) => await RunPreviewAsync();
+
         // Visibility toggling based on type selection
         void UpdateConditionalFields()
         {
@@ -2856,6 +2964,7 @@ public sealed partial class AdminSectionsPage : Page
                 activeFilterType = selType;
                 filterFields.Children.Clear();
                 filterFields.Children.Add(activeFilterEditor.Content);
+                AttachSectionPreviewTriggers(activeFilterEditor.Content, ScheduleSectionPreview);
             }
             continueTypeField.Visibility = Visibility.Collapsed;
             recipeFields.Visibility = isKnownRecipe && selType != "collection"
@@ -2879,15 +2988,23 @@ public sealed partial class AdminSectionsPage : Page
                 activeRecipeType = selType;
                 recipeFields.Children.Clear();
                 recipeFields.Children.Add(activeRecipeEditor.Content);
+                AttachSectionPreviewTriggers(activeRecipeEditor.Content, ScheduleSectionPreview);
             }
+            previewBox.Visibility = selType == "collection" ? Visibility.Collapsed : Visibility.Visible;
         }
-        typeCombo.SelectionChanged += (_, _) => UpdateConditionalFields();
+        typeCombo.SelectionChanged += (_, _) => { UpdateConditionalFields(); ScheduleSectionPreview(); };
         collectionPicker.SelectionChanged += (_, _) =>
         {
             var selectedType = (typeCombo.SelectedItem as ComboBoxItem)?.Tag as string;
             if (selectedType == "collection")
                 SaveSectionEditorButton.IsEnabled = collectionPicker.SelectedItem != null;
+            ScheduleSectionPreview();
         };
+        itemLimitBox.ValueChanged += (_, _) => ScheduleSectionPreview();
+        mediaScopeCombo.SelectionChanged += (_, _) => ScheduleSectionPreview();
+        continueTypeCombo.SelectionChanged += (_, _) => ScheduleSectionPreview();
+        genreInput.TextChanged += (_, _) => ScheduleSectionPreview();
+        foreach (var entry in libraryCheckboxes) entry.Check.Click += (_, _) => ScheduleSectionPreview();
         UpdateConditionalFields();
 
         object? GetBody()
@@ -2968,7 +3085,92 @@ public sealed partial class AdminSectionsPage : Page
             return ViewModel.BuildCreateBody(title, sectionType, itemLimit, featuredSwitchSmall.IsOn, enabledSwitchSmall.IsOn, config);
         }
 
+        ScheduleSectionPreview();
         return (form, GetBody);
+    }
+
+    private static List<int>? ExtractPreviewLibraryIds(IReadOnlyDictionary<string, object?> config)
+    {
+        if (!config.TryGetValue("library_ids", out var value) || value == null)
+            return null;
+
+        var result = new List<int>();
+
+        static void AddIfValid(List<int> target, object? candidate)
+        {
+            if (candidate == null) return;
+            if (candidate is JsonElement element)
+            {
+                if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var jsonNumber))
+                    target.Add(jsonNumber);
+                else if (element.ValueKind == JsonValueKind.String && int.TryParse(element.GetString(), out var jsonText))
+                    target.Add(jsonText);
+                return;
+            }
+
+            if (candidate is int number)
+            {
+                target.Add(number);
+                return;
+            }
+
+            if (int.TryParse(candidate.ToString(), out var parsed))
+                target.Add(parsed);
+        }
+
+        if (value is JsonElement json && json.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var entry in json.EnumerateArray()) AddIfValid(result, entry);
+        }
+        else if (value is System.Collections.IEnumerable entries && value is not string)
+        {
+            foreach (var entry in entries) AddIfValid(result, entry);
+        }
+        else
+        {
+            AddIfValid(result, value);
+        }
+
+        return result.Count == 0 ? null : result.Distinct().ToList();
+    }
+
+    private static void AttachSectionPreviewTriggers(FrameworkElement root, Action trigger)
+    {
+        switch (root)
+        {
+            case TextBox textBox:
+                textBox.TextChanged += (_, _) => trigger();
+                break;
+            case ComboBox comboBox:
+                comboBox.SelectionChanged += (_, _) => trigger();
+                break;
+            case NumberBox numberBox:
+                numberBox.ValueChanged += (_, _) => trigger();
+                break;
+            case CheckBox checkBox:
+                checkBox.Click += (_, _) => trigger();
+                break;
+            case ToggleSwitch toggleSwitch:
+                toggleSwitch.Toggled += (_, _) => trigger();
+                break;
+        }
+
+        switch (root)
+        {
+            case Panel panel:
+                foreach (var child in panel.Children.OfType<FrameworkElement>())
+                    AttachSectionPreviewTriggers(child, trigger);
+                break;
+            case Border border when border.Child is FrameworkElement child:
+                AttachSectionPreviewTriggers(child, trigger);
+                break;
+            case ScrollViewer scrollViewer when scrollViewer.Content is FrameworkElement child:
+                AttachSectionPreviewTriggers(child, trigger);
+                break;
+            case ContentControl contentControl when contentControl.Content is FrameworkElement child:
+                AttachSectionPreviewTriggers(child, trigger);
+                break;
+        }
     }
 
     // ===== Badge Helpers =====

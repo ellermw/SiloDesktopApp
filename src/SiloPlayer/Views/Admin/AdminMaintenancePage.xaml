@@ -21,7 +21,7 @@
             IsScrollInertiaEnabled="True">
 
             <!-- webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
-            <StackPanel Padding="40,24,40,24" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
+            <StackPanel x:Name="MaintenancePageShell" Padding="40,24,40,24" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
 
                 <!-- ===== Page header ===== -->
                 <StackPanel Spacing="6">
@@ -88,11 +88,12 @@
                     BorderThickness="1"
                     CornerRadius="12"
                     Padding="20,16">
-                    <Grid ColumnSpacing="16">
+                    <Grid x:Name="CatalogMaintenanceHeader" ColumnSpacing="16" RowSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                         <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
                             <TextBlock
                                 Text="Catalog Import &amp; Export"
@@ -107,7 +108,7 @@
                                 MaxWidth="640"
                                 HorizontalAlignment="Left" />
                         </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10"
+                        <StackPanel x:Name="CatalogMaintenanceActions" Grid.Column="1" Orientation="Horizontal" Spacing="10"
                                     VerticalAlignment="Center">
                             <Button
                                 x:Name="StartExportButton"

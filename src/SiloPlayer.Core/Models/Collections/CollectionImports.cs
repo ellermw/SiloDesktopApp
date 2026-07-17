@@ -22,13 +22,17 @@ public sealed class CollectionTemplate
     public string Source { get; set; } = "";
     public string MediaKind { get; set; } = "";
     public int DefaultLimit { get; set; }
+    public int? DefaultSortOrder { get; set; }
     public string? DefaultSyncSchedule { get; set; }
+    public string? PosterPath { get; set; }
     public bool RequiresProfile { get; set; }
     public bool Featured { get; set; }
     public List<string> Tags { get; set; } = [];
     public CollectionTemplateTmdbSpec? Tmdb { get; set; }
     public CollectionTemplateTraktSpec? Trakt { get; set; }
     public CollectionTemplateMdblistSpec? Mdblist { get; set; }
+    public CollectionTemplateTmdbCollectionSpec? TmdbCollection { get; set; }
+    public CollectionTemplateTmdbDiscoverSpec? TmdbDiscover { get; set; }
 }
 
 public sealed class CollectionTemplateTmdbSpec
@@ -47,6 +51,108 @@ public sealed class CollectionTemplateTraktSpec
 public sealed class CollectionTemplateMdblistSpec
 {
     public string Url { get; set; } = "";
+}
+
+public sealed class CollectionTemplateTmdbCollectionSpec
+{
+    public int CollectionId { get; set; }
+}
+
+public sealed class CollectionTemplateTmdbDiscoverSpec
+{
+    public string MediaType { get; set; } = "movie";
+    public List<int> WithGenres { get; set; } = [];
+    public List<int> WithoutGenres { get; set; } = [];
+    public string SortBy { get; set; } = "popularity.desc";
+    public int? VoteCountGte { get; set; }
+    public double? VoteAverageGte { get; set; }
+    public string? ReleaseDateGte { get; set; }
+    public string? ReleaseDateLte { get; set; }
+    public List<string> Certifications { get; set; } = [];
+    public string? CertificationLte { get; set; }
+    public int? WithRuntimeGte { get; set; }
+    public int? WithRuntimeLte { get; set; }
+    public string? OriginalLanguage { get; set; }
+}
+
+public sealed class CollectionTemplateBundleCatalog
+{
+    public List<CollectionTemplateBundle> Bundles { get; set; } = [];
+}
+
+public sealed class CollectionTemplateBundle
+{
+    public string Id { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Description { get; set; } = "";
+    public List<string> TemplateIds { get; set; } = [];
+}
+
+public sealed class ApplyCollectionTemplateBundleRequest
+{
+    public List<int> LibraryIds { get; set; } = [];
+    public bool? DryRun { get; set; }
+    public bool? DeleteExisting { get; set; }
+    public ApplyCollectionTemplateBundleFeaturedRequest? Featured { get; set; }
+}
+
+public sealed class ApplyCollectionTemplateBundleFeaturedRequest
+{
+    public ApplyCollectionTemplateBundleHomeFeaturedRequest? Home { get; set; }
+    public Dictionary<string, string>? Libraries { get; set; }
+}
+
+public sealed class ApplyCollectionTemplateBundleHomeFeaturedRequest
+{
+    public int LibraryId { get; set; }
+    public string TemplateId { get; set; } = "";
+}
+
+public sealed class CollectionTemplateBundleApplyEntry
+{
+    public string TemplateId { get; set; } = "";
+    public string TemplateTitle { get; set; } = "";
+    public int LibraryId { get; set; }
+    public string LibraryName { get; set; } = "";
+    public string? CollectionId { get; set; }
+    public string? Reason { get; set; }
+}
+
+public sealed class CollectionTemplateBundleCollectionEntry
+{
+    public int LibraryId { get; set; }
+    public string LibraryName { get; set; } = "";
+    public string? CollectionId { get; set; }
+    public string? CollectionTitle { get; set; }
+    public string? Reason { get; set; }
+}
+
+public sealed class CollectionTemplateBundleFeaturedEntry
+{
+    public string Surface { get; set; } = "";
+    public int? LibraryId { get; set; }
+    public string? LibraryName { get; set; }
+    public string TemplateId { get; set; } = "";
+    public string TemplateTitle { get; set; } = "";
+    public string? CollectionId { get; set; }
+    public string? SectionId { get; set; }
+    public string? Reason { get; set; }
+}
+
+public sealed class ApplyCollectionTemplateBundleResponse
+{
+    public string BundleId { get; set; } = "";
+    public bool DryRun { get; set; }
+    public bool? DeleteExisting { get; set; }
+    public List<CollectionTemplateBundleCollectionEntry> Deleted { get; set; } = [];
+    public List<CollectionTemplateBundleCollectionEntry> DeleteSkipped { get; set; } = [];
+    public List<CollectionTemplateBundleCollectionEntry> DeleteFailed { get; set; } = [];
+    public List<CollectionTemplateBundleApplyEntry> Created { get; set; } = [];
+    public List<CollectionTemplateBundleApplyEntry> Skipped { get; set; } = [];
+    public List<CollectionTemplateBundleApplyEntry> Failed { get; set; } = [];
+    public List<CollectionTemplateBundleApplyEntry> SyncQueued { get; set; } = [];
+    public List<CollectionTemplateBundleFeaturedEntry> Featured { get; set; } = [];
+    public List<CollectionTemplateBundleFeaturedEntry> FeaturedFailed { get; set; } = [];
 }
 
 public sealed class ImportUserCollectionResponse

@@ -73,6 +73,21 @@ public class MediaItem
     /// <summary>Server-attached badges (e.g. "season_premiere") shown as pills on
     /// section item cards. Source: HomeSectionItem.badges[] on the server.</summary>
     public List<string>? Badges { get; set; }
+    public SectionItemUpcomingEvent? UpcomingEvent { get; set; }
+}
+
+public class SectionItemUpcomingEvent
+{
+    public string Type { get; set; } = "";
+    public string AirDate { get; set; } = "";
+    public string? AirTime { get; set; }
+    public string? AirAt { get; set; }
+    public string? AirTimezone { get; set; }
+    public string? LocalAirDate { get; set; }
+    public string? EpisodeTitle { get; set; }
+    public int? SeasonNumber { get; set; }
+    public int? EpisodeNumber { get; set; }
+    public List<string> Badges { get; set; } = [];
 }
 
 public class BrowseItemSortMetrics

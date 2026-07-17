@@ -54,15 +54,20 @@
                 HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
-                <Grid>
+                <Grid x:Name="PageHeaderGrid" RowSpacing="16">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
                     <!-- Left: title + subtitle -->
-                    <StackPanel Grid.Column="0" Spacing="12" VerticalAlignment="Bottom">
+                    <StackPanel x:Name="PageHeaderCopy" Grid.Column="0" Spacing="12" VerticalAlignment="Bottom">
                         <TextBlock
+                            x:Name="PageTitleText"
                             Text="Dashboard"
                             FontSize="52"
                             FontWeight="ExtraBold"
@@ -76,7 +81,7 @@
                     </StackPanel>
 
                     <!-- Right: action buttons -->
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Bottom">
+                    <StackPanel x:Name="PageHeaderActions" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Bottom">
                         <TextBlock x:Name="LastUpdatedText" FontSize="12" Foreground="{StaticResource TertiaryTextBrush}"
                                    VerticalAlignment="Center" Visibility="Collapsed" />
                         <Button
@@ -142,6 +147,11 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
                     <controls:SkeletonBox Grid.Column="0" Height="96" CornerRadius="16" />
                     <controls:SkeletonBox Grid.Column="1" Height="96" CornerRadius="16" />
                     <controls:SkeletonBox Grid.Column="2" Height="96" CornerRadius="16" />
@@ -156,6 +166,11 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
                     <!-- 1: Active Streams -->
                     <Border Grid.Column="0" Style="{StaticResource StatCardStyle}">
@@ -367,14 +382,18 @@
                 </StackPanel>
 
                 <!-- ===== Libraries + Users Two-Column Section ===== -->
-                <Grid ColumnSpacing="14">
+                <Grid x:Name="LibraryUsersGrid" ColumnSpacing="14" RowSpacing="14">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="1.4*" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
                     <!-- Libraries card -->
-                    <Border Grid.Column="0" Style="{StaticResource SectionCardStyle}">
+                    <Border x:Name="LibrariesCard" Grid.Column="0" Style="{StaticResource SectionCardStyle}">
                         <StackPanel Spacing="14">
                             <!-- Header -->
                             <Grid>
@@ -404,7 +423,7 @@
                     </Border>
 
                     <!-- Users card -->
-                    <Border Grid.Column="1" Style="{StaticResource SectionCardStyle}">
+                    <Border x:Name="UsersCard" Grid.Column="1" Style="{StaticResource SectionCardStyle}">
                         <StackPanel Spacing="14">
                             <!-- Header -->
                             <Grid>

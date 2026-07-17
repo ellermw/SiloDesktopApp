@@ -48,6 +48,26 @@ public class AdminDashboardRegressionSourceTests
     }
 
     [Fact]
+    public void DashboardMatchesTheWebUiResponsiveGridBreakpoints()
+    {
+        Assert.Contains("ApplyResponsiveLayout(width)", DashboardSource, StringComparison.Ordinal);
+        Assert.Contains("contentWidth >= 1024 ? 5 : contentWidth >= 640 ? 3 : 2", DashboardSource, StringComparison.Ordinal);
+        Assert.Contains("contentWidth >= 1024 ? 2 : 1", DashboardSource, StringComparison.Ordinal);
+        Assert.Contains("contentWidth >= 1280", DashboardSource, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"LibraryUsersGrid\"", DashboardMarkup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"PageHeaderActions\"", DashboardMarkup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LibraryContractCarriesServerSortOrder()
+    {
+        var model = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer.Core", "Models", "Catalog", "Library.cs"));
+        Assert.Contains("[JsonPropertyName(\"sort_order\")]", model, StringComparison.Ordinal);
+        Assert.Contains("public int SortOrder", model, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DashboardReusesItsLastSnapshotWhileRefreshing()
     {
         var appSource = File.ReadAllText(Path.Combine(

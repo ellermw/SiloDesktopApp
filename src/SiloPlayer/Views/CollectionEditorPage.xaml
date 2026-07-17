@@ -65,7 +65,7 @@
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
-            <StackPanel MaxWidth="800" Margin="48,24,48,48" Spacing="24">
+            <StackPanel x:Name="CollectionEditorShell" MaxWidth="800" Margin="48,24,48,48" Spacing="24">
 
                 <!-- ===== Header ===== -->
                 <Grid>

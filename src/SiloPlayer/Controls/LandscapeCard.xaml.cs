@@ -66,6 +66,9 @@ public sealed partial class LandscapeCard : UserControl
         // from the home screen without opening a context menu.
         UpdateDismissVisibility();
         DismissButton.Opacity = 0; // starts invisible, fades in on hover
+        HoverPlayIcon.Glyph = item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase)
+            ? "\uE736"
+            : "\uE768";
 
         // B31: Match the webui ContinueWatchingCard hierarchy. For episodes,
         // the series title is the primary heading and the episode context
@@ -138,6 +141,7 @@ public sealed partial class LandscapeCard : UserControl
         UpdateBadges(item);
         _ = EnsureBadgesLoadedAsync(item, ct);
 
+        NoImageText.Visibility = Visibility.Visible;
         BackdropImage.Opacity = 0;
 
         _ = LoadImageAsync(item, ct);
@@ -222,6 +226,7 @@ public sealed partial class LandscapeCard : UserControl
                 UriSource = new Uri(diskPath),
             };
             BackdropImage.Source = bitmapImage;
+            NoImageText.Visibility = Visibility.Collapsed;
             // Smooth fade-in matching webui transition-opacity duration-300
             var fadeIn = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
             {
@@ -250,11 +255,37 @@ public sealed partial class LandscapeCard : UserControl
     {
         if (MediaItem == null) return;
         e.Handled = true;
-        var playerService = App.Services.GetRequiredService<Services.PlayerService>();
+        var navigationService = App.Services.GetRequiredService<NavigationService>();
         // Always play the actual content_id on the card — the server resolves
         // episode → file; we don't rewrite to series_id here (that would break
         // resume for the specific episode the card represents).
-        _ = playerService.PlayAsync(MediaItem.ContentId);
+        navigationService.Navigate<ItemDetailPage>(MediaItem.ContentId);
+    }
+
+    private void OnPlayTapped(object sender, TappedRoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (MediaItem == null) return;
+
+        var nav = App.Services.GetRequiredService<NavigationService>();
+        if (MediaItem.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
+        {
+            nav.Navigate<EbookReaderPage>(new EbookReaderNavigation(MediaItem.ContentId));
+            return;
+        }
+
+        if (MediaItem.Type is "movie" or "episode" or "audiobook")
+        {
+            var player = App.Services.GetRequiredService<Services.PlayerService>();
+            if (MediaItem.Type == "audiobook" && player.IsAudiobook &&
+                string.Equals(player.ContentId, MediaItem.ContentId, StringComparison.Ordinal))
+                player.ToggleAudiobookPlayback();
+            else
+                _ = player.PlayAsync(MediaItem.ContentId);
+            return;
+        }
+
+        nav.Navigate<ItemDetailPage>(MediaItem.ContentId);
     }
 
     private void OnTextTapped(object sender, TappedRoutedEventArgs e)

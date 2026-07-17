@@ -35,17 +35,22 @@
                 HorizontalAlignment="Center">
 
                 <!-- ===== Page Header (.page-header: flex items-end justify-between) ===== -->
-                <Grid>
+                <Grid x:Name="PageHeaderGrid" RowSpacing="16">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
                     <!-- Left: title + subtitle. VerticalAlignment=Bottom to match items-end. -->
-                    <StackPanel Grid.Column="0" Spacing="12" VerticalAlignment="Bottom">
+                    <StackPanel x:Name="PageHeaderCopy" Grid.Column="0" Spacing="12" VerticalAlignment="Bottom">
                         <!-- .page-title: clamp(2rem, 4vw, 3.75rem), font-weight:800, line-height:0.95,
                              letter-spacing:-0.05em. WinUI CharacterSpacing is 1/1000 em, so -50. -->
                         <TextBlock
+                            x:Name="PageTitleText"
                             Text="Libraries"
                             FontSize="48"
                             FontWeight="ExtraBold"
@@ -65,7 +70,7 @@
                     </StackPanel>
 
                     <!-- Right: action buttons. VerticalAlignment=Bottom to align with subtitle baseline. -->
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Bottom">
+                    <StackPanel x:Name="PageHeaderActions" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Bottom">
                         <!-- Scan Queue Popover (pulsing badge, only visible when scans active) -->
                         <Button
                             x:Name="ScanQueueButton"
@@ -138,12 +143,18 @@
                      .surface-panel: surface @ 90%, 1px subtle border, rounded (radius 2xl + 0.35rem ≈ 22px),
                      inset white highlight + large soft shadow below. -->
                 <Border
+                    x:Name="LibrariesTableSurface"
                     Background="{StaticResource SurfaceBrush}"
                     CornerRadius="16"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="0"
                     Padding="0">
-                    <StackPanel>
+                    <ScrollViewer
+                        HorizontalScrollMode="Auto"
+                        HorizontalScrollBarVisibility="Auto"
+                        VerticalScrollMode="Disabled"
+                        VerticalScrollBarVisibility="Disabled">
+                    <StackPanel MinWidth="1160">
                         <!-- Table header (shadcn <TableHeader>/<TableHead>): h-10 px-4, muted foreground,
                              font-medium, sentence case (NOT uppercase). -->
                         <Grid Padding="12,0" Height="40" ColumnSpacing="12">
@@ -212,6 +223,7 @@
                             </StackPanel>
                         </Border>
                     </StackPanel>
+                    </ScrollViewer>
                 </Border>
 
                 <!-- ===== Unmatched Items Section ===== -->

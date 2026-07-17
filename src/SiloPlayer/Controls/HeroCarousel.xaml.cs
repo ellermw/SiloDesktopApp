@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Shapes;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 using SiloPlayer.Views;
 
 namespace SiloPlayer.Controls;
@@ -18,12 +19,17 @@ public sealed partial class HeroCarousel : UserControl
     private DispatcherTimer? _autoAdvanceTimer;
     private CancellationTokenSource? _imageCts;
     private readonly AsyncLoadVersionGate _imageLoadGate = new();
+    // Match the WebUI's single carousel pause state. Hover/focus pauses it,
+    // leaving the hero resumes it, and the explicit control can resume while
+    // the pointer is still over the hero.
+    private bool _isPaused;
 
     // F-series hero polish:
     // - Crossfade between BackdropImageA / BackdropImageB. `_activeIsA`
     //   tracks which one is currently fully visible.
     // - Hover-reveal nav arrows (fade 0 → 1 on PointerEntered).
     private bool _activeIsA = true;
+    private bool IsAutoAdvancePaused => _isPaused;
 
     public static readonly DependencyProperty ItemsSourceProperty =
         DependencyProperty.Register(
@@ -68,7 +74,12 @@ public sealed partial class HeroCarousel : UserControl
     {
         // Match web UI: min-h-[72dvh] — 72% of viewport height
         if (XamlRoot?.Content is FrameworkElement root && root.ActualHeight > 0)
+        {
             Height = Math.Max(350, root.ActualHeight * 0.72);
+            var titleSize = root.ActualWidth >= 1400 ? 68d : root.ActualWidth >= 1024 ? 60d : 48d;
+            HeroTitle.FontSize = titleSize;
+            HeroTitleShadow.FontSize = titleSize;
+        }
     }
 
     // Height is managed by UpdateHeightFromWindow, no SizeChanged needed
@@ -82,6 +93,8 @@ public sealed partial class HeroCarousel : UserControl
     private void StartAutoAdvance()
     {
         StopAutoAdvance();
+        if (_items == null || _items.Count <= 1 || IsAutoAdvancePaused)
+            return;
         _autoAdvanceTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(8) };
         _autoAdvanceTimer.Tick += (_, _) => NavigateNext();
         _autoAdvanceTimer.Start();
@@ -96,7 +109,7 @@ public sealed partial class HeroCarousel : UserControl
     private void ResetAutoAdvance()
     {
         // Restart the timer when user interacts
-        if (_autoAdvanceTimer != null)
+        if (!IsAutoAdvancePaused && _autoAdvanceTimer != null)
         {
             _autoAdvanceTimer.Stop();
             _autoAdvanceTimer.Start();
@@ -187,6 +200,7 @@ public sealed partial class HeroCarousel : UserControl
         HeroTitle.Text = item.Title;
         HeroTitleShadow.Text = item.Title;
         HeroOverview.Text = item.Overview ?? "";
+        UpdatePrimaryAction(item);
 
         // Eyebrow: "FEATURED — No. 01"
         HeroEyebrow.Text = $"FEATURED \u2014 No. {(_currentIndex + 1):D2}";
@@ -201,30 +215,16 @@ public sealed partial class HeroCarousel : UserControl
         // pills matching the webui .metadata-badge hero pattern.
         HeroMetaPillsRow.Children.Clear();
         if (item.Year > 0)
-            HeroMetaPillsRow.Children.Add(BuildHeroPill(item.Year.ToString()));
+            AddHeroMeta(item.Year.ToString());
         if (item.RatingImdb.HasValue)
-        {
-            var ratingStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-            ratingStack.Children.Add(new FontIcon
-            {
-                Glyph = "\uE735",
-                FontSize = 11,
-                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                    Windows.UI.Color.FromArgb(0xFF, 0xFA, 0xCC, 0x15)),
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-            ratingStack.Children.Add(new TextBlock
-            {
-                Text = item.RatingImdb.Value.ToString("0.0"),
-                FontSize = 12,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-            HeroMetaPillsRow.Children.Add(BuildHeroPill(ratingStack));
-        }
+            AddHeroMeta($"IMDb {item.RatingImdb.Value:0.0}");
         foreach (var genre in item.Genres.Take(3))
-            HeroMetaPillsRow.Children.Add(BuildHeroPill(genre));
+            AddHeroMeta(genre);
+        var runtime = FormatRuntime(item.DurationSeconds ?? (item.Runtime > 0 ? item.Runtime * 60d : null));
+        if (runtime != null)
+            AddHeroMeta(runtime);
+
+        SlideControlsPanel.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
 
         UpdateDots();
 
@@ -251,14 +251,96 @@ public sealed partial class HeroCarousel : UserControl
     private bool IsCurrentBackdropLoad(int version, CancellationToken ct) =>
         !ct.IsCancellationRequested && _imageLoadGate.IsCurrent(version);
 
-    private void PlayButton_Click(object sender, RoutedEventArgs e)
+    private async void PlayButton_Click(object sender, RoutedEventArgs e)
     {
         if (_items == null || _items.Count == 0 || _currentIndex >= _items.Count) return;
         var item = _items[_currentIndex];
-        // Navigate to ItemDetailPage first (for series, user needs to pick an episode)
-        // For movies, the detail page has the Play button ready
         var nav = App.Services.GetRequiredService<NavigationService>();
-        nav.Navigate<ItemDetailPage>(item.ContentId);
+        if (item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
+        {
+            nav.Navigate<EbookReaderPage>(new EbookReaderNavigation(item.ContentId));
+            return;
+        }
+
+        if (item.Type is not ("movie" or "episode" or "audiobook"))
+        {
+            nav.Navigate<ItemDetailPage>(item.ContentId);
+            return;
+        }
+
+        try
+        {
+            var player = App.Services.GetRequiredService<PlayerService>();
+            if (item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase) &&
+                player.IsAudiobook &&
+                string.Equals(player.ContentId, item.ContentId, StringComparison.Ordinal))
+            {
+                player.ToggleAudiobookPlayback();
+                UpdatePrimaryAction(item);
+                return;
+            }
+
+            await player.PlayAsync(item.ContentId);
+            UpdatePrimaryAction(item);
+        }
+        catch (Exception ex)
+        {
+            App.MainWindowInstance?.ShowPlaybackError($"Failed to start playback: {ex.Message}");
+        }
+    }
+
+    private void MoreInfoButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_items == null || _items.Count == 0 || _currentIndex >= _items.Count) return;
+        App.Services.GetRequiredService<NavigationService>()
+            .Navigate<ItemDetailPage>(_items[_currentIndex].ContentId);
+    }
+
+    private void UpdatePrimaryAction(MediaItem item)
+    {
+        if (item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
+        {
+            PlayButtonText.Text = "Read";
+            PlayButtonIcon.Glyph = "\uE736";
+            return;
+        }
+
+        PlayButtonIcon.Glyph = "\uE768";
+        if (!item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase))
+        {
+            PlayButtonText.Text = "Play";
+            return;
+        }
+
+        var player = App.Services.GetRequiredService<PlayerService>();
+        if (player.IsAudiobook && string.Equals(player.ContentId, item.ContentId, StringComparison.Ordinal))
+        {
+            PlayButtonText.Text = player.IsPaused ? "Resume" : "Pause";
+            PlayButtonIcon.Glyph = player.IsPaused ? "\uE768" : "\uE769";
+        }
+        else if ((item.PositionSeconds ?? 0) > 0 &&
+                 ((item.DurationSeconds ?? 0) <= 0 || item.PositionSeconds < item.DurationSeconds))
+        {
+            PlayButtonText.Text = "Resume";
+        }
+        else if (item.UserState?.Played == true)
+        {
+            PlayButtonText.Text = "Listen Again";
+        }
+        else
+        {
+            PlayButtonText.Text = "Listen";
+        }
+    }
+
+    private static string? FormatRuntime(double? seconds)
+    {
+        if (seconds is null or <= 0) return null;
+        var minutes = (int)Math.Round(seconds.Value / 60d);
+        if (minutes < 60) return $"{minutes} min";
+        var hours = minutes / 60;
+        var remainder = minutes % 60;
+        return remainder == 0 ? $"{hours}h" : $"{hours}h {remainder}m";
     }
 
     private async Task LoadBackdropAsync(MediaItem item, int version, CancellationToken ct)
@@ -385,27 +467,31 @@ public sealed partial class HeroCarousel : UserControl
 
     // ── Hero metadata pill builder ──────────────────────────────────────
 
-    private static Border BuildHeroPill(string text) => BuildHeroPill(
-        new TextBlock
+    private void AddHeroMeta(string text)
+    {
+        if (HeroMetaPillsRow.Children.Count > 0)
+        {
+            HeroMetaPillsRow.Children.Add(new TextBlock
+            {
+                Text = "\u00B7",
+                FontSize = 13,
+                Opacity = 0.55,
+                Margin = new Thickness(7, 0, 7, 0),
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+        }
+
+        HeroMetaPillsRow.Children.Add(new TextBlock
         {
             Text = text,
-            FontSize = 12,
+            FontSize = 13,
             FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+            Opacity = 0.85,
             VerticalAlignment = VerticalAlignment.Center,
         });
-
-    private static Border BuildHeroPill(FrameworkElement content) => new()
-    {
-        Height = 26,
-        Background = (Brush)Application.Current.Resources["CardOverlayBackgroundBrush"],
-        BorderBrush = (Brush)Application.Current.Resources["CardOverlayBorderBrush"],
-        BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(13),
-        Padding = new Thickness(12, 0, 12, 0),
-        VerticalAlignment = VerticalAlignment.Center,
-        Child = content,
-    };
+    }
 
     // ── Progress rail animation ────────────────────────────────────────
 
@@ -415,6 +501,9 @@ public sealed partial class HeroCarousel : UserControl
     {
         _progressStoryboard?.Stop();
         ProgressRailFill.Width = 0;
+
+        if (_items == null || _items.Count <= 1 || IsAutoAdvancePaused)
+            return;
 
         var anim = new DoubleAnimation
         {
@@ -454,11 +543,47 @@ public sealed partial class HeroCarousel : UserControl
     private void RootGrid_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
         AnimateArrows(1.0);
+        SetCarouselPaused(true);
+        StopAutoAdvance();
+        _progressStoryboard?.Pause();
     }
 
     private void RootGrid_PointerExited(object sender, PointerRoutedEventArgs e)
     {
         AnimateArrows(0.0);
+        SetCarouselPaused(false);
+        ResumeCarouselCycleIfAllowed();
+    }
+
+    private void PauseCarouselButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetCarouselPaused(!_isPaused);
+
+        if (IsAutoAdvancePaused)
+        {
+            StopAutoAdvance();
+            _progressStoryboard?.Pause();
+        }
+        else
+        {
+            ResumeCarouselCycleIfAllowed();
+        }
+    }
+
+    private void SetCarouselPaused(bool paused)
+    {
+        _isPaused = paused;
+        PauseCarouselIcon.Glyph = paused ? "\uE768" : "\uE769";
+        ToolTipService.SetToolTip(PauseCarouselButton, paused ? "Play slideshow" : "Pause slideshow");
+    }
+
+    private void ResumeCarouselCycleIfAllowed()
+    {
+        if (IsAutoAdvancePaused)
+            return;
+
+        StartAutoAdvance();
+        AnimateProgressRail();
     }
 
     private void AnimateArrows(double to)

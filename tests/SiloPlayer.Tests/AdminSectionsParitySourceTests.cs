@@ -121,4 +121,22 @@ public class AdminSectionsParitySourceTests
         Assert.Contains("HydrateCuratedItemLabelsAsync", PageSource, StringComparison.Ordinal);
         Assert.Contains("GetItemDetailAsync(pendingItem.Id)", PageSource, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void SectionEditorUsesCurrentDebouncedLivePreviewContract()
+    {
+        var api = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer.Core", "Api", "AdminApi.cs"));
+        var model = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer.Core", "Models", "Admin", "AdminSection.cs"));
+
+        Assert.Contains("/api/v1/admin/sections/preview", api, StringComparison.Ordinal);
+        Assert.Contains("AdminSectionPreviewRequest", model, StringComparison.Ordinal);
+        Assert.Contains("AdminSectionPreviewResponse", model, StringComparison.Ordinal);
+        Assert.Contains("TimeSpan.FromMilliseconds(300)", PageSource, StringComparison.Ordinal);
+        Assert.Contains("Preview · {preview.TotalCount} items match", PageSource, StringComparison.Ordinal);
+        Assert.Contains("AttachSectionPreviewTriggers", PageSource, StringComparison.Ordinal);
+        Assert.Contains("ExtractPreviewLibraryIds", PageSource, StringComparison.Ordinal);
+        Assert.Contains("preview.Items.Take(10)", PageSource, StringComparison.Ordinal);
+    }
 }

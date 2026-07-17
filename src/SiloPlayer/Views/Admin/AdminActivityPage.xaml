@@ -56,13 +56,17 @@
                 HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
-                <Grid>
+                <Grid x:Name="PageHeaderGrid" RowSpacing="16">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
-                    <StackPanel Grid.Column="0" Spacing="12" VerticalAlignment="Bottom">
+                    <StackPanel x:Name="PageHeaderCopy" Grid.Column="0" Spacing="12" VerticalAlignment="Bottom">
                         <!-- Title row with session count badge -->
                         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                             <TextBlock
@@ -107,7 +111,7 @@
                     </StackPanel>
 
                     <!-- Connection state indicator + Refresh -->
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Bottom">
+                    <StackPanel x:Name="PageHeaderActions" Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Bottom">
                         <Button
                             x:Name="ActivityRefreshButton"
                             Style="{StaticResource OutlineButtonStyle}"
@@ -337,7 +341,12 @@
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
                     Padding="0">
-                    <StackPanel>
+                    <ScrollViewer
+                        HorizontalScrollMode="Auto"
+                        HorizontalScrollBarVisibility="Auto"
+                        VerticalScrollMode="Disabled"
+                        VerticalScrollBarVisibility="Disabled">
+                    <StackPanel MinWidth="1100">
                         <!-- Table header: bg-surface/50 py-2.5 -->
                         <Grid x:Name="TableHeader" Padding="12,10" ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
@@ -424,6 +433,7 @@
 
                         <!-- Empty state — contextual icon + text set in code-behind -->
                     </StackPanel>
+                    </ScrollViewer>
                 </Border>
 
                 <!-- WebUI renders the empty state without an empty bordered table shell. -->

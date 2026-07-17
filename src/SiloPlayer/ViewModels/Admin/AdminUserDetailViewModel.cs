@@ -23,6 +23,8 @@ public partial class AdminUserDetailViewModel : ObservableObject
     public ObservableCollection<AdminUserProfile> Profiles { get; } = [];
     public ObservableCollection<AdminPlaybackHistoryItem> History { get; } = [];
     public ObservableCollection<UserIPEntry> IPs { get; } = [];
+    public ObservableCollection<AdminUserSetting> UserSettings { get; } = [];
+    public ObservableCollection<AdminDeviceSetting> DeviceSettings { get; } = [];
     public ObservableCollection<Library> Libraries { get; } = [];
     public ObservableCollection<AccessGroup> AccessGroups { get; } = [];
 
@@ -39,8 +41,11 @@ public partial class AdminUserDetailViewModel : ObservableObject
             var ipsTask      = _adminApi.GetUserIPsAsync(userId, days: 30);
             var librariesTask = _adminApi.GetAdminLibrariesAsync();
             var accessGroupsTask = _adminApi.GetAccessGroupsAsync();
+            var settingsTask = _adminApi.GetUserSettingsAsync(userId);
+            var deviceSettingsTask = _adminApi.GetUserDeviceSettingsAsync(userId);
 
-            await Task.WhenAll(userTask, profilesTask, historyTask, ipsTask, librariesTask, accessGroupsTask);
+            await Task.WhenAll(userTask, profilesTask, historyTask, ipsTask, librariesTask, accessGroupsTask,
+                settingsTask, deviceSettingsTask);
 
             User = userTask.Result;
 
@@ -52,6 +57,12 @@ public partial class AdminUserDetailViewModel : ObservableObject
 
             IPs.Clear();
             foreach (var ip in ipsTask.Result) IPs.Add(ip);
+
+            UserSettings.Clear();
+            foreach (var setting in settingsTask.Result) UserSettings.Add(setting);
+
+            DeviceSettings.Clear();
+            foreach (var setting in deviceSettingsTask.Result) DeviceSettings.Add(setting);
 
             Libraries.Clear();
             foreach (var l in librariesTask.Result) Libraries.Add(l);
@@ -82,6 +93,38 @@ public partial class AdminUserDetailViewModel : ObservableObject
     {
         var updated = await _adminApi.UpdateUserAsync(id, request);
         User = updated;
+    }
+
+    public async Task SaveUserSettingAsync(int userId, AdminUserSetting setting, string value)
+    {
+        await _adminApi.UpdateUserSettingAsync(userId, setting.Key, value);
+        setting.Value = value;
+    }
+
+    public async Task ResetUserSettingAsync(int userId, AdminUserSetting setting)
+    {
+        await _adminApi.DeleteUserSettingAsync(userId, setting.Key);
+        UserSettings.Remove(setting);
+    }
+
+    public async Task SaveDeviceSettingAsync(int userId, AdminDeviceSetting setting, string value)
+    {
+        await _adminApi.UpdateDeviceSettingAsync(userId, setting.ProfileId, setting.DeviceId, setting.Key, value);
+        setting.Value = value;
+        setting.UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    public async Task ResetDeviceSettingAsync(int userId, AdminDeviceSetting setting)
+    {
+        await _adminApi.DeleteDeviceSettingAsync(userId, setting.ProfileId, setting.DeviceId, setting.Key);
+        DeviceSettings.Remove(setting);
+    }
+
+    public async Task ResetDeviceProfileAsync(int userId, string profileId, string deviceId)
+    {
+        await _adminApi.DeleteAllDeviceSettingsAsync(userId, profileId, deviceId);
+        foreach (var setting in DeviceSettings.Where(setting => setting.ProfileId == profileId && setting.DeviceId == deviceId).ToList())
+            DeviceSettings.Remove(setting);
     }
 
     // ===== Formatting helpers =====

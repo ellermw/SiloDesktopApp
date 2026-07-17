@@ -22,7 +22,12 @@
         x:Name="RootGrid"
         Width="{StaticResource PosterCardWidth}"
         Height="{StaticResource PosterCardTotalHeight}"
-        Background="Transparent">
+        Background="Transparent"
+        RenderTransformOrigin="0.5,0.5">
+
+        <Grid.RenderTransform>
+            <CompositeTransform x:Name="CardHoverTransform" />
+        </Grid.RenderTransform>
 
         <Grid.RowDefinitions>
             <RowDefinition Height="267" />
@@ -42,6 +47,8 @@
             <Border
                 x:Name="PosterBackground"
                 Background="{StaticResource CardBackgroundBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1"
                 CornerRadius="{StaticResource PosterCornerRadius}" />
 
             <!-- Thumbhash placeholder -->
@@ -127,8 +134,7 @@
                 HorizontalAlignment="Right"
                 Margin="6" />
 
-            <!-- Hover overlays — MUST be last so they paint on top of image/gradient/badges.
-                 Z-order goes: background → image → gradient → badges → dim → play → border. -->
+            <!-- Selection remains above artwork and configured badges. -->
             <Border
                 x:Name="SelectionBadge"
                 Width="34"
@@ -145,42 +151,37 @@
                 <FontIcon Glyph="&#xE73E;" FontSize="15" Foreground="{StaticResource AccentForegroundBrush}" />
             </Border>
 
+            <!-- WebUI ItemCard hover brightens the poster without adding a
+                 play button, dark veil, or accent outline. -->
             <Border
-                x:Name="HoverDim"
+                x:Name="HoverBrighten"
                 CornerRadius="{StaticResource PosterCornerRadius}"
-                Background="#55000000"
+                Background="#18FFFFFF"
                 Opacity="0"
                 IsHitTestVisible="False" />
 
-            <!-- Circular Play button — fades and scales in on hover, matching
-                 the webui ContinueWatchingCard/WatchTonightCard hover pattern. -->
-            <Grid
-                x:Name="HoverPlayButton"
-                HorizontalAlignment="Center"
-                VerticalAlignment="Center"
-                Width="52" Height="52"
+            <!-- Current WebUI poster menu: bottom-right, revealed on hover. -->
+            <Button
+                x:Name="MoreButton"
+                Width="32"
+                Height="32"
+                MinWidth="0"
+                MinHeight="0"
+                Margin="0,0,10,10"
+                Padding="0"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                CornerRadius="6"
+                Background="#AA000000"
+                BorderBrush="#30FFFFFF"
+                BorderThickness="1"
                 Opacity="0"
-                IsHitTestVisible="False"
-                RenderTransformOrigin="0.5,0.5">
-                <Grid.RenderTransform>
-                    <CompositeTransform x:Name="HoverPlayButtonTransform" ScaleX="0.7" ScaleY="0.7" />
-                </Grid.RenderTransform>
-                <Ellipse Fill="{StaticResource AccentBrush}" />
-                <FontIcon
-                    Glyph="&#xE768;"
-                    FontSize="20"
-                    Foreground="{StaticResource AccentForegroundBrush}"
-                    Margin="3,0,0,0" />
-            </Grid>
-
-            <!-- Hover accent border (visible only on hover) — topmost layer -->
-            <Border
-                x:Name="HoverBorder"
-                CornerRadius="{StaticResource PosterCornerRadius}"
-                BorderBrush="{StaticResource AccentBrush}"
-                BorderThickness="2"
-                Opacity="0"
-                IsHitTestVisible="False" />
+                GotFocus="MoreButton_GotFocus"
+                LostFocus="MoreButton_LostFocus"
+                Click="MoreButton_Click"
+                Tapped="MoreButton_Tapped">
+                <FontIcon Glyph="&#xE712;" FontSize="15" Foreground="White" />
+            </Button>
         </Grid>
 
         <!-- Text below poster (web: px-1 pt-3 = 4px side, 12px top) -->
@@ -193,6 +194,15 @@
                 Foreground="{StaticResource PrimaryTextBrush}"
                 TextTrimming="CharacterEllipsis"
                 MaxLines="1" />
+            <TextBlock
+                x:Name="EpisodeTitleText"
+                FontSize="12"
+                FontWeight="Medium"
+                Foreground="{StaticResource SecondaryTextBrush}"
+                TextTrimming="CharacterEllipsis"
+                MaxLines="1"
+                Margin="0,4,0,0"
+                Visibility="Collapsed" />
             <!-- Year/type: text-[11px] font-medium uppercase tracking-[0.14em] -->
             <TextBlock
                 x:Name="SubtitleText"

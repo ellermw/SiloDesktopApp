@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Collections.Concurrent;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Tests;
@@ -295,6 +296,139 @@ public sealed class AuthServiceTests
         Assert.Equal("profile-2", apiClient.ProfileId);
         Assert.Equal("new-profile-token", apiClient.ProfileToken);
         Assert.Equal("new-profile-token", store.LoadCredential("https://example.test", "profile_token"));
+    }
+
+    [Fact]
+    public async Task Impersonation_EndRestoresPreservedAdministratorSession()
+    {
+        string? endBearer = null;
+        var handler = new DelegateHandler((request, _) =>
+        {
+            if (request.RequestUri?.AbsolutePath == "/api/v1/auth/impersonation/end")
+            {
+                endBearer = request.Headers.Authorization?.Parameter;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            }
+
+            if (request.RequestUri?.AbsolutePath == "/api/v1/auth/me")
+                return Task.FromResult(JsonResponse("""{"id":1,"username":"admin","role":"admin"}"""));
+
+            throw new InvalidOperationException($"Unexpected request: {request.RequestUri}");
+        });
+        var store = new MemoryCredentialStore();
+        var apiClient = new SiloApiClient(new HttpClient(handler));
+        apiClient.SetBaseUrl("https://example.test");
+        using var authService = new AuthService(apiClient, new AuthApi(apiClient), store);
+        authService.SetTokens("admin-access", "admin-refresh", 86400);
+        authService.SetCurrentUser(new UserInfo { Id = 1, Username = "admin", Role = "admin" });
+
+        authService.BeginImpersonation(new ImpersonationResponse
+        {
+            AccessToken = "user-access",
+            RefreshToken = "user-refresh",
+            ExpiresIn = 86400,
+            User = new UserInfo
+            {
+                Id = 2,
+                Username = "viewer",
+                Role = "user",
+                Impersonation = new ImpersonationInfo
+                {
+                    Active = true,
+                    ImpersonatorUserId = 1,
+                    ImpersonatorUsername = "admin",
+                },
+            },
+        }, "/admin/users/2");
+
+        Assert.Equal("user-access", apiClient.AccessToken);
+        Assert.Equal("user-refresh", authService.RefreshToken);
+        Assert.Equal("admin-refresh", store.LoadCredential(
+            "https://example.test",
+            "impersonation_admin_refresh_token"));
+
+        var returnPath = await authService.EndImpersonationAsync();
+
+        Assert.Equal("user-access", endBearer);
+        Assert.Equal("/admin/users/2", returnPath);
+        Assert.Equal("admin-access", apiClient.AccessToken);
+        Assert.Equal("admin-refresh", authService.RefreshToken);
+        Assert.Equal("admin", authService.CurrentUser?.Username);
+        Assert.False(authService.IsImpersonating);
+        Assert.Null(store.LoadCredential(
+            "https://example.test",
+            "impersonation_admin_refresh_token"));
+    }
+
+    [Fact]
+    public async Task Impersonation_EndRecoversAdminAfterRestartAndNotImpersonatingResponse()
+    {
+        var store = new MemoryCredentialStore();
+        var bootstrapClient = new SiloApiClient(new HttpClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)))));
+        bootstrapClient.SetBaseUrl("https://example.test");
+        using (var bootstrapAuth = new AuthService(
+            bootstrapClient,
+            new AuthApi(bootstrapClient),
+            store))
+        {
+            bootstrapAuth.SetTokens("admin-access", "admin-refresh", 86400);
+            bootstrapAuth.SetCurrentUser(new UserInfo { Id = 1, Username = "admin", Role = "admin" });
+            bootstrapAuth.BeginImpersonation(new ImpersonationResponse
+            {
+                AccessToken = "user-access",
+                RefreshToken = "user-refresh",
+                ExpiresIn = 86400,
+                User = new UserInfo
+                {
+                    Id = 2,
+                    Username = "viewer",
+                    Role = "user",
+                    Impersonation = new ImpersonationInfo { Active = true },
+                },
+            }, "/admin/users/2");
+        }
+
+        var refreshCalls = 0;
+        var handler = new DelegateHandler((request, _) =>
+        {
+            return request.RequestUri?.AbsolutePath switch
+            {
+                "/api/v1/auth/impersonation/end" => Task.FromResult(JsonResponse(
+                    """{"error":"not_impersonating","message":"No active impersonation session"}""",
+                    HttpStatusCode.BadRequest)),
+                "/api/v1/auth/refresh" => Task.FromResult(RefreshResponse()),
+                "/api/v1/auth/me" => Task.FromResult(JsonResponse(
+                    """{"id":1,"username":"admin","role":"admin"}""")),
+                _ => throw new InvalidOperationException($"Unexpected request: {request.RequestUri}"),
+            };
+
+            HttpResponseMessage RefreshResponse()
+            {
+                Interlocked.Increment(ref refreshCalls);
+                return JsonResponse(
+                    """{"access_token":"restored-access","refresh_token":"restored-refresh","expires_in":86400}""");
+            }
+        });
+        var apiClient = new SiloApiClient(new HttpClient(handler));
+        apiClient.SetBaseUrl("https://example.test");
+        using var authService = new AuthService(apiClient, new AuthApi(apiClient), store);
+        authService.SetTokens("user-access", "user-refresh", 86400);
+        authService.SetCurrentUser(new UserInfo
+        {
+            Id = 2,
+            Username = "viewer",
+            Role = "user",
+            Impersonation = new ImpersonationInfo { Active = true },
+        });
+
+        var returnPath = await authService.EndImpersonationAsync();
+
+        Assert.Equal(1, refreshCalls);
+        Assert.Equal("/admin/users/2", returnPath);
+        Assert.Equal("restored-access", apiClient.AccessToken);
+        Assert.Equal("restored-refresh", authService.RefreshToken);
+        Assert.Equal("admin", authService.CurrentUser?.Username);
     }
 
     private static HttpResponseMessage JsonResponse(

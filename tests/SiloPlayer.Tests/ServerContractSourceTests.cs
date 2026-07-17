@@ -580,15 +580,14 @@ public sealed class ServerContractSourceTests
 
         Assert.Contains("Spoken language", settingsXaml);
         Assert.Contains("Prefer a spoken language for this profile when multiple tracks are available.", settingsXaml);
-        Assert.Contains("Content=\"No preference\" Tag=\"\"", settingsXaml);
-        Assert.Contains("Content=\"Original\" Tag=\"original\"", settingsXaml);
-        Assert.Contains("(\"original\", \"Original\")", settingsCode);
+        Assert.Contains("PopulateLanguageCombo(SpokenLanguageComboBox, \"No preference\")", settingsCode);
+        Assert.Contains("MediaLanguageCatalog.All", settingsCode);
+        Assert.Contains("(\"original\", \"Original Language\")", settingsCode);
         Assert.Contains("SaveAudioLanguageCommand", settingsCode);
         Assert.Contains("SaveProfileFieldAsync(\"language\", AudioLanguage)", settingsViewModel);
         Assert.Contains("preferred_metadata_language", settingsViewModel);
         Assert.Contains("Metadata language", settingsXaml);
         Assert.DoesNotContain("Preferred audio language", settingsXaml + settingsCode);
-        Assert.DoesNotContain("Original Language", settingsXaml + settingsCode + settingsViewModel);
     }
 
     [Fact]

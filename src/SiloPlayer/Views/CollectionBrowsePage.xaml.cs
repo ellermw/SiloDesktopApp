@@ -1,7 +1,9 @@
 using System.Text.Json;
+using System.Collections.ObjectModel;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Helpers;
 
@@ -31,11 +33,25 @@ public sealed partial class CollectionBrowsePage : Page
     }
 
     private NavArgs? _currentArgs;
+    private readonly ObservableCollection<MediaItem> _items = [];
+    private CancellationTokenSource? _loadCts;
+    private string? _sort;
+    private string? _order;
+    private int _total;
+    private bool _hasMore;
+    private bool _isLoadingMore;
+    private bool _suppressSortEvents = true;
+    private const int PageSize = 60;
 
     public CollectionBrowsePage()
     {
         _catalogApi = App.Services.GetRequiredService<CatalogApi>();
         this.InitializeComponent();
+        PosterRepeater.ItemsSource = _items;
+        SortCombo.SelectedIndex = 0;
+        OrderButton.IsEnabled = false;
+        _suppressSortEvents = false;
+        SizeChanged += CollectionBrowsePage_SizeChanged;
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -59,30 +75,132 @@ public sealed partial class CollectionBrowsePage : Page
             PinButton.Visibility = Visibility.Collapsed;
         }
 
+        await LoadFirstPageAsync();
+    }
+
+    private async Task LoadFirstPageAsync()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        var loadCts = new CancellationTokenSource();
+        _loadCts = loadCts;
+        _items.Clear();
+        _total = 0;
+        _hasMore = false;
         ShowLoading();
         try
         {
-            var resp = args.IsUserCollection
-                ? await _catalogApi.BrowseUserCollectionAsync(args.CollectionId)
-                : await _catalogApi.BrowseLibraryCollectionAsync(args.CollectionId);
-
-            var items = resp.Items ?? new List<MediaItem>();
-            if (items.Count == 0)
-            {
-                ShowEmpty();
-                return;
-            }
-
-            PosterRepeater.ItemsSource = items;
-            ItemCountText.Text = items.Count.ToString();
-            ItemCountLabel.Text = items.Count == 1 ? "item" : "items";
-            CountPanel.Visibility = Visibility.Visible;
-            ShowContent();
+            var response = await LoadPageAsync(0, loadCts.Token);
+            foreach (var item in response.Items) _items.Add(item);
+            _total = response.Total > 0 ? response.Total : _items.Count;
+            _hasMore = response.HasMore || _items.Count < _total;
+            UpdateCountDisplay();
+            if (_items.Count == 0) ShowEmpty();
+            else ShowContent();
+        }
+        catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {
             ShowError(ex.Message);
         }
+    }
+
+    private Task<CatalogResponse> LoadPageAsync(int offset, CancellationToken ct)
+    {
+        if (_currentArgs is not { } args)
+            throw new InvalidOperationException("Collection navigation details are unavailable.");
+        return args.IsUserCollection
+            ? _catalogApi.BrowseUserCollectionAsync(args.CollectionId, _sort, _order, PageSize, offset, ct)
+            : _catalogApi.BrowseLibraryCollectionAsync(args.CollectionId, _sort, _order, PageSize, offset, ct);
+    }
+
+    private async Task LoadMoreAsync()
+    {
+        if (_isLoadingMore || !_hasMore || _currentArgs == null) return;
+        _isLoadingMore = true;
+        LoadMoreRing.Visibility = Visibility.Visible;
+        LoadMoreRing.IsActive = true;
+        try
+        {
+            var response = await LoadPageAsync(_items.Count, _loadCts?.Token ?? CancellationToken.None);
+            foreach (var item in response.Items) _items.Add(item);
+            if (response.Total > 0) _total = response.Total;
+            _hasMore = response.HasMore || (_items.Count < _total && response.Items.Count > 0);
+            UpdateCountDisplay();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            ErrorText.Text = $"Could not load more items: {ex.Message}";
+            ErrorText.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            _isLoadingMore = false;
+            LoadMoreRing.IsActive = false;
+            LoadMoreRing.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void UpdateCountDisplay()
+    {
+        var count = _total > 0 ? _total : _items.Count;
+        ItemCountText.Text = count.ToString("N0");
+        ItemCountLabel.Text = count == 1 ? "item" : "items";
+        CountPanel.Visibility = count > 0 && ActualWidth >= 720 ? Visibility.Visible : Visibility.Collapsed;
+        LoadedCountText.Text = _hasMore
+            ? $"Showing {_items.Count:N0} of {count:N0}"
+            : $"{count:N0} {(count == 1 ? "item" : "items")}";
+    }
+
+    private async void ContentScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (ContentScroll.ScrollableHeight - ContentScroll.VerticalOffset < 900)
+            await LoadMoreAsync();
+    }
+
+    private async void SortCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressSortEvents || _currentArgs == null) return;
+        _sort = SortCombo.SelectedItem is ComboBoxItem { Tag: string value } && !string.IsNullOrWhiteSpace(value)
+            ? value
+            : null;
+        _order = _sort is "title" or "content_rating" or "author" or "narrator" or "series" ? "asc" : "desc";
+        OrderButton.IsEnabled = _sort != null;
+        OrderIcon.Glyph = _order == "asc" ? "\uE74A" : "\uE74B";
+        await LoadFirstPageAsync();
+    }
+
+    private async void OrderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_sort == null) return;
+        _order = string.Equals(_order, "asc", StringComparison.OrdinalIgnoreCase) ? "desc" : "asc";
+        OrderIcon.Glyph = _order == "asc" ? "\uE74A" : "\uE74B";
+        ToolTipService.SetToolTip(OrderButton, _order == "asc" ? "Ascending" : "Descending");
+        await LoadFirstPageAsync();
+    }
+
+    private void CollectionBrowsePage_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var compact = e.NewSize.Width < 720;
+        var gutter = e.NewSize.Width < 600 ? 16 : compact ? 24 : 40;
+        CollectionHeaderGrid.Margin = new Thickness(gutter, 20, gutter, 16);
+        CollectionToolbar.Margin = new Thickness(gutter, 0, gutter, 14);
+        ContentScroll.Padding = new Thickness(gutter, 0, gutter, 24);
+        CountPanel.Visibility = !compact && _items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        LoadedCountText.Visibility = e.NewSize.Width < 520 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = null;
+        base.OnNavigatedFrom(e);
     }
 
     private void BackButton_Click(object sender, RoutedEventArgs e)

@@ -51,4 +51,14 @@ public class AdminActivityParitySourceTests
         var emptyState = PageMarkup.IndexOf("x:Name=\"EmptyState\"", StringComparison.Ordinal);
         Assert.True(tableEnd >= 0 && emptyState > tableEnd);
     }
+
+    [Fact]
+    public void ActivityUsesCurrentAdminBreakpointsAndProtectsItsWideTable()
+    {
+        Assert.Contains("x:Name=\"PageHeaderActions\"", PageMarkup, StringComparison.Ordinal);
+        Assert.Contains("HorizontalScrollMode=\"Auto\"", PageMarkup, StringComparison.Ordinal);
+        Assert.Contains("MinWidth=\"1100\"", PageMarkup, StringComparison.Ordinal);
+        Assert.Contains("width >= 1280 ? 40", PageSource, StringComparison.Ordinal);
+        Assert.Contains("contentWidth < 760", PageSource, StringComparison.Ordinal);
+    }
 }

@@ -50,14 +50,18 @@
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,28,40,40" Spacing="24">
+            <StackPanel x:Name="CollectionsPageShell" Padding="40,28,40,40" Spacing="24">
 
                 <!-- ===== Header ===== -->
-                <Grid>
+                <Grid x:Name="CollectionsHeaderGrid" RowSpacing="14">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
                     <StackPanel Grid.Column="0" Spacing="6" VerticalAlignment="Center">
                         <TextBlock
@@ -74,6 +78,7 @@
                     </StackPanel>
 
                     <StackPanel
+                        x:Name="CollectionsHeaderActions"
                         Grid.Column="1"
                         Orientation="Horizontal"
                         Spacing="10"

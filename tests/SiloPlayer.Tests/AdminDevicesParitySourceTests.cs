@@ -65,6 +65,10 @@ public sealed class AdminDevicesParitySourceTests
         Assert.Contains("SaveSettingAsync", code);
         Assert.Contains("ResetSettingAsync", code);
         Assert.Contains("Settings_CollectionChanged", code);
+        Assert.Contains("x:Name=\"DeviceWorkspaceGrid\"", page);
+        Assert.Contains("x:Name=\"FleetPulseGrid\"", page);
+        Assert.Contains("ApplyResponsiveLayout", code);
+        Assert.Contains("width >= 1024", code);
     }
 
     private static string ReadRepoFile(params string[] parts)

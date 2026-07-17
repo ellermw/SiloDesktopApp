@@ -35,6 +35,45 @@ public sealed class CurrentCollectionsParitySourceTests
         Assert.Contains("[\"group_id\"] = groupId", api);
     }
 
+    [Fact]
+    public void SmartCollectionWizardCoversCurrentFiltersSharingArtworkAndResponsiveFlow()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SmartCollectionWizardPage.xaml");
+        var code = ReadRepoFile("src", "SiloPlayer", "Views", "SmartCollectionWizardPage.xaml.cs");
+        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "SmartCollectionWizardViewModel.cs");
+
+        Assert.Contains("x:Name=\"ProfileAccessSection\"", xaml);
+        Assert.Contains("x:Name=\"AdminBackdropPanel\"", xaml);
+        Assert.Contains("ChoosePoster_Click", xaml);
+        Assert.Contains("SmartCollectionWizardPage_SizeChanged", code);
+        Assert.Contains("SchedulePreview", code);
+        Assert.Contains("(\"Dolby Vision\", \"dolby_vision\")", code);
+        Assert.Contains("(\"between\", \"between\")", code);
+        Assert.Contains("AllowedProfileIds = IsShared", viewModel);
+        Assert.Contains("UploadCollectionImageAsync(created.Id, \"backdrop\"", viewModel);
+        Assert.Contains("Only the profile that created this collection can edit it.", viewModel);
+    }
+
+    [Fact]
+    public void CollectionSurfacesReflowAndBrowseTheCompleteResultSet()
+    {
+        var listXaml = ReadRepoFile("src", "SiloPlayer", "Views", "CollectionsPage.xaml");
+        var listCode = ReadRepoFile("src", "SiloPlayer", "Views", "CollectionsPage.xaml.cs");
+        var browseXaml = ReadRepoFile("src", "SiloPlayer", "Views", "CollectionBrowsePage.xaml");
+        var browseCode = ReadRepoFile("src", "SiloPlayer", "Views", "CollectionBrowsePage.xaml.cs");
+        var editorCode = ReadRepoFile("src", "SiloPlayer", "Views", "CollectionEditorPage.xaml.cs");
+
+        Assert.Contains("x:Name=\"CollectionsHeaderActions\"", listXaml);
+        Assert.Contains("CollectionsPage_SizeChanged", listCode);
+        Assert.Contains("x:Name=\"SortCombo\"", browseXaml);
+        Assert.Contains("ViewChanged=\"ContentScroll_ViewChanged\"", browseXaml);
+        Assert.Contains("const int PageSize = 60", browseCode);
+        Assert.Contains("LoadMoreAsync", browseCode);
+        Assert.Contains("response.Total", browseCode);
+        Assert.Contains("CollectionBrowsePage_SizeChanged", browseCode);
+        Assert.Contains("CollectionEditorPage_SizeChanged", editorCode);
+    }
+
     private static string ReadRepoFile(params string[] parts)
     {
         var all = new string[parts.Length + 1];

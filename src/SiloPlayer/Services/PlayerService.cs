@@ -18,6 +18,13 @@ namespace SiloPlayer.Services;
 
 public enum PlayerState { Idle, Expanded, Fullscreen, Minimized, PictureInPicture }
 
+public sealed record AudiobookChapterInfo(
+    int Index,
+    string Title,
+    double StartSeconds,
+    double EndSeconds,
+    int FileId);
+
 public class PlayerService : IDisposable
 {
     private readonly PlaybackApi _playbackApi;
@@ -60,6 +67,11 @@ public class PlayerService : IDisposable
     private PlaybackTransportPlan? _activeTransportPlan;
     private double _timelineOffsetSeconds;
     private double? _transportDurationSeconds;
+    private double _audiobookPartOffsetSeconds;
+    private double _audiobookTotalDurationSeconds;
+    private long _lastAudiobookProgressReportTicks;
+    private DateTimeOffset? _audiobookPausedAt;
+    private Timer? _audiobookSleepTimer;
     private bool _canSeekAnywhere = true;
     private TranscodeStartRequest? _activeHlsRecipe;
     private PlaybackTransportPlan? _preBitmapBurnInPlan;
@@ -148,6 +160,29 @@ public class PlayerService : IDisposable
     }
 
     /// <summary>
+    /// Initializes the hidden native mpv host while the user is browsing so a
+    /// cold libmpv startup is not added to the first playback request. This is
+    /// intentionally synchronous and must be invoked on the window dispatcher.
+    /// A failed warm-up is non-fatal; PlayAsync will retry normal initialization.
+    /// </summary>
+    public void Prewarm()
+    {
+        if (_mpv != null)
+            return;
+
+        try
+        {
+            EnsureMpvInitialized();
+            LogToFile("state_trace.txt", "Native player prewarm complete");
+        }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"Native player prewarm failed (will retry on play): {ex.Message}");
+            ResetFailedMpvInitialization();
+        }
+    }
+
+    /// <summary>
     /// True when subtitles are hidden via the C keyboard shortcut. mpv
     /// internally tracks <c>sub-visibility</c>, but we mirror it here so
     /// the overlay can swap the Captions glyph.
@@ -202,7 +237,23 @@ public class PlayerService : IDisposable
         var mediaPosition = Math.Max(0, duration > 0
             ? Math.Min(positionSeconds, duration)
             : positionSeconds);
-        var transportPosition = PlaybackTimeline.ToPlayerTime(mediaPosition, _timelineOffsetSeconds);
+        if (IsAudiobook)
+        {
+            var targetPart = FindAudiobookPart(mediaPosition);
+            var activeFileId = _playbackManager?.CurrentSession?.MediaFileId;
+            if (targetPart.HasValue && targetPart.Value.Version.FileId != activeFileId &&
+                !string.IsNullOrWhiteSpace(ContentId))
+            {
+                _ = PlayAsync(
+                    ContentId,
+                    fileId: targetPart.Value.Version.FileId,
+                    startPositionOverride: mediaPosition);
+                return;
+            }
+        }
+
+        var localMediaPosition = ToSessionPosition(mediaPosition);
+        var transportPosition = PlaybackTimeline.ToPlayerTime(localMediaPosition, _timelineOffsetSeconds);
         var insideCopyHlsWindow = plan.IsHls &&
             !_canSeekAnywhere &&
             PlaybackTimeline.IsInsideExposedWindow(
@@ -220,7 +271,7 @@ public class PlayerService : IDisposable
                 mpv.Seek(transportPosition);
             if (forceResume)
                 mpv.Play();
-            _playbackManager?.UpdatePosition(mediaPosition, forceResume ? false : IsPaused);
+            UpdatePlaybackManagerPosition(mediaPosition, forceResume ? false : IsPaused);
             _ = ReportSeekProgressAsync(mediaPosition, forceResume ? false : IsPaused);
             return;
         }
@@ -272,7 +323,7 @@ public class PlayerService : IDisposable
             App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
                 () => App.MainWindowInstance?.ShowLoadingOverlay());
             var seekPaused = forceResume ? false : wasPaused;
-            manager.UpdatePosition(mediaPosition, seekPaused);
+            manager.UpdatePosition(ToSessionPosition(mediaPosition), seekPaused);
             await ReportSeekProgressAsync(mediaPosition, seekPaused).ConfigureAwait(false);
 
             PreparedPlaybackTransport prepared;
@@ -351,8 +402,10 @@ public class PlayerService : IDisposable
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await manager.ReportProgressNowAsync(mediaPosition, paused, cts.Token)
+            await manager.ReportProgressNowAsync(ToSessionPosition(mediaPosition), paused, cts.Token)
                 .ConfigureAwait(false);
+            if (IsAudiobook)
+                await ReportAudiobookProgressAsync(mediaPosition, force: true).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -624,12 +677,17 @@ public class PlayerService : IDisposable
     public string Resolution { get; private set; } = "";
     public double Volume { get; set; } = 100;
     public bool IsMuted { get; set; }
+    public bool IsAudiobook { get; private set; }
+    public string? AudiobookPosterUrl { get; private set; }
+    public string? AudiobookAuthor { get; private set; }
+    public string? AudiobookNarrator { get; private set; }
 
     public MpvPlayer? Mpv => _mpv;
     public PlaybackManager? Manager => _playbackManager;
     public WatchDetailResponse? WatchDetail => _playbackManager?.WatchDetail;
     public List<FileVersion> Versions { get; private set; } = [];
     public FileVersion? ActiveVersion => Versions.FirstOrDefault(v => v.FileId == (_playbackManager?.CurrentSession?.MediaFileId ?? 0));
+    public IReadOnlyList<AudiobookChapterInfo> AudiobookChapters => BuildAudiobookChapters();
     public TimeRange? ActiveIntro => ActiveVersion?.Intro ?? WatchDetail?.Intro;
     public TimeRange? ActiveCredits => ActiveVersion?.Credits ?? WatchDetail?.Credits;
     public TimeRange? ActiveRecap => ActiveVersion?.Recap ?? WatchDetail?.Recap;
@@ -657,6 +715,8 @@ public class PlayerService : IDisposable
     // ── Events ───────────────────────────────────────────────────────────
 
     public event Action<PlayerState>? StateChanged;
+    public event Action? AudiobookPresentationChanged;
+    public event Action? AudiobookSleepChanged;
 
     /// <summary>Fired after a new playback session is created on the server.
     /// Payload is the session UUID. Consumers like
@@ -731,6 +791,234 @@ public class PlayerService : IDisposable
 
     // ── State transitions ────────────────────────────────────────────────
 
+    public void SetAudiobookPresentation(MediaItemDetail item)
+    {
+        if (!item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        AudiobookPosterUrl = item.PosterUrl;
+        AudiobookAuthor = JoinPeople(item.Audiobook?.Authors)
+            ?? JoinCrew(item.Crew, "author");
+        AudiobookNarrator = JoinPeople(item.Audiobook?.Narrators)
+            ?? JoinCrew(item.Crew, "narrator");
+        try { AudiobookPresentationChanged?.Invoke(); } catch { }
+    }
+
+    private async Task LoadAudiobookPresentationAsync(string contentId, CancellationToken ct)
+    {
+        try
+        {
+            var item = await _catalogApi.GetItemDetailAsync(contentId, ct).ConfigureAwait(false);
+            if (!ct.IsCancellationRequested && IsAudiobook &&
+                string.Equals(ContentId, contentId, StringComparison.Ordinal))
+            {
+                SetAudiobookPresentation(item);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"Audiobook presentation load failed: {ex.Message}");
+        }
+    }
+
+    private static string? JoinPeople(IEnumerable<Core.Models.Home.AudiobookPerson>? people)
+    {
+        var names = people?
+            .Select(person => person.Name?.Trim())
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        return names?.Count > 0 ? string.Join(", ", names) : null;
+    }
+
+    private static string? JoinCrew(IEnumerable<CrewMember> crew, string job)
+    {
+        var names = crew
+            .Where(member => member.Job.Equals(job, StringComparison.OrdinalIgnoreCase))
+            .Select(member => member.Name?.Trim())
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        return names.Count > 0 ? string.Join(", ", names) : null;
+    }
+
+    private IReadOnlyList<(FileVersion Version, double Start, double End)> BuildAudiobookParts()
+    {
+        var result = new List<(FileVersion Version, double Start, double End)>();
+        var cursor = 0d;
+        foreach (var version in Versions)
+        {
+            var duration = Math.Max(0, version.Duration);
+            result.Add((version, cursor, cursor + duration));
+            cursor += duration;
+        }
+        return result;
+    }
+
+    private (FileVersion Version, double Start, double End)? FindAudiobookPart(double absolutePosition, int? preferredFileId = null)
+    {
+        var parts = BuildAudiobookParts();
+        if (parts.Count == 0) return null;
+        if (preferredFileId.HasValue)
+        {
+            var preferred = parts.FirstOrDefault(part => part.Version.FileId == preferredFileId.Value);
+            if (preferred.Version != null) return preferred;
+        }
+
+        var position = Math.Max(0, absolutePosition);
+        return parts.FirstOrDefault(part => part.End > part.Start && position < part.End)
+            is var match && match.Version != null
+                ? match
+                : parts[^1];
+    }
+
+    private IReadOnlyList<AudiobookChapterInfo> BuildAudiobookChapters()
+    {
+        if (!IsAudiobook) return [];
+        var result = new List<AudiobookChapterInfo>();
+        foreach (var part in BuildAudiobookParts())
+        {
+            if (part.Version.Chapters is { Count: > 0 })
+            {
+                foreach (var chapter in part.Version.Chapters.OrderBy(chapter => chapter.StartSeconds))
+                {
+                    var absoluteStart = part.Start + Math.Max(0, chapter.StartSeconds);
+                    var absoluteEnd = part.Start + Math.Max(chapter.StartSeconds, chapter.EndSeconds);
+                    result.Add(new AudiobookChapterInfo(
+                        result.Count,
+                        string.IsNullOrWhiteSpace(chapter.Title) ? $"Chapter {result.Count + 1}" : chapter.Title,
+                        absoluteStart,
+                        absoluteEnd > absoluteStart ? absoluteEnd : absoluteStart + 1,
+                        part.Version.FileId));
+                }
+            }
+        }
+        return result;
+    }
+
+    public AudiobookChapterInfo? CurrentAudiobookChapter =>
+        AudiobookChapters.LastOrDefault(chapter => Position >= chapter.StartSeconds)
+        ?? AudiobookChapters.FirstOrDefault();
+
+    public void SeekToPreviousAudiobookChapter()
+    {
+        var chapters = AudiobookChapters;
+        if (chapters.Count == 0) return;
+        var currentIndex = -1;
+        for (var index = chapters.Count - 1; index >= 0; index--)
+        {
+            if (Position >= chapters[index].StartSeconds)
+            {
+                currentIndex = index;
+                break;
+            }
+        }
+        if (currentIndex < 0) currentIndex = 0;
+        var targetIndex = Position - chapters[currentIndex].StartSeconds > 3
+            ? currentIndex
+            : Math.Max(0, currentIndex - 1);
+        SeekTo(chapters[targetIndex].StartSeconds);
+    }
+
+    public void SeekToNextAudiobookChapter()
+    {
+        var next = AudiobookChapters.FirstOrDefault(chapter => chapter.StartSeconds > Position + 0.5);
+        if (next != null) SeekTo(next.StartSeconds);
+    }
+
+    public void ToggleAudiobookPlayback()
+    {
+        if (_mpv == null) return;
+        if (!_mpv.IsPaused)
+        {
+            _mpv.Pause();
+            return;
+        }
+
+        var settings = _settingsService.Load();
+        if (settings.AudiobookSmartRewind && _audiobookPausedAt.HasValue)
+        {
+            var pausedFor = DateTimeOffset.UtcNow - _audiobookPausedAt.Value;
+            var rewind = pausedFor.TotalSeconds switch
+            {
+                < 10 => 0,
+                < 60 => 3,
+                < 600 => 10,
+                < 3600 => 20,
+                _ => 30,
+            };
+            if (rewind > 0)
+                SeekTo(Math.Max(0, Position - rewind));
+        }
+        _audiobookPausedAt = null;
+        _mpv.Play();
+    }
+
+    public DateTimeOffset? AudiobookSleepDeadline { get; private set; }
+    public double? AudiobookSleepAtPosition { get; private set; }
+
+    public void SetAudiobookSleepTimer(TimeSpan? duration, double? atPosition)
+    {
+        AudiobookSleepDeadline = duration.HasValue ? DateTimeOffset.UtcNow + duration.Value : null;
+        AudiobookSleepAtPosition = atPosition;
+        _audiobookSleepTimer?.Dispose();
+        _audiobookSleepTimer = new Timer(_ =>
+        {
+            var elapsed = AudiobookSleepDeadline.HasValue && DateTimeOffset.UtcNow >= AudiobookSleepDeadline.Value;
+            var reached = AudiobookSleepAtPosition.HasValue && CurrentMediaPosition >= AudiobookSleepAtPosition.Value;
+            if (!elapsed && !reached) return;
+            _mpv?.Pause();
+            ClearAudiobookSleepTimer();
+        }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        try { AudiobookSleepChanged?.Invoke(); } catch { }
+    }
+
+    public void ClearAudiobookSleepTimer()
+    {
+        AudiobookSleepDeadline = null;
+        AudiobookSleepAtPosition = null;
+        Interlocked.Exchange(ref _audiobookSleepTimer, null)?.Dispose();
+        try { AudiobookSleepChanged?.Invoke(); } catch { }
+    }
+
+    private double ToSessionPosition(double absolutePosition) =>
+        IsAudiobook ? Math.Max(0, absolutePosition - _audiobookPartOffsetSeconds) : absolutePosition;
+
+    private void UpdatePlaybackManagerPosition(double absolutePosition, bool paused) =>
+        _playbackManager?.UpdatePosition(ToSessionPosition(absolutePosition), paused);
+
+    private async Task ReportAudiobookProgressAsync(double position, bool force = false)
+    {
+        if (!IsAudiobook || string.IsNullOrWhiteSpace(ContentId) || _audiobookTotalDurationSeconds <= 0)
+            return;
+        var now = DateTime.UtcNow.Ticks;
+        var previous = Interlocked.Read(ref _lastAudiobookProgressReportTicks);
+        if (!force && previous > 0 && now - previous < TimeSpan.FromSeconds(10).Ticks)
+            return;
+        Interlocked.Exchange(ref _lastAudiobookProgressReportTicks, now);
+        try
+        {
+            await _catalogApi.SyncProgressAsync(new
+            {
+                items = new[]
+                {
+                    new
+                    {
+                        media_item_id = ContentId,
+                        position = Math.Floor(Math.Clamp(position, 0, _audiobookTotalDurationSeconds)),
+                        duration = Math.Floor(_audiobookTotalDurationSeconds),
+                        force_overwrite = true,
+                    }
+                }
+            }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LogToFile("progress_error.txt", $"Audiobook progress failed: {ex.Message}");
+        }
+    }
+
     public void SetState(PlayerState newState)
     {
         var threadId = Environment.CurrentManagedThreadId;
@@ -743,8 +1031,10 @@ public class PlayerService : IDisposable
         // Show() call and the popup stays hidden.
         if (State == newState)
         {
-            if (newState == PlayerState.Expanded || newState == PlayerState.Fullscreen)
+            if (!IsAudiobook && (newState == PlayerState.Expanded || newState == PlayerState.Fullscreen))
                 _videoWindow?.Show();
+            else if (IsAudiobook)
+                _videoWindow?.Hide();
             PublishFullscreenVisualState(newState == PlayerState.Fullscreen);
             PublishPictureInPictureVisualState(newState == PlayerState.PictureInPicture);
             return;
@@ -759,7 +1049,7 @@ public class PlayerService : IDisposable
         PublishFullscreenVisualState(newState == PlayerState.Fullscreen);
         PublishPictureInPictureVisualState(newState == PlayerState.PictureInPicture);
 
-        if (newState == PlayerState.Expanded || newState == PlayerState.Fullscreen)
+        if (!IsAudiobook && (newState == PlayerState.Expanded || newState == PlayerState.Fullscreen))
         {
             _videoWindow?.Show();
             _mpv?.SendScriptMessage("osc-set-visibility", "true");
@@ -767,7 +1057,10 @@ public class PlayerService : IDisposable
         else if (newState == PlayerState.Minimized)
         {
             _mpv?.SendScriptMessage("osc-set-visibility", "false");
-            PositionVideoForMiniBar();
+            if (IsAudiobook)
+                _videoWindow?.Hide();
+            else
+                PositionVideoForMiniBar();
         }
         else if (newState == PlayerState.PictureInPicture)
         {
@@ -1040,7 +1333,7 @@ public class PlayerService : IDisposable
             var finalPosition = CurrentMediaPosition;
             _mpv?.Stop();
             retiringSessionTask = retiringManager.StopSessionAsync(
-                finalPosition > 0 ? finalPosition : null,
+                finalPosition > 0 ? ToSessionPosition(finalPosition) : null,
                 isPaused: true);
             retiringManager.ProgressReportingFailed -= OnProgressReportingFailed;
             _playbackManager = null;
@@ -1085,6 +1378,38 @@ public class PlayerService : IDisposable
 
             var watchDetail = await FetchWatchDetailAsync(contentId, requestToken);
             SetTitleFromWatchDetail(watchDetail);
+            IsAudiobook = watchDetail.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase);
+            if (IsAudiobook)
+            {
+                Versions = watchDetail.Versions?.ToList() ?? [];
+                _audiobookTotalDurationSeconds = Versions.Sum(version => Math.Max(0, version.Duration));
+                _ = LoadAudiobookPresentationAsync(contentId, requestToken);
+            }
+            else
+            {
+                _audiobookPartOffsetSeconds = 0;
+                _audiobookTotalDurationSeconds = 0;
+                AudiobookPosterUrl = null;
+                AudiobookAuthor = null;
+                AudiobookNarrator = null;
+            }
+
+            var absoluteStartPosition = startPositionOverride.HasValue
+                ? Math.Max(0, startPositionOverride.Value)
+                : DetermineStartPosition(watchDetail, fromStart);
+            if (IsAudiobook && !fromStart && !startPositionOverride.HasValue &&
+                absoluteStartPosition > 0 && _settingsService.Load().AudiobookSmartRewind)
+            {
+                absoluteStartPosition = Math.Max(0, absoluteStartPosition - 10);
+            }
+            var audiobookPart = IsAudiobook
+                ? FindAudiobookPart(absoluteStartPosition, fileId)
+                : null;
+            if (audiobookPart.HasValue)
+            {
+                fileId = audiobookPart.Value.Version.FileId;
+                _audiobookPartOffsetSeconds = audiobookPart.Value.Start;
+            }
 
             var bestVersion = SelectVersion(watchDetail, fileId);
             if (bestVersion == null)
@@ -1094,9 +1419,9 @@ public class PlayerService : IDisposable
 
             Resolution = bestVersion.Resolution;
             _requestedMediaFileId = bestVersion.FileId;
-            var startPosition = startPositionOverride.HasValue
-                ? Math.Max(0, startPositionOverride.Value)
-                : DetermineStartPosition(watchDetail, fromStart);
+            var startPosition = IsAudiobook
+                ? Math.Max(0, absoluteStartPosition - _audiobookPartOffsetSeconds)
+                : absoluteStartPosition;
             var selectedAudioTrackIndex = audioTrackIndex ?? bestVersion.EffectiveAudioTrackIndex;
 
             PlaybackStartResponse session;
@@ -1105,9 +1430,10 @@ public class PlayerService : IDisposable
                 session = await _playbackManager.StartSessionAsync(
                     bestVersion.FileId,
                     startPosition,
-                    forceStartPosition: fromStart || startPositionOverride.HasValue,
+                    forceStartPosition: IsAudiobook || fromStart || startPositionOverride.HasValue,
                     audioTrackIndex: selectedAudioTrackIndex,
                     forceDirectAudioSelection: selectedAudioTrackIndex.HasValue,
+                    disableProgressPersistence: IsAudiobook,
                     ct: requestToken);
             }
             catch (ApiException ex) when (
@@ -1120,9 +1446,10 @@ public class PlayerService : IDisposable
                 session = await _playbackManager.StartSessionAsync(
                     bestVersion.FileId,
                     startPosition,
-                    forceStartPosition: fromStart || startPositionOverride.HasValue,
+                    forceStartPosition: IsAudiobook || fromStart || startPositionOverride.HasValue,
                     audioTrackIndex: selectedAudioTrackIndex,
                     forceDirectAudioSelection: selectedAudioTrackIndex.HasValue,
+                    disableProgressPersistence: IsAudiobook,
                     ct: requestToken);
             }
             ResolveInitialSubtitleSelection(
@@ -1166,7 +1493,7 @@ public class PlayerService : IDisposable
                 _ = ApplySubtitleAppearanceWhenLoadedAsync(subtitleAppearanceTask);
             }
 
-            SetState(PlayerState.Expanded);
+            SetState(IsAudiobook ? PlayerState.Minimized : PlayerState.Expanded);
             ApplyPreparedTransport(prepared);
 
             LogToFile(
@@ -1326,6 +1653,14 @@ public class PlayerService : IDisposable
         try
         {
             ConfigureAudioOutput(mpv);
+            var bufferProfile = prepared.Plan.IsHls
+                ? MpvNetworkBufferSizing.Default
+                : MpvNetworkBufferSizing.ForBitrateKbps(ActiveVersion?.Bitrate ?? 0);
+            mpv.ConfigureNetworkBuffer(
+                bufferProfile.MaxMiB,
+                bufferProfile.BackMiB,
+                bufferProfile.ReadAheadSeconds,
+                bufferProfile.StreamMiB);
             mpv.LoadFile(prepared.LocalUrl, null, prepared.MpvLoadStartSeconds);
             if (restorePaused)
                 mpv.Pause();
@@ -1543,6 +1878,11 @@ public class PlayerService : IDisposable
         var previousRecipe = _activeHlsRecipe;
         var previousQualityTier = _activeQualityTier;
         var previousDuration = CurrentMediaDuration;
+        // A keepalive failure can happen while the user has intentionally
+        // paused. Preserve that intent across the replacement session, but do
+        // not mistake mpv's network-cache pause for a user pause: buffering
+        // recoveries must resume as soon as the replacement stream is ready.
+        var restorePaused = _mpv.IsPaused && !_mpv.IsBufferingForCache;
         var resumePosition = Math.Max(0, currentPosition - 2);
         var ct = _playbackCts?.Token ?? CancellationToken.None;
 
@@ -1604,8 +1944,8 @@ public class PlayerService : IDisposable
                 return;
 
             ApplyPreparedTransport(prepared);
-            BeginMpvLoad(prepared, restorePaused: false);
-            IsPaused = false;
+            BeginMpvLoad(prepared, restorePaused);
+            IsPaused = restorePaused;
             _mpv.SendScriptMessage("osc-set-play-method", PlayMethod ?? "direct");
             LogToFile("state_trace.txt", $"Stream recovery ({reason}) LoadFile issued at mediaPos={resumePosition:F1} transport={prepared.Plan.TransportKind}");
         }
@@ -2209,13 +2549,16 @@ public class PlayerService : IDisposable
 
     private double CurrentMediaPosition
         => _mpv != null
-            ? PlaybackTimeline.ToMediaTime(_mpv.Position, _timelineOffsetSeconds)
+            ? PlaybackTimeline.ToMediaTime(_mpv.Position, _timelineOffsetSeconds) +
+                (IsAudiobook ? _audiobookPartOffsetSeconds : 0)
             : Position;
 
     private double CurrentMediaDuration
     {
         get
         {
+            if (IsAudiobook && _audiobookTotalDurationSeconds > 0)
+                return _audiobookTotalDurationSeconds;
             if (_mpv == null)
                 return Duration;
             var rawDuration = _mpv.Duration;
@@ -2366,6 +2709,15 @@ public class PlayerService : IDisposable
             PushSubtitleAppearanceToMpv(_subtitleAppearance);
     }
 
+    private void ResetFailedMpvInitialization()
+    {
+        try { UnwireMpvEvents(); } catch { }
+        try { _mpv?.Dispose(); } catch { }
+        _mpv = null;
+        try { _videoWindow?.Dispose(); } catch { }
+        _videoWindow = null;
+    }
+
     private void UnwireMpvEvents()
     {
         if (_mpv == null) return;
@@ -2440,6 +2792,39 @@ public class PlayerService : IDisposable
 
         var pos = CurrentMediaPosition;
         var dur = CurrentMediaDuration;
+        if (IsAudiobook)
+        {
+            var activeFileId = _playbackManager?.CurrentSession?.MediaFileId;
+            var parts = BuildAudiobookParts();
+            var activeIndex = -1;
+            for (var index = 0; index < parts.Count; index++)
+            {
+                if (parts[index].Version.FileId == activeFileId)
+                {
+                    activeIndex = index;
+                    break;
+                }
+            }
+
+            if (activeIndex >= 0 && activeIndex + 1 < parts.Count && !string.IsNullOrWhiteSpace(ContentId))
+            {
+                var next = parts[activeIndex + 1];
+                _switchingContent = true;
+                LogToFile("state_trace.txt", $"  -> Audiobook part {activeIndex + 1} complete; continuing file {next.Version.FileId}");
+                _ = ContinueAudiobookPartAsync(ContentId, next.Version.FileId, next.Start);
+                return;
+            }
+
+            Position = dur > 0 ? dur : pos;
+            IsPaused = true;
+            _mpv?.Pause();
+            _ = ReportAudiobookProgressAsync(Position, force: true);
+            PositionChanged?.Invoke(Position);
+            PauseChanged?.Invoke(true);
+            LogToFile("state_trace.txt", "  -> Audiobook complete; retaining the listening surface at the end");
+            return;
+        }
+
         // A direct stream can be interrupted during its opening seconds just
         // as easily as later in the movie. The old ten-second floor treated
         // those early EOFs as natural completion and closed the player. The
@@ -2518,6 +2903,12 @@ public class PlayerService : IDisposable
         ShowPlayingNextRequested?.Invoke();
     }
 
+    private async Task ContinueAudiobookPartAsync(string contentId, int fileId, double absoluteStart)
+    {
+        await ReportAudiobookProgressAsync(absoluteStart, force: true).ConfigureAwait(false);
+        await PlayAsync(contentId, fileId: fileId, startPositionOverride: absoluteStart).ConfigureAwait(false);
+    }
+
     private static bool IsAtMediaEnd(double position, double duration)
     {
         if (duration <= 0 || position < 0)
@@ -2537,10 +2928,13 @@ public class PlayerService : IDisposable
             if (_switchingContent)
                 return;
 
-            var mediaPosition = PlaybackTimeline.ToMediaTime(pos, _timelineOffsetSeconds);
+            var mediaPosition = PlaybackTimeline.ToMediaTime(pos, _timelineOffsetSeconds) +
+                (IsAudiobook ? _audiobookPartOffsetSeconds : 0);
             Position = mediaPosition;
-            _playbackManager?.UpdatePosition(mediaPosition, IsPaused);
+            UpdatePlaybackManagerPosition(mediaPosition, IsPaused);
             PositionChanged?.Invoke(mediaPosition);
+            if (IsAudiobook)
+                _ = ReportAudiobookProgressAsync(mediaPosition);
 
             if (_prematureEofRecoveryPosition > 0 && mediaPosition > _prematureEofRecoveryPosition + 30)
             {
@@ -2557,10 +2951,12 @@ public class PlayerService : IDisposable
             if (_switchingContent)
                 return;
 
-            var mediaDuration = PlaybackTimeline.ResolveMediaDuration(
-                dur,
-                _timelineOffsetSeconds,
-                _transportDurationSeconds);
+            var mediaDuration = IsAudiobook && _audiobookTotalDurationSeconds > 0
+                ? _audiobookTotalDurationSeconds
+                : PlaybackTimeline.ResolveMediaDuration(
+                    dur,
+                    _timelineOffsetSeconds,
+                    _transportDurationSeconds);
             Duration = mediaDuration;
             DurationChanged?.Invoke(mediaDuration);
         };
@@ -2569,8 +2965,10 @@ public class PlayerService : IDisposable
         _mpvPauseHandler = (paused) =>
         {
             IsPaused = paused;
+            if (IsAudiobook)
+                _audiobookPausedAt = paused ? DateTimeOffset.UtcNow : null;
             var mediaPosition = CurrentMediaPosition;
-            _playbackManager?.UpdatePosition(mediaPosition, paused);
+            UpdatePlaybackManagerPosition(mediaPosition, paused);
             if (!_closing && !_switchingContent && State != PlayerState.Idle)
                 _ = ReportSeekProgressAsync(mediaPosition, paused);
             PauseChanged?.Invoke(paused);
@@ -2627,7 +3025,7 @@ public class PlayerService : IDisposable
             var mediaDuration = CurrentMediaDuration;
             Position = mediaPosition;
             Duration = mediaDuration;
-            _playbackManager?.UpdatePosition(mediaPosition, restorePaused);
+            UpdatePlaybackManagerPosition(mediaPosition, restorePaused);
             PositionChanged?.Invoke(mediaPosition);
             DurationChanged?.Invoke(mediaDuration);
 
@@ -3289,11 +3687,7 @@ public class PlayerService : IDisposable
             ["audio_title"] = audioTrack?.Title ?? audioTrack?.EmbeddedTitle ?? "",
             ["video_profile"] = videoTrack?.Profile ?? "",
             ["video_bitrate"] = videoTrack?.Bitrate ?? 0,
-            ["video_range"] = !string.IsNullOrWhiteSpace(videoTrack?.DolbyVision)
-                ? string.IsNullOrWhiteSpace(videoTrack.VideoRange)
-                    ? videoTrack.DolbyVision
-                    : $"{videoTrack.DolbyVision} ({videoTrack.VideoRange})"
-                : videoTrack?.VideoRange ?? videoTrack?.VideoRangeType ?? (version.Hdr ? "HDR" : "SDR"),
+            ["video_range"] = FormatVideoRangeForHud(version, videoTrack),
             ["audio_bitrate"] = audioTrack?.Bitrate ?? 0,
             ["audio_sample_rate"] = audioTrack?.SampleRate ?? 0,
             ["requested_source"] = BuildRequestedSourceLabel(version),
@@ -3337,8 +3731,26 @@ public class PlayerService : IDisposable
         {
             requested.Resolution,
             requested.CodecVideo?.ToUpperInvariant(),
-            requested.Hdr ? "HDR" : null
+            MediaVideoRange.Label(requested)
         }.Where(part => !string.IsNullOrWhiteSpace(part)));
+    }
+
+    private static string FormatVideoRangeForHud(FileVersion version, VersionVideoTrack? track)
+    {
+        if (!string.IsNullOrWhiteSpace(track?.DolbyVision))
+        {
+            var dolbyVision = track.DolbyVision.StartsWith("Dolby Vision", StringComparison.OrdinalIgnoreCase)
+                ? track.DolbyVision
+                : $"Dolby Vision {track.DolbyVision}";
+            return string.IsNullOrWhiteSpace(track.VideoRange)
+                ? dolbyVision
+                : $"{dolbyVision} ({track.VideoRange})";
+        }
+
+        if (!string.IsNullOrWhiteSpace(track?.VideoRange))
+            return track.VideoRange;
+
+        return MediaVideoRange.Label(version) is { Length: > 0 } range ? range : "SDR";
     }
 
     private void SendSubtitleListToOsc()
@@ -3670,6 +4082,27 @@ public class PlayerService : IDisposable
             case "silo-marker-edit":
                 dispatch.TryEnqueue(() => _ = ShowMarkerEditDialogAsync());
                 break;
+            case "silo-marker-save":
+            {
+                if (args.Length < 9) break;
+                var values = new double[8];
+                var valid = true;
+                for (var index = 0; index < values.Length; index++)
+                {
+                    if (!double.TryParse(
+                            args[index + 1],
+                            System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            out values[index]))
+                    {
+                        valid = false;
+                        break;
+                    }
+                }
+                if (valid)
+                    dispatch.TryEnqueue(() => _ = SaveMarkerEditsFromOscAsync(values));
+                break;
+            }
             case "silo-audio-select":
                 if (args.Length > 1 && int.TryParse(args[1], out var audioIdx))
                     dispatch.TryEnqueue(() => _ = SwitchAudioTrackAsync(audioIdx));
@@ -4056,6 +4489,43 @@ public class PlayerService : IDisposable
         }
     }
 
+    private async Task SaveMarkerEditsFromOscAsync(double[] values)
+    {
+        var session = _playbackManager?.CurrentSession;
+        if (session == null || values.Length < 8 ||
+            !AuthorizationPolicy.CanEditMarkers(_authService))
+            return;
+
+        static TimeRange? Range(double start, double end)
+            => start >= 0 && end > start
+                ? new TimeRange { Start = start, End = end }
+                : null;
+
+        var intro = Range(values[0], values[1]);
+        var recap = Range(values[2], values[3]);
+        var credits = Range(values[4], values[5]);
+        var preview = Range(values[6], values[7]);
+        var changes = new Dictionary<string, object?>
+        {
+            ["intro"] = intro == null ? null : new { start = intro.Start, end = intro.End },
+            ["recap"] = recap == null ? null : new { start = recap.Start, end = recap.End },
+            ["credits"] = credits == null ? null : new { start = credits.Start, end = credits.End },
+            ["preview"] = preview == null ? null : new { start = preview.Start, end = preview.End },
+        };
+
+        try
+        {
+            await _playbackApi.SetFileMarkersAsync(session.MediaFileId, changes);
+            ApplyMarkerEdits(intro, recap, credits, preview);
+            ShowNotice("Markers saved", "Timeline markers were updated.", "info");
+        }
+        catch (Exception ex)
+        {
+            LogToFile("player_marker_save_error.txt", ex.ToString());
+            ShowNotice("Could not save markers", ex.Message, "error");
+        }
+    }
+
     private async Task ShowMarkerEditDialogAsync()
     {
         var mainWindow = App.MainWindowInstance;
@@ -4189,6 +4659,7 @@ public class PlayerService : IDisposable
     private void PositionVideoForMiniBar()
     {
         if (_videoWindow == null) return;
+        if (IsAudiobook) { _videoWindow.Hide(); return; }
         var mw = App.MainWindowInstance;
         if (mw == null) { _videoWindow.Hide(); return; }
 
@@ -4210,7 +4681,9 @@ public class PlayerService : IDisposable
 
     public void HandleWindowResize()
     {
-        if (State == PlayerState.Minimized)
+        if (IsAudiobook)
+            _videoWindow?.Hide();
+        else if (State == PlayerState.Minimized)
             PositionVideoForMiniBar();
         else if (State == PlayerState.PictureInPicture)
             _videoWindow?.EnterPictureInPicture();
@@ -4223,7 +4696,7 @@ public class PlayerService : IDisposable
         if (State == PlayerState.Idle) return;
         if (minimized && State != PlayerState.PictureInPicture)
             _videoWindow?.Hide();
-        else if (State == PlayerState.Expanded || State == PlayerState.Fullscreen)
+        else if (!IsAudiobook && (State == PlayerState.Expanded || State == PlayerState.Fullscreen))
             _videoWindow?.Show();
         else if (State == PlayerState.Minimized)
             PositionVideoForMiniBar();
@@ -4251,10 +4724,13 @@ public class PlayerService : IDisposable
         string? closedContentId = ContentId;
         double closedPosition = CurrentMediaPosition;
         double closedDuration = CurrentMediaDuration;
+        var audiobookProgressTask = IsAudiobook
+            ? ReportAudiobookProgressAsync(closedPosition, force: true)
+            : Task.CompletedTask;
         var closingManager = _playbackManager;
         var sessionStopTask = closingManager != null
             ? closingManager.StopSessionAsync(
-                closedPosition > 0 ? closedPosition : null,
+                closedPosition > 0 ? ToSessionPosition(closedPosition) : null,
                 isPaused: true)
             : Task.CompletedTask;
 
@@ -4304,6 +4780,7 @@ public class PlayerService : IDisposable
         // path (CloseAsync dispatch) instead of the next-episode path.
         ClearNextEpisodeHint();
         ClearLiveSubtitleTranslation(restorePreviousSubtitle: false);
+        ClearAudiobookSleepTimer();
 
         _mpv?.Stop();
         StopDirectStreamProxy();
@@ -4316,6 +4793,7 @@ public class PlayerService : IDisposable
                 _playbackManager = null;
             _ = FinishClosingSessionAsync(closingManager, sessionStopTask);
         }
+        await audiobookProgressTask.ConfigureAwait(false);
 
         ContentId = null;
         Title = "";
@@ -4338,6 +4816,13 @@ public class PlayerService : IDisposable
         _preBitmapBurnInPlan = null;
         _preBitmapBurnInQualityTier = null;
         _requestedMediaFileId = null;
+        IsAudiobook = false;
+        AudiobookPosterUrl = null;
+        AudiobookAuthor = null;
+        AudiobookNarrator = null;
+        _audiobookPartOffsetSeconds = 0;
+        _audiobookTotalDurationSeconds = 0;
+        Interlocked.Exchange(ref _lastAudiobookProgressReportTicks, 0);
         _pendingSubtitleSelection = null;
         _pendingInitialServerSubtitleIndex = null;
         ClearChapterThumbnailOverlayCache();

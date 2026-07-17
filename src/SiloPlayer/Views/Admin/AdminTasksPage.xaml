@@ -22,7 +22,7 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,24,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Stretch">
+            <StackPanel x:Name="TasksPageShell" Padding="40,24,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Stretch">
 
                 <!-- ===== Header ===== -->
                 <StackPanel Spacing="12">

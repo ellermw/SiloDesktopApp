@@ -1,6 +1,7 @@
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Models.HistoryImport;
 
 namespace SiloPlayer.Core.Api;
@@ -79,6 +80,21 @@ public class AdminApi(SiloApiClient client)
         => client.DeleteAsync(
             $"/api/v1/admin/users/{userId}/profiles/{Uri.EscapeDataString(profileId)}/devices/{Uri.EscapeDataString(deviceId)}/settings",
             ct);
+
+    public async Task<List<AdminUserSetting>> GetUserSettingsAsync(int userId, CancellationToken ct = default)
+        => (await client.GetAsync<AdminUserSettingsResponse>($"/api/v1/admin/users/{userId}/settings", ct)).Settings;
+
+    public Task UpdateUserSettingAsync(int userId, string key, string value, CancellationToken ct = default)
+        => client.PutAsync<object>(
+            $"/api/v1/admin/users/{userId}/settings/{Uri.EscapeDataString(key)}",
+            new Dictionary<string, object?> { ["value"] = value }, ct);
+
+    public Task DeleteUserSettingAsync(int userId, string key, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/users/{userId}/settings/{Uri.EscapeDataString(key)}", ct);
+
+    public async Task<List<AdminDeviceSetting>> GetUserDeviceSettingsAsync(int userId, CancellationToken ct = default)
+        => (await client.GetAsync<AdminUserDeviceSettingsResponse>(
+            $"/api/v1/admin/users/{userId}/device-settings", ct)).Settings;
 
     // ===== Autoscan =====
 
@@ -486,6 +502,9 @@ public class AdminApi(SiloApiClient client)
     public Task<BulkCreateSectionsResponse> BulkCreateSectionsAsync(object body, CancellationToken ct = default)
         => client.PostAsync<BulkCreateSectionsResponse>("/api/v1/admin/sections/bulk-create", body, ct);
 
+    public Task<AdminSectionPreviewResponse> PreviewSectionAsync(AdminSectionPreviewRequest body, CancellationToken ct = default)
+        => client.PostAsync<AdminSectionPreviewResponse>("/api/v1/admin/sections/preview", body, ct);
+
     public Task<object> UpdateSectionAsync(string id, object body, CancellationToken ct = default)
         => client.PutAsync<object>($"/api/v1/admin/sections/{Uri.EscapeDataString(id)}", body, ct);
 
@@ -573,6 +592,36 @@ public class AdminApi(SiloApiClient client)
 
     public Task UpdateItemMetadataAsync(string itemId, object request, CancellationToken ct = default)
         => client.PatchAsync<object>($"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/metadata", request, ct);
+
+    public Task<ItemImagesResponse> GetItemImagesAsync(string itemId, CancellationToken ct = default)
+        => client.GetAsync<ItemImagesResponse>(
+            $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/images",
+            ct);
+
+    public Task<ApplyItemImageResponse> ApplyItemImageAsync(
+        string itemId,
+        ApplyItemImageRequest request,
+        CancellationToken ct = default)
+        => client.PostAsync<ApplyItemImageResponse>(
+            $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/images/apply",
+            request,
+            ct);
+
+    public Task<MetadataTranslationJobResponse> StartItemMetadataTranslationAsync(
+        string itemId,
+        TranslateItemMetadataRequest request,
+        CancellationToken ct = default)
+        => client.PostAsync<MetadataTranslationJobResponse>(
+            $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/metadata-translation",
+            request,
+            ct);
+
+    public Task<MetadataTranslationJobsResponse> GetItemMetadataTranslationJobsAsync(
+        string itemId,
+        CancellationToken ct = default)
+        => client.GetAsync<MetadataTranslationJobsResponse>(
+            $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/metadata-translation/jobs",
+            ct);
 
     // ===== Catalog Seed =====
 
@@ -762,6 +811,22 @@ public class AdminApi(SiloApiClient client)
 
     public Task<ImportTraktCollectionResponse> ImportTraktCollectionAsync(ImportTraktCollectionRequest request, CancellationToken ct = default)
         => client.PostAsync<ImportTraktCollectionResponse>("/api/v1/admin/collections/import/trakt", request, ct);
+
+    public Task<CollectionTemplateCatalog> GetAdminCollectionTemplatesAsync(CancellationToken ct = default)
+        => client.GetAsync<CollectionTemplateCatalog>("/api/v1/admin/collections/templates", ct);
+
+    public Task<CollectionTemplateBundleCatalog> GetAdminCollectionTemplateBundlesAsync(CancellationToken ct = default)
+        => client.GetAsync<CollectionTemplateBundleCatalog>("/api/v1/admin/collections/template-bundles", ct);
+
+    public Task<ApplyCollectionTemplateBundleResponse> ApplyCollectionTemplateBundleAsync(
+        string bundleId, ApplyCollectionTemplateBundleRequest request, CancellationToken ct = default)
+        => client.PostAsync<ApplyCollectionTemplateBundleResponse>(
+            $"/api/v1/admin/collections/template-bundles/{Uri.EscapeDataString(bundleId)}/apply", request, ct);
+
+    public Task<AdminJob> QueueCollectionTemplateBundleApplyAsync(
+        string bundleId, ApplyCollectionTemplateBundleRequest request, CancellationToken ct = default)
+        => client.PostAsync<AdminJob>(
+            $"/api/v1/admin/collections/template-bundles/{Uri.EscapeDataString(bundleId)}/apply-job", request, ct);
 
     public Task UploadCollectionImageAsync(string id, string type, byte[] fileBytes, string fileName, string contentType, CancellationToken ct = default)
         => client.PutMultipartNoContentAsync($"/api/v1/admin/collections/{Uri.EscapeDataString(id)}/image?type={Uri.EscapeDataString(type)}", "file", fileName, fileBytes, contentType, ct);

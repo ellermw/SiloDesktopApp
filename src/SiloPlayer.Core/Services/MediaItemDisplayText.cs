@@ -4,6 +4,77 @@ namespace SiloPlayer.Core.Services;
 
 public static class MediaItemDisplayText
 {
+    public static string BuildTitle(MediaItem item)
+    {
+        if (item.UpcomingEvent is not null)
+            return item.Title;
+
+        return BuildEpisodeTitle(item) is not null && !string.IsNullOrWhiteSpace(item.SeriesTitle)
+            ? item.SeriesTitle
+            : item.Title;
+    }
+
+    public static string? BuildEpisodeTitle(MediaItem item)
+    {
+        if (item.UpcomingEvent is not null)
+            return null;
+
+        if (item.Type != "episode" ||
+            !item.SeasonNumber.HasValue ||
+            !item.EpisodeNumber.HasValue ||
+            string.IsNullOrWhiteSpace(item.Title) ||
+            string.IsNullOrWhiteSpace(item.SeriesTitle) ||
+            string.Equals(item.SeriesTitle, item.Title, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return item.Title;
+    }
+
+    public static string FormatUpcomingSubtitle(SectionItemUpcomingEvent upcoming)
+    {
+        if ((upcoming.Type == "episode" || upcoming.Type == "season_premiere") &&
+            upcoming.SeasonNumber.HasValue)
+        {
+            if (upcoming.EpisodeNumber.HasValue)
+            {
+                return $"S{upcoming.SeasonNumber} \u00b7 E{upcoming.EpisodeNumber}" +
+                    (string.IsNullOrWhiteSpace(upcoming.EpisodeTitle)
+                        ? ""
+                        : $" - {upcoming.EpisodeTitle}");
+            }
+
+            return $"Season {upcoming.SeasonNumber}" +
+                (string.IsNullOrWhiteSpace(upcoming.EpisodeTitle)
+                    ? ""
+                    : $" \u00b7 {upcoming.EpisodeTitle}");
+        }
+
+        return upcoming.Type == "movie" ? "Movie" : "";
+    }
+
+    public static string FormatUpcomingSchedule(SectionItemUpcomingEvent upcoming)
+    {
+        var dateValue = string.IsNullOrWhiteSpace(upcoming.LocalAirDate)
+            ? upcoming.AirDate
+            : upcoming.LocalAirDate;
+        var parts = new List<string>();
+        if (DateTime.TryParse(dateValue, out var date))
+            parts.Add(date.ToString("ddd, MMM d"));
+
+        if (DateTimeOffset.TryParse(upcoming.AirAt, out var airAt))
+        {
+            parts.Add(airAt.ToLocalTime().ToString("t"));
+        }
+        else if (TimeSpan.TryParse(upcoming.AirTime, out var airTime))
+        {
+            parts.Add(DateTime.Today.Add(airTime).ToString("t"));
+        }
+
+        return string.Join("  ", parts);
+    }
+
     public static string BuildSubtitle(MediaItem item, string? sortKey)
     {
         switch (sortKey)
@@ -57,6 +128,14 @@ public static class MediaItemDisplayText
 
     private static string BuildDefault(MediaItem item)
     {
+        if (item.ItemSource == "next_in_series" && !string.IsNullOrWhiteSpace(item.SeriesTitle))
+        {
+            var bookBadge = item.Badges?.FirstOrDefault(badge =>
+                badge.StartsWith("Book ", StringComparison.Ordinal));
+            return string.Join(" \u00b7 ", new[] { bookBadge, item.SeriesTitle }
+                .Where(value => !string.IsNullOrWhiteSpace(value)));
+        }
+
         var parts = new List<string>();
         if (item.Year > 0)
             parts.Add(item.Year.ToString());

@@ -124,6 +124,7 @@
                         Foreground="{StaticResource PrimaryTextBrush}"
                         VerticalAlignment="Center" />
                     <TextBlock
+                        x:Name="EndSessionText"
                         Text="End session"
                         FontSize="12"
                         FontWeight="SemiBold"

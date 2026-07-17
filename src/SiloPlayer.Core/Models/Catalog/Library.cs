@@ -7,6 +7,8 @@ public class Library
     public int Id { get; set; }
     public string Name { get; set; } = "";
     public string Type { get; set; } = "";
+    [JsonPropertyName("sort_order")]
+    public int SortOrder { get; set; }
     [JsonPropertyName("poster_url")]
     public string? PosterUrl { get; set; }
     public bool Enabled { get; set; } = true;
@@ -41,6 +43,8 @@ public class LibraryMountCheckRoot
     public string? ErrorCode { get; set; }
     [JsonPropertyName("error_message")]
     public string? ErrorMessage { get; set; }
+    [JsonPropertyName("suspect_empty")]
+    public bool SuspectEmpty { get; set; }
 }
 
 public class LibraryMountCheckResponse

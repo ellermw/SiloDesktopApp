@@ -55,6 +55,24 @@ public sealed class VersionRankingCurrentParityTests
         Assert.Equal(8, selected?.FileId);
     }
 
+    [Fact]
+    public void SelectedFileSummaryUsesItsHighestRankedAudioTrack()
+    {
+        var selected = new FileVersion
+        {
+            CodecAudio = "aac",
+            AudioTracks =
+            [
+                new AudioTrackInfo { Codec = "aac" },
+                new AudioTrackInfo { Codec = "truehd" },
+            ],
+        };
+
+        var attributes = VersionRanking.PickBestAttributes([selected], qualityPreference: null);
+
+        Assert.Equal("TrueHD", attributes?.AudioLabel);
+    }
+
     private static PlaybackVariant Variant(string editionKey, int defaultFileId, params FileVersion[] versions) => new()
     {
         VariantId = editionKey,

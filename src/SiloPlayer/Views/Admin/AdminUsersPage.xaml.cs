@@ -30,6 +30,19 @@ public sealed partial class AdminUsersPage : Page
         ViewModel = App.Services.GetRequiredService<AdminUsersViewModel>();
         InviteCodesViewModel = App.Services.GetRequiredService<AdminInviteCodesViewModel>();
         this.InitializeComponent();
+        SizeChanged += AdminUsersPage_SizeChanged;
+    }
+
+    private void AdminUsersPage_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var compact = e.NewSize.Width < 760;
+        var gutter = e.NewSize.Width < 600 ? 16 : compact ? 24 : 40;
+        UsersPageShell.Padding = new Thickness(gutter, compact ? 24 : 32, gutter, 40);
+        UsersHeaderGrid.ColumnDefinitions[1].Width = compact ? new GridLength(0) : GridLength.Auto;
+        Grid.SetRow(UsersHeaderActions, compact ? 1 : 0);
+        Grid.SetColumn(UsersHeaderActions, compact ? 0 : 1);
+        Grid.SetColumnSpan(UsersHeaderActions, compact ? 2 : 1);
+        UsersHeaderActions.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)

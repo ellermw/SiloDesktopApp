@@ -35,6 +35,7 @@ public sealed partial class AdminSubtitlesPage : Page
         InitializeComponent();
 
         Loaded += AdminSubtitlesPage_Loaded;
+        SizeChanged += (_, _) => ApplyResponsiveLayout();
         Unloaded += (_, _) => _searchTimer.Stop();
         _searchTimer.Tick += async (_, _) =>
         {
@@ -46,11 +47,91 @@ public sealed partial class AdminSubtitlesPage : Page
 
     private async void AdminSubtitlesPage_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout();
         if (_ready) return;
         PopulateLanguageFilter();
         await LoadUsersAsync();
         _ready = true;
         await LoadSubtitlesAsync();
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        var width = ActualWidth;
+        var side = width < 640 ? 16 : width < 1024 ? 24 : 40;
+        SubtitlesPageShell.Padding = new Thickness(side, width < 640 ? 16 : 24, side, 40);
+
+        var stats = new FrameworkElement[] { TotalStoredStat, UploadsStat, ProviderDownloadsStat, LanguagesStat };
+        var statColumns = width >= 1280 ? 4 : width >= 640 ? 2 : 1;
+        SubtitleStatsGrid.ColumnDefinitions.Clear();
+        SubtitleStatsGrid.RowDefinitions.Clear();
+        for (var column = 0; column < statColumns; column++)
+            SubtitleStatsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        for (var row = 0; row < (int)Math.Ceiling(stats.Length / (double)statColumns); row++)
+            SubtitleStatsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        for (var index = 0; index < stats.Length; index++)
+        {
+            Grid.SetColumn(stats[index], index % statColumns);
+            Grid.SetRow(stats[index], index / statColumns);
+        }
+
+        SubtitleFiltersGrid.ColumnDefinitions.Clear();
+        SubtitleFiltersGrid.RowDefinitions.Clear();
+        if (width >= 1280)
+        {
+            foreach (var length in new[] { new GridLength(1, GridUnitType.Star), GridLength.Auto, new GridLength(180), new GridLength(200), GridLength.Auto })
+                SubtitleFiltersGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = length });
+            SubtitleFiltersGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            PlaceFilter(SearchBox, 0, 0); PlaceFilter(ProviderFiltersPanel, 1, 0);
+            PlaceFilter(LanguageFilterComboBox, 2, 0); PlaceFilter(UserFilterComboBox, 3, 0); PlaceFilter(ResetFiltersButton, 4, 0);
+        }
+        else if (width >= 760)
+        {
+            SubtitleFiltersGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
+            SubtitleFiltersGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(200) });
+            SubtitleFiltersGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            for (var row = 0; row < 3; row++) SubtitleFiltersGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            PlaceFilter(SearchBox, 0, 0, 3); PlaceFilter(ProviderFiltersPanel, 0, 1, 3);
+            PlaceFilter(LanguageFilterComboBox, 0, 2); PlaceFilter(UserFilterComboBox, 1, 2); PlaceFilter(ResetFiltersButton, 2, 2);
+        }
+        else
+        {
+            SubtitleFiltersGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            for (var row = 0; row < 5; row++) SubtitleFiltersGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            PlaceFilter(SearchBox, 0, 0); PlaceFilter(ProviderFiltersPanel, 0, 1);
+            PlaceFilter(LanguageFilterComboBox, 0, 2); PlaceFilter(UserFilterComboBox, 0, 3); PlaceFilter(ResetFiltersButton, 0, 4);
+            LanguageFilterComboBox.HorizontalAlignment = HorizontalAlignment.Stretch;
+            UserFilterComboBox.HorizontalAlignment = HorizontalAlignment.Stretch;
+        }
+
+        SubtitlePaginationGrid.ColumnDefinitions.Clear();
+        SubtitlePaginationGrid.RowDefinitions.Clear();
+        if (width >= 760)
+        {
+            SubtitlePaginationGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            for (var i = 0; i < 4; i++) SubtitlePaginationGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            SubtitlePaginationGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            PlacePagination(PageSummaryText, 0, 0); PlacePagination(PageSizeComboBox, 1, 0);
+            PlacePagination(PrevPageButton, 2, 0); PlacePagination(PageText, 3, 0); PlacePagination(NextPageButton, 4, 0);
+        }
+        else
+        {
+            for (var i = 0; i < 4; i++) SubtitlePaginationGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            SubtitlePaginationGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            SubtitlePaginationGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            PlacePagination(PageSummaryText, 0, 0, 4); PlacePagination(PageSizeComboBox, 0, 1);
+            PlacePagination(PrevPageButton, 1, 1); PlacePagination(PageText, 2, 1); PlacePagination(NextPageButton, 3, 1);
+        }
+    }
+
+    private static void PlaceFilter(FrameworkElement element, int column, int row, int columnSpan = 1)
+    {
+        Grid.SetColumn(element, column); Grid.SetRow(element, row); Grid.SetColumnSpan(element, columnSpan);
+    }
+
+    private static void PlacePagination(FrameworkElement element, int column, int row, int columnSpan = 1)
+    {
+        Grid.SetColumn(element, column); Grid.SetRow(element, row); Grid.SetColumnSpan(element, columnSpan);
     }
 
     private async Task LoadUsersAsync()

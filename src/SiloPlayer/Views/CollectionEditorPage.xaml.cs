@@ -33,6 +33,13 @@ public sealed partial class CollectionEditorPage : Page
 
         ViewModel.PreviewItems.CollectionChanged += (_, _) =>
             DispatcherQueue.TryEnqueue(BuildPreviewItemsUI);
+        SizeChanged += CollectionEditorPage_SizeChanged;
+    }
+
+    private void CollectionEditorPage_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var horizontalMargin = e.NewSize.Width < 600 ? 16 : e.NewSize.Width < 900 ? 24 : 48;
+        CollectionEditorShell.Margin = new Thickness(horizontalMargin, 24, horizontalMargin, 48);
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)

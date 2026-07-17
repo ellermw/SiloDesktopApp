@@ -76,6 +76,10 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("ToolTipService.ToolTip=\"More actions\"", xaml);
         Assert.Contains("x:Name=\"OverlayTopLeft\"", xaml);
         Assert.Contains("x:Name=\"TimeLeftText\"", xaml);
+        Assert.Contains("Tapped=\"OnPlayTapped\"", xaml);
+        Assert.Contains("Navigate<ItemDetailPage>(MediaItem.ContentId)", code);
+        Assert.Contains("Navigate<EbookReaderPage>", code);
+        Assert.Contains("ToggleAudiobookPlayback", code);
         Assert.Contains("item.BackdropUrl", code);
         Assert.Contains("PosterCard.BuildBadge", code);
         Assert.Contains("item.ProgressUpdatedAt", menu);

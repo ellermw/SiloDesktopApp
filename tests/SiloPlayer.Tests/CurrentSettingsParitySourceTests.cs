@@ -14,6 +14,10 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("x:Name=\"AppearanceNavGroup\"", xaml);
         Assert.Matches("AppearanceNavGroup[\\s\\S]+CardOverlaysTab[\\s\\S]+PersonalizeTab[\\s\\S]+LibraryDataNavGroup", xaml);
         Assert.Contains("SettingsSearchBox_TextChanged", code);
+        Assert.Contains("SettingsPage_SizeChanged", code);
+        Assert.Contains("e.NewSize.Width < 1024", code);
+        Assert.Contains("SettingsNavigationGroups.Orientation", code);
+        Assert.Contains("SettingsContentPanel.MaxWidth", code);
     }
 
     [Fact]
@@ -162,7 +166,10 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("GetSettingAsync(\"ui_theme\"", service);
         Assert.Contains("GetServerBrandingAsync", service);
         Assert.Contains("GetSettingAsync(\"ui_custom_theme_vars\"", service);
-        Assert.Contains("await _themeService.SyncFromServerAsync(timeout.Token);", window);
+        Assert.Contains("await _themeService.SyncFromServerAsync(cancellationToken);", window);
+        Assert.True(
+            window.IndexOf("await _themeService.SyncFromServerAsync(cancellationToken);", StringComparison.Ordinal) <
+            window.IndexOf("ShowMainNavigation();", StringComparison.Ordinal));
         Assert.Contains("await _themeService.SyncFromServerAsync();", profiles);
     }
 

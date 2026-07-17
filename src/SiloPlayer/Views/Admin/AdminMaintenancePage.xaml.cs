@@ -37,10 +37,12 @@ public sealed partial class AdminMaintenancePage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminMaintenanceViewModel>();
         this.InitializeComponent();
+        SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout();
         ViewModel.ImportJobs.CollectionChanged += (_, _) => ScheduleRebuildImports();
         ViewModel.ExportJobs.CollectionChanged += (_, _) => ScheduleRebuildExports();
         ViewModel.AllJobs.CollectionChanged += (_, _) => ScheduleRebuildAll();
@@ -55,6 +57,17 @@ public sealed partial class AdminMaintenancePage : Page
             _eventSubscription = _eventChannel.Subscribe("jobs");
         }
         catch { }
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        var compact = ActualWidth < 720;
+        var side = ActualWidth < 640 ? 16 : ActualWidth < 1024 ? 24 : 40;
+        MaintenancePageShell.Padding = new Thickness(side, ActualWidth < 640 ? 16 : 24, side, 24);
+        Grid.SetColumn(CatalogMaintenanceActions, compact ? 0 : 1);
+        Grid.SetRow(CatalogMaintenanceActions, compact ? 1 : 0);
+        CatalogMaintenanceActions.Orientation = ActualWidth < 480 ? Orientation.Vertical : Orientation.Horizontal;
+        CatalogMaintenanceActions.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)

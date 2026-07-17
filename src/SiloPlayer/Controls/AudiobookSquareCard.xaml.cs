@@ -65,8 +65,23 @@ public sealed partial class AudiobookSquareCard : UserControl
         App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(MediaItem.ContentId);
     }
 
-    private void Card_PointerEntered(object sender, PointerRoutedEventArgs e) => MoreButton.Opacity = 1;
-    private void Card_PointerExited(object sender, PointerRoutedEventArgs e) => MoreButton.Opacity = 0;
+    private void Card_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        CardHoverTransform.TranslateY = -4;
+        CoverHoverTransform.ScaleX = 1.06;
+        CoverHoverTransform.ScaleY = 1.06;
+        HoverBrighten.Opacity = 1;
+        MoreButton.Opacity = 1;
+    }
+
+    private void Card_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        CardHoverTransform.TranslateY = 0;
+        CoverHoverTransform.ScaleX = 1;
+        CoverHoverTransform.ScaleY = 1;
+        HoverBrighten.Opacity = 0;
+        MoreButton.Opacity = 0;
+    }
 
     private void MoreButton_Click(object sender, RoutedEventArgs e)
     {

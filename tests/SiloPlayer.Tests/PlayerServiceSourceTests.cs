@@ -141,6 +141,27 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
+    public void StreamRecoveryPreservesUserPauseButNotNetworkBufferingPause()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        var methodStart = source.IndexOf("private async Task RecoverInterruptedStreamCoreAsync", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private double _resumePosition", methodStart, StringComparison.Ordinal);
+        Assert.True(methodStart >= 0);
+        Assert.True(methodEnd > methodStart);
+
+        var method = source[methodStart..methodEnd];
+        Assert.Contains("var restorePaused = _mpv.IsPaused && !_mpv.IsBufferingForCache;", method);
+        Assert.Contains("BeginMpvLoad(prepared, restorePaused);", method);
+        Assert.Contains("IsPaused = restorePaused;", method);
+    }
+
+    [Fact]
     public void MpvLoadFailureRetriesBeforeCleanlyClosingTheSession()
     {
         var source = File.ReadAllText(Path.Combine(
@@ -350,6 +371,69 @@ public sealed class PlayerServiceSourceTests
         Assert.DoesNotContain(
             "await _playbackManager.StopSessionAsync();",
             method[..startupHandoffEnd]);
+    }
+
+    [Fact]
+    public void NativeMarkerEditorPersistsEveryCurrentWebUiMarkerKind()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        Assert.Contains("case \"silo-marker-save\"", source);
+        Assert.Contains("SaveMarkerEditsFromOscAsync", source);
+        Assert.Contains("[\"intro\"]", source);
+        Assert.Contains("[\"recap\"]", source);
+        Assert.Contains("[\"credits\"]", source);
+        Assert.Contains("[\"preview\"]", source);
+        Assert.Contains("SetFileMarkersAsync(session.MediaFileId, changes)", source);
+        Assert.Contains("ApplyMarkerEdits(intro, recap, credits, preview)", source);
+    }
+
+    [Fact]
+    public void PlayerHudUsesCurrentDynamicRangeVocabulary()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        Assert.Contains("FormatVideoRangeForHud(version, videoTrack)", source);
+        Assert.Contains("MediaVideoRange.Label(requested)", source);
+        Assert.Contains("Dolby Vision {track.DolbyVision}", source);
+        Assert.DoesNotContain("requested.Hdr ? \"HDR\"", source);
+    }
+
+    [Fact]
+    public void ProgressivePlaybackUsesBitrateAwareMpvBuffering()
+    {
+        var root = FindRepositoryRoot();
+        var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var mpv = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Player", "MpvPlayer.cs"));
+
+        Assert.Contains("prepared.Plan.IsHls", service);
+        Assert.Contains("MpvNetworkBufferSizing.ForBitrateKbps(ActiveVersion?.Bitrate ?? 0)", service);
+        Assert.Contains("mpv.ConfigureNetworkBuffer", service);
+        Assert.Contains("SetProperty(\"demuxer-max-bytes\"", mpv);
+        Assert.Contains("SetProperty(\"stream-buffer-size\"", mpv);
+    }
+
+    [Fact]
+    public void NativePlayerIsPrewarmedAfterAuthenticatedNavigationAtLowPriority()
+    {
+        var root = FindRepositoryRoot();
+        var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var window = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml.cs"));
+
+        Assert.Contains("public void Prewarm()", service);
+        Assert.Contains("ResetFailedMpvInitialization", service);
+        Assert.Contains("DispatcherQueuePriority.Low", window);
+        Assert.Contains("() => _playerService.Prewarm()", window);
     }
 
     private static string FindRepositoryRoot()

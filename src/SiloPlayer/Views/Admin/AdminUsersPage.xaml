@@ -22,14 +22,15 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
-            <StackPanel Padding="40,32,40,40" Spacing="24" MaxWidth="1640" HorizontalAlignment="Center">
+            <StackPanel x:Name="UsersPageShell" Padding="40,32,40,40" Spacing="24" MaxWidth="1640" HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
-                <Grid>
+                <Grid x:Name="UsersHeaderGrid" RowSpacing="14">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
 
                     <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
                         <TextBlock
@@ -43,7 +44,7 @@
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
 
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <StackPanel x:Name="UsersHeaderActions" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <Button
                             x:Name="AccessGroupsButton"
                             Style="{StaticResource SecondaryButtonStyle}"
@@ -156,8 +157,10 @@
                     </Grid>
 
                     <!-- Users Table — borderless surface-panel style -->
+                    <ScrollViewer x:Name="UsersTableScroll" HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled"
+                                  VerticalScrollBarVisibility="Disabled">
                     <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="0"
-                            BorderThickness="0">
+                            BorderThickness="0" MinWidth="1080">
                         <StackPanel>
                             <!-- Table header -->
                             <Grid Padding="20,14,20,14" ColumnSpacing="12">
@@ -244,6 +247,7 @@
                             </Border>
                         </StackPanel>
                     </Border>
+                    </ScrollViewer>
                 </StackPanel>
 
                 <!-- ===== Invite Codes Tab Content ===== -->
@@ -300,8 +304,10 @@
                         Width="36" Height="36" />
 
                     <!-- Invite codes table -->
+                    <ScrollViewer x:Name="InviteCodesTableScroll" HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled"
+                                  VerticalScrollBarVisibility="Disabled">
                     <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="0"
-                            BorderThickness="0">
+                            BorderThickness="0" MinWidth="960">
                         <StackPanel>
                             <!-- Table header -->
                             <Grid Padding="20,14,20,14" ColumnSpacing="12">
@@ -343,6 +349,7 @@
                             </Border>
                         </StackPanel>
                     </Border>
+                    </ScrollViewer>
                 </StackPanel>
 
             </StackPanel>

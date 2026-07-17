@@ -20,3 +20,25 @@ public class AdminSectionsListResponse
 {
     public List<AdminSection> Sections { get; set; } = [];
 }
+
+public sealed class AdminSectionPreviewRequest
+{
+    public string SectionType { get; set; } = "";
+    public Dictionary<string, object?> Config { get; set; } = [];
+    public int? ItemLimit { get; set; }
+    public int? LibraryId { get; set; }
+    public List<int>? LibraryIds { get; set; }
+}
+
+public sealed class AdminSectionPreviewResponse
+{
+    public List<AdminSectionPreviewItem> Items { get; set; } = [];
+    public int TotalCount { get; set; }
+}
+
+public sealed class AdminSectionPreviewItem
+{
+    public string ContentId { get; set; } = "";
+    public string? Title { get; set; }
+    public string? PosterPath { get; set; }
+}

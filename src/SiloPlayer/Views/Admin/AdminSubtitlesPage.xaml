@@ -9,7 +9,7 @@
     Background="{StaticResource AppBackgroundBrush}">
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Padding="40,32,40,40" Spacing="24" MaxWidth="1640" HorizontalAlignment="Center">
+        <StackPanel x:Name="SubtitlesPageShell" Padding="40,32,40,40" Spacing="24" MaxWidth="1640" HorizontalAlignment="Center">
             <StackPanel Spacing="8">
                 <TextBlock
                     Text="Subtitles"
@@ -24,7 +24,7 @@
             </StackPanel>
 
             <Border Style="{StaticResource CardStyle}" Padding="16">
-            <Grid ColumnSpacing="24">
+            <Grid x:Name="SubtitleStatsGrid" ColumnSpacing="24" RowSpacing="16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
@@ -32,19 +32,19 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" Spacing="4">
+                    <StackPanel x:Name="TotalStoredStat" Grid.Column="0" Spacing="4">
                         <TextBlock Text="TOTAL STORED" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                         <TextBlock x:Name="TotalStoredText" Text="0" FontSize="28" FontWeight="SemiBold" />
                     </StackPanel>
-                    <StackPanel Grid.Column="1" Spacing="4">
+                    <StackPanel x:Name="UploadsStat" Grid.Column="1" Spacing="4">
                         <TextBlock Text="USER UPLOADS" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                         <TextBlock x:Name="UploadsText" Text="0" FontSize="28" FontWeight="SemiBold" />
                     </StackPanel>
-                    <StackPanel Grid.Column="2" Spacing="4">
+                    <StackPanel x:Name="ProviderDownloadsStat" Grid.Column="2" Spacing="4">
                         <TextBlock Text="PROVIDER DOWNLOADS" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                         <TextBlock x:Name="ProviderDownloadsText" Text="0" FontSize="28" FontWeight="SemiBold" />
                     </StackPanel>
-                    <StackPanel Grid.Column="3" Spacing="4">
+                    <StackPanel x:Name="LanguagesStat" Grid.Column="3" Spacing="4">
                         <TextBlock Text="LANGUAGES ON PAGE" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                         <TextBlock x:Name="LanguagesText" Text="0" FontSize="28" FontWeight="SemiBold" />
                     </StackPanel>
@@ -52,7 +52,7 @@
             </Border>
 
             <Border Style="{StaticResource CardStyle}" Padding="16">
-                <Grid ColumnSpacing="10">
+                <Grid x:Name="SubtitleFiltersGrid" ColumnSpacing="10" RowSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
@@ -68,7 +68,7 @@
                         FontFamily="Consolas"
                         TextChanged="SearchBox_TextChanged" />
 
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <StackPanel x:Name="ProviderFiltersPanel" Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                         <Button x:Name="ProviderAllButton" Content="All" Tag="" Click="ProviderFilter_Click" />
                         <Button x:Name="ProviderUploadButton" Content="Upload" Tag="upload" Click="ProviderFilter_Click" />
                         <Button x:Name="ProviderOpenSubtitlesButton" Content="OpenSubtitles" Tag="opensubtitles" Click="ProviderFilter_Click" />
@@ -81,6 +81,7 @@
                     <ComboBox x:Name="UserFilterComboBox" Grid.Column="3" SelectionChanged="Filter_Changed" />
 
                     <Button
+                        x:Name="ResetFiltersButton"
                         Grid.Column="4"
                         Content="Reset filters"
                         VerticalAlignment="Center"
@@ -88,7 +89,11 @@
                 </Grid>
             </Border>
 
-            <Border Style="{StaticResource CardStyle}" Padding="0">
+            <ScrollViewer x:Name="SubtitlesTableScroll"
+                          HorizontalScrollBarVisibility="Auto"
+                          HorizontalScrollMode="Enabled"
+                          VerticalScrollBarVisibility="Disabled">
+            <Border Style="{StaticResource CardStyle}" Padding="0" MinWidth="1320">
                 <Grid RowSpacing="0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -123,10 +128,11 @@
                         IsItemClickEnabled="False" />
                 </Grid>
             </Border>
+            </ScrollViewer>
 
             <TextBlock x:Name="StatusText" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
 
-            <Grid ColumnSpacing="12">
+            <Grid x:Name="SubtitlePaginationGrid" ColumnSpacing="12" RowSpacing="10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />

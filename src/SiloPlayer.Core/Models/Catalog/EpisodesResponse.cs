@@ -18,6 +18,7 @@ public class Episode
     public string? StillThumbhash { get; set; }
     public EpisodeUserData? UserData { get; set; }
     public List<EpisodeFile> Files { get; set; } = [];
+    public SiloPlayer.Core.Models.Home.OverlaySummary? OverlaySummary { get; set; }
 }
 
 public class EpisodeUserData
