@@ -1007,7 +1007,7 @@ public sealed partial class AdminRequestsPage : Page
     private static void SelectTag(ComboBox box, string value) => box.SelectedItem = box.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, value));
     private static string FormatMediaType(string value) => value.Equals("series", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie";
     private static string FormatLabel(string value) => string.IsNullOrWhiteSpace(value) ? "Unknown" : char.ToUpperInvariant(value[0]) + value[1..].Replace('_', ' ');
-    private static string FormatDate(string value) => DateTime.TryParse(value, out var date) ? date.ToLocalTime().ToString("MMM d, yyyy") : value;
+    private static string FormatDate(string value) => DateTimeOffset.TryParse(value, out var date) ? SiloPlayer.Helpers.DateTimeDisplay.FormatDate(date, medium: true) : value;
     private static Brush Brush(string key) => (Brush)Application.Current.Resources[key];
     private void ClearError() { ErrorText.Text = ""; ErrorText.Visibility = Visibility.Collapsed; }
     private void ShowError(string? error) { ErrorText.Text = error ?? ""; ErrorText.Visibility = string.IsNullOrWhiteSpace(error) ? Visibility.Collapsed : Visibility.Visible; }

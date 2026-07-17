@@ -647,7 +647,7 @@ public sealed partial class AdminSubtitlesPage : Page
         if (elapsed.TotalHours < 1) return $"{(int)elapsed.TotalMinutes}m ago";
         if (elapsed.TotalDays < 1) return $"{(int)elapsed.TotalHours}h ago";
         if (elapsed.TotalDays < 30) return $"{(int)elapsed.TotalDays}d ago";
-        return date.ToLocalTime().ToString("M/d/yyyy");
+        return SiloPlayer.Helpers.DateTimeDisplay.FormatDate(date);
     }
 
     private static string Basename(string path)

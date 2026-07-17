@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.47**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.47/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.48**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.48/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `431C89D9E21F5FF4F9420F593BBA0FC8E10F324DA8679FCEFD9324EF53EC9BC8`
+SHA-256: `7549D62D3418FE346236D9F9E42765F21B786F1DE22862AAB7731A4130791F6E`
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -23,14 +23,14 @@ Status meanings:
 
 | Area | Status | Current state |
 |---|---|---|
-| Authentication and profiles | Substantial | Login, refresh tokens, profile selection, PINs, profile management, signup, setup, public server branding, and the current QR/device-login flow are implemented. The complete impersonation lifecycle and final installed visual comparison remain. |
+| Authentication and profiles | Substantial | Login, refresh tokens, profile selection, PINs, profile management, signup, setup, public server branding, QR/device login, and the complete administrator impersonation lifecycle with restart/stale-session recovery are implemented. Final installed visual comparison remains. |
 | Catalog and library browsing | Substantial | Virtualized browsing, filters, sorting, search, collections, favorites, watchlist, history, calendar, recommendations, and requests are implemented. Exact layout details and literary-media browsing still need work. |
 | Home screen | Substantial | Server-defined sections, hero content, continue watching, next up, recommendations, customization, incremental refresh, current card variants, and audiobook rows are implemented. Installed-build visual comparison and remaining responsive edge cases are still required. |
-| Item and person details | Substantial | Movie, series, season, episode, cast/crew, versions, watched/favorite/watchlist/rating, trailers, extras, edition selection, split/marker workflows, and current More actions are implemented. Installed-build comparison and remaining edge cases are still required. |
-| Audiobooks, ebooks, and manga | Partial | Current server contracts, grouped audiobook browsing, literary detail surfaces, ebook reading foundation, and manga actions are present. The full audiobook player, manga reader/presentation, and final literary-media visual pass remain incomplete. |
+| Item and person details | Substantial | Movie, series, season, episode, cast/crew, versions, watched/favorite/watchlist/rating, trailers, extras, edition selection, current multi-version Media Info spec sheets, automatic split previews, marker workflows, and current More actions are implemented. Installed-build comparison and remaining edge cases are still required. |
+| Audiobooks, ebooks, and manga | Substantial | Current server contracts, grouped browsing, literary detail surfaces, manga volume/chapter reading through the shared reader, next-chapter navigation, read progress, and the WebUI-style audiobook mini/expanded player are present. The reader recognizes the current EPUB/PDF/MOBI/AZW/AZW3/CBZ/CBR/FB2/FBZ contract; remaining format-specific compatibility and final installed visual validation are still required. |
 | User collections | Substantial | Browse, create, edit, manual/smart rules, imports, and collection management exist. Current templates, guided rules, collage/scheduling details, and visual polish remain. |
 | Notifications | Substantial | Notification center and user notification settings are implemented, including current delivery configuration foundations. Additional current-server edge cases remain to be audited. |
-| Settings | Substantial | Playback, subtitles, appearance, theme editor, accessibility, home, card overlays, libraries, history import, webhook sync, watch providers, profiles, and notification controls are present. The server continues to add fields, so these routes remain subject to drift audits. |
+| Settings | Substantial | Playback, subtitles, appearance, theme editor, accessibility, date/time formats, home, card overlays, libraries, history import, webhook sync, watch providers, profiles, and notification controls are present. Date/time choices now flow through the current admin and operational surfaces. The server continues to add fields, so these routes remain subject to drift audits. |
 | Admin: Libraries | Functional; visual parity incomplete | The current table, real drag reorder, separate live scan/metadata work rows, warning rows, scan queue, diagnostics, and seven-type editor are implemented. Primary rows now render before slower diagnostics. A final installed-build side-by-side pass and remaining fine visual tuning are still required. |
 | Admin: Dashboard | Functional; visual parity incomplete | Incremental sections, live sessions, current stats, corrected Trakt 24h metrics, WebUI scan snapshot/progress states, users, activity links, and scan controls are implemented. A final installed-build side-by-side pass and remaining fine visual tuning are still required. |
 | Admin: Activity | Functional; visual parity incomplete | Realtime stream state, search/filter/sort, client/profile/IP presentation, IP history lookup, playback position/state, grouped container/video/audio decisions, hardware transcode mode, session controls, log links, inline FFmpeg output, and the current Playback/Node/Time/Actions table structure are implemented. Installed-build comparison and fine visual tuning remain. |
@@ -40,7 +40,7 @@ Status meanings:
 | Admin: Requests | Functional; visual parity incomplete | The current Queue, Settings, Integrations, and User Overrides tabs are implemented. Queue rows include requester/library context, per-target quality/router status and errors, detail links, decline reasons, and action states. Global settings, plugin-backed router selection/configuration, and user limits call the current APIs; plugin-schema-specific form rendering and final visual tuning remain. |
 | Admin: Automation | Functional; visual parity incomplete | Autoscan, Scheduled Tasks, Subtitles, Marker History, and Recommendations were re-audited against the current WebUI. Current source/activity structure, task metadata/actions, ten-column subtitle management, marker audit table, recommendation job controls, embedding presets, and connection checks are implemented. Fine responsive and installed-build visual verification remain. |
 | Admin: Users and History | Functional; visual parity incomplete | Users now has the current Access Groups action, sortable seven-column table, invite-code workflow, and user actions. Playback History includes current filters, stats, polling/manual refresh, table and log links. History Import uses real API-key status, current source controls, discovery/mappings, runs, and current empty states. Fine visual tuning remains. |
-| Admin: System | Functional; visual parity incomplete | Settings, Plugins, Nodes, API Keys, and Maintenance were re-audited against the current WebUI. Current grouped settings navigation, plugin configuration/update policy, node capacity/load columns, API-key tier/create/copy/revoke flows, and catalog import/export job surfaces are implemented. Branding asset uploads, Search connection/status diagnostics, external plugin links, and installed-build visual verification remain. |
+| Admin: System | Functional; visual parity incomplete | Settings, Plugins, Nodes, API Keys, and Maintenance were re-audited against the current WebUI. Current grouped settings navigation, branding asset upload/preview/delete, Search diagnostics, safe Source/Changelog/Support links, authenticated plugin pages, plugin configuration/update policy, node capacity/load columns, API-key flows, and catalog import/export jobs are implemented. Installed-build visual verification remains. |
 | Admin: Access Groups and Devices | Functional; visual parity incomplete | Access Groups now follows the current responsive cards and in-place editor sections. Devices now uses the current 1920px fleet console with pulse totals, grouping pivots, saved views, platform/override/recency facets, grouped device rows, and an in-place per-profile override editor. Installed-build side-by-side tuning and remaining keyboard/link refinements are still required. |
 | Remaining admin work | Partial | Provider/policy edge cases and final installed-build visual verification remain across the admin suite. Dashboard, Libraries, Activity, Collections, Sections, Requests, and other pages retain explicit visual-parity-incomplete status until those checks pass. |
 | Player on-screen controls | Substantial | Current cinema controls, marker/chapter seek regions, real chapter thumbnails, rich audio/subtitle/quality menus, live AI subtitle translation, playback-info sections, credits countdown, post-roll/finished screens, On Deck, PiP, keyboard shortcuts, and fullscreen synchronization are implemented. The marker editor, remaining overlay geometry, keyboard focus semantics, and installed playback comparison still need final parity work. |
@@ -48,6 +48,16 @@ Status meanings:
 | Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
 
 ## Recent release work
+
+### 1.1.48
+
+- Matched the current WebUI audiobook behavior with remembered per-book playback rates, 0.5–3× controls, keyboard rate shortcuts, WebUI skip intervals, sleep-timer extension, and live countdowns.
+- Corrected ebook/reader format resolution for server containers, ZIP/RAR packages, and `.fb2.zip`/FBZ files while retaining the current EPUB/PDF/MOBI/AZW/AZW3/CBZ/CBR/FB2/FBZ contract.
+- Rebuilt Media Info from a text dump into current-style multi-version General, Video, Audio, and Subtitle spec sheets, including audio stream profiles such as Dolby TrueHD + Dolby Atmos.
+- Changed Split Versions to automatically debounce dry-run previews, reject stale preview responses, show reattribution impact inline, and use one final action instead of a manual review/confirmation chain.
+- Applied the user's date and 12/24-hour preferences across admin libraries, activity, logs, autoscan, tasks, users, nodes, requests, policy history, subtitles, maintenance, and Playing Next.
+- Fixed an Admin Libraries provider-chain empty-state edge and re-audited the release against public Silo Server commit `b96e359b4ebe3e6aea68ce327d180578bf0b04d0`.
+- Expanded regression coverage to 553 passing tests with a zero-warning x64 build.
 
 ### 1.1.47
 

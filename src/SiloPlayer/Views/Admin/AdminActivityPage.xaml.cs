@@ -1130,7 +1130,9 @@ public sealed partial class AdminActivityPage : Page
 
                             var timeCol = new TextBlock
                             {
-                                Text = entry.Timestamp != null ? DateTime.Parse(entry.Timestamp).ToLocalTime().ToString("HH:mm:ss") : "",
+                                Text = entry.Timestamp != null && DateTimeOffset.TryParse(entry.Timestamp, out var timestamp)
+                                    ? DateTimeDisplay.FormatTime(timestamp, seconds: true)
+                                    : "",
                                 FontSize = 10, FontFamily = new FontFamily("Consolas"),
                                 Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
                             };

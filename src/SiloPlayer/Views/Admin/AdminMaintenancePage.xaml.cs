@@ -605,8 +605,8 @@ public sealed partial class AdminMaintenancePage : Page
     private static string FormatLocalTime(string iso)
     {
         if (string.IsNullOrEmpty(iso)) return "";
-        if (DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
-            return dt.ToLocalTime().ToString("g");
+        if (DateTimeOffset.TryParse(iso, out var dt))
+            return SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(dt);
         return iso;
     }
 

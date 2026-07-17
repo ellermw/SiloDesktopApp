@@ -1,5 +1,6 @@
 using System.Text.Json;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Playback;
 
 namespace SiloPlayer.Tests;
 
@@ -72,6 +73,19 @@ public sealed class EbookReaderCurrentParityTests
         Assert.Contains("PopulateVoicesAsync", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("UpdateRulerOverlay", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("DisplayRequest", CodeBehind, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("ignored.epub", "AZW3", "azw3")]
+    [InlineData("book.fb2.zip", "zip", "fbz")]
+    [InlineData("comic.cbz", "zip", "cbz")]
+    [InlineData("comic.cbr", "rar", "cbr")]
+    [InlineData("/library/book.pdf", "", "pdf")]
+    public void ReaderFileFormatMatchesCurrentWebUiDetection(string fileName, string container, string expected)
+    {
+        var version = new FileVersion { FileName = fileName, Container = container };
+        Assert.Equal(expected, SiloPlayer.Core.Services.EbookReaderFormat.Detect(version));
+        Assert.True(SiloPlayer.Core.Services.EbookReaderFormat.IsSupported(version));
     }
 
     private static string Read(params string[] parts)

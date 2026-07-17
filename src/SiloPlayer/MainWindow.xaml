@@ -10,7 +10,8 @@
     mc:Ignorable="d"
     Title="Silo">
 
-    <Grid Background="{StaticResource AppBackgroundBrush}">
+    <Grid Background="{StaticResource AppBackgroundBrush}"
+          CharacterReceived="RootGrid_CharacterReceived">
         <Grid.KeyboardAccelerators>
             <!-- Ctrl+K opens the global search palette (webui parity). -->
             <KeyboardAccelerator Modifiers="Control" Key="K" Invoked="GlobalSearchAccelerator_Invoked" />

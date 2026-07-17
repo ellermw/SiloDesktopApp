@@ -1014,8 +1014,8 @@ public sealed partial class AdminCollectionsPage : Page
 
         // ---- Updated column ----
         string updatedText = "";
-        if (DateTime.TryParse(col.UpdatedAt, out var updatedDt))
-            updatedText = updatedDt.ToLocalTime().ToString("g");
+        if (DateTimeOffset.TryParse(col.UpdatedAt, out var updatedDt))
+            updatedText = SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(updatedDt);
         else
             updatedText = col.UpdatedAt;
 

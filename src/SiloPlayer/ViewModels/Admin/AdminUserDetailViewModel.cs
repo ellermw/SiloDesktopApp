@@ -185,15 +185,15 @@ public partial class AdminUserDetailViewModel : ObservableObject
     public static string FormatDateTime(string? iso)
     {
         if (string.IsNullOrWhiteSpace(iso)) return "";
-        if (!DateTime.TryParse(iso, out var dt)) return iso;
-        return dt.ToLocalTime().ToString("g");
+        if (!DateTimeOffset.TryParse(iso, out var dt)) return iso;
+        return SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(dt);
     }
 
     public static string FormatDate(string? iso)
     {
         if (string.IsNullOrWhiteSpace(iso)) return "";
-        if (!DateTime.TryParse(iso, out var dt)) return iso;
-        return dt.ToLocalTime().ToString("MMM d, yyyy");
+        if (!DateTimeOffset.TryParse(iso, out var dt)) return iso;
+        return SiloPlayer.Helpers.DateTimeDisplay.FormatDate(dt, medium: true);
     }
 
     // B29: Delegated to SiloPlayer.Core.Helpers.TimeAgo for consistency.

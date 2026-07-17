@@ -298,7 +298,7 @@ public sealed partial class AdminPolicyPage : Page
             var active = version.Id == ViewModel.SelectedDocument?.ActiveVersionId;
             row.Children.Add(new TextBlock { Text = active ? $"v{version.VersionNumber}  LIVE" : $"v{version.VersionNumber}", FontSize = 12, FontWeight = FontWeights.SemiBold });
             var author = new TextBlock { Text = version.CreatedByUserId is int id ? $"User {id}" : "—", FontSize = 12 }; Grid.SetColumn(author, 1); row.Children.Add(author);
-            var date = new TextBlock { Text = version.CreatedAt.ToLocalTime().ToString("g"), FontSize = 12 }; Grid.SetColumn(date, 2); row.Children.Add(date);
+            var date = new TextBlock { Text = SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(version.CreatedAt), FontSize = 12 }; Grid.SetColumn(date, 2); row.Children.Add(date);
             var comment = new TextBlock { Text = string.IsNullOrWhiteSpace(version.Comment) ? "—" : version.Comment, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis }; Grid.SetColumn(comment, 3); row.Children.Add(comment);
             var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
             var view = new Button { Content = "View source", Tag = version, Style = (Style)Application.Current.Resources["OutlineButtonStyle"] };

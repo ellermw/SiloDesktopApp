@@ -200,20 +200,20 @@ public partial class AdminLogsViewModel : ObservableObject
 
     public static string FormatTimestamp(string iso)
     {
-        if (!DateTime.TryParse(iso, out var dt)) return iso;
-        return dt.ToLocalTime().ToString("HH:mm:ss.fff");
+        if (!DateTimeOffset.TryParse(iso, out var dt)) return iso;
+        return SiloPlayer.Helpers.DateTimeDisplay.FormatTime(dt, seconds: true);
     }
 
     public static string FormatDateTime(string iso)
     {
-        if (!DateTime.TryParse(iso, out var dt)) return iso;
-        return dt.ToLocalTime().ToString("g"); // short date + short time (locale)
+        if (!DateTimeOffset.TryParse(iso, out var dt)) return iso;
+        return SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(dt);
     }
 
     public static string FormatDate(string iso)
     {
-        if (!DateTime.TryParse(iso, out var dt)) return iso;
-        return dt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+        if (!DateTimeOffset.TryParse(iso, out var dt)) return iso;
+        return SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(dt, seconds: true);
     }
 
     public static string TruncatePath(string path, int max = 60)

@@ -104,7 +104,10 @@
                                 ValueChanged="VolumeSlider_ValueChanged" />
                         <Button x:Name="SleepButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
                                 ToolTipService.ToolTip="Sleep timer">
-                            <FontIcon Glyph="&#xE823;" FontSize="15" />
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <FontIcon Glyph="&#xE823;" FontSize="15" />
+                                <TextBlock x:Name="SleepTimerText" Text="Sleep" FontSize="13" />
+                            </StackPanel>
                         </Button>
                         <Button x:Name="ChaptersButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
                                 ToolTipService.ToolTip="Chapters">

@@ -30,10 +30,11 @@ public sealed partial class AudiobookNowListening : UserControl
         _active = true;
         _player.PauseChanged += OnPauseChanged;
         _player.AudiobookPresentationChanged += OnPresentationChanged;
+        _player.AudiobookPlaybackRateChanged += OnPlaybackRateChanged;
         _suppressVolume = true;
         VolumeSlider.Value = _player.Volume;
         _suppressVolume = false;
-        _rate = Math.Clamp(_player.Mpv?.GetPropertyDouble("speed") ?? 1, 0.5, 3);
+        _rate = _player.AudiobookPlaybackRate;
         SpeedButton.Content = $"{_rate:0.##}×";
         var config = _settings.Load();
         SkipBackText.Text = config.AudiobookSkipBackSeconds.ToString();
@@ -52,6 +53,7 @@ public sealed partial class AudiobookNowListening : UserControl
         _active = false;
         _player.PauseChanged -= OnPauseChanged;
         _player.AudiobookPresentationChanged -= OnPresentationChanged;
+        _player.AudiobookPlaybackRateChanged -= OnPlaybackRateChanged;
         if (_timer != null) _timer.Tick -= Timer_Tick;
         _timer?.Stop();
         _timer = null;
@@ -63,6 +65,13 @@ public sealed partial class AudiobookNowListening : UserControl
     private void Timer_Tick(object? sender, object e) => UpdatePlayback();
     private void OnPauseChanged(bool _) => DispatcherQueue.TryEnqueue(UpdatePlayback);
     private void OnPresentationChanged() => DispatcherQueue.TryEnqueue(UpdatePresentation);
+    private void OnPlaybackRateChanged(double rate) => DispatcherQueue.TryEnqueue(() =>
+    {
+        _rate = rate;
+        SpeedButton.Content = $"{rate:0.##}×";
+        BuildFlyouts();
+        UpdatePlayback();
+    });
 
     private void UpdatePresentation()
     {
@@ -101,6 +110,7 @@ public sealed partial class AudiobookNowListening : UserControl
             ChapterTitleText.Text = chapter.Title;
         }
         UpdateVolumeIcon();
+        UpdateSleepLabel();
     }
 
     private async Task LoadCoverAsync()
@@ -129,13 +139,12 @@ public sealed partial class AudiobookNowListening : UserControl
     private void BuildFlyouts()
     {
         var speed = new MenuFlyout();
-        foreach (var value in new[] { 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0 })
+        foreach (var value in new[] { 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0 })
         {
             var item = new ToggleMenuFlyoutItem { Text = $"{value:0.##}×", IsChecked = Math.Abs(value - _rate) < 0.001 };
             item.Click += (_, _) =>
             {
-                _rate = value;
-                _player.Mpv?.SetProperty("speed", value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                _rate = _player.SetAudiobookPlaybackRate(value);
                 SpeedButton.Content = $"{value:0.##}×";
                 BuildFlyouts();
             };
@@ -157,7 +166,7 @@ public sealed partial class AudiobookNowListening : UserControl
         var off = new MenuFlyoutItem { Text = "Off" };
         off.Click += (_, _) => _player.ClearAudiobookSleepTimer();
         sleep.Items.Add(off);
-        foreach (var minutes in new[] { 15, 30, 45, 60 })
+        foreach (var minutes in new[] { 5, 15, 30, 45, 60 })
         {
             var item = new MenuFlyoutItem { Text = $"{minutes} minutes" };
             item.Click += (_, _) => _player.SetAudiobookSleepTimer(TimeSpan.FromMinutes(minutes), null);
@@ -183,10 +192,18 @@ public sealed partial class AudiobookNowListening : UserControl
         SettingsButton.Flyout = settings;
     }
 
+    private void UpdateSleepLabel()
+    {
+        var remaining = _player.GetAudiobookSleepRemaining();
+        SleepTimerText.Text = remaining.HasValue
+            ? $"Sleep {(int)remaining.Value.TotalMinutes}:{remaining.Value.Seconds:00}"
+            : "Sleep";
+    }
+
     private MenuFlyoutSubItem BuildSkipSubmenu(string label, bool backward, int selected)
     {
         var submenu = new MenuFlyoutSubItem { Text = label };
-        foreach (var seconds in new[] { 10, 15, 30, 45, 60 })
+        foreach (var seconds in new[] { 5, 10, 15, 30, 45, 60, 90 })
         {
             var item = new ToggleMenuFlyoutItem { Text = $"{seconds} seconds", IsChecked = seconds == selected };
             item.Click += (_, _) =>

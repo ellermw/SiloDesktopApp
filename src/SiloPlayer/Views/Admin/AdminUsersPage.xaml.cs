@@ -1527,8 +1527,8 @@ public sealed partial class AdminUsersPage : Page
 
         // Created date
         string createdText = "\u2014";
-        if (!string.IsNullOrEmpty(code.CreatedAt) && DateTime.TryParse(code.CreatedAt, out var dt))
-            createdText = dt.ToLocalTime().ToString("d");
+        if (!string.IsNullOrEmpty(code.CreatedAt) && DateTimeOffset.TryParse(code.CreatedAt, out var dt))
+            createdText = SiloPlayer.Helpers.DateTimeDisplay.FormatDate(dt);
         var created = new TextBlock
         {
             Text = createdText,
@@ -1734,7 +1734,7 @@ public sealed partial class AdminUsersPage : Page
 
     private static string FormatFullDate(string? value)
         => DateTimeOffset.TryParse(value, out var date)
-            ? date.ToLocalTime().ToString("F")
+            ? SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(date, seconds: true)
             : "";
 
     private static string FormatLastActive(string? value)
@@ -1744,6 +1744,6 @@ public sealed partial class AdminUsersPage : Page
 
     private static string FormatCreated(string? value)
         => DateTimeOffset.TryParse(value, out var created)
-            ? created.ToLocalTime().ToString("MMM d, yyyy, h:mm tt")
+            ? SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(created)
             : value ?? "—";
 }

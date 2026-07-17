@@ -1987,58 +1987,204 @@ public sealed partial class ItemDetailPage : Page
 
     private async Task ShowMediaInfoDialogAsync()
     {
-        var version = _selectedVersion;
-        if (version == null) return;
-        var lines = new List<string>
+        var versions = (_watchDetail?.Versions ?? ViewModel.Item?.Versions ?? [])
+            .OrderByDescending(version => ResolutionRank(version.Resolution))
+            .ToList();
+        if (versions.Count == 0) return;
+
+        var body = new StackPanel { Spacing = 14, MinWidth = 560 };
+        body.Children.Add(new TextBlock
         {
-            BuildQualitySummary(version),
-            $"Container: {version.Container.ToUpperInvariant()}",
-            $"Duration: {FormatExtraDuration(version.Duration)}",
-            $"Bitrate: {(version.Bitrate > 0 ? $"{version.Bitrate / 1_000_000d:0.##} Mbps" : "Unknown")}",
-            $"Size: {(version.FileSize > 0 ? FormatFileSize(version.FileSize) : "Unknown")}",
-        };
-        if (!string.IsNullOrWhiteSpace(version.EditionRaw)) lines.Add($"Edition: {version.EditionRaw}");
-        if (!string.IsNullOrWhiteSpace(version.FileName)) lines.Add($"File: {version.FileName}");
-        if (version.VideoTracks is { Count: > 0 })
+            Text = ViewModel.Item?.Title ?? _watchDetail?.Title ?? "",
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+
+        if (versions.Count == 1)
         {
-            var video = version.VideoTracks[0];
-            lines.Add("");
-            lines.Add("VIDEO");
-            lines.Add($"{video.Codec?.ToUpperInvariant()}  {video.Width}×{video.Height}  {video.BitDepth}-bit");
-            if (!string.IsNullOrWhiteSpace(video.DolbyVision)) lines.Add($"Dolby Vision: {video.DolbyVision}");
-            if (video.Hdr10Plus == true) lines.Add("HDR10+");
+            body.Children.Add(BuildMediaInfoSpecSheet(versions[0]));
         }
-        if (version.AudioTracks is { Count: > 0 })
+        else
         {
-            lines.Add("");
-            lines.Add("AUDIO TRACKS");
-            lines.AddRange(version.AudioTracks.Select((track, index) =>
-                $"{index + 1}. {FormatAudioTrackSummary(track)}"));
-        }
-        if (version.SubtitleTracks is { Count: > 0 })
-        {
-            lines.Add("");
-            lines.Add("SUBTITLE TRACKS");
-            lines.AddRange(version.SubtitleTracks.Select((track, index) =>
-                $"{index + 1}. {FormatSubtitleTrackSummary(track)}"));
+            foreach (var version in versions)
+            {
+                var summary = BuildQualitySummary(version);
+                if (string.IsNullOrWhiteSpace(summary))
+                    summary = version.FileName ?? $"Version {versions.IndexOf(version) + 1}";
+                var details = new List<string>();
+                if (!string.IsNullOrWhiteSpace(version.Container)) details.Add(version.Container.ToUpperInvariant());
+                if (version.FileSize > 0) details.Add(FormatFileSize(version.FileSize));
+                var header = new StackPanel { Spacing = 2 };
+                header.Children.Add(new TextBlock { Text = summary, FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+                if (details.Count > 0)
+                    header.Children.Add(new TextBlock { Text = string.Join(" · ", details), FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+                body.Children.Add(new Expander
+                {
+                    Header = header,
+                    Content = BuildMediaInfoSpecSheet(version),
+                    IsExpanded = version.FileId == _selectedVersion?.FileId,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                });
+            }
         }
 
-        var text = new TextBlock
-        {
-            Text = string.Join(Environment.NewLine, lines),
-            TextWrapping = TextWrapping.Wrap,
-            IsTextSelectionEnabled = true,
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 12,
-        };
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "Media Info",
-            Content = new ScrollViewer { Content = text, MaxHeight = 560 },
+            Content = new ScrollViewer { Content = body, MaxHeight = 680, HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled },
             CloseButtonText = "Close",
         };
         await dialog.ShowAsync();
+    }
+
+    private StackPanel BuildMediaInfoSpecSheet(FileVersion version)
+    {
+        var sheet = new StackPanel { Spacing = 16, Padding = new Thickness(0, 8, 0, 8) };
+        AddMediaInfoSection(sheet, "General",
+        [
+            ("Container", version.Container?.ToUpperInvariant()),
+            ("File Size", version.FileSize > 0 ? FormatFileSize(version.FileSize) : null),
+            ("Duration", version.Duration > 0 ? FormatDetailedDuration(version.Duration) : null),
+            ("Overall Bitrate", FormatMediaBitrate(version.Bitrate)),
+            ("Edition", version.EditionRaw),
+            ("Added", FormatMediaAdded(version.AddedAt)),
+            ("File Path", version.FilePath),
+        ]);
+
+        var videos = version.VideoTracks ?? [];
+        for (var index = 0; index < videos.Count; index++)
+        {
+            var track = videos[index];
+            AddMediaInfoSection(sheet, videos.Count > 1 ? $"Video {index + 1}" : "Video",
+            [
+                ("Codec", track.Codec?.ToUpperInvariant()),
+                ("Profile", track.Profile),
+                ("Level", FormatVideoLevel(track.Codec, track.Level)),
+                ("Resolution", track.Width > 0 && track.Height > 0 ? $"{track.Width}x{track.Height}" : null),
+                ("Aspect Ratio", track.AspectRatio),
+                ("Frame Rate", string.IsNullOrWhiteSpace(track.FrameRate) ? null : $"{track.FrameRate} fps"),
+                ("Bitrate", FormatMediaBitrate(track.Bitrate)),
+                ("Bit Depth", track.BitDepth > 0 ? $"{track.BitDepth}-bit" : null),
+                ("Pixel Format", track.PixelFormat),
+                ("Chroma Subsampling", FormatChromaSubsampling(track.PixelFormat)),
+                ("Dynamic Range", FormatTrackDynamicRange(track)),
+                ("Color Primaries", track.ColorPrimaries),
+                ("Color Transfer", track.ColorTransfer),
+                ("Color Space", track.ColorSpace),
+                ("Reference Frames", track.ReferenceFrames > 0 ? track.ReferenceFrames.ToString() : null),
+                ("Scan", track.Interlaced == true ? "Interlaced" : "Progressive"),
+            ]);
+        }
+
+        var audioTracks = version.AudioTracks ?? [];
+        for (var index = 0; index < audioTracks.Count; index++)
+        {
+            var track = audioTracks[index];
+            AddMediaInfoSection(sheet, audioTracks.Count > 1 ? $"Audio {index + 1}" : "Audio",
+            [
+                ("Title", !string.IsNullOrWhiteSpace(track.Title) ? track.Title : track.EmbeddedTitle),
+                ("Language", string.IsNullOrWhiteSpace(track.Language) ? null : MediaLanguageCatalog.Label(track.Language)),
+                ("Codec", NormalizeAudioCodec(track.Codec, null)),
+                ("Profile", track.Profile),
+                ("Layout", track.Layout),
+                ("Channels", FormatMediaChannels(track.Channels)),
+                ("Bitrate", FormatMediaBitrate(track.Bitrate)),
+                ("Sample Rate", track.SampleRate > 0 ? $"{track.SampleRate:N0} Hz" : null),
+                ("Bit Depth", track.BitDepth > 0 ? $"{track.BitDepth}-bit" : null),
+                ("Default", track.Default ? "Yes" : null),
+            ]);
+        }
+
+        var subtitleTracks = version.SubtitleTracks ?? [];
+        for (var index = 0; index < subtitleTracks.Count; index++)
+        {
+            var track = subtitleTracks[index];
+            AddMediaInfoSection(sheet, subtitleTracks.Count > 1 ? $"Subtitle {index + 1}" : "Subtitle",
+            [
+                ("Title", !string.IsNullOrWhiteSpace(track.Title) ? track.Title : track.EmbeddedTitle),
+                ("Language", string.IsNullOrWhiteSpace(track.Language) ? null : MediaLanguageCatalog.Label(track.Language)),
+                ("Format", track.Codec?.ToUpperInvariant()),
+                ("Source", track.External == true ? "External" : "Embedded"),
+                ("File", track.External == true ? track.FileName : null),
+                ("Resolution", track.Resolution),
+                ("Forced", track.Forced == true ? "Yes" : null),
+                ("Default", track.Default == true ? "Yes" : null),
+                ("Hearing Impaired", track.HearingImpaired == true ? "Yes" : null),
+            ]);
+        }
+        return sheet;
+    }
+
+    private static void AddMediaInfoSection(StackPanel sheet, string title, IEnumerable<(string Label, string? Value)> candidates)
+    {
+        var rows = candidates.Where(row => !string.IsNullOrWhiteSpace(row.Value)).ToList();
+        if (rows.Count == 0) return;
+        var section = new StackPanel { Spacing = 6 };
+        section.Children.Add(new TextBlock { Text = title.ToUpperInvariant(), FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, CharacterSpacing = 80, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"] });
+        var rowStack = new StackPanel();
+        for (var index = 0; index < rows.Count; index++)
+        {
+            var row = new Grid { ColumnSpacing = 20, Padding = new Thickness(12, 7, 12, 7) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.Children.Add(new TextBlock { Text = rows[index].Label, FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+            var value = new TextBlock { Text = rows[index].Value, FontSize = 12, TextAlignment = TextAlignment.Right, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, HorizontalAlignment = HorizontalAlignment.Right };
+            Grid.SetColumn(value, 1);
+            row.Children.Add(value);
+            if (index < rows.Count - 1)
+            {
+                row.BorderBrush = (Brush)Application.Current.Resources["BorderBrush"];
+                row.BorderThickness = new Thickness(0, 0, 0, 1);
+            }
+            rowStack.Children.Add(row);
+        }
+        section.Children.Add(new Border { BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Background = (Brush)Application.Current.Resources["SurfaceBrush"], Child = rowStack });
+        sheet.Children.Add(section);
+    }
+
+    private static string? FormatMediaAdded(string? value) => DateTimeOffset.TryParse(value, out var added) ? DateTimeDisplay.FormatDateTime(added) : null;
+    private static string? FormatMediaBitrate(int? bitrate) => bitrate > 0 ? bitrate >= 1_000_000 ? $"{bitrate.Value / 1_000_000d:0.##} Mbps" : $"{bitrate.Value / 1_000d:0} kbps" : null;
+
+    private static string FormatDetailedDuration(double seconds)
+    {
+        var total = Math.Max(0, (int)Math.Floor(seconds));
+        var hours = total / 3600;
+        var minutes = total % 3600 / 60;
+        var remainder = total % 60;
+        return hours > 0 ? $"{hours}h {minutes}m {remainder}s" : minutes > 0 ? $"{minutes}m {remainder}s" : $"{remainder}s";
+    }
+
+    private static string? FormatMediaChannels(int? channels) => channels switch { 1 => "Mono", 2 => "Stereo", 6 => "5.1", 8 => "7.1", > 0 => $"{channels} ch", _ => null };
+
+    private static string? FormatChromaSubsampling(string? pixelFormat)
+    {
+        var value = pixelFormat?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        if (value.Contains("444")) return "4:4:4";
+        if (value.Contains("440")) return "4:4:0";
+        if (value.Contains("422")) return "4:2:2";
+        if (value.Contains("420") || value.StartsWith("nv12") || value.StartsWith("nv21") || value.StartsWith("p010") || value.StartsWith("p016")) return "4:2:0";
+        if (value.Contains("411")) return "4:1:1";
+        if (value.Contains("410")) return "4:1:0";
+        return null;
+    }
+
+    private static string? FormatVideoLevel(string? codec, int? level)
+    {
+        if (level is null or <= 0) return null;
+        var normalized = codec?.ToLowerInvariant() ?? "";
+        var value = normalized.Contains("hevc") || normalized.Contains("h265") || normalized.Contains("265") ? level.Value / 30d : normalized.Contains("avc") || normalized.Contains("h264") || normalized.Contains("264") ? level.Value / 10d : level.Value;
+        return Math.Abs(value - Math.Round(value)) < 0.001 ? Math.Round(value).ToString("0") : value.ToString("0.0");
+    }
+
+    private static string? FormatTrackDynamicRange(VersionVideoTrack track)
+    {
+        if (!string.IsNullOrWhiteSpace(track.DolbyVision)) return track.Hdr10Plus == true ? $"{track.DolbyVision} · HDR10+" : track.DolbyVision;
+        if (!string.IsNullOrWhiteSpace(track.VideoRangeType)) return track.VideoRangeType;
+        if (track.Hdr10Plus == true) return "HDR10+";
+        return track.VideoRange;
     }
 
     private async Task ShowRefreshMetadataDialogAsync()
@@ -2376,35 +2522,123 @@ public sealed partial class ItemDetailPage : Page
         content.Children.Add(candidates);
         content.Children.Add(detach);
         content.Children.Add(historyMode);
+        var previewText = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12 };
+        var previewPanel = new Border
+        {
+            Padding = new Thickness(12, 9, 12, 9),
+            CornerRadius = new CornerRadius(8),
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            Child = previewText,
+            Visibility = Visibility.Collapsed,
+        };
+        content.Children.Add(previewPanel);
 
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "Split Versions",
             Content = new ScrollViewer { Content = content, MaxHeight = 620 },
-            PrimaryButtonText = "Review Split",
+            PrimaryButtonText = "Split Versions",
             CloseButtonText = "Cancel",
             IsPrimaryButtonEnabled = false,
         };
-        void UpdateCanReview()
+        ItemSplitResponse? currentPreview = null;
+        CancellationTokenSource? previewCts = null;
+        var previewGeneration = 0;
+
+        bool PlanIsValid()
         {
             var selectedCount = selectedFiles.Count(entry => entry.Check.IsChecked == true);
-            dialog.IsPrimaryButtonEnabled = selectedCount > 0
-                                            && selectedCount < selectedFiles.Count
-                                            && (detach.IsChecked == true || candidates.SelectedItem != null);
+            return selectedCount > 0
+                   && selectedCount < selectedFiles.Count
+                   && (detach.IsChecked == true || candidates.SelectedItem != null);
         }
+
+        ItemSplitRequest BuildSplitRequest(bool dryRun)
+        {
+            var chosenFiles = selectedFiles
+                .Where(entry => entry.Check.IsChecked == true)
+                .Select(entry => entry.File.Id)
+                .ToList();
+            var candidate = candidates.SelectedItem as Core.Models.Admin.MatchCandidate;
+            return new ItemSplitRequest
+            {
+                FileIds = chosenFiles,
+                Target = detach.IsChecked == true
+                    ? new ItemSplitTarget { Unmatched = true }
+                    : new ItemSplitTarget
+                    {
+                        ProviderIds = candidate?.ProviderIds,
+                        Title = candidate?.Title,
+                        Year = candidate?.Year > 0 ? candidate.Year : null,
+                    },
+                HistoryMode = (historyMode.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "evidence",
+                PersistOverride = true,
+                DryRun = dryRun,
+            };
+        }
+
+        async Task RunPreviewAsync(int generation, CancellationToken token)
+        {
+            try
+            {
+                await Task.Delay(400, token);
+                var preview = await adminApi.SplitItemAsync(item.ContentId, BuildSplitRequest(dryRun: true), token);
+                if (generation != previewGeneration || token.IsCancellationRequested) return;
+                currentPreview = preview;
+                previewText.Text = $"{preview.FilesMoved} file(s) will move · "
+                                   + $"{preview.Reattribution.HistoryMoved} history moved · "
+                                   + $"{preview.Reattribution.HistoryStayed} staying · "
+                                   + $"{preview.Reattribution.HistoryAmbiguous} ambiguous";
+                if (preview.EpisodePairs > 0)
+                    previewText.Text += $" · {preview.EpisodePairs} episodes re-anchored";
+                var overrideCount = preview.RootOverrides.Count + preview.FileOverrides.Count;
+                if (overrideCount > 0)
+                    previewText.Text += $" · {overrideCount} identity override(s) pinned";
+                dialog.IsPrimaryButtonEnabled = true;
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                if (generation != previewGeneration || token.IsCancellationRequested) return;
+                previewText.Text = $"Preview failed: {ex.Message}";
+            }
+        }
+
+        void SchedulePreview()
+        {
+            previewCts?.Cancel();
+            previewCts?.Dispose();
+            previewCts = null;
+            previewGeneration++;
+            currentPreview = null;
+            dialog.IsPrimaryButtonEnabled = false;
+            if (!PlanIsValid())
+            {
+                previewPanel.Visibility = Visibility.Collapsed;
+                return;
+            }
+            previewPanel.Visibility = Visibility.Visible;
+            previewText.Text = "Previewing…";
+            previewCts = new CancellationTokenSource();
+            _ = RunPreviewAsync(previewGeneration, previewCts.Token);
+        }
+
         foreach (var entry in selectedFiles)
         {
-            entry.Check.Checked += (_, _) => UpdateCanReview();
-            entry.Check.Unchecked += (_, _) => UpdateCanReview();
+            entry.Check.Checked += (_, _) => SchedulePreview();
+            entry.Check.Unchecked += (_, _) => SchedulePreview();
         }
-        detach.Checked += (_, _) => { candidates.SelectedItem = null; UpdateCanReview(); };
-        detach.Unchecked += (_, _) => UpdateCanReview();
+        detach.Checked += (_, _) => { candidates.SelectedItem = null; SchedulePreview(); };
+        detach.Unchecked += (_, _) => SchedulePreview();
         candidates.SelectionChanged += (_, _) =>
         {
             if (candidates.SelectedItem != null) detach.IsChecked = false;
-            UpdateCanReview();
+            SchedulePreview();
         };
+        historyMode.SelectionChanged += (_, _) => SchedulePreview();
         search.Click += async (_, _) =>
         {
             search.IsEnabled = false;
@@ -2431,45 +2665,13 @@ public sealed partial class ItemDetailPage : Page
             }
         };
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        var chosenFiles = selectedFiles
-            .Where(entry => entry.Check.IsChecked == true)
-            .Select(entry => entry.File.Id)
-            .ToList();
-        var candidate = candidates.SelectedItem as Core.Models.Admin.MatchCandidate;
-        var request = new ItemSplitRequest
-        {
-            FileIds = chosenFiles,
-            Target = detach.IsChecked == true
-                ? new ItemSplitTarget { Unmatched = true }
-                : new ItemSplitTarget
-                {
-                    ProviderIds = candidate?.ProviderIds,
-                    Title = candidate?.Title,
-                    Year = candidate?.Year > 0 ? candidate.Year : null,
-                },
-            HistoryMode = (historyMode.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "evidence",
-            PersistOverride = true,
-            DryRun = true,
-        };
-
+        var resultKind = await dialog.ShowAsync();
+        previewCts?.Cancel();
+        previewCts?.Dispose();
+        if (resultKind != ContentDialogResult.Primary || currentPreview == null) return;
+        var request = BuildSplitRequest(dryRun: false);
         try
         {
-            var preview = await adminApi.SplitItemAsync(item.ContentId, request);
-            var confirm = new ContentDialog
-            {
-                XamlRoot = XamlRoot,
-                Title = "Confirm Split",
-                Content = $"Move {chosenFiles.Count} file(s) to “{candidate?.Title ?? "Unmatched"}”?\n\n"
-                          + $"History moved: {preview.Reattribution.HistoryMoved}\n"
-                          + $"History staying: {preview.Reattribution.HistoryStayed}\n"
-                          + $"Ambiguous history: {preview.Reattribution.HistoryAmbiguous}",
-                PrimaryButtonText = "Split Versions",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Primary,
-            };
-            if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
-            request.DryRun = false;
             var result = await adminApi.SplitItemAsync(item.ContentId, request);
             toast.Success($"Moved {result.FilesMoved} file{(result.FilesMoved == 1 ? "" : "s")} to a separate item");
             await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);

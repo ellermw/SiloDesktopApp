@@ -5,6 +5,13 @@ public class ServerEntry
     public string Name { get; set; } = "";
     public DateTime LastUsed { get; set; }
 }
+
+public class AudiobookRatePreference
+{
+    public double Rate { get; set; } = 1;
+    public DateTime LastUsedUtc { get; set; }
+}
+
 public class AppSettings
 {
     public List<ServerEntry> Servers { get; set; } = [];
@@ -24,9 +31,10 @@ public class AppSettings
     /// <summary>Whether the player was last in a muted state.</summary>
     public bool PlayerMuted { get; set; } = false;
 
-    public int AudiobookSkipBackSeconds { get; set; } = 15;
+    public int AudiobookSkipBackSeconds { get; set; } = 10;
     public int AudiobookSkipForwardSeconds { get; set; } = 30;
     public bool AudiobookSmartRewind { get; set; } = true;
+    public Dictionary<string, AudiobookRatePreference> AudiobookPlaybackRates { get; set; } = [];
 
     /// <summary>Opt-in HDMI/S/PDIF compressed-audio passthrough. Disabled by
     /// default because unsupported speakers and Bluetooth endpoints can be silent.</summary>

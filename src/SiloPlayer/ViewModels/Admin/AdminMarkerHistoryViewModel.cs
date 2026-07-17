@@ -115,7 +115,7 @@ public sealed record MarkerHistoryRowViewModel(
 
         return new MarkerHistoryRowViewModel(
             entry.Id,
-            entry.CreatedAt.ToLocalTime().ToString("MMM d, h:mm tt"),
+            SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(entry.CreatedAt),
             itemLabel,
             entry.FilePath ?? $"Media file {entry.MediaFileId}",
             entry.ItemId,

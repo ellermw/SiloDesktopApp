@@ -6,6 +6,10 @@ namespace SiloPlayer.Core.Services;
 
 public class SettingsService
 {
+    public const double AudiobookRateMinimum = 0.5;
+    public const double AudiobookRateMaximum = 3;
+    public const double AudiobookRateStep = 0.05;
+    private const int MaximumRememberedAudiobookRates = 50;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -82,5 +86,56 @@ public class SettingsService
             server.LastUsed = DateTime.UtcNow;
             Save(settings);
         }
+    }
+
+    public double GetAudiobookPlaybackRate(string? contentId)
+    {
+        if (string.IsNullOrWhiteSpace(contentId))
+            return 1;
+
+        lock (_lock)
+        {
+            var settings = Load();
+            if (!settings.AudiobookPlaybackRates.TryGetValue(contentId, out var preference))
+                return 1;
+            return ClampAudiobookPlaybackRate(preference.Rate);
+        }
+    }
+
+    public double RememberAudiobookPlaybackRate(string? contentId, double rate)
+    {
+        var clamped = ClampAudiobookPlaybackRate(rate);
+        if (string.IsNullOrWhiteSpace(contentId))
+            return clamped;
+
+        lock (_lock)
+        {
+            var settings = Load();
+            settings.AudiobookPlaybackRates[contentId] = new AudiobookRatePreference
+            {
+                Rate = clamped,
+                LastUsedUtc = DateTime.UtcNow,
+            };
+
+            foreach (var staleId in settings.AudiobookPlaybackRates
+                         .OrderByDescending(entry => entry.Value.LastUsedUtc)
+                         .Skip(MaximumRememberedAudiobookRates)
+                         .Select(entry => entry.Key)
+                         .ToList())
+            {
+                settings.AudiobookPlaybackRates.Remove(staleId);
+            }
+
+            Save(settings);
+        }
+        return clamped;
+    }
+
+    public static double ClampAudiobookPlaybackRate(double rate)
+    {
+        if (!double.IsFinite(rate))
+            return 1;
+        var clamped = Math.Clamp(rate, AudiobookRateMinimum, AudiobookRateMaximum);
+        return Math.Round(clamped / AudiobookRateStep, MidpointRounding.AwayFromZero) * AudiobookRateStep;
     }
 }

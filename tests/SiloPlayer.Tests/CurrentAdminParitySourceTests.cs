@@ -180,7 +180,7 @@ public sealed class CurrentAdminParitySourceTests
         Assert.Contains("FontWeight=\"ExtraBold\"", xaml);
         Assert.DoesNotContain("x:Name=\"StatusBanner\"", xaml);
         Assert.Contains("PaginationBar.Visibility = Visibility.Visible", code);
-        Assert.Contains("ToString(\"g\")", code);
+        Assert.Contains("DateTimeDisplay.FormatDateTime", code);
         Assert.Contains("Revoke API key {key.Label}", code);
         Assert.Contains("GetRequiredService<ToastService>().Success", code);
     }

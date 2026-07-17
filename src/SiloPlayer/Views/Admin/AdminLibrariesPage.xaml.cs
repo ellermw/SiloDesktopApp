@@ -12,6 +12,7 @@ using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels.Admin;
 
 namespace SiloPlayer.Views.Admin;
@@ -620,7 +621,7 @@ public sealed partial class AdminLibrariesPage : Page
         if (!string.IsNullOrEmpty(lib.LastScannedAt) &&
             DateTimeOffset.TryParse(lib.LastScannedAt, out var lastScanned))
         {
-            lastScannedText = lastScanned.LocalDateTime.ToString("g");
+            lastScannedText = DateTimeDisplay.FormatDateTime(lastScanned);
         }
         lastScannedColumn.Children.Add(new TextBlock
         {
@@ -1084,7 +1085,7 @@ public sealed partial class AdminLibrariesPage : Page
 
         string checkedText = "Checked ";
         if (DateTimeOffset.TryParse(result.CheckedAt, out var checkedAt))
-            checkedText += checkedAt.LocalDateTime.ToString("g");
+            checkedText += DateTimeDisplay.FormatDateTime(checkedAt);
         else
             checkedText += result.CheckedAt;
 
@@ -1652,8 +1653,8 @@ public sealed partial class AdminLibrariesPage : Page
 
             AddCell(row, 4, s.ProviderId, FontWeights.Normal, _tertiaryText, fontFamily: new FontFamily("Consolas"), fontSize: 11);
 
-            string firstSeen = DateTimeOffset.TryParse(s.FirstSeenAt, out var fs) ? fs.LocalDateTime.ToString("g") : "";
-            string lastSeen = DateTimeOffset.TryParse(s.LastSeenAt, out var ls) ? ls.LocalDateTime.ToString("g") : "";
+            string firstSeen = DateTimeOffset.TryParse(s.FirstSeenAt, out var fs) ? DateTimeDisplay.FormatDateTime(fs) : "";
+            string lastSeen = DateTimeOffset.TryParse(s.LastSeenAt, out var ls) ? DateTimeDisplay.FormatDateTime(ls) : "";
             AddCell(row, 5, firstSeen, FontWeights.Normal, _tertiaryText, fontSize: 11);
             AddCell(row, 6, lastSeen, FontWeights.Normal, _tertiaryText, fontSize: 11);
 
@@ -2416,7 +2417,7 @@ public sealed partial class AdminLibrariesPage : Page
 
         string firstSeenText = "";
         if (DateTimeOffset.TryParse(root.FirstSeenAt, out var firstSeen))
-            firstSeenText = firstSeen.LocalDateTime.ToString("g");
+            firstSeenText = DateTimeDisplay.FormatDateTime(firstSeen);
         var firstSeenBlock = new TextBlock
         {
             Text = firstSeenText,
@@ -2427,7 +2428,7 @@ public sealed partial class AdminLibrariesPage : Page
 
         string lastSeenText = "";
         if (DateTimeOffset.TryParse(root.LastSeenAt, out var lastSeen))
-            lastSeenText = lastSeen.LocalDateTime.ToString("g");
+            lastSeenText = DateTimeDisplay.FormatDateTime(lastSeen);
         var lastSeenBlock = new TextBlock
         {
             Text = lastSeenText,
@@ -4003,7 +4004,7 @@ public sealed partial class AdminLibrariesPage : Page
     {
         container.Children.Clear();
 
-        if (levels.Length == 0 || levelChains.Count == 0)
+        if (levels.Length == 0 || !levelChains.Values.Any(items => items.Count > 0))
         {
             container.Children.Add(new TextBlock
             {

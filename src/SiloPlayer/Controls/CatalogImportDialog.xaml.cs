@@ -256,8 +256,8 @@ public sealed partial class CatalogImportDialog : ContentDialog
     private static string FormatTime(string iso)
     {
         if (string.IsNullOrEmpty(iso)) return "";
-        if (DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
-            return dt.ToLocalTime().ToString("g");
+        if (DateTimeOffset.TryParse(iso, out var dt))
+            return SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(dt);
         return iso;
     }
 }

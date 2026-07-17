@@ -550,7 +550,7 @@ public sealed partial class AdminTasksPage : Page
         }
 
         string FormatDt(string? s) => string.IsNullOrEmpty(s) ? "\u2014" :
-            (DateTime.TryParse(s, out var d) ? d.ToLocalTime().ToString("g") : s);
+            (DateTimeOffset.TryParse(s, out var d) ? SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(d) : s);
 
         AddCell(0, "Refresh Backlog", metrics.Total.ToString("N0"));
         AddCell(1, "Due for Refresh", metrics.Due.ToString("N0"));

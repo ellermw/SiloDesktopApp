@@ -389,7 +389,7 @@ public sealed partial class MainWindow : Window
     {
         var parts = new List<string>();
         if (DateTimeOffset.TryParse(airDate, out var parsedDate))
-            parts.Add(parsedDate.ToLocalTime().ToString("MMMM d, yyyy"));
+            parts.Add(DateTimeDisplay.FormatDate(parsedDate, medium: true));
         if (runtimeSeconds > 0)
             parts.Add($"{Math.Max(1, (int)Math.Round(runtimeSeconds / 60d))} min");
         return string.Join("  •  ", parts);
@@ -1038,6 +1038,24 @@ public sealed partial class MainWindow : Window
             default:
                 return;
         }
+        args.Handled = true;
+    }
+
+    private void RootGrid_CharacterReceived(
+        UIElement sender,
+        Microsoft.UI.Xaml.Input.CharacterReceivedRoutedEventArgs args)
+    {
+        if (!_playerService.IsAudiobook || _playerService.State == PlayerState.Idle ||
+            args.Character is not ('<' or '>'))
+            return;
+
+        var focused = Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(Content.XamlRoot);
+        if (focused is TextBox or PasswordBox or ComboBox)
+            return;
+
+        var direction = args.Character == '>' ? 1 : -1;
+        _playerService.SetAudiobookPlaybackRate(
+            _playerService.AudiobookPlaybackRate + direction * SettingsService.AudiobookRateStep);
         args.Handled = true;
     }
 

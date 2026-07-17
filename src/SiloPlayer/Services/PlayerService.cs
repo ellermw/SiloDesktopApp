@@ -724,6 +724,7 @@ public class PlayerService : IDisposable
 
     public event Action<PlayerState>? StateChanged;
     public event Action? AudiobookPresentationChanged;
+    public event Action<double>? AudiobookPlaybackRateChanged;
     public event Action? AudiobookSleepChanged;
 
     /// <summary>Fired after a new playback session is created on the server.
@@ -965,6 +966,31 @@ public class PlayerService : IDisposable
 
     public DateTimeOffset? AudiobookSleepDeadline { get; private set; }
     public double? AudiobookSleepAtPosition { get; private set; }
+
+    public double AudiobookPlaybackRate => SettingsService.ClampAudiobookPlaybackRate(
+        _mpv?.GetPropertyDouble("speed") ?? _settingsService.GetAudiobookPlaybackRate(ContentId));
+
+    public double SetAudiobookPlaybackRate(double rate)
+    {
+        var clamped = IsAudiobook
+            ? _settingsService.RememberAudiobookPlaybackRate(ContentId, rate)
+            : SettingsService.ClampAudiobookPlaybackRate(rate);
+        _mpv?.SetProperty("speed", clamped.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        try { AudiobookPlaybackRateChanged?.Invoke(clamped); } catch { }
+        return clamped;
+    }
+
+    public TimeSpan? GetAudiobookSleepRemaining()
+    {
+        if (AudiobookSleepDeadline.HasValue)
+            return TimeSpan.FromSeconds(Math.Max(0, (AudiobookSleepDeadline.Value - DateTimeOffset.UtcNow).TotalSeconds));
+        if (AudiobookSleepAtPosition.HasValue)
+        {
+            var mediaSeconds = Math.Max(0, AudiobookSleepAtPosition.Value - CurrentMediaPosition);
+            return TimeSpan.FromSeconds(mediaSeconds / Math.Max(SettingsService.AudiobookRateMinimum, AudiobookPlaybackRate));
+        }
+        return null;
+    }
 
     public void SetAudiobookSleepTimer(TimeSpan? duration, double? atPosition)
     {
@@ -1498,6 +1524,10 @@ public class PlayerService : IDisposable
                 return;
 
             EnsureMpvInitialized();
+            _mpv?.SetProperty(
+                "speed",
+                (IsAudiobook ? _settingsService.GetAudiobookPlaybackRate(ContentId) : 1)
+                    .ToString(System.Globalization.CultureInfo.InvariantCulture));
             if (subtitleAppearanceTask.IsCompletedSuccessfully)
             {
                 if (_subtitleAppearance != null) PushSubtitleAppearanceToMpv(_subtitleAppearance);

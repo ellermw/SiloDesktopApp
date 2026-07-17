@@ -334,8 +334,8 @@ public sealed partial class AdminNodesPage : Page
 
         // ---- Last Check ----
         string lastCheckText = "Never";
-        if (!string.IsNullOrEmpty(node.LastHealthCheck) && DateTime.TryParse(node.LastHealthCheck, out var checkDt))
-            lastCheckText = checkDt.ToLocalTime().ToString("G");
+        if (!string.IsNullOrEmpty(node.LastHealthCheck) && DateTimeOffset.TryParse(node.LastHealthCheck, out var checkDt))
+            lastCheckText = SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(checkDt, seconds: true);
 
         var lastCheckBlock = new TextBlock
         {

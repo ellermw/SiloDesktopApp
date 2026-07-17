@@ -2958,7 +2958,7 @@ public sealed partial class SettingsPage : Page
         if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
         if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
         if (diff.TotalDays < 7) return $"{(int)diff.TotalDays}d ago";
-        return dt.ToLocalTime().ToString("MMM d, yyyy");
+        return DateTimeDisplay.FormatDate(dt, medium: true);
     }
 
     // ===== Plugin Settings Handlers =====

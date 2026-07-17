@@ -131,7 +131,10 @@
                                 ValueChanged="AudiobookVolumeSlider_ValueChanged" />
                         <Button x:Name="AudiobookSleepButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
                                 ToolTipService.ToolTip="Sleep timer">
-                            <FontIcon Glyph="&#xE823;" FontSize="14" />
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <FontIcon Glyph="&#xE823;" FontSize="14" />
+                                <TextBlock x:Name="AudiobookSleepText" Text="Sleep" FontSize="12" />
+                            </StackPanel>
                         </Button>
                         <Button x:Name="AudiobookChaptersButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
                                 ToolTipService.ToolTip="Chapters">

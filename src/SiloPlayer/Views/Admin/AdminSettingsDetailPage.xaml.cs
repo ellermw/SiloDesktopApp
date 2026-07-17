@@ -1111,7 +1111,7 @@ public sealed partial class AdminSettingsDetailPage : Page
     private static string FormatSearchStatusDate(string? value)
     {
         if (string.IsNullOrWhiteSpace(value) || !DateTimeOffset.TryParse(value, out var parsed)) return "Never";
-        return parsed.ToLocalTime().ToString("g");
+        return SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(parsed);
     }
 
     private void BuildThemingTab()

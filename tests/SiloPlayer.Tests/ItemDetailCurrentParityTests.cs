@@ -130,6 +130,35 @@ public sealed class ItemDetailCurrentParityTests
     }
 
     [Fact]
+    public void MediaInfoUsesCurrentMultiVersionSpecSheetsAndAudioProfiles()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var models = Read("src", "SiloPlayer.Core", "Models", "Playback", "WatchDetailResponse.cs");
+
+        Assert.Contains("BuildMediaInfoSpecSheet", page);
+        Assert.Contains("new Expander", page);
+        Assert.Contains("(\"Profile\", track.Profile)", page);
+        Assert.Contains("(\"Chroma Subsampling\"", page);
+        Assert.Contains("(\"Hearing Impaired\"", page);
+        Assert.Contains("public string? Profile { get; set; }", models);
+        Assert.DoesNotContain("AUDIO TRACKS", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SplitVersionsAutomaticallyDebouncesItsDryRunPreview()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+
+        Assert.Contains("await Task.Delay(400, token)", page);
+        Assert.Contains("BuildSplitRequest(dryRun: true)", page);
+        Assert.Contains("previewText.Text = \"Previewing…\"", page);
+        Assert.Contains("dialog.IsPrimaryButtonEnabled = true", page);
+        Assert.Contains("BuildSplitRequest(dryRun: false)", page);
+        Assert.DoesNotContain("PrimaryButtonText = \"Review Split\"", page);
+        Assert.DoesNotContain("Title = \"Confirm Split\"", page);
+    }
+
+    [Fact]
     public void VersionChoiceSelectsBeforePlayAndPlayCarriesSelectedFileId()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");

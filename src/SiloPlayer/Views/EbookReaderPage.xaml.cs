@@ -13,6 +13,7 @@ using Windows.System.Display;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 
@@ -86,7 +87,7 @@ public sealed partial class EbookReaderPage : Page
             _item = await _catalogApi.GetItemDetailAsync(_contentId, _lifetime.Token);
             TitleText.Text = _item.Title;
             if (App.MainWindowInstance is MainWindow window) window.SetDynamicTitle(_item.Title);
-            _readerFiles = _item.Versions.Where(version => SupportedFormats.Contains(FormatOf(version))).ToList();
+            _readerFiles = _item.Versions.Where(EbookReaderFormat.IsSupported).ToList();
             BuildFileSelector();
             await LoadMangaNavigationAsync();
             var version = ChooseVersion(_readerFiles, requestedFileId)
@@ -128,21 +129,14 @@ public sealed partial class EbookReaderPage : Page
         if (requested.HasValue)
         {
             var requestedVersion = list.FirstOrDefault(v => v.FileId == requested.Value);
-            if (requestedVersion != null && SupportedFormats.Contains(FormatOf(requestedVersion)))
+            if (requestedVersion != null && EbookReaderFormat.IsSupported(requestedVersion))
                 return requestedVersion;
         }
         return list.FirstOrDefault(v => FormatOf(v).Equals("epub", StringComparison.OrdinalIgnoreCase))
-            ?? list.FirstOrDefault(v => SupportedFormats.Contains(FormatOf(v)));
+            ?? list.FirstOrDefault(EbookReaderFormat.IsSupported);
     }
 
-    private static readonly HashSet<string> SupportedFormats = new(StringComparer.OrdinalIgnoreCase)
-        { "epub", "pdf", "mobi", "azw", "azw3", "cbz", "cbr", "fb2", "fbz" };
-
-    private static string FormatOf(FileVersion version)
-    {
-        var extension = Path.GetExtension(version.FileName ?? version.FilePath ?? "").TrimStart('.');
-        return string.IsNullOrWhiteSpace(extension) ? version.Container.TrimStart('.') : extension;
-    }
+    private static string FormatOf(FileVersion version) => EbookReaderFormat.Detect(version);
 
     private void BuildFileSelector()
     {

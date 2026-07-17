@@ -165,8 +165,8 @@ public sealed partial class AdminInviteCodesPage : Page
         Grid.SetColumn(statusSwitch, 3); row.Children.Add(statusSwitch);
 
         string createdText = "\u2014";
-        if (!string.IsNullOrEmpty(code.CreatedAt) && DateTime.TryParse(code.CreatedAt, out var dt))
-            createdText = dt.ToLocalTime().ToString("d");
+        if (!string.IsNullOrEmpty(code.CreatedAt) && DateTimeOffset.TryParse(code.CreatedAt, out var dt))
+            createdText = SiloPlayer.Helpers.DateTimeDisplay.FormatDate(dt);
         var created = new TextBlock
         {
             Text = createdText, FontSize = 12,

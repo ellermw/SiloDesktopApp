@@ -511,8 +511,8 @@ public sealed partial class AdminTaskDetailPage : Page
     private static string FormatOptionalDateTime(string? dateStr)
     {
         if (string.IsNullOrEmpty(dateStr)) return "\u2014";
-        if (DateTime.TryParse(dateStr, out var dt))
-            return dt.ToLocalTime().ToString("G");
+        if (DateTimeOffset.TryParse(dateStr, out var dt))
+            return SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(dt, seconds: true);
         return dateStr;
     }
 
@@ -807,8 +807,8 @@ public sealed partial class AdminTaskDetailPage : Page
     private static string FormatDateTime(string dateStr)
     {
         if (string.IsNullOrEmpty(dateStr)) return "\u2014";
-        if (DateTime.TryParse(dateStr, out var dt))
-            return dt.ToLocalTime().ToString("g");
+        if (DateTimeOffset.TryParse(dateStr, out var dt))
+            return SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(dt);
         return dateStr;
     }
 

@@ -31,6 +31,7 @@ public sealed partial class MiniPlayerBar : UserControl
         _playerService.PositionChanged += OnPositionChanged;
         _playerService.PauseChanged += OnPauseChanged;
         _playerService.AudiobookPresentationChanged += OnAudiobookPresentationChanged;
+        _playerService.AudiobookPlaybackRateChanged += OnAudiobookPlaybackRateChanged;
 
         _suppressVolume = true;
         VolumeSlider.Value = AudiobookVolumeSlider.Value = _playerService.Volume;
@@ -39,7 +40,7 @@ public sealed partial class MiniPlayerBar : UserControl
 
         if (_playerService.IsAudiobook)
         {
-            _playbackRate = Math.Clamp(_playerService.Mpv?.GetPropertyDouble("speed") ?? 1, 0.5, 3);
+            _playbackRate = _playerService.AudiobookPlaybackRate;
             AudiobookSpeedButton.Content = $"{_playbackRate:0.##}×";
             ActivateAudiobookMode();
         }
@@ -60,6 +61,7 @@ public sealed partial class MiniPlayerBar : UserControl
         _playerService.PositionChanged -= OnPositionChanged;
         _playerService.PauseChanged -= OnPauseChanged;
         _playerService.AudiobookPresentationChanged -= OnAudiobookPresentationChanged;
+        _playerService.AudiobookPlaybackRateChanged -= OnAudiobookPlaybackRateChanged;
         if (_uiTimer != null) _uiTimer.Tick -= UiTimer_Tick;
         _uiTimer?.Stop();
         _uiTimer = null;
@@ -107,6 +109,7 @@ public sealed partial class MiniPlayerBar : UserControl
             AudiobookTimeText.Text = $"{FormatTime(pos)}  /  {FormatTime(dur)}";
             var chapter = _playerService.CurrentAudiobookChapter;
             AudiobookChapterText.Text = chapter?.Title ?? "";
+            UpdateAudiobookSleepLabel();
         }
         else
         {
@@ -122,6 +125,13 @@ public sealed partial class MiniPlayerBar : UserControl
 
     private void OnAudiobookPresentationChanged() =>
         DispatcherQueue?.TryEnqueue(UpdateAudiobookPresentation);
+
+    private void OnAudiobookPlaybackRateChanged(double rate) => DispatcherQueue?.TryEnqueue(() =>
+    {
+        _playbackRate = rate;
+        AudiobookSpeedButton.Content = $"{rate:0.##}×";
+        BuildSpeedFlyout();
+    });
 
     private void UpdatePlayPauseIcon()
     {
@@ -173,7 +183,7 @@ public sealed partial class MiniPlayerBar : UserControl
     private void BuildSpeedFlyout()
     {
         var flyout = new MenuFlyout();
-        foreach (var rate in new[] { 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0 })
+        foreach (var rate in new[] { 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0 })
         {
             var item = new ToggleMenuFlyoutItem
             {
@@ -182,8 +192,7 @@ public sealed partial class MiniPlayerBar : UserControl
             };
             item.Click += (_, _) =>
             {
-                _playbackRate = rate;
-                _playerService.Mpv?.SetProperty("speed", rate.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                _playbackRate = _playerService.SetAudiobookPlaybackRate(rate);
                 AudiobookSpeedButton.Content = $"{rate:0.##}×";
                 BuildSpeedFlyout();
             };
@@ -214,7 +223,7 @@ public sealed partial class MiniPlayerBar : UserControl
         var off = new MenuFlyoutItem { Text = "Off" };
         off.Click += (_, _) => _playerService.ClearAudiobookSleepTimer();
         flyout.Items.Add(off);
-        foreach (var minutes in new[] { 15, 30, 45, 60 })
+        foreach (var minutes in new[] { 5, 15, 30, 45, 60 })
         {
             var item = new MenuFlyoutItem { Text = $"{minutes} minutes" };
             item.Click += (_, _) => _playerService.SetAudiobookSleepTimer(TimeSpan.FromMinutes(minutes), null);
@@ -224,6 +233,14 @@ public sealed partial class MiniPlayerBar : UserControl
         endChapter.Click += (_, _) => _playerService.SetAudiobookSleepTimer(null, _playerService.CurrentAudiobookChapter?.EndSeconds);
         flyout.Items.Add(endChapter);
         AudiobookSleepButton.Flyout = flyout;
+    }
+
+    private void UpdateAudiobookSleepLabel()
+    {
+        var remaining = _playerService.GetAudiobookSleepRemaining();
+        AudiobookSleepText.Text = remaining.HasValue
+            ? $"Sleep {(int)remaining.Value.TotalMinutes}:{remaining.Value.Seconds:00}"
+            : "Sleep";
     }
 
     private void BuildSettingsFlyout()
@@ -246,7 +263,7 @@ public sealed partial class MiniPlayerBar : UserControl
     private MenuFlyoutSubItem BuildSkipSubmenu(string label, bool backward, int selected)
     {
         var submenu = new MenuFlyoutSubItem { Text = label };
-        foreach (var seconds in new[] { 10, 15, 30, 45, 60 })
+        foreach (var seconds in new[] { 5, 10, 15, 30, 45, 60, 90 })
         {
             var item = new ToggleMenuFlyoutItem { Text = $"{seconds} seconds", IsChecked = seconds == selected };
             item.Click += (_, _) =>

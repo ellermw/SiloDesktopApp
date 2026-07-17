@@ -168,4 +168,14 @@ public class AdminLibrariesRegressionSourceTests
         Assert.Contains("contentWidth < 1080", page, StringComparison.Ordinal);
         Assert.Contains("width >= 1280 ? 40", page, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void ProviderEditorUsesResolvedChainContentsForItsEmptyState()
+    {
+        var page = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminLibrariesPage.xaml.cs"));
+
+        Assert.Contains("levelChains.Values.Any(items => items.Count > 0)", page, StringComparison.Ordinal);
+        Assert.Contains("GetLibraryProviderDefaultsAsync", page, StringComparison.Ordinal);
+    }
 }

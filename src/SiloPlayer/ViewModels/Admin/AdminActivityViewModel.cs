@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.ViewModels.Admin;
 
@@ -429,7 +430,7 @@ public partial class AdminActivityViewModel : ObservableObject
 
     public static string FormatLocaleDateTime(string dateStr)
     {
-        if (!DateTime.TryParse(dateStr, out var dt)) return "";
-        return dt.ToLocalTime().ToString("G");
+        if (!DateTimeOffset.TryParse(dateStr, out var dt)) return "";
+        return DateTimeDisplay.FormatDateTime(dt);
     }
 }

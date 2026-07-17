@@ -67,7 +67,9 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
         ? "Queue counts are active, but live scan details have not arrived yet."
         : "No autoscan scans are queued or running.";
     public bool HasRunningPolls => RunningPolls.Count > 0;
-    public string LatestPollDisplay => Status?.LatestEventAt?.ToLocalTime().ToString("hh:mm tt") ?? "—";
+    public string LatestPollDisplay => Status?.LatestEventAt is { } latest
+        ? SiloPlayer.Helpers.DateTimeDisplay.FormatTime(latest)
+        : "—";
     public bool IsActivityFiltered => !string.IsNullOrWhiteSpace(ActivityQuery) || ActivityStatus != "All statuses";
     public bool HasFeedback => IsLoading || !string.IsNullOrWhiteSpace(ErrorMessage) || !string.IsNullOrWhiteSpace(StatusMessage);
     partial void OnIsLoadingChanged(bool value)

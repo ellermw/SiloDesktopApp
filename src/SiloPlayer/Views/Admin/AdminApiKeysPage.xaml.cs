@@ -299,8 +299,8 @@ public sealed partial class AdminApiKeysPage : Page
 
         // ---- Created ----
         string createdText = "—";
-        if (!string.IsNullOrEmpty(key.CreatedAt) && DateTime.TryParse(key.CreatedAt, out var createdDt))
-            createdText = createdDt.ToLocalTime().ToString("g");
+        if (!string.IsNullOrEmpty(key.CreatedAt) && DateTimeOffset.TryParse(key.CreatedAt, out var createdDt))
+            createdText = SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(createdDt);
 
         var createdBlock = new TextBlock
         {
@@ -314,8 +314,8 @@ public sealed partial class AdminApiKeysPage : Page
 
         // ---- Last Used ----
         string lastUsedText = "Never";
-        if (!string.IsNullOrEmpty(key.LastUsedAt) && DateTime.TryParse(key.LastUsedAt, out var lastUsedDt))
-            lastUsedText = lastUsedDt.ToLocalTime().ToString("g");
+        if (!string.IsNullOrEmpty(key.LastUsedAt) && DateTimeOffset.TryParse(key.LastUsedAt, out var lastUsedDt))
+            lastUsedText = SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(lastUsedDt);
 
         var lastUsedBlock = new TextBlock
         {
