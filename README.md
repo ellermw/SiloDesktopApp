@@ -8,7 +8,7 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 [**Download Silo Desktop Player 1.1.44**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.44/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `EB649DF4F4299DD0AEDC605BD16E6B1AC827A10CB1EBA404FC42DF73809280A8`
+SHA-256: `637842DB2570AB29C737EDD791EEA3DB5DDB756D670C5397167CA66987D39213`
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
