@@ -7,6 +7,7 @@ using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
+using Windows.ApplicationModel.DataTransfer;
 
 namespace SiloPlayer.Views;
 
@@ -33,13 +34,31 @@ public sealed partial class CollectionEditorPage : Page
 
         ViewModel.PreviewItems.CollectionChanged += (_, _) =>
             DispatcherQueue.TryEnqueue(BuildPreviewItemsUI);
+        ViewModel.SelectedLibraryIds.CollectionChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(UpdateEditorSummary);
+        ViewModel.AllowedProfileIds.CollectionChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(UpdateEditorSummary);
+        ViewModel.PropertyChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(UpdateEditorSummary);
         SizeChanged += CollectionEditorPage_SizeChanged;
     }
 
     private void CollectionEditorPage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         var horizontalMargin = e.NewSize.Width < 600 ? 16 : e.NewSize.Width < 900 ? 24 : 48;
-        CollectionEditorShell.Margin = new Thickness(horizontalMargin, 24, horizontalMargin, 48);
+        CollectionEditorShell.Margin = new Thickness(horizontalMargin, e.NewSize.Width < 640 ? 16 : 24, horizontalMargin, 48);
+        var stacked = e.NewSize.Width < 1100;
+        EditorSidebarColumn.Width = stacked ? new GridLength(0) : new GridLength(352);
+        EditorBodyGrid.ColumnSpacing = stacked ? 0 : 32;
+        Grid.SetColumn(EditorSidebar, stacked ? 0 : 1);
+        Grid.SetRow(EditorSidebar, stacked ? 1 : 0);
+        EditorSidebar.Margin = stacked ? new Thickness(0, 24, 0, 0) : new Thickness(0);
+
+        var compactBanner = e.NewSize.Width < 760;
+        Grid.SetColumn(SourceBannerActions, compactBanner ? 1 : 2);
+        Grid.SetRow(SourceBannerActions, compactBanner ? 1 : 0);
+        SourceBannerActions.HorizontalAlignment = compactBanner ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        SourceBannerActions.Margin = compactBanner ? new Thickness(0, 12, 0, 0) : new Thickness(0);
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -66,11 +85,14 @@ public sealed partial class CollectionEditorPage : Page
             UpdateSectionVisibility();
             BuildImportedOptionsUI();
             ApplyReadOnlyState();
+            UpdateSourceBanner();
+            UpdateEditorSummary();
         }
         else
         {
             await ViewModel.LoadReferenceDataCommand.ExecuteAsync(null);
             BuildImportedOptionsUI();
+            UpdateEditorSummary();
         }
     }
 
@@ -128,12 +150,14 @@ public sealed partial class CollectionEditorPage : Page
         ManualItemsSection.Visibility = ViewModel.CollectionType == "manual" ? Visibility.Visible : Visibility.Collapsed;
         SmartRulesSection.Visibility = ViewModel.CollectionType == "smart" ? Visibility.Visible : Visibility.Collapsed;
         ImportedSourceSection.Visibility = ViewModel.IsImportedCollection ? Visibility.Visible : Visibility.Collapsed;
+        ImportedSourceBanner.Visibility = ViewModel.IsImportedCollection ? Visibility.Visible : Visibility.Collapsed;
         TypeSection.Visibility = ViewModel.IsImportedCollection ? Visibility.Collapsed : Visibility.Visible;
         BasicInfoTitle.Text = ViewModel.IsImportedCollection ? "Display" : "Basics";
         SourceUrlTextBox.IsEnabled = ViewModel.CollectionType == "mdblist";
         SourceUrlSection.Visibility = ViewModel.CollectionType == "mdblist"
             ? Visibility.Visible
             : Visibility.Collapsed;
+        UpdateEditorSummary();
     }
 
     private void BuildImportedOptionsUI()
@@ -173,6 +197,60 @@ public sealed partial class CollectionEditorPage : Page
             ? Visibility.Collapsed
             : Visibility.Visible;
         ImportedProfileAccessSection.Visibility = ViewModel.IsShared ? Visibility.Visible : Visibility.Collapsed;
+        UpdateSourceBanner();
+        UpdateEditorSummary();
+    }
+
+    private void UpdateEditorSummary()
+    {
+        if (SummaryModeText == null) return;
+        SummaryModeText.Text = ViewModel.CollectionType switch
+        {
+            "smart" => "Smart",
+            "mdblist" => "MDBList",
+            "tmdb" => "TMDB",
+            "trakt" => "Trakt",
+            _ => "Manual",
+        };
+        var selectedLibraries = ViewModel.AvailableLibraries
+            .Where(library => ViewModel.SelectedLibraryIds.Contains(library.Id))
+            .Select(library => library.Name)
+            .ToList();
+        SummaryLibrariesText.Text = selectedLibraries.Count == 0
+            ? "All libraries"
+            : string.Join(", ", selectedLibraries);
+        SummarySharedText.Text = ViewModel.IsShared ? "Yes" : "No";
+        SummaryProfilesText.Text = ViewModel.AllowedProfileIds.Count == 0
+            ? "All profiles"
+            : $"{ViewModel.AllowedProfileIds.Count} selected";
+        SummaryLibraryTabText.Text = ViewModel.IncludeInServerCollections ? "Yes" : "No";
+        SummaryCollectionText.Text = string.IsNullOrWhiteSpace(ViewModel.Name) ? "New" : ViewModel.Name;
+    }
+
+    private void UpdateSourceBanner()
+    {
+        if (!ViewModel.IsImportedCollection || SourceBrandLabel == null) return;
+        var source = ViewModel.CollectionType.ToLowerInvariant();
+        var (label, initials, tagline) = source switch
+        {
+            "tmdb" => ("TMDB", "Tm", "The Movie Database"),
+            "trakt" => ("TRAKT", "Tk", "Trakt.tv"),
+            _ => ("MDBLIST", "Mb", "mdblist.com"),
+        };
+        SourceBrandLabel.Text = label;
+        SourceBrandInitials.Text = initials;
+        SourcePresetLabel.Text = ViewModel.Name;
+        SourceBannerDescription.Text = $"Synced from {tagline} — items, posters, and ordering are managed by the source.";
+        SourceBannerSyncStatus.Text = ViewModel.LastSyncSummary ?? "Not yet synced";
+        OpenSourceButton.Visibility = Uri.TryCreate(ViewModel.SourceUrl, UriKind.Absolute, out _)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private async void OpenSource_Click(object sender, RoutedEventArgs e)
+    {
+        if (Uri.TryCreate(ViewModel.SourceUrl, UriKind.Absolute, out var sourceUri))
+            await Windows.System.Launcher.LaunchUriAsync(sourceUri);
     }
 
     private void ApplyReadOnlyState()
@@ -677,6 +755,27 @@ public sealed partial class CollectionEditorPage : Page
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
 
+        var grip = new Button
+        {
+            Width = 28,
+            Height = 28,
+            Padding = new Thickness(0),
+            CanDrag = !ViewModel.IsReadOnly,
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Content = new FontIcon
+            {
+                Glyph = "\uE700",
+                FontSize = 14,
+                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"]
+            }
+        };
+        grip.DragStarting += (_, args) =>
+        {
+            args.Data.RequestedOperation = DataPackageOperation.Move;
+            args.Data.SetText($"manual-item:{item.MediaItemId}");
+        };
+
         // Position number
         var posText = new TextBlock
         {
@@ -726,26 +825,7 @@ public sealed partial class CollectionEditorPage : Page
             TextTrimming = TextTrimming.CharacterEllipsis
         });
 
-        // Reorder buttons
-        var reorderPanel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 2,
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center
-        };
-
-        var upBtn = MakeSmallIconButton("\uE74A", "Move up");
-        upBtn.IsEnabled = index > 0;
         var capturedItem = item;
-        upBtn.Click += (_, _) => ViewModel.MoveItemUpCommand.Execute(capturedItem);
-
-        var downBtn = MakeSmallIconButton("\uE74B", "Move down");
-        downBtn.IsEnabled = index < ViewModel.ManualItems.Count - 1;
-        downBtn.Click += (_, _) => ViewModel.MoveItemDownCommand.Execute(capturedItem);
-
-        reorderPanel.Children.Add(upBtn);
-        reorderPanel.Children.Add(downBtn);
 
         // Remove button
         var actionPanel = new StackPanel
@@ -758,34 +838,51 @@ public sealed partial class CollectionEditorPage : Page
 
         var removeBtn = MakeSmallIconButton("\uE74D", "Remove");
         removeBtn.Click += (_, _) => ViewModel.RemoveManualItemCommand.Execute(capturedItem);
-        actionPanel.Children.Add(reorderPanel);
         actionPanel.Children.Add(removeBtn);
-
-        Grid.SetColumn(posText, 0);
-        Grid.SetColumn(titlePanel, 1);
-        Grid.SetColumn(reorderPanel, 2);
-        Grid.SetColumn(removeBtn, 3);
 
         // Actually place in proper columns
         row.Children.Clear();
         row.ColumnDefinitions.Clear();
 
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        Grid.SetColumn(posText, 0);
-        Grid.SetColumn(titlePanel, 1);
-        Grid.SetColumn(actionPanel, 2);
+        Grid.SetColumn(grip, 0);
+        Grid.SetColumn(posText, 1);
+        Grid.SetColumn(titlePanel, 2);
+        Grid.SetColumn(actionPanel, 3);
 
+        row.Children.Add(grip);
         row.Children.Add(posText);
         row.Children.Add(titlePanel);
         row.Children.Add(actionPanel);
 
         var border = new Border
         {
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(12),
+            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            AllowDrop = !ViewModel.IsReadOnly,
             Child = row
+        };
+        border.DragOver += (_, args) => args.AcceptedOperation = DataPackageOperation.Move;
+        border.Drop += async (_, args) =>
+        {
+            if (!args.DataView.Contains(StandardDataFormats.Text)) return;
+            args.Handled = true;
+            var payload = await args.DataView.GetTextAsync();
+            const string prefix = "manual-item:";
+            if (!payload.StartsWith(prefix, StringComparison.Ordinal)) return;
+            var sourceId = payload[prefix.Length..];
+            var source = ViewModel.ManualItems.FirstOrDefault(candidate => candidate.MediaItemId == sourceId);
+            if (source == null) return;
+            var oldIndex = ViewModel.ManualItems.IndexOf(source);
+            var newIndex = ViewModel.ManualItems.IndexOf(item);
+            if (oldIndex >= 0 && newIndex >= 0 && oldIndex != newIndex)
+                ViewModel.ManualItems.Move(oldIndex, newIndex);
         };
 
         border.PointerEntered += (s, _) =>
@@ -796,7 +893,7 @@ public sealed partial class CollectionEditorPage : Page
         border.PointerExited += (s, _) =>
         {
             if (s is Border b)
-                b.Background = null;
+                b.Background = (Brush)Application.Current.Resources["CardBackgroundBrush"];
         };
 
         return border;

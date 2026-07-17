@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.ViewModels.Admin;
+using Microsoft.UI.Xaml.Navigation;
 
 namespace SiloPlayer.Views.Admin;
 
@@ -17,6 +18,7 @@ public sealed partial class AdminRecommendationsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminRecommendationsViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)

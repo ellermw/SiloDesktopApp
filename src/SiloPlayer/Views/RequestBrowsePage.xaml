@@ -4,12 +4,14 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:requests="using:SiloPlayer.Core.Models.Requests"
     xmlns:controls="using:SiloPlayer.Controls"
-    Background="{StaticResource AppBackgroundBrush}">
+    Background="{StaticResource AppBackgroundBrush}"
+    SizeChanged="Page_SizeChanged">
     <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-        <StackPanel Grid.Row="0" Padding="30,22,30,12" Spacing="18">
+        <StackPanel x:Name="HeaderPanel" Grid.Row="0" Padding="40,24,40,12" Spacing="18">
             <Button HorizontalAlignment="Left" Click="Back_Click"><StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE72B;" /><TextBlock Text="Requests" /></StackPanel></Button>
-            <Grid ColumnSpacing="16">
+            <Grid x:Name="BrowseHeaderGrid" ColumnSpacing="16" RowSpacing="14">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" Spacing="16">
                     <Border x:Name="HeaderTile" Width="112" Height="64" CornerRadius="7" Background="{StaticResource SurfaceRaisedBrush}">
@@ -23,33 +25,35 @@
                         <TextBlock x:Name="PageText" FontSize="13" Opacity="0.65" />
                     </StackPanel>
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                <StackPanel x:Name="FilterPanel" Grid.Column="1" Orientation="Horizontal" Spacing="10">
                     <ComboBox x:Name="MediaTypeCombo" Width="130" SelectionChanged="Filter_Changed"><ComboBoxItem Content="Movies" Tag="movie" IsSelected="True" /><ComboBoxItem Content="Series" Tag="series" /></ComboBox>
                     <ComboBox x:Name="SortCombo" Width="170" SelectionChanged="Filter_Changed"><ComboBoxItem Content="Popularity" Tag="popularity" IsSelected="True" /><ComboBoxItem Content="Rating" Tag="vote_average" /><ComboBoxItem Content="Release date" Tag="release_date" /></ComboBox>
                 </StackPanel>
             </Grid>
         </StackPanel>
-        <GridView x:Name="ResultsGrid" Grid.Row="1" Padding="26,8,26,20" SelectionMode="None" IsItemClickEnabled="True" ItemClick="ResultsGrid_ItemClick">
+        <GridView x:Name="ResultsGrid" Grid.Row="1" Padding="40,8,40,20" SelectionMode="None" IsItemClickEnabled="True" ItemClick="ResultsGrid_ItemClick" ContainerContentChanging="ResultsGrid_ContainerContentChanging">
             <GridView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" ItemWidth="164" ItemHeight="312" /></ItemsPanelTemplate></GridView.ItemsPanel>
             <GridView.ItemTemplate>
                 <DataTemplate x:DataType="requests:RequestMediaResult">
-                    <Grid Width="150" Margin="6">
-                        <Grid.RowDefinitions><RowDefinition Height="225" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                        <Border CornerRadius="8" Background="{StaticResource SurfaceRaisedBrush}"><Image Source="{x:Bind PosterUrl}" Stretch="UniformToFill" /></Border>
+                    <Grid Width="184" Margin="6" PointerEntered="ResultCard_PointerEntered" PointerExited="ResultCard_PointerExited">
+                        <Grid.RowDefinitions><RowDefinition Height="276" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <Grid>
+                            <Border CornerRadius="8" Background="{StaticResource SurfaceRaisedBrush}"><Image Source="{x:Bind PosterUrl}" Stretch="UniformToFill" /></Border>
+                            <Button x:Name="InlineRequestButton" Content="{x:Bind RequestLabel}" Tag="{x:Bind}" Click="Request_Click" Tapped="InlineRequest_Tapped" IsEnabled="{x:Bind Request.Requestable}" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,12" Padding="14,6" CornerRadius="16" Opacity="0" />
+                        </Grid>
                         <TextBlock Grid.Row="1" Text="{x:Bind Title}" Margin="1,7,1,0" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Grid.Row="2" Text="{x:Bind YearText}" Margin="1,2" FontSize="11" Opacity="0.6" />
-                        <Button Grid.Row="3" Content="{x:Bind RequestLabel}" Tag="{x:Bind}" Click="Request_Click" IsEnabled="{x:Bind Request.Requestable}" HorizontalAlignment="Stretch" Padding="8,4" />
+                        <TextBlock Grid.Row="2" Text="{x:Bind DisplayMeta}" Margin="1,4" FontSize="11" Opacity="0.6" />
                     </Grid>
                 </DataTemplate>
             </GridView.ItemTemplate>
         </GridView>
-        <Grid Grid.Row="2" Padding="30,8,30,18">
-            <Button x:Name="PreviousButton" Content="Previous" Click="Previous_Click" HorizontalAlignment="Left" />
+        <Grid x:Name="FooterPanel" Grid.Row="2" Padding="40,8,40,18">
+            <Button x:Name="PreviousButton" Content="Prev" Click="Previous_Click" HorizontalAlignment="Left" />
             <TextBlock x:Name="FooterPageText" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.7" />
             <Button x:Name="NextButton" Content="Next" Click="Next_Click" HorizontalAlignment="Right" />
         </Grid>
-        <Grid x:Name="LoadingLayer" Grid.RowSpan="3" Background="{StaticResource AppBackgroundBrush}">
-            <StackPanel x:Name="BrowseSkeleton" Padding="30,120,30,20" Spacing="22">
+        <Grid x:Name="LoadingLayer" Grid.Row="1" Background="{StaticResource AppBackgroundBrush}">
+            <StackPanel x:Name="BrowseSkeleton" Padding="40,8,40,20" Spacing="22">
                 <StackPanel Orientation="Horizontal" Spacing="14"><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /></StackPanel>
                 <StackPanel Orientation="Horizontal" Spacing="14"><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /></StackPanel>
                 <StackPanel Orientation="Horizontal" Spacing="14"><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /></StackPanel>

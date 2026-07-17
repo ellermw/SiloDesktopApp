@@ -17,13 +17,37 @@
     </Page.Resources>
 
     <Grid>
-        <!-- Loading indicator -->
-        <ProgressRing
-            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+        <!-- Match the WebUI's stable six-card loading layout instead of
+             replacing the page with a centered spinner. -->
+        <ScrollViewer
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
+            IsScrollInertiaEnabled="True">
+            <StackPanel
+                x:Name="CollectionsLoadingShell"
+                MaxWidth="1400"
+                HorizontalAlignment="Center"
+                Padding="40,24,40,40">
+                <ItemsRepeater x:Name="CollectionsLoadingRepeater">
+                    <ItemsRepeater.Layout>
+                        <UniformGridLayout
+                            MinItemWidth="280"
+                            MinColumnSpacing="16"
+                            MinRowSpacing="16"
+                            MaximumRowsOrColumns="3"
+                            ItemsStretch="Fill" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate>
+                            <Border
+                                Height="96"
+                                CornerRadius="26"
+                                Background="{StaticResource SurfaceBrush}"
+                                Opacity="0.62" />
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+            </StackPanel>
+        </ScrollViewer>
 
         <!-- Error state -->
         <StackPanel
@@ -50,7 +74,12 @@
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
-            <StackPanel x:Name="CollectionsPageShell" Padding="40,28,40,40" Spacing="24">
+            <StackPanel
+                x:Name="CollectionsPageShell"
+                MaxWidth="1400"
+                HorizontalAlignment="Center"
+                Padding="40,24,40,40"
+                Spacing="24">
 
                 <!-- ===== Header ===== -->
                 <Grid x:Name="CollectionsHeaderGrid" RowSpacing="14">
@@ -85,7 +114,7 @@
                         VerticalAlignment="Center">
                         <Button
                             x:Name="BrowseTemplatesButton"
-                            Style="{StaticResource GhostButtonStyle}"
+                            Style="{StaticResource OutlineButtonStyle}"
                             Click="BrowseTemplates_Click">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <FontIcon Glyph="&#xE8B7;" FontSize="14" />
@@ -115,9 +144,11 @@
                 <Border
                     x:Name="EmptyState"
                     Background="{StaticResource SurfaceBrush}"
-                    CornerRadius="24"
-                    Padding="40,48"
-                    HorizontalAlignment="Center"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="32"
+                    Padding="24,64"
+                    HorizontalAlignment="Stretch"
                     Visibility="Collapsed">
                     <StackPanel HorizontalAlignment="Center" Spacing="12">
                         <FontIcon
@@ -127,13 +158,13 @@
                             HorizontalAlignment="Center" />
                         <TextBlock
                             Text="No collections yet"
-                            FontSize="20"
-                            FontWeight="SemiBold"
+                            FontSize="14"
+                            FontWeight="Medium"
                             Foreground="{StaticResource PrimaryTextBrush}"
                             HorizontalAlignment="Center" />
                         <TextBlock
                             Text="Start from a curated TMDB, Trakt, or MDBList template — or build your own from scratch."
-                            FontSize="14"
+                            FontSize="12"
                             Foreground="{StaticResource SecondaryTextBrush}"
                             HorizontalAlignment="Center"
                             TextWrapping="Wrap"
@@ -141,7 +172,7 @@
                             TextAlignment="Center" />
                         <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" Margin="0,8,0,0">
                             <Button
-                                Style="{StaticResource AccentButtonStyle}"
+                                Style="{StaticResource OutlineButtonStyle}"
                                 Click="BrowseTemplates_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon Glyph="&#xE8B7;" FontSize="14" />
@@ -165,7 +196,7 @@
 
                 <Button
                     x:Name="AddGroupButton"
-                    Style="{StaticResource GhostButtonStyle}"
+                    Style="{StaticResource OutlineButtonStyle}"
                     HorizontalAlignment="Left"
                     Click="AddGroup_Click">
                     <StackPanel Orientation="Horizontal" Spacing="6">
@@ -173,6 +204,28 @@
                         <TextBlock Text="Add group" />
                     </StackPanel>
                 </Button>
+
+                <StackPanel
+                    x:Name="AddGroupEditor"
+                    Orientation="Horizontal"
+                    Spacing="8"
+                    Visibility="Collapsed">
+                    <TextBox
+                        x:Name="AddGroupNameBox"
+                        Width="300"
+                        MaxWidth="300"
+                        PlaceholderText="Group title"
+                        Style="{StaticResource DarkTextBoxStyle}"
+                        KeyDown="AddGroupNameBox_KeyDown" />
+                    <Button
+                        Content="Add"
+                        Style="{StaticResource GhostButtonStyle}"
+                        Click="AddGroupCommit_Click" />
+                    <Button
+                        Content="Cancel"
+                        Style="{StaticResource GhostButtonStyle}"
+                        Click="AddGroupCancel_Click" />
+                </StackPanel>
 
                 <StackPanel x:Name="ServerCollectionsSection" Spacing="22" Visibility="Collapsed" Margin="0,8,0,0">
                     <StackPanel Spacing="4">
@@ -186,7 +239,47 @@
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
-                    <StackPanel x:Name="ServerCollectionsRows" Spacing="30" />
+                    <StackPanel
+                        x:Name="ServerCollectionsLoadingRows"
+                        Spacing="32"
+                        Visibility="{x:Bind ViewModel.IsLoadingServerCollections, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                        <StackPanel Spacing="18">
+                            <Border Width="160" Height="28" CornerRadius="8" Background="{StaticResource SurfaceBrush}" Opacity="0.62" HorizontalAlignment="Left" />
+                            <ItemsRepeater x:Name="ServerCollectionsLoadingRowOne">
+                                <ItemsRepeater.Layout>
+                                    <StackLayout Orientation="Horizontal" Spacing="16" />
+                                </ItemsRepeater.Layout>
+                                <ItemsRepeater.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Width="178" Spacing="10">
+                                            <Border Width="178" Height="267" CornerRadius="12" Background="{StaticResource SurfaceBrush}" Opacity="0.62" />
+                                            <Border Width="132" Height="16" CornerRadius="6" Background="{StaticResource SurfaceBrush}" Opacity="0.62" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsRepeater.ItemTemplate>
+                            </ItemsRepeater>
+                        </StackPanel>
+                        <StackPanel Spacing="18">
+                            <Border Width="160" Height="28" CornerRadius="8" Background="{StaticResource SurfaceBrush}" Opacity="0.62" HorizontalAlignment="Left" />
+                            <ItemsRepeater x:Name="ServerCollectionsLoadingRowTwo">
+                                <ItemsRepeater.Layout>
+                                    <StackLayout Orientation="Horizontal" Spacing="16" />
+                                </ItemsRepeater.Layout>
+                                <ItemsRepeater.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Width="178" Spacing="10">
+                                            <Border Width="178" Height="267" CornerRadius="12" Background="{StaticResource SurfaceBrush}" Opacity="0.62" />
+                                            <Border Width="132" Height="16" CornerRadius="6" Background="{StaticResource SurfaceBrush}" Opacity="0.62" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsRepeater.ItemTemplate>
+                            </ItemsRepeater>
+                        </StackPanel>
+                    </StackPanel>
+                    <StackPanel
+                        x:Name="ServerCollectionsRows"
+                        Spacing="30"
+                        Visibility="{x:Bind ViewModel.IsLoadingServerCollections, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}" />
                 </StackPanel>
 
             </StackPanel>

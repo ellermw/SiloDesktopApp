@@ -26,6 +26,9 @@ public partial class NotificationsViewModel : ObservableObject
     [ObservableProperty] private bool _hasMore;
     [ObservableProperty] private bool _isEmpty;
     private string? _nextCursor;
+    private DateTime _lastLoadedAt = DateTime.MinValue;
+    private string? _lastLoadedFilter;
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(2);
 
     [RelayCommand]
     private async Task LoadAsync()
@@ -47,6 +50,9 @@ public partial class NotificationsViewModel : ObservableObject
     private async Task LoadPageAsync(bool reset)
     {
         if (IsLoading) return;
+        if (reset && Notifications.Count > 0 && _lastLoadedFilter == StatusFilter
+            && DateTime.UtcNow - _lastLoadedAt < CacheDuration)
+            return;
 
         IsLoading = true;
         ErrorMessage = null;
@@ -70,6 +76,11 @@ public partial class NotificationsViewModel : ObservableObject
             HasMore = !string.IsNullOrWhiteSpace(_nextCursor);
             IsEmpty = Notifications.Count == 0;
             StatusMessage = "";
+            if (reset)
+            {
+                _lastLoadedAt = DateTime.UtcNow;
+                _lastLoadedFilter = StatusFilter;
+            }
         }
         catch (Exception ex)
         {
@@ -104,6 +115,7 @@ public partial class NotificationsViewModel : ObservableObject
         catch (Exception ex)
         {
             ErrorMessage = $"Failed to mark notification read: {ex.Message}";
+            _lastLoadedAt = DateTime.MinValue;
             await LoadPageAsync(reset: true);
         }
     }
@@ -128,6 +140,7 @@ public partial class NotificationsViewModel : ObservableObject
         catch (Exception ex)
         {
             ErrorMessage = $"Failed to mark notifications read: {ex.Message}";
+            _lastLoadedAt = DateTime.MinValue;
             await LoadPageAsync(reset: true);
         }
     }

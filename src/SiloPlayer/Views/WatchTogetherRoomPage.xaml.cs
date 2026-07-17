@@ -609,4 +609,29 @@ public sealed partial class WatchTogetherRoomPage : Page
     {
         target.Source = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? new BitmapImage(uri) : null;
     }
+
+    private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var width = e.NewSize.Width;
+        if (width <= 0) return;
+        var gutter = width < 640 ? 16d : width < 1024 ? 28d : 40d;
+        PageShell.Padding = new Thickness(gutter, width < 640 ? 18 : 28, gutter, 42);
+
+        var stackHeader = width < 820;
+        Grid.SetRow(RoomHeaderActions, stackHeader ? 1 : 0);
+        Grid.SetColumn(RoomHeaderActions, stackHeader ? 0 : 1);
+        RoomHeaderActions.HorizontalAlignment = stackHeader ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        RoomHeaderSummary.Spacing = width < 560 ? 10 : 20;
+
+        NowPlayingGrid.Height = width < 640 ? 132 : 150;
+        NowPlayingTitle.FontSize = width < 640 ? 22 : 27;
+
+        var compactCandidate = width < 660;
+        CandidatePosterBorder.Visibility = compactCandidate ? Visibility.Collapsed : Visibility.Visible;
+        CandidateContentGrid.ColumnDefinitions[0].Width = compactCandidate ? new GridLength(0) : new GridLength(116);
+        Grid.SetColumn(CandidateTextPanel, compactCandidate ? 0 : 1);
+        Grid.SetColumnSpan(CandidateTextPanel, compactCandidate ? 2 : 1);
+        CandidateContentGrid.Padding = new Thickness(compactCandidate ? 16 : 22);
+        CandidateTitle.FontSize = compactCandidate ? 20 : 24;
+    }
 }

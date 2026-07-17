@@ -11,11 +11,15 @@ public sealed partial class SearchPage : Page
 {
     public SearchViewModel ViewModel { get; }
     private bool _filterInitializing = true;
+    private bool _initialized;
+    private double _catalogCardWidth = 178;
 
     public SearchPage()
     {
         ViewModel = App.Services.GetRequiredService<SearchViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Required;
+        SearchLoadingRepeater.ItemsSource = Enumerable.Range(0, 24).ToArray();
 
         ResultsRepeater.ItemsSource = ViewModel.Results;
         PeopleRepeater.ItemsSource = ViewModel.PeopleResults;
@@ -40,20 +44,36 @@ public sealed partial class SearchPage : Page
                 DispatcherQueue.TryEnqueue(UpdateResultsState);
             }
         };
+        SizeChanged += SearchPage_SizeChanged;
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
 
-        // Reset to empty state
+        if (!_initialized)
+        {
+            await Task.WhenAll(ViewModel.LoadMediaScopeAsync(), ViewModel.LoadFiltersAsync());
+            PopulateResultFilters();
+            _filterInitializing = false;
+            _initialized = true;
+        }
+
+        if (e.NavigationMode == NavigationMode.Back && !string.IsNullOrWhiteSpace(ViewModel.Query))
+        {
+            SearchBox.Text = ViewModel.Query;
+            ResultsSearchBox.Text = ViewModel.Query;
+            UpdateScopeButtons();
+            UpdateResultsState();
+            return;
+        }
+
         ViewModel.Query = "";
         ViewModel.Results.Clear();
         ViewModel.PeopleResults.Clear();
         ViewModel.OutsideLibraryResults.Clear();
-        await Task.WhenAll(ViewModel.LoadMediaScopeAsync(), ViewModel.LoadFiltersAsync());
-        PopulateResultFilters();
-        _filterInitializing = false;
+        SearchBox.Text = "";
+        ResultsSearchBox.Text = "";
         UpdateScopeButtons();
         EmptyState.Visibility = Visibility.Visible;
         ResultsState.Visibility = Visibility.Collapsed;
@@ -149,9 +169,9 @@ public sealed partial class SearchPage : Page
             return;
         }
 
-        // Debounce: wait 400ms after last keystroke before searching
+        // Match the current WebUI's 100ms live-search navigation debounce.
         _searchDebounce?.Stop();
-        _searchDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _searchDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _searchDebounce.Tick += async (_, _) =>
         {
             _searchDebounce?.Stop();
@@ -204,6 +224,48 @@ public sealed partial class SearchPage : Page
         SearchBox.Focus(FocusState.Programmatic);
     }
 
+    private async void ResultsScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (ResultsScroll.ScrollableHeight - ResultsScroll.VerticalOffset < 900)
+            await ViewModel.LoadMoreAsync();
+    }
+
+    private void SearchPage_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var gutter = e.NewSize.Width < 640 ? 16 : e.NewSize.Width < 1024 ? 24 : 40;
+        ResultsScroll.Padding = new Thickness(gutter, 0, gutter, 24);
+        UpdateCatalogGridLayout(e.NewSize.Width, gutter);
+    }
+
+    private void UpdateCatalogGridLayout(double viewportWidth, double gutter)
+    {
+        var columns = viewportWidth >= 1280 ? 8
+            : viewportWidth >= 1024 ? 7
+            : viewportWidth >= 768 ? 5
+            : viewportWidth >= 640 ? 4
+            : 3;
+        var contentWidth = Math.Max(320, Math.Min(1400, viewportWidth - (gutter * 2)));
+        _catalogCardWidth = Math.Max(96, (contentWidth - (12 * (columns - 1))) / columns);
+        ResultsGridLayout.MaximumRowsOrColumns = columns;
+        ResultsGridLayout.MinItemWidth = _catalogCardWidth;
+        ResultsGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + 56;
+        for (var index = 0; index < ViewModel.Results.Count; index++)
+            if (ResultsRepeater.TryGetElement(index) is SiloPlayer.Controls.PosterCard card)
+                card.SetCatalogGridLayout(_catalogCardWidth);
+    }
+
+    private void ResultsRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
+    {
+        if (args.Element is SiloPlayer.Controls.PosterCard card)
+            card.SetCatalogGridLayout(_catalogCardWidth);
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        _searchDebounce?.Stop();
+        base.OnNavigatedFrom(e);
+    }
+
     private void PopulateResultFilters()
     {
         FillResultCombo(ResultGenreCombo, "All Genres", ViewModel.AvailableFilters?.Genres ?? []);
@@ -243,7 +305,7 @@ public sealed partial class SearchPage : Page
     {
         if (_filterInitializing) return;
         ViewModel.SortField = SelectedTag(ResultSortCombo) ?? "added_at";
-        var ascending = ViewModel.SortField is "title" or "content_rating";
+        var ascending = ViewModel.SortField is "title" or "content_rating" or "author" or "narrator" or "series";
         _filterInitializing = true;
         SelectComboTag(ResultOrderCombo, ascending ? "asc" : "desc");
         _filterInitializing = false;

@@ -57,7 +57,7 @@
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
             <StackPanel Padding="40,24,40,24" Spacing="36">
                 <!-- Hero carousel skeleton (16:9 backdrop) -->
-                <controls:SkeletonBackdrop Height="380" />
+                <controls:SkeletonBackdrop x:Name="InitialHeroSkeleton" Height="380" />
 
                 <!-- Three section-row skeletons -->
                 <StackPanel Spacing="12">

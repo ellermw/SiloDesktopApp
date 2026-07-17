@@ -19,6 +19,7 @@ public sealed partial class AdminActivityPage : Page
     public AdminActivityViewModel ViewModel { get; }
     private bool _rebuildStreamPending;
     private bool _rebuildIpPending;
+    private bool _loaded;
 
     // Event channel subscription for realtime refresh
     private IDisposable? _eventSubscription;
@@ -37,6 +38,7 @@ public sealed partial class AdminActivityPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminActivityViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Required;
     }
 
     private void ContentScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -60,11 +62,14 @@ public sealed partial class AdminActivityPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        if (_loaded) return;
+        _loaded = true;
         SizeChanged += ActivityPage_SizeChanged;
         UpdateResponsiveTitle(ActualWidth);
-        ViewModel.FilteredSessions.CollectionChanged += (_, _) => ScheduleRebuildStream();
-        ViewModel.IPLookupResults.CollectionChanged += (_, _) => ScheduleRebuildIp();
+        ViewModel.FilteredSessions.CollectionChanged += FilteredSessions_CollectionChanged;
+        ViewModel.IPLookupResults.CollectionChanged += IpLookupResults_CollectionChanged;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        if (ViewModel.FilteredSessions.Count > 0) RebuildAll();
         try
         {
             await ViewModel.LoadCommand.ExecuteAsync(null);
@@ -94,6 +99,7 @@ public sealed partial class AdminActivityPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        _loaded = false;
         if (_eventChannel != null)
         {
             _eventChannel.EventReceived -= OnEventReceived;
@@ -102,7 +108,16 @@ public sealed partial class AdminActivityPage : Page
         _eventSubscription?.Dispose();
         _eventSubscription = null;
         SizeChanged -= ActivityPage_SizeChanged;
+        ViewModel.FilteredSessions.CollectionChanged -= FilteredSessions_CollectionChanged;
+        ViewModel.IPLookupResults.CollectionChanged -= IpLookupResults_CollectionChanged;
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
     }
+
+    private void FilteredSessions_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuildStream();
+
+    private void IpLookupResults_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuildIp();
 
     private void ActivityPage_SizeChanged(object sender, SizeChangedEventArgs e)
     {

@@ -86,6 +86,21 @@ public sealed class CurrentHomeParitySourceTests
     }
 
     [Fact]
+    public void HomeRetainsItsVisualTreeAndCoalescesLayoutRefreshes()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml.cs");
+        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "HomeViewModel.cs");
+
+        Assert.Contains("NavigationCacheMode = NavigationCacheMode.Required", page);
+        Assert.Contains("AttachViewModelEvents();", page);
+        Assert.Contains("_layoutChangedWhileRefreshing", page);
+        Assert.Contains("if (_isRefreshingLayout)", page);
+        Assert.Contains("Math.Clamp(e.NewSize.Height * ratio, 350, 700)", page);
+        Assert.Contains("if (_loadInProgress) return;", viewModel);
+        Assert.Contains("IsLoading = !hadContent;", viewModel);
+    }
+
+    [Fact]
     public void ContinueWatchingCardsUseCurrentWideMenuOverlayAndMetadataLayout()
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Controls", "LandscapeCard.xaml");

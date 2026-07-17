@@ -189,6 +189,41 @@ public sealed partial class RequestDetailPage : Page
     private static string? Tmdb(string? path, string size) => string.IsNullOrWhiteSpace(path) ? null : $"https://image.tmdb.org/t/p/{size}{path}";
     private static void SetImage(Image image, string? url) { if (url != null) image.Source = new BitmapImage(new Uri(url)); }
     private static Brush Brush(string key) => (Brush)Application.Current.Resources[key];
+
+    private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var width = e.NewSize.Width;
+        if (width <= 0) return;
+        var gutter = width < 640 ? 16d : width < 1024 ? 24d : width < 1280 ? 40d : 48d;
+        var compact = width < 1024;
+
+        BackButton.Margin = new Thickness(gutter, 24, 0, 0);
+        LowerContent.Padding = new Thickness(gutter, 20, gutter, 50);
+        HeroContent.Margin = new Thickness(gutter, compact ? 96 : 104, gutter, compact ? 32 : 46);
+        HeroGrid.MinHeight = compact ? 780 : Math.Max(620, ActualHeight * 0.72);
+        TitleText.FontSize = width < 640 ? 32 : width < 1024 ? 38 : 42;
+
+        HeroContent.ColumnDefinitions[0].Width = compact
+            ? new GridLength(1, GridUnitType.Star) : new GridLength(210);
+        Grid.SetRow(PosterBorder, 0);
+        Grid.SetColumn(PosterBorder, 0);
+        Grid.SetRow(HeroInfo, compact ? 1 : 0);
+        Grid.SetColumn(HeroInfo, compact ? 0 : 1);
+        Grid.SetColumnSpan(HeroInfo, compact ? 2 : 1);
+        PosterBorder.Width = compact ? 170 : 210;
+        PosterBorder.Height = compact ? 255 : 315;
+
+        DetailSkeleton.ColumnDefinitions[0].Width = compact
+            ? new GridLength(1, GridUnitType.Star) : new GridLength(210);
+        Grid.SetRow(DetailSkeletonPoster, 0);
+        Grid.SetColumn(DetailSkeletonPoster, 0);
+        Grid.SetRow(DetailSkeletonInfo, compact ? 1 : 0);
+        Grid.SetColumn(DetailSkeletonInfo, compact ? 0 : 1);
+        Grid.SetColumnSpan(DetailSkeletonInfo, compact ? 2 : 1);
+        DetailSkeletonPoster.Width = compact ? 170 : 210;
+        DetailSkeletonPoster.Height = compact ? 255 : 315;
+        DetailSkeleton.Margin = new Thickness(gutter, compact ? 96 : 105, gutter, 50);
+    }
 }
 
 public sealed record RequestDetailNavigation(string MediaType, int TmdbId);

@@ -14,6 +14,7 @@ public sealed partial class AdminMarkerHistoryPage : Page
     public AdminMarkerHistoryPage()
     {
         InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)

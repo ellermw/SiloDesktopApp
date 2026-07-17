@@ -11,6 +11,7 @@ public partial class CollectionsViewModel : ObservableObject
 {
     private readonly CollectionsApi _collectionsApi;
     private readonly CatalogApi _catalogApi;
+    private bool _loadInProgress;
 
     public CollectionsViewModel(CollectionsApi collectionsApi, CatalogApi catalogApi)
     {
@@ -32,6 +33,9 @@ public partial class CollectionsViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isLoading;
+
+    [ObservableProperty]
+    private bool _isLoadingServerCollections;
 
     [ObservableProperty]
     private bool _isEmpty;
@@ -60,15 +64,21 @@ public partial class CollectionsViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadCollectionsAsync()
     {
-        if (IsLoading) return;
+        if (_loadInProgress) return;
 
-        IsLoading = true;
+        _loadInProgress = true;
+        // Preserve the previous page while refreshing. Skeletons are useful
+        // only for the first visit; hiding populated collections on every
+        // navigation makes the route look as though it was torn down.
+        IsLoading = Collections.Count == 0 && Groups.Count == 0;
+        IsLoadingServerCollections = ServerLibraries.Count == 0;
         ErrorMessage = null;
+        Task<ServerCollectionsResponse>? serverCollectionsTask = null;
 
         try
         {
             var collectionsTask = _collectionsApi.GetCollectionsAsync();
-            var serverCollectionsTask = _collectionsApi.GetServerCollectionsAsync();
+            serverCollectionsTask = _collectionsApi.GetServerCollectionsAsync();
             var response = await collectionsTask;
             Collections.Clear();
             foreach (var c in response.Collections)
@@ -77,18 +87,6 @@ public partial class CollectionsViewModel : ObservableObject
             foreach (var group in response.Groups.OrderBy(group => group.SortOrder))
                 Groups.Add(group);
 
-            ServerLibraries.Clear();
-            try
-            {
-                var serverResponse = await serverCollectionsTask;
-                foreach (var library in serverResponse.Libraries)
-                    ServerLibraries.Add(library);
-            }
-            catch
-            {
-                // Server collections are an independent, optional surface. A
-                // failure here must not hide the user's editable collections.
-            }
             IsEmpty = Collections.Count == 0;
         }
         catch (Exception ex)
@@ -98,6 +96,27 @@ public partial class CollectionsViewModel : ObservableObject
         finally
         {
             IsLoading = false;
+        }
+
+        ServerLibraries.Clear();
+        try
+        {
+            if (serverCollectionsTask != null)
+            {
+                var serverResponse = await serverCollectionsTask;
+                foreach (var library in serverResponse.Libraries)
+                    ServerLibraries.Add(library);
+            }
+        }
+        catch
+        {
+            // Server collections are an independent, optional surface. A
+            // failure here must not hide the user's editable collections.
+        }
+        finally
+        {
+            IsLoadingServerCollections = false;
+            _loadInProgress = false;
         }
     }
 
@@ -187,6 +206,39 @@ public partial class CollectionsViewModel : ObservableObject
         }
     }
 
+    public async Task<bool> DropCollectionAsync(string sourceId, string? targetId, string? targetGroupId)
+    {
+        var source = Collections.FirstOrDefault(item => item.Id == sourceId);
+        if (source == null) return false;
+
+        if (!string.Equals(source.GroupId, targetGroupId, StringComparison.Ordinal))
+            return await MoveCollectionToGroupAsync(source, targetGroupId);
+
+        var scope = Collections
+            .Where(item => string.Equals(item.GroupId, targetGroupId, StringComparison.Ordinal))
+            .OrderBy(item => item.SortOrder)
+            .ToList();
+        var oldIndex = scope.FindIndex(item => item.Id == sourceId);
+        var newIndex = targetId == null
+            ? scope.Count - 1
+            : scope.FindIndex(item => item.Id == targetId);
+        if (oldIndex < 0 || newIndex < 0 || oldIndex == newIndex) return false;
+
+        scope.RemoveAt(oldIndex);
+        scope.Insert(Math.Min(newIndex, scope.Count), source);
+        try
+        {
+            await _collectionsApi.ReorderCollectionsAsync(scope.Select(item => item.Id).ToList(), targetGroupId);
+            await LoadCollectionsAsync();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to reorder collections: {ex.Message}";
+            return false;
+        }
+    }
+
     public async Task<bool> MoveGroupAsync(CollectionGroup group, int offset)
     {
         var ordered = Groups.OrderBy(item => item.SortOrder).ToList();
@@ -204,6 +256,29 @@ public partial class CollectionsViewModel : ObservableObject
         catch (Exception ex)
         {
             ErrorMessage = $"Failed to reorder groups: {ex.Message}";
+            return false;
+        }
+    }
+
+    public async Task<bool> DropGroupAsync(string sourceId, string targetId)
+    {
+        var ordered = Groups.OrderBy(item => item.SortOrder).ToList();
+        var oldIndex = ordered.FindIndex(item => item.Id == sourceId);
+        var newIndex = ordered.FindIndex(item => item.Id == targetId);
+        if (oldIndex < 0 || newIndex < 0 || oldIndex == newIndex) return false;
+
+        var source = ordered[oldIndex];
+        ordered.RemoveAt(oldIndex);
+        ordered.Insert(Math.Min(newIndex, ordered.Count), source);
+        try
+        {
+            await _collectionsApi.ReorderCollectionGroupsAsync(ordered.Select(item => item.Id).ToList());
+            await LoadCollectionsAsync();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to reorder collection groups: {ex.Message}";
             return false;
         }
     }

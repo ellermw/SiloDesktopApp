@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
+using Microsoft.UI.Xaml.Input;
 using SiloPlayer.Core.Models.Notifications;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
@@ -17,6 +19,7 @@ public sealed partial class NotificationsPage : Page
         ViewModel = App.Services.GetRequiredService<NotificationsViewModel>();
         DataContext = ViewModel;
         InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Required;
         Loaded += NotificationsPage_Loaded;
     }
 
@@ -123,4 +126,45 @@ public sealed partial class NotificationsPage : Page
         => active
             ? (Brush)Application.Current.Resources["SurfaceBrush"]
             : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+
+    private void NotificationRow_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Grid { DataContext: AppNotification notification } row) return;
+        if (notification.IsUnread && Application.Current.Resources["SurfaceBrush"] is SolidColorBrush surface)
+            row.Background = new SolidColorBrush(surface.Color) { Opacity = 0.3 };
+        else
+            row.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+    }
+
+    private void NotificationRow_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement row && row.FindName("InlineMarkReadButton") is Button button)
+            button.Opacity = 1;
+    }
+
+    private void NotificationRow_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is FrameworkElement row && row.FindName("InlineMarkReadButton") is Button button)
+            button.Opacity = 0;
+    }
+
+    private void MarkRead_Tapped(object sender, TappedRoutedEventArgs e) => e.Handled = true;
+
+    private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var width = e.NewSize.Width;
+        if (width <= 0) return;
+        PageContent.Padding = width < 640 ? new Thickness(16, 32, 16, 32) : new Thickness(24, 32, 24, 32);
+
+        var compact = width < 560;
+        if (HeaderGrid.Children[0] is FrameworkElement title)
+        {
+            Grid.SetRow(title, 0);
+            Grid.SetColumnSpan(title, compact ? 3 : 1);
+        }
+        Grid.SetRow(MarkAllButton, compact ? 1 : 0);
+        Grid.SetRow(PreferencesButton, compact ? 1 : 0);
+        Grid.SetColumn(MarkAllButton, compact ? 1 : 1);
+        Grid.SetColumn(PreferencesButton, compact ? 2 : 2);
+    }
 }

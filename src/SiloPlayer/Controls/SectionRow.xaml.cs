@@ -27,6 +27,8 @@ public sealed partial class SectionRow : UserControl
     private bool _canScrollNext;
     private bool _isPinned;
     private int? _libraryId;
+    private bool _useTitleViewLink;
+    private double _posterWidth = 178;
 
     private static readonly HashSet<string> BrowseableSectionTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -64,9 +66,23 @@ public sealed partial class SectionRow : UserControl
         set
         {
             _onViewAll = value;
-            if (ExploreAllBtn != null)
-                ExploreAllBtn.Visibility = value != null ? Visibility.Visible : Visibility.Collapsed;
+            UpdateNavigationPresentation();
             UpdateArrowsOpacity();
+        }
+    }
+
+    /// <summary>
+    /// Uses the current WebUI recommendation-section treatment: the title is
+    /// the navigation target and carries a small "View" suffix.
+    /// </summary>
+    public bool UseTitleViewLink
+    {
+        get => _useTitleViewLink;
+        set
+        {
+            if (_useTitleViewLink == value) return;
+            _useTitleViewLink = value;
+            UpdateNavigationPresentation();
         }
     }
 
@@ -88,9 +104,9 @@ public sealed partial class SectionRow : UserControl
     private void UpdateSection(HomeSectionWithItems section)
     {
         SectionTitle.Text = section.Title;
+        TitleLinkTitle.Text = section.Title;
 
-        // Show the "Explore all" button only when a navigation callback is set.
-        ExploreAllBtn.Visibility = OnViewAll != null ? Visibility.Visible : Visibility.Collapsed;
+        UpdateNavigationPresentation();
         UpdatePinAvailability();
         SyncPinState();
 
@@ -138,6 +154,18 @@ public sealed partial class SectionRow : UserControl
         // Reset scroll position on re-bind so the first item is always visible.
         CardsScrollViewer.ChangeView(0, null, null, disableAnimation: true);
         UpdateScrollBounds();
+    }
+
+    private void UpdateNavigationPresentation()
+    {
+        if (ExploreAllBtn == null || TitleLinkBtn == null || SectionTitle == null) return;
+        var hasTarget = OnViewAll != null;
+        TitleLinkBtn.Visibility = hasTarget && UseTitleViewLink
+            ? Visibility.Visible : Visibility.Collapsed;
+        SectionTitle.Visibility = hasTarget && UseTitleViewLink
+            ? Visibility.Collapsed : Visibility.Visible;
+        ExploreAllBtn.Visibility = hasTarget && !UseTitleViewLink
+            ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>
@@ -201,10 +229,9 @@ public sealed partial class SectionRow : UserControl
 
     private void UpdateArrowsOpacity()
     {
-        // Panel is visible when hovered AND either there's something to scroll
-        // or the "Explore all" button is available.
-        bool hasExploreAll = OnViewAll != null;
-        bool show = _isHovered && (_canScrollPrev || _canScrollNext || hasExploreAll);
+        // WebUI keeps Explore all visible in the header and hover-reveals only
+        // the carousel edge arrows.
+        bool show = _isHovered && (_canScrollPrev || _canScrollNext);
         double target = show ? 1.0 : 0.0;
         if (PinSectionBtn.Visibility == Visibility.Visible)
             PinSectionBtn.Opacity = _isPinned || _isHovered ? 1.0 : 0.0;
@@ -276,6 +303,47 @@ public sealed partial class SectionRow : UserControl
     private void ExploreAll_Click(object sender, RoutedEventArgs e)
     {
         OnViewAll?.Invoke();
+    }
+
+    private void TitleLink_Click(object sender, RoutedEventArgs e)
+    {
+        OnViewAll?.Invoke();
+    }
+
+    private void SectionRow_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var width = e.NewSize.Width;
+        if (width <= 0) return;
+
+        var gutter = width < 640 ? 16d
+            : width < 1024 ? 24d
+            : width < 1280 ? 40d
+            : 48d;
+        var posterWidth = width < 640 ? 140d
+            : width < 1024 ? 160d
+            : 185d;
+
+        var edgeMargin = new Thickness(gutter, 0, gutter, 0);
+        SectionHeader.Margin = new Thickness(gutter, 0, gutter, 20);
+        CardsRepeater.Margin = edgeMargin;
+        SkeletonPanel.Margin = edgeMargin;
+        ErrorPanel.Margin = edgeMargin;
+        CardsLayout.Spacing = width < 1024 ? 16 : 20;
+
+        if (Math.Abs(_posterWidth - posterWidth) < 0.1) return;
+        _posterWidth = posterWidth;
+        if (Section == null) return;
+        for (var i = 0; i < Section.Items.Count; i++)
+        {
+            if (CardsRepeater.TryGetElement(i) is PosterCard card)
+                card.SetCatalogGridLayout(_posterWidth);
+        }
+    }
+
+    private void CardsRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
+    {
+        if (args.Element is PosterCard card)
+            card.SetCatalogGridLayout(_posterWidth);
     }
 
     private void RetrySection_Click(object sender, RoutedEventArgs e)

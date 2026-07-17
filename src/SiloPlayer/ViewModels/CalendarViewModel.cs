@@ -59,6 +59,9 @@ public partial class CalendarViewModel : ObservableObject
     [ObservableProperty]
     private bool _isEmpty;
 
+    [ObservableProperty]
+    private bool _hasLoaded;
+
     [RelayCommand]
     private async Task LoadAsync()
     {
@@ -93,6 +96,7 @@ public partial class CalendarViewModel : ObservableObject
                 Days.Add(day);
 
             IsEmpty = Days.Count == 0;
+            HasLoaded = true;
         }
         catch (Exception ex)
         {

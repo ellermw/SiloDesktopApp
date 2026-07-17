@@ -20,6 +20,8 @@ public sealed partial class AdminLogsPage : Page
     private OperationalLogEntry? _selectedAppEntry;
     private bool _rebuildAppPending;
     private bool _rebuildAuditPending;
+    private bool _loaded;
+    private bool _uiEventsAttached;
 
     // Debounce timer for live-filter (webui has no Search button — inputs filter on change)
     private DispatcherTimer? _filterDebounce;
@@ -39,6 +41,7 @@ public sealed partial class AdminLogsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminLogsViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
     }
 
     private void ContentScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -58,22 +61,11 @@ public sealed partial class AdminLogsPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        ViewModel.AppLogs.CollectionChanged += (_, _) => ScheduleRebuildApp();
-        ViewModel.AuditLogs.CollectionChanged += (_, _) => ScheduleRebuildAudit();
-        ViewModel.PropertyChanged += (_, args) =>
-        {
-            switch (args.PropertyName)
-            {
-                case nameof(ViewModel.PlaybackSessionId):
-                    DispatcherQueue.TryEnqueue(UpdatePlaybackSessionTag);
-                    break;
-                case nameof(ViewModel.AppLogsHasMore):
-                case nameof(ViewModel.AuditLogsHasMore):
-                case nameof(ViewModel.IsLoadingMore):
-                    DispatcherQueue.TryEnqueue(UpdateLoadMoreState);
-                    break;
-            }
-        };
+        if (_loaded) return;
+        _loaded = true;
+        ViewModel.AppLogs.CollectionChanged += AppLogs_CollectionChanged;
+        ViewModel.AuditLogs.CollectionChanged += AuditLogs_CollectionChanged;
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
 
         // Apply navigation parameter (from "View Logs" / "FFmpeg Logs" links)
         if (!string.IsNullOrWhiteSpace(_pendingSessionId))
@@ -93,15 +85,19 @@ public sealed partial class AdminLogsPage : Page
             _filterDebounce!.Stop();
             await RestartStreamAsync();
         };
-        AppRequestIdBox.TextChanged += (_, _) => RestartFilterDebounce();
-        AppMessageBox.TextChanged += (_, _) => RestartFilterDebounce();
-        AppComponentBox.TextChanged += (_, _) => RestartFilterDebounce();
-        AuditRequestIdBox.TextChanged += (_, _) => RestartFilterDebounce();
-        AuditMethodBox.TextChanged += (_, _) => RestartFilterDebounce();
-        AuditClientIpBox.TextChanged += (_, _) => RestartFilterDebounce();
-        PlaybackSessionBox.TextChanged += PlaybackSessionBox_TextChanged;
+        if (!_uiEventsAttached)
+        {
+            _uiEventsAttached = true;
+            AppRequestIdBox.TextChanged += FilterTextBox_TextChanged;
+            AppMessageBox.TextChanged += FilterTextBox_TextChanged;
+            AppComponentBox.TextChanged += FilterTextBox_TextChanged;
+            AuditRequestIdBox.TextChanged += FilterTextBox_TextChanged;
+            AuditMethodBox.TextChanged += FilterTextBox_TextChanged;
+            AuditClientIpBox.TextChanged += FilterTextBox_TextChanged;
+            PlaybackSessionBox.TextChanged += PlaybackSessionBox_TextChanged;
+        }
 
-        SetActiveTab(true);
+        SetActiveTab(_isAppTab);
         UpdatePlaybackSessionTag();
 
         // Live stream replaces the old "load once, refresh manually" pattern.
@@ -113,8 +109,12 @@ public sealed partial class AdminLogsPage : Page
     protected override async void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        _loaded = false;
         _isNavigatedAway = true;
         _filterDebounce?.Stop();
+        ViewModel.AppLogs.CollectionChanged -= AppLogs_CollectionChanged;
+        ViewModel.AuditLogs.CollectionChanged -= AuditLogs_CollectionChanged;
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
         await _streamRestartGate.WaitAsync();
         try
         {
@@ -127,6 +127,30 @@ public sealed partial class AdminLogsPage : Page
         }
         finally { _streamRestartGate.Release(); }
     }
+
+    private void AppLogs_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuildApp();
+
+    private void AuditLogs_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuildAudit();
+
+    private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+    {
+        switch (args.PropertyName)
+        {
+            case nameof(ViewModel.PlaybackSessionId):
+                DispatcherQueue.TryEnqueue(UpdatePlaybackSessionTag);
+                break;
+            case nameof(ViewModel.AppLogsHasMore):
+            case nameof(ViewModel.AuditLogsHasMore):
+            case nameof(ViewModel.IsLoadingMore):
+                DispatcherQueue.TryEnqueue(UpdateLoadMoreState);
+                break;
+        }
+    }
+
+    private void FilterTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        => RestartFilterDebounce();
 
     private void RestartFilterDebounce()
     {

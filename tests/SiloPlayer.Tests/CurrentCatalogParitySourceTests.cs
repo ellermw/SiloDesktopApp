@@ -14,11 +14,16 @@ public sealed class CurrentCatalogParitySourceTests
         Assert.Contains("x:Name=\"ResultTypeCombo\"", xaml);
         Assert.Contains("x:Name=\"ResultSortCombo\"", xaml);
         Assert.Contains("x:Name=\"ResultFiltersSheet\"", xaml);
+        Assert.Contains("x:Name=\"SearchLoadingRepeater\"", xaml);
+        Assert.Contains("ViewChanged=\"ResultsScroll_ViewChanged\"", xaml);
         Assert.Contains("Discover · Outside your library", xaml);
         Assert.Contains("UpdatePeopleSection", code);
         Assert.Contains("PeopleSection.Visibility = Visibility.Collapsed", code);
         Assert.Contains("source: \"query\"", viewModel);
         Assert.Contains("limit: 60", viewModel);
+        Assert.Contains("LoadMoreAsync", viewModel);
+        Assert.DoesNotContain("Task.Delay(300", viewModel);
+        Assert.Contains("TimeSpan.FromMilliseconds(100)", code);
     }
 
     [Fact]

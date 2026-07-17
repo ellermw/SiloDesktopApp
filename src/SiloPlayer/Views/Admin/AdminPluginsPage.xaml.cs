@@ -3,6 +3,7 @@ using Microsoft.Web.WebView2.Core;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using System.Text.Json;
 using Windows.UI;
 using SiloPlayer.Core.Models.Plugins;
@@ -27,13 +28,17 @@ public sealed partial class AdminPluginsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminPluginsViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        ViewModel.Installations.CollectionChanged += (_, _) => ScheduleRebuild();
-        ViewModel.CatalogEntries.CollectionChanged += (_, _) => ScheduleRebuild();
-        ViewModel.Repositories.CollectionChanged += (_, _) => ScheduleRebuild();
+        ViewModel.Installations.CollectionChanged += Plugins_CollectionChanged;
+        ViewModel.CatalogEntries.CollectionChanged += Plugins_CollectionChanged;
+        ViewModel.Repositories.CollectionChanged += Plugins_CollectionChanged;
+
+        if (ViewModel.Installations.Count > 0 || ViewModel.CatalogEntries.Count > 0 || ViewModel.Repositories.Count > 0)
+            RebuildAll();
 
         try
         {
@@ -46,6 +51,17 @@ public sealed partial class AdminPluginsPage : Page
 
         UpdateTabVisuals();
     }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        ViewModel.Installations.CollectionChanged -= Plugins_CollectionChanged;
+        ViewModel.CatalogEntries.CollectionChanged -= Plugins_CollectionChanged;
+        ViewModel.Repositories.CollectionChanged -= Plugins_CollectionChanged;
+        base.OnNavigatedFrom(e);
+    }
+
+    private void Plugins_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuild();
 
     // ===== Check for updates =====
     // Matches web: triggers the "check_plugin_updates" scheduled task, then reloads plugin data.

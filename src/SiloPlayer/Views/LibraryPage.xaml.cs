@@ -17,6 +17,8 @@ namespace SiloPlayer.Views;
 
 public sealed partial class LibraryPage : Page
 {
+    public sealed record NavigationArgs(Library Library, string? InitialTab = null);
+
     private static readonly (string Label, string Value)[] AdvancedRuleFields =
     [
         ("Genre", "genre"), ("Year", "year"), ("IMDb Rating", "rating_imdb"),
@@ -60,6 +62,7 @@ public sealed partial class LibraryPage : Page
         public string Order { get; set; } = "asc";
         public string? MediaType { get; set; }
         public string? Genre { get; set; }
+        public List<string> Genres { get; set; } = [];
         public string? ContentRating { get; set; }
         public string? Studio { get; set; }
         public string? Country { get; set; }
@@ -69,6 +72,7 @@ public sealed partial class LibraryPage : Page
         public string? YearMax { get; set; }
         public string? MinimumRating { get; set; }
         public string? OriginalLanguage { get; set; }
+        public List<string> OriginalLanguages { get; set; } = [];
         public string? Actor { get; set; }
         public string? Director { get; set; }
         public string? Writer { get; set; }
@@ -100,6 +104,8 @@ public sealed partial class LibraryPage : Page
 
     public LibraryViewModel ViewModel { get; }
     private bool _suppressFilterEvents;
+    private readonly HashSet<string> _selectedGenres = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _selectedOriginalLanguages = new(StringComparer.OrdinalIgnoreCase);
     private bool _recommendedLoaded;
     private bool _collectionsLoaded;
     private bool _libraryCatalogLoaded;
@@ -136,6 +142,7 @@ public sealed partial class LibraryPage : Page
     private DispatcherTimer? _cardBindTimer;
     private bool _isNavigated;
     private bool _viewModelEventsAttached;
+    private int? _activeLibraryId;
     private const int CardBindsPerTick = 12;
     private const int MaxRealizedLibraryCards = 40;
     private const int LibraryOverscanRows = 1;
@@ -144,6 +151,7 @@ public sealed partial class LibraryPage : Page
     {
         ViewModel = App.Services.GetRequiredService<LibraryViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Required;
         AttachViewModelEvents();
         UpdateVirtualGridMetrics();
         _visibleRangeDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
@@ -217,6 +225,19 @@ public sealed partial class LibraryPage : Page
         LibraryViewportHost.Padding = new Thickness(horizontalGutter, 0, horizontalGutter, 24);
         AudiobookGroupsPanel.Padding = new Thickness(horizontalGutter, 0, horizontalGutter, 24);
 
+        var collectionsGutter = width >= 1024 ? 40d : width >= 640 ? 24d : 16d;
+        var collectionsVerticalPadding = width >= 640 ? 56d : 40d;
+        CollectionsPanel.Padding = new Thickness(
+            collectionsGutter,
+            collectionsVerticalPadding,
+            collectionsGutter,
+            collectionsVerticalPadding);
+        CollectionsTitle.FontSize = Math.Clamp(width * 0.04, 32, 48);
+        CollectionsSubtitle.FontSize = width >= 640 ? 16 : 14;
+
+        var tallHeroRatio = width >= 1024 ? 0.72 : 0.60;
+        RecommendedHeroSkeleton.Height = Math.Clamp(e.NewSize.Height * tallHeroRatio, 420, 760);
+
         var compact = width < 640;
         LibraryEyebrow.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         if (compact)
@@ -239,8 +260,30 @@ public sealed partial class LibraryPage : Page
         _isNavigated = true;
         AttachViewModelEvents();
 
-        if (e.Parameter is Library library)
+        var library = e.Parameter as Library;
+        string? requestedTab = null;
+        if (e.Parameter is NavigationArgs navigationArgs)
         {
+            library = navigationArgs.Library;
+            requestedTab = navigationArgs.InitialTab;
+        }
+
+        if (library != null)
+        {
+            var sameLibrary = _activeLibraryId == library.Id && ViewModel.Library?.Id == library.Id;
+            if (!sameLibrary)
+            {
+                ViewModel.CancelCatalogLoads();
+                ClearVirtualCards();
+                _currentFirstRow = 0;
+                _lastRequestedStartIndex = -1;
+                _lastRequestedEndIndex = -1;
+                _recommendedLoaded = false;
+                _collectionsLoaded = false;
+                _libraryCatalogLoaded = false;
+            }
+
+            _activeLibraryId = library.Id;
             LibraryTitle.Text = library.Name;
             LibraryEyebrowName.Text = library.Name.ToUpperInvariant();
             RecommendedTab.Content = library.Type is "audiobook" or "audiobooks" ? "Home" : "Recommended";
@@ -258,9 +301,11 @@ public sealed partial class LibraryPage : Page
             // Falls back to fresh defaults on first visit.
             _viewStateByLibrary.TryGetValue(library.Id, out var state);
             state ??= new LibraryViewState();
+            if (requestedTab is "Recommended" or "Library" or "Collections")
+                state.Tab = requestedTab;
 
             _suppressFilterEvents = true;
-            UpdateSortOptions(library.Type, state.Sort);
+            UpdateSortOptions(library.Type, state.Sort, state.MediaType);
             ConfigureBrowseTypeSelector(library.Type, state.MediaType);
             MediaTypeComboBox.SelectedIndex = IndexOfMediaType(state.MediaType);
             GenreComboBox.SelectedIndex = -1;
@@ -271,8 +316,16 @@ public sealed partial class LibraryPage : Page
             AudioLangComboBox.SelectedIndex = -1;
             YearMinBox.Text = state.YearMin ?? "";
             YearMaxBox.Text = state.YearMax ?? "";
+            DecadeComboBox.SelectedIndex = IndexOfDecade(state.YearMin, state.YearMax);
             MinimumRatingBox.Text = state.MinimumRating ?? "";
             OriginalLanguageComboBox.SelectedIndex = -1;
+            _selectedGenres.Clear();
+            foreach (var genre in state.Genres.Count > 0 ? state.Genres : [state.Genre ?? ""])
+                if (!string.IsNullOrWhiteSpace(genre)) _selectedGenres.Add(genre);
+            _selectedOriginalLanguages.Clear();
+            foreach (var language in state.OriginalLanguages.Count > 0 ? state.OriginalLanguages : [state.OriginalLanguage ?? ""])
+                if (!string.IsNullOrWhiteSpace(language)) _selectedOriginalLanguages.Add(language);
+            UpdateMultiSelectLabels();
             ActorBox.Text = state.Actor ?? "";
             DirectorBox.Text = state.Director ?? "";
             WriterBox.Text = state.Writer ?? "";
@@ -285,9 +338,9 @@ public sealed partial class LibraryPage : Page
             WatchStatusComboBox.SelectedIndex = IndexOfTaggedItem(WatchStatusComboBox, state.WatchStatus);
             AddedInLastBox.Text = state.AddedInLast ?? "";
             ReleasedInLastBox.Text = state.ReleasedInLast ?? "";
-            FourKToggle.IsOn = state.FourK;
-            HdrToggle.IsOn = state.Hdr;
-            DolbyVisionToggle.IsOn = state.DolbyVision;
+            FourKToggle.IsChecked = state.FourK;
+            HdrToggle.IsChecked = state.Hdr;
+            DolbyVisionToggle.IsChecked = state.DolbyVision;
             ConfigureFilterSections(library.Type);
             _orderAsc = state.Order != "desc";
             UpdateOrderButton();
@@ -297,6 +350,7 @@ public sealed partial class LibraryPage : Page
             ViewModel.SelectedOrder = state.Order;
             ViewModel.SelectedType = state.MediaType;
             ViewModel.SelectedGenre = state.Genre;
+            ViewModel.SelectedGenres = _selectedGenres.ToList();
             ViewModel.SelectedContentRating = state.ContentRating;
             ViewModel.SelectedStudio = state.Studio;
             ViewModel.SelectedCountry = state.Country;
@@ -306,6 +360,7 @@ public sealed partial class LibraryPage : Page
             ViewModel.SelectedYearMax = state.YearMax;
             ViewModel.SelectedMinimumRating = state.MinimumRating;
             ViewModel.SelectedOriginalLanguage = state.OriginalLanguage;
+            ViewModel.SelectedOriginalLanguages = _selectedOriginalLanguages.ToList();
             ViewModel.SelectedActor = state.Actor;
             ViewModel.SelectedDirector = state.Director;
             ViewModel.SelectedWriter = state.Writer;
@@ -322,9 +377,6 @@ public sealed partial class LibraryPage : Page
             ViewModel.SelectedHdr = state.Hdr;
             ViewModel.SelectedDolbyVision = state.DolbyVision;
             _suppressFilterEvents = false;
-            _recommendedLoaded = false;
-            _collectionsLoaded = false;
-            _libraryCatalogLoaded = false;
             ActiveFiltersBar.Visibility = Visibility.Collapsed;
 
             ShowTab(state.Tab);
@@ -336,7 +388,11 @@ public sealed partial class LibraryPage : Page
             {
                 await EnsureLibraryCatalogLoadedAsync();
                 await FillViewportAsync();
+                QueueRenderVirtualGrid(force: true);
             }
+
+            if (state.Tab == "Collections")
+                await LoadCollectionsAsync();
         }
     }
 
@@ -350,12 +406,10 @@ public sealed partial class LibraryPage : Page
         _audiobookGroupLoadCts?.Cancel();
         _audiobookGroupLoadCts?.Dispose();
         _audiobookGroupLoadCts = null;
-        _currentFirstRow = 0;
         _pendingCardBinds.Clear();
         _pendingCardBindSet.Clear();
-        ViewModel.CancelCatalogLoads();
+        ViewModel.SuspendCatalogLoads();
         DetachViewModelEvents();
-        ClearVirtualCards();
     }
 
     private void AttachViewModelEvents()
@@ -372,47 +426,71 @@ public sealed partial class LibraryPage : Page
         _viewModelEventsAttached = false;
     }
 
-    private void UpdateSortOptions(string libraryType, string selectedSort)
+    private void UpdateSortOptions(string libraryType, string? selectedSort, string? browseType = null)
     {
         var type = libraryType.Trim().ToLowerInvariant();
+        var scope = type switch
+        {
+            "movie" => "movie",
+            "series" or "tv" when browseType == "episode" => "episode",
+            "series" or "tv" => "series",
+            "audiobook" or "audiobooks" => "audiobook",
+            "ebook" or "ebooks" => "ebook",
+            "manga" => "manga",
+            "mixed" => browseType switch
+            {
+                "movie" or "series" or "episode" or "audiobook" or "ebook" => browseType,
+                "manga" => "ebook",
+                _ => "all",
+            },
+            _ => "all",
+        };
+
+        var allVideo = scope == "all";
         var options = new List<SortOption>
         {
             new("Title", "title", "asc"),
             new("Date Added", "added_at", "desc"),
             new("Release Date", "release_date", "desc"),
             new("Year", "year", "desc"),
-            new("Duration", "runtime", "desc"),
-            new("Bitrate", "bitrate", "desc"),
-            new("Progress", "progress", "desc"),
-            new("Date Viewed", "date_viewed", "desc"),
-            new("Plays", "plays", "desc"),
         };
 
-        var isBook = type is "audiobook" or "audiobooks" or "ebook" or "ebooks" or "manga";
-        if (!isBook)
+        if (scope is "series" or "episode")
         {
-            options.InsertRange(4,
+            options.Insert(3, new("Latest Episode Air Date", "last_air_date", "desc"));
+            if (scope == "series")
+                options.Insert(4, new("Latest Episode Added", "latest_episode_added", "desc"));
+        }
+
+        if (allVideo || scope is "movie" or "series" or "episode")
+        {
+            options.AddRange(
             [
                 new("Content Rating", "content_rating", "asc"),
+                new("Duration", "runtime", "desc"),
                 new("IMDb Rating", "rating_imdb", "desc"),
                 new("TMDB Rating", "rating_tmdb", "desc"),
                 new("RT Critic Rating", "rating_rt_critic", "desc"),
                 new("RT Audience Rating", "rating_rt_audience", "desc"),
                 new("Resolution", "resolution", "desc"),
+                new("Bitrate", "bitrate", "desc"),
             ]);
         }
-
-        if (type is "series" or "tv")
+        else if (scope is "audiobook" or "ebook")
         {
-            options.Insert(3, new("Latest Episode Air Date", "last_air_date", "desc"));
-            options.Insert(4, new("Latest Episode Added", "latest_episode_added", "desc"));
+            options.Add(new("Duration", "runtime", "desc"));
+            options.Add(new("Bitrate", "bitrate", "desc"));
         }
 
-        if (type is "audiobook" or "audiobooks" or "ebook" or "ebooks" or "manga")
+        options.Add(new("Progress", "progress", "desc"));
+        options.Add(new(scope is "ebook" or "manga" ? "Date Read" : "Date Viewed", "date_viewed", "desc"));
+        options.Add(new(scope is "ebook" or "manga" ? "Reads" : "Plays", "plays", "desc"));
+
+        if (scope is "audiobook" or "ebook" or "manga")
             options.Add(new("Author", "author", "asc"));
-        if (type is "audiobook" or "audiobooks")
+        if (scope == "audiobook")
             options.Add(new("Narrator", "narrator", "asc"));
-        if (type is "audiobook" or "audiobooks" or "ebook" or "ebooks")
+        if (scope is "audiobook" or "ebook")
             options.Add(new("Series", "series", "asc"));
 
         var normalized = selectedSort switch
@@ -431,9 +509,13 @@ public sealed partial class LibraryPage : Page
 
     private static int IndexOfMediaType(string? type) => type switch
     {
-        "movie" => 1,
-        "series" => 2,
-        "episode" => 3,
+        "video" => 1,
+        "movie" => 2,
+        "series" => 3,
+        "episode" => 4,
+        "audiobook" => 5,
+        "ebook" => 6,
+        "manga" => 7,
         _ => 0,
     };
 
@@ -448,6 +530,14 @@ public sealed partial class LibraryPage : Page
         return 0;
     }
 
+    private static int IndexOfDecade(string? yearMin, string? yearMax)
+    {
+        if (!int.TryParse(yearMin, out var from) || !int.TryParse(yearMax, out var to) || to != from + 9)
+            return 0;
+        var index = 1 + (2030 - from) / 10;
+        return from is >= 1900 and <= 2030 && from % 10 == 0 ? index : 0;
+    }
+
     private void ConfigureFilterSections(string libraryType)
     {
         var type = libraryType.Trim().ToLowerInvariant();
@@ -455,11 +545,12 @@ public sealed partial class LibraryPage : Page
         var isEbook = type is "ebook" or "ebooks" or "manga";
         var isBook = isAudiobook || isEbook;
 
-        VideoMetadataFilters.Visibility = isBook ? Visibility.Collapsed : Visibility.Visible;
+        VideoRatingFilters.Visibility = isBook ? Visibility.Collapsed : Visibility.Visible;
+        VideoPeopleFilters.Visibility = isBook ? Visibility.Collapsed : Visibility.Visible;
         VideoQualityToggles.Visibility = isBook ? Visibility.Collapsed : Visibility.Visible;
         BookMetadataFilters.Visibility = isBook ? Visibility.Visible : Visibility.Collapsed;
         NarratorFilterField.Visibility = isAudiobook ? Visibility.Visible : Visibility.Collapsed;
-        WatchStatusLabel.Text = isEbook ? "Read status" : isAudiobook ? "Listening status" : "Watch status";
+        WatchStatusLabel.Text = isEbook ? "Read Status" : isAudiobook ? "Listening Status" : "Watch Status";
 
         if (WatchStatusComboBox.Items.Count >= 4)
         {
@@ -531,6 +622,7 @@ public sealed partial class LibraryPage : Page
             Order = ViewModel.SelectedOrder ?? "asc",
             MediaType = ViewModel.SelectedType,
             Genre = ViewModel.SelectedGenre,
+            Genres = _selectedGenres.ToList(),
             ContentRating = ViewModel.SelectedContentRating,
             Studio = ViewModel.SelectedStudio,
             Country = ViewModel.SelectedCountry,
@@ -540,6 +632,7 @@ public sealed partial class LibraryPage : Page
             YearMax = ViewModel.SelectedYearMax,
             MinimumRating = ViewModel.SelectedMinimumRating,
             OriginalLanguage = ViewModel.SelectedOriginalLanguage,
+            OriginalLanguages = _selectedOriginalLanguages.ToList(),
             Actor = ViewModel.SelectedActor,
             Director = ViewModel.SelectedDirector,
             Writer = ViewModel.SelectedWriter,
@@ -671,7 +764,87 @@ public sealed partial class LibraryPage : Page
 
     private void UpdateGenreCombo()
     {
-        UpdateFilterCombo(GenreComboBox, ViewModel.Genres, "All Genres", ViewModel.SelectedGenre, "genres");
+        UpdateMultiSelectLabels();
+    }
+
+    private void UpdateMultiSelectLabels()
+    {
+        GenreMultiSelectText.Text = _selectedGenres.Count == 0
+            ? "Select genres..."
+            : string.Join(", ", _selectedGenres.OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
+        OriginalLanguageMultiSelectText.Text = _selectedOriginalLanguages.Count == 0
+            ? "Select languages..."
+            : string.Join(", ", _selectedOriginalLanguages.OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
+    }
+
+    private void GenreMultiSelect_Click(object sender, RoutedEventArgs e)
+    {
+        ShowMultiSelectFlyout(
+            GenreMultiSelectButton,
+            ViewModel.Genres,
+            _selectedGenres,
+            ApplyGuidedMultiSelectFiltersAsync);
+    }
+
+    private void OriginalLanguageMultiSelect_Click(object sender, RoutedEventArgs e)
+    {
+        ShowMultiSelectFlyout(
+            OriginalLanguageMultiSelectButton,
+            ViewModel.OriginalLanguages,
+            _selectedOriginalLanguages,
+            ApplyGuidedMultiSelectFiltersAsync);
+    }
+
+    private void ShowMultiSelectFlyout(
+        Button anchor,
+        IEnumerable<string> values,
+        HashSet<string> selected,
+        Func<Task> applyAsync)
+    {
+        var flyout = new MenuFlyout();
+        foreach (var value in values.Where(value => !string.IsNullOrWhiteSpace(value))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var option = new ToggleMenuFlyoutItem
+            {
+                Text = value,
+                IsChecked = selected.Contains(value),
+            };
+            option.Click += async (_, _) =>
+            {
+                if (option.IsChecked) selected.Add(value);
+                else selected.Remove(value);
+                await applyAsync();
+            };
+            flyout.Items.Add(option);
+        }
+
+        if (selected.Count > 0)
+        {
+            flyout.Items.Add(new MenuFlyoutSeparator());
+            var clear = new MenuFlyoutItem { Text = "Clear All" };
+            clear.Click += async (_, _) =>
+            {
+                selected.Clear();
+                await applyAsync();
+            };
+            flyout.Items.Add(clear);
+        }
+
+        flyout.ShowAt(anchor);
+    }
+
+    private async Task ApplyGuidedMultiSelectFiltersAsync()
+    {
+        ViewModel.SelectedGenres = _selectedGenres.ToList();
+        ViewModel.SelectedGenre = _selectedGenres.FirstOrDefault();
+        ViewModel.SelectedOriginalLanguages = _selectedOriginalLanguages.ToList();
+        ViewModel.SelectedOriginalLanguage = _selectedOriginalLanguages.FirstOrDefault();
+        UpdateMultiSelectLabels();
+        await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+        await FillViewportAsync();
+        UpdateActiveFilterBadges();
+        SaveViewState(_currentTab);
     }
 
     private void UpdateContentRatingCombo()
@@ -1084,6 +1257,22 @@ public sealed partial class LibraryPage : Page
         if (MediaTypeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string type)
         {
             ViewModel.SelectedType = string.IsNullOrEmpty(type) ? null : type;
+            _suppressFilterEvents = true;
+            if (BrowseTypeComboBox.ItemsSource is IEnumerable<FilterOption> browseOptions)
+                BrowseTypeComboBox.SelectedItem = browseOptions.FirstOrDefault(option => option.Value == type)
+                    ?? browseOptions.FirstOrDefault();
+            if (ViewModel.Library is { } library)
+            {
+                UpdateSortOptions(library.Type, ViewModel.SelectedSort, type);
+                if (SortComboBox.SelectedItem is SortOption sort)
+                {
+                    ViewModel.SelectedSort = sort.Value;
+                    ViewModel.SelectedOrder = sort.DefaultOrder;
+                    _orderAsc = sort.DefaultOrder == "asc";
+                    UpdateOrderButton();
+                }
+            }
+            _suppressFilterEvents = false;
             await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
             await FillViewportAsync();
             UpdateActiveFilterBadges();
@@ -1117,6 +1306,10 @@ public sealed partial class LibraryPage : Page
     {
         if (_suppressFilterEvents) return;
 
+        _suppressFilterEvents = true;
+        DecadeComboBox.SelectedIndex = 0;
+        _suppressFilterEvents = false;
+
         // Debounce year filter changes
         _yearDebounceTimer?.Stop();
         _yearDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
@@ -1133,6 +1326,27 @@ public sealed partial class LibraryPage : Page
             SaveViewState(_currentTab); // B42
         };
         _yearDebounceTimer.Start();
+    }
+
+    private async void DecadeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressFilterEvents ||
+            DecadeComboBox.SelectedItem is not ComboBoxItem { Tag: string decade } ||
+            string.IsNullOrEmpty(decade))
+            return;
+
+        _yearDebounceTimer?.Stop();
+        _yearDebounceTimer = null;
+        _suppressFilterEvents = true;
+        YearMinBox.Text = decade;
+        YearMaxBox.Text = (int.Parse(decade) + 9).ToString();
+        _suppressFilterEvents = false;
+        ViewModel.SelectedYearMin = YearMinBox.Text;
+        ViewModel.SelectedYearMax = YearMaxBox.Text;
+        await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+        await FillViewportAsync();
+        UpdateActiveFilterBadges();
+        SaveViewState(_currentTab);
     }
 
     private void LibraryScrollBar_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -1377,6 +1591,17 @@ public sealed partial class LibraryPage : Page
         ViewModel.SelectedType = string.IsNullOrEmpty(option.Value) ? null : option.Value;
         _suppressFilterEvents = true;
         MediaTypeComboBox.SelectedIndex = IndexOfMediaType(ViewModel.SelectedType);
+        if (ViewModel.Library is { } library)
+        {
+            UpdateSortOptions(library.Type, ViewModel.SelectedSort, option.Value);
+            if (SortComboBox.SelectedItem is SortOption sort)
+            {
+                ViewModel.SelectedSort = sort.Value;
+                ViewModel.SelectedOrder = sort.DefaultOrder;
+                _orderAsc = sort.DefaultOrder == "asc";
+                UpdateOrderButton();
+            }
+        }
         _suppressFilterEvents = false;
         await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
         await FillViewportAsync();
@@ -1468,13 +1693,14 @@ public sealed partial class LibraryPage : Page
             _audiobookGroupsHasMore = false;
             AudiobookGroupsHost.Children.Clear();
             AudiobookGroupsEmpty.Visibility = Visibility.Collapsed;
+            BuildAudiobookGroupSkeletons(_currentAudiobookAxis == "series");
         }
 
         _audiobookGroupLoadCts ??= new CancellationTokenSource();
         var ct = _audiobookGroupLoadCts.Token;
         _isLoadingAudiobookGroups = true;
         AudiobookGroupsLoading.IsActive = true;
-        AudiobookGroupsLoading.Visibility = Visibility.Visible;
+        AudiobookGroupsLoading.Visibility = reset ? Visibility.Collapsed : Visibility.Visible;
 
         try
         {
@@ -1493,6 +1719,7 @@ public sealed partial class LibraryPage : Page
             {
                 _audiobookGroupsTotal = response.Total;
                 _audiobookGroupsTotalExact = response.TotalExact;
+                AudiobookGroupsHost.Children.Clear();
             }
             foreach (var group in response.Groups)
                 AudiobookGroupsHost.Children.Add(CreateAudiobookGroupCard(group, _currentAudiobookAxis == "series"));
@@ -1501,7 +1728,7 @@ public sealed partial class LibraryPage : Page
             _audiobookGroupsHasMore = response.HasMore;
             var noun = AudiobookGroupNoun(_currentAudiobookAxis);
             AudiobookGroupCountText.Text = _audiobookGroupsTotalExact
-                ? $"{_audiobookGroupsOffset:N0} of {_audiobookGroupsTotal:N0} {noun}"
+                ? $"{(_audiobookGroupsOffset == _audiobookGroupsTotal ? $"{_audiobookGroupsTotal:N0}" : $"{_audiobookGroupsOffset:N0} of {_audiobookGroupsTotal:N0}")} {noun}"
                 : $"{_audiobookGroupsOffset:N0}{(_audiobookGroupsHasMore ? "+" : "")} {noun}";
             AudiobookGroupsEmpty.Text = string.IsNullOrWhiteSpace(AudiobookGroupSearchBox.Text)
                 ? $"No {noun} found in this library."
@@ -1513,6 +1740,7 @@ public sealed partial class LibraryPage : Page
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
+            if (reset) AudiobookGroupsHost.Children.Clear();
             AudiobookGroupsEmpty.Text = $"Could not load {AudiobookGroupNoun(_currentAudiobookAxis)}: {ex.Message}";
             AudiobookGroupsEmpty.Visibility = Visibility.Visible;
         }
@@ -1526,7 +1754,8 @@ public sealed partial class LibraryPage : Page
 
     private FrameworkElement CreateAudiobookGroupCard(AudiobookGroup group, bool large)
     {
-        var cover = CreateAudiobookGroupCover(group, large);
+        var cardWidth = GetAudiobookGroupCardWidth(large);
+        var cover = CreateAudiobookGroupCover(group, large, cardWidth);
         var title = new TextBlock
         {
             Text = group.Name,
@@ -1558,17 +1787,17 @@ public sealed partial class LibraryPage : Page
 
         if (large)
         {
-            button.Width = 220;
+            button.Width = cardWidth;
             button.Content = new StackPanel
             {
-                Width = 220,
+                Width = cardWidth,
                 Spacing = 3,
                 Children = { cover, title, stats },
             };
         }
         else
         {
-            button.Width = 420;
+            button.Width = cardWidth;
             var text = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
             text.Children.Add(title);
             text.Children.Add(stats);
@@ -1586,10 +1815,63 @@ public sealed partial class LibraryPage : Page
         return button;
     }
 
-    private FrameworkElement CreateAudiobookGroupCover(AudiobookGroup group, bool large)
+    private double GetAudiobookGroupCardWidth(bool large)
     {
-        var size = large ? 220d : 56d;
-        var host = new Grid { Width = large ? size : 96, Height = size };
+        var viewportWidth = Math.Max(320, AudiobookGroupsPanel.ActualWidth);
+        var contentWidth = Math.Max(280,
+            viewportWidth - AudiobookGroupsPanel.Padding.Left - AudiobookGroupsPanel.Padding.Right);
+        var columns = large
+            ? viewportWidth >= 1280 ? 6 : viewportWidth >= 1024 ? 5 : viewportWidth >= 768 ? 4 : viewportWidth >= 640 ? 3 : 2
+            : viewportWidth >= 1280 ? 3 : viewportWidth >= 768 ? 2 : 1;
+        var gap = large ? 16d : 12d;
+        AudiobookGroupsHost.HorizontalSpacing = gap;
+        return Math.Max(large ? 120 : 240, (contentWidth - gap * (columns - 1)) / columns);
+    }
+
+    private void BuildAudiobookGroupSkeletons(bool large)
+    {
+        AudiobookGroupsHost.Children.Clear();
+        var cardWidth = GetAudiobookGroupCardWidth(large);
+        var brush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"];
+        var count = large ? 12 : 9;
+        for (var index = 0; index < count; index++)
+        {
+            if (large)
+            {
+                var skeleton = new StackPanel { Width = cardWidth, Spacing = 8 };
+                skeleton.Children.Add(new Border
+                {
+                    Width = cardWidth,
+                    Height = cardWidth,
+                    CornerRadius = new CornerRadius(12),
+                    Background = brush,
+                });
+                skeleton.Children.Add(new Border
+                {
+                    Width = cardWidth * 0.75,
+                    Height = 16,
+                    CornerRadius = new CornerRadius(4),
+                    Background = brush,
+                });
+                AudiobookGroupsHost.Children.Add(skeleton);
+            }
+            else
+            {
+                AudiobookGroupsHost.Children.Add(new Border
+                {
+                    Width = cardWidth,
+                    Height = 80,
+                    CornerRadius = new CornerRadius(12),
+                    Background = brush,
+                });
+            }
+        }
+    }
+
+    private FrameworkElement CreateAudiobookGroupCover(AudiobookGroup group, bool large, double cardWidth)
+    {
+        var size = large ? cardWidth : 56d;
+        var host = new Grid { Width = large ? size : 112, Height = size };
         var urls = group.PosterUrls.Take(3).ToList();
         if (urls.Count == 0)
         {
@@ -1622,7 +1904,7 @@ public sealed partial class LibraryPage : Page
                 CornerRadius = new CornerRadius(10),
                 Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"],
                 HorizontalAlignment = HorizontalAlignment.Left,
-                Margin = large ? new Thickness(index * 4, 0, 0, 0) : new Thickness(index * 20, 0, 0, 0),
+                Margin = large ? new Thickness(index * 4, 0, 0, 0) : new Thickness(index * 28, 0, 0, 0),
             };
             host.Children.Add(poster);
             _ = LoadAudiobookGroupPosterAsync(poster, group.Name, urls[index], size);
@@ -2107,8 +2389,10 @@ public sealed partial class LibraryPage : Page
     {
         var version = ++_recommendationsVersion;
         _recommendedLoaded = true;
-        RecommendedLoading.IsActive = true;
-        RecommendedLoading.Visibility = Visibility.Visible;
+        // Current WebUI leaves this region empty while the layout request is
+        // pending, then renders per-slot skeletons once the layout arrives.
+        RecommendedLoading.IsActive = false;
+        RecommendedLoading.Visibility = Visibility.Collapsed;
         RecommendedErrorPanel.Visibility = Visibility.Collapsed;
         RecommendedHeroCarousel.Visibility = Visibility.Collapsed;
         RecommendedNowListeningHero.Visibility = Visibility.Collapsed;
@@ -2135,8 +2419,7 @@ public sealed partial class LibraryPage : Page
 
             if (layoutResponse.Sections.Count == 0)
             {
-                RecommendedError.Text = "No recommendations available yet.";
-                RecommendedErrorPanel.Visibility = Visibility.Visible;
+                await LoadPinnedCollectionRowsAsync(catalogApi, libraryId, version);
                 return;
             }
 
@@ -2357,6 +2640,10 @@ public sealed partial class LibraryPage : Page
     private async Task LoadCollectionsAsync()
     {
         _collectionsLoaded = true;
+        CollectionsHeader.Visibility = Visibility.Collapsed;
+        CollectionsEmptyCard.Visibility = Visibility.Collapsed;
+        CollectionsRepeater.Visibility = Visibility.Collapsed;
+        RemoveDynamicCollectionPanels();
         BuildCollectionSkeletons();
         CollectionsSkeletonHost.Visibility = Visibility.Visible;
 
@@ -2375,12 +2662,14 @@ public sealed partial class LibraryPage : Page
 
         if (sections.Count == 0)
         {
+            CollectionsHeader.Visibility = Visibility.Collapsed;
             CollectionsEmptyCard.Visibility = Visibility.Visible;
             CollectionsRepeater.Visibility = Visibility.Collapsed;
             RemoveDynamicCollectionPanels();
             return;
         }
 
+        CollectionsHeader.Visibility = Visibility.Visible;
         CollectionsEmptyCard.Visibility = Visibility.Collapsed;
         CollectionsRepeater.Visibility = Visibility.Visible;
         CollectionsRepeater.ItemsSource = null;
@@ -2698,7 +2987,7 @@ public sealed partial class LibraryPage : Page
 
     private void UpdateOriginalLanguageCombo()
     {
-        UpdateFilterCombo(OriginalLanguageComboBox, ViewModel.OriginalLanguages, "All Languages", ViewModel.SelectedOriginalLanguage, "original-languages");
+        UpdateMultiSelectLabels();
     }
 
     private void UpdateNetworkCombo()
@@ -2736,7 +3025,8 @@ public sealed partial class LibraryPage : Page
     private async Task ApplyAdvancedFiltersAsync()
     {
         ViewModel.SelectedMinimumRating = NullIfWhiteSpace(MinimumRatingBox.Text);
-        ViewModel.SelectedOriginalLanguage = SelectedFilterValue(OriginalLanguageComboBox);
+        ViewModel.SelectedOriginalLanguages = _selectedOriginalLanguages.ToList();
+        ViewModel.SelectedOriginalLanguage = _selectedOriginalLanguages.FirstOrDefault();
         ViewModel.SelectedActor = NullIfWhiteSpace(ActorBox.Text);
         ViewModel.SelectedDirector = NullIfWhiteSpace(DirectorBox.Text);
         ViewModel.SelectedWriter = NullIfWhiteSpace(WriterBox.Text);
@@ -2749,9 +3039,9 @@ public sealed partial class LibraryPage : Page
         ViewModel.SelectedWatchStatus = SelectedTag(WatchStatusComboBox);
         ViewModel.SelectedAddedInLast = NullIfWhiteSpace(AddedInLastBox.Text);
         ViewModel.SelectedReleasedInLast = NullIfWhiteSpace(ReleasedInLastBox.Text);
-        ViewModel.SelectedFourK = FourKToggle.IsOn;
-        ViewModel.SelectedHdr = HdrToggle.IsOn;
-        ViewModel.SelectedDolbyVision = DolbyVisionToggle.IsOn;
+        ViewModel.SelectedFourK = FourKToggle.IsChecked == true;
+        ViewModel.SelectedHdr = HdrToggle.IsChecked == true;
+        ViewModel.SelectedDolbyVision = DolbyVisionToggle.IsChecked == true;
 
         await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
         await FillViewportAsync();
@@ -2852,8 +3142,17 @@ public sealed partial class LibraryPage : Page
                 };
                 filters.Add(("Type", label, () => { ViewModel.SelectedType = null; MediaTypeComboBox.SelectedIndex = 0; }));
             }
-            if (!string.IsNullOrEmpty(ViewModel.SelectedGenre))
-                filters.Add(("Genre", ViewModel.SelectedGenre, () => { ViewModel.SelectedGenre = null; GenreComboBox.SelectedIndex = 0; }));
+            foreach (var selectedGenre in _selectedGenres.ToList())
+            {
+                var capturedGenre = selectedGenre;
+                filters.Add(("Genre", capturedGenre, () =>
+                {
+                    _selectedGenres.Remove(capturedGenre);
+                    ViewModel.SelectedGenres = _selectedGenres.ToList();
+                    ViewModel.SelectedGenre = _selectedGenres.FirstOrDefault();
+                    UpdateMultiSelectLabels();
+                }));
+            }
             if (!string.IsNullOrEmpty(ViewModel.SelectedContentRating))
                 filters.Add(("Rating", ViewModel.SelectedContentRating, () => { ViewModel.SelectedContentRating = null; ContentRatingComboBox.SelectedIndex = 0; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedStudio))
@@ -2870,8 +3169,17 @@ public sealed partial class LibraryPage : Page
                 filters.Add(("Year To", ViewModel.SelectedYearMax, () => { ViewModel.SelectedYearMax = null; YearMaxBox.Text = ""; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedMinimumRating))
                 filters.Add(("IMDb", $"{ViewModel.SelectedMinimumRating}+", () => { ViewModel.SelectedMinimumRating = null; MinimumRatingBox.Text = ""; }));
-            if (!string.IsNullOrEmpty(ViewModel.SelectedOriginalLanguage))
-                filters.Add(("Language", ViewModel.SelectedOriginalLanguage, () => { ViewModel.SelectedOriginalLanguage = null; OriginalLanguageComboBox.SelectedIndex = 0; }));
+            foreach (var selectedLanguage in _selectedOriginalLanguages.ToList())
+            {
+                var capturedLanguage = selectedLanguage;
+                filters.Add(("Language", capturedLanguage, () =>
+                {
+                    _selectedOriginalLanguages.Remove(capturedLanguage);
+                    ViewModel.SelectedOriginalLanguages = _selectedOriginalLanguages.ToList();
+                    ViewModel.SelectedOriginalLanguage = _selectedOriginalLanguages.FirstOrDefault();
+                    UpdateMultiSelectLabels();
+                }));
+            }
             if (!string.IsNullOrEmpty(ViewModel.SelectedActor))
                 filters.Add(("Actor", ViewModel.SelectedActor, () => { ViewModel.SelectedActor = null; ActorBox.Text = ""; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedDirector))
@@ -2897,11 +3205,11 @@ public sealed partial class LibraryPage : Page
             if (!string.IsNullOrEmpty(ViewModel.SelectedReleasedInLast))
                 filters.Add(("Released", ViewModel.SelectedReleasedInLast, () => { ViewModel.SelectedReleasedInLast = null; ReleasedInLastBox.Text = ""; }));
             if (ViewModel.SelectedFourK)
-                filters.Add(("Quality", "4K", () => { ViewModel.SelectedFourK = false; FourKToggle.IsOn = false; }));
+                filters.Add(("Quality", "4K", () => { ViewModel.SelectedFourK = false; FourKToggle.IsChecked = false; }));
             if (ViewModel.SelectedHdr)
-                filters.Add(("Quality", "HDR", () => { ViewModel.SelectedHdr = false; HdrToggle.IsOn = false; }));
+                filters.Add(("Quality", "HDR", () => { ViewModel.SelectedHdr = false; HdrToggle.IsChecked = false; }));
             if (ViewModel.SelectedDolbyVision)
-                filters.Add(("Quality", "Dolby Vision", () => { ViewModel.SelectedDolbyVision = false; DolbyVisionToggle.IsOn = false; }));
+                filters.Add(("Quality", "Dolby Vision", () => { ViewModel.SelectedDolbyVision = false; DolbyVisionToggle.IsChecked = false; }));
         }
 
         if (filters.Count == 0)
@@ -2995,6 +3303,8 @@ public sealed partial class LibraryPage : Page
         }
         ViewModel.SelectedType = null;
         ViewModel.SelectedGenre = null;
+        ViewModel.SelectedGenres = [];
+        _selectedGenres.Clear();
         ViewModel.SelectedContentRating = null;
         ViewModel.SelectedStudio = null;
         ViewModel.SelectedCountry = null;
@@ -3004,6 +3314,8 @@ public sealed partial class LibraryPage : Page
         ViewModel.SelectedYearMax = null;
         ViewModel.SelectedMinimumRating = null;
         ViewModel.SelectedOriginalLanguage = null;
+        ViewModel.SelectedOriginalLanguages = [];
+        _selectedOriginalLanguages.Clear();
         ViewModel.SelectedActor = null;
         ViewModel.SelectedDirector = null;
         ViewModel.SelectedWriter = null;
@@ -3042,9 +3354,10 @@ public sealed partial class LibraryPage : Page
         WatchStatusComboBox.SelectedIndex = 0;
         AddedInLastBox.Text = "";
         ReleasedInLastBox.Text = "";
-        FourKToggle.IsOn = false;
-        HdrToggle.IsOn = false;
-        DolbyVisionToggle.IsOn = false;
+        FourKToggle.IsChecked = false;
+        HdrToggle.IsChecked = false;
+        DolbyVisionToggle.IsChecked = false;
+        UpdateMultiSelectLabels();
         _suppressFilterEvents = false;
 
         ActiveFiltersBar.Visibility = Visibility.Collapsed;

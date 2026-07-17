@@ -15,9 +15,18 @@ public sealed class PlaybackWebSocket : IDisposable
 {
     private readonly string _baseUrl;
     private readonly string _sessionId;
-    private readonly string? _token;
+    private readonly Func<string?> _tokenProvider;
     private ClientWebSocket? _ws;
     private CancellationTokenSource? _cts;
+    private readonly HashSet<string> _seenCommandIds = new(StringComparer.Ordinal);
+    private readonly object _seenCommandGate = new();
+    private static readonly TimeSpan[] ReconnectDelays =
+    [
+        TimeSpan.FromSeconds(1),
+        TimeSpan.FromSeconds(2),
+        TimeSpan.FromSeconds(5),
+        TimeSpan.FromSeconds(10),
+    ];
 
     private static readonly string[] SupportedCommands =
     [
@@ -31,20 +40,44 @@ public sealed class PlaybackWebSocket : IDisposable
     public event Action<PlaybackRealtimeEvent>? EventReceived;
 
     public PlaybackWebSocket(string baseUrl, string sessionId, string? token)
+        : this(baseUrl, sessionId, () => token)
+    {
+    }
+
+    public PlaybackWebSocket(string baseUrl, string sessionId, Func<string?> tokenProvider)
     {
         _baseUrl = baseUrl.TrimEnd('/');
         _sessionId = sessionId;
-        _token = token;
+        _tokenProvider = tokenProvider;
     }
 
     public async Task ConnectAsync()
     {
+        Disconnect();
         _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+        var attempt = 0;
 
+        while (!ct.IsCancellationRequested)
+        {
+            var connected = await ConnectOnceAsync(ct);
+            if (ct.IsCancellationRequested) break;
+            if (connected) attempt = 0;
+
+            var delay = ReconnectDelays[Math.Min(attempt, ReconnectDelays.Length - 1)];
+            attempt++;
+            Log($"Reconnecting in {delay.TotalSeconds:0}s");
+            try { await Task.Delay(delay, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+        }
+    }
+
+    private async Task<bool> ConnectOnceAsync(CancellationToken ct)
+    {
         var wsUrl = _baseUrl.Replace("https://", "wss://").Replace("http://", "ws://");
         wsUrl += $"/api/v1/playback/sessions/{_sessionId}/control/ws";
         // Pass token as query param (matching web player) — CDN may strip Auth headers on WebSocket upgrades
-        wsUrl = UrlHelper.AppendToken(wsUrl, _token);
+        wsUrl = UrlHelper.AppendToken(wsUrl, _tokenProvider());
 
         _ws = new ClientWebSocket();
 
@@ -52,7 +85,7 @@ public sealed class PlaybackWebSocket : IDisposable
         {
             var logUrl = wsUrl.Contains('?') ? wsUrl[..wsUrl.IndexOf('?')] : wsUrl;
             Log($"Connecting to: {logUrl}");
-            await _ws.ConnectAsync(new Uri(wsUrl), _cts.Token);
+            await _ws.ConnectAsync(new Uri(wsUrl), ct);
             Log($"Connected successfully");
 
             // Send hello (use dictionaries — anonymous types break with .NET trimmer)
@@ -64,26 +97,37 @@ public sealed class PlaybackWebSocket : IDisposable
                 ["capabilities"] = new Dictionary<string, object> { ["commands"] = SupportedCommands }
             });
 
-            // Start receive loop
-            _ = Task.Run(() => ReceiveLoop(_cts.Token));
+            lock (_seenCommandGate) _seenCommandIds.Clear();
+            await ReceiveLoop(ct);
+            return true;
         }
         catch (Exception ex)
         {
             Log($"Connect failed: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            var socket = _ws;
+            _ws = null;
+            try { socket?.Abort(); } catch { }
+            socket?.Dispose();
         }
     }
 
     public void Disconnect()
     {
-        _cts?.Cancel();
+        var cts = Interlocked.Exchange(ref _cts, null);
+        try { cts?.Cancel(); } catch (ObjectDisposedException) { }
+        var socket = Interlocked.Exchange(ref _ws, null);
         try
         {
-            if (_ws?.State == WebSocketState.Open || _ws?.State == WebSocketState.CloseReceived)
-                _ws.Abort();
+            if (socket?.State is WebSocketState.Open or WebSocketState.CloseReceived or WebSocketState.Connecting)
+                socket.Abort();
         }
         catch { }
-        _ws?.Dispose();
-        _ws = null;
+        socket?.Dispose();
+        cts?.Dispose();
     }
 
     private async Task ReceiveLoop(CancellationToken ct)
@@ -164,6 +208,10 @@ public sealed class PlaybackWebSocket : IDisposable
 
             var commandId = root.GetProperty("command_id").GetString() ?? "";
             var name = root.GetProperty("name").GetString() ?? "";
+            lock (_seenCommandGate)
+            {
+                if (!_seenCommandIds.Add(commandId)) return;
+            }
 
             // Parse payload
             Dictionary<string, JsonElement>? payload = null;

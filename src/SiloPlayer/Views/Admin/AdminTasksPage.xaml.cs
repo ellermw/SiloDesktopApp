@@ -6,6 +6,7 @@ using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels.Admin;
+using Microsoft.UI.Xaml.Navigation;
 
 namespace SiloPlayer.Views.Admin;
 
@@ -20,18 +21,23 @@ public sealed partial class AdminTasksPage : Page
     private IDisposable? _eventSubscription;
     private DateTime _lastEventRefresh = DateTime.MinValue;
     private bool _compactLayout;
+    private bool _loaded;
 
     public AdminTasksPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminTasksViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
         SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        if (_loaded) return;
+        _loaded = true;
         ApplyResponsiveLayout();
         ViewModel.Tasks.CollectionChanged += Tasks_CollectionChanged;
+        if (ViewModel.Tasks.Count > 0) RebuildTaskGroups();
 
         try
         {
@@ -73,6 +79,7 @@ public sealed partial class AdminTasksPage : Page
 
     protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
+        _loaded = false;
         StopRefreshTimer();
         ViewModel.Tasks.CollectionChanged -= Tasks_CollectionChanged;
         if (_eventChannel is not null) _eventChannel.EventReceived -= OnEventReceived;

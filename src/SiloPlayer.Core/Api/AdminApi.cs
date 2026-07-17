@@ -262,6 +262,9 @@ public class AdminApi(SiloApiClient client)
 
     // ===== System Info =====
 
+    public Task<AdminBuildInfo> GetBuildInfoAsync(CancellationToken ct = default)
+        => client.GetAsync<AdminBuildInfo>("/api/v1/admin/system/build", ct);
+
     public Task<Dictionary<string, object>> GetHWAccelInfoAsync(CancellationToken ct = default)
         => client.GetAsync<Dictionary<string, object>>("/api/v1/admin/system/hw-accel", ct);
 

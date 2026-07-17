@@ -4,6 +4,7 @@ using Microsoft.UI.Input;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Navigation;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 using Windows.UI.Core;
@@ -35,20 +36,32 @@ public sealed partial class AdminCollectionsPage : Page
     private string? _selectionAnchorId;
     private string? _selectionSectionId;
     private bool _selectionIsUserCollection;
+    private bool _loaded;
 
     public AdminCollectionsPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminCollectionsViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        if (_loaded) return;
+        _loaded = true;
         try
         {
-            ViewModel.Collections.CollectionChanged += (_, _) => ScheduleRebuild();
-            ViewModel.CollectionGroups.CollectionChanged += (_, _) => ScheduleRebuild();
-            BuildLoadingSkeletons();
+            ViewModel.Collections.CollectionChanged += Collections_CollectionChanged;
+            ViewModel.CollectionGroups.CollectionChanged += Collections_CollectionChanged;
+            if (ViewModel.Collections.Count > 0 || ViewModel.CollectionGroups.Count > 0)
+            {
+                PopulateLibraryPicker();
+                BuildCollectionRows();
+            }
+            else
+            {
+                BuildLoadingSkeletons();
+            }
             await ViewModel.LoadCommand.ExecuteAsync(null);
             PopulateLibraryPicker();
             BuildCollectionRows();
@@ -58,6 +71,17 @@ public sealed partial class AdminCollectionsPage : Page
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
     }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        _loaded = false;
+        ViewModel.Collections.CollectionChanged -= Collections_CollectionChanged;
+        ViewModel.CollectionGroups.CollectionChanged -= Collections_CollectionChanged;
+        base.OnNavigatedFrom(e);
+    }
+
+    private void Collections_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuild();
 
     private void ScheduleRebuild()
     {
@@ -76,6 +100,7 @@ public sealed partial class AdminCollectionsPage : Page
     private void PopulateLibraryPicker()
     {
         _suppressPickerChange = true;
+        var selectedLibraryId = ViewModel.SelectedLibraryId;
 
         LibraryPicker.Items.Clear();
         LibraryPicker.Items.Add(new ComboBoxItem
@@ -90,7 +115,19 @@ public sealed partial class AdminCollectionsPage : Page
             LibraryPicker.Items.Add(new ComboBoxItem { Content = $"{lib.Name} ({count})", Tag = (int?)lib.Id });
         }
 
-        LibraryPicker.SelectedIndex = 0;
+        var selectedIndex = 0;
+        if (selectedLibraryId.HasValue)
+        {
+            for (var index = 1; index < LibraryPicker.Items.Count; index++)
+            {
+                if (LibraryPicker.Items[index] is ComboBoxItem { Tag: int id } && id == selectedLibraryId.Value)
+                {
+                    selectedIndex = index;
+                    break;
+                }
+            }
+        }
+        LibraryPicker.SelectedIndex = selectedIndex;
         _suppressPickerChange = false;
     }
 

@@ -3,6 +3,83 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void HlsAndRemuxEmbeddedSubtitlesUseSlidingSidecarsWhileDirectPlayStaysNative()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+
+        Assert.Contains("CanUseNativeEmbeddedSubtitleTrack()", source, StringComparison.Ordinal);
+        Assert.Contains("TransportKind == PlaybackTransportKind.DirectProgressive", source, StringComparison.Ordinal);
+        Assert.Contains("SelectEmbeddedSubtitleSidecar(track)", source, StringComparison.Ordinal);
+        Assert.Contains("AppendPositionDuration(pair.Value.FullUrl, windowStart, SubtitleWindowDurationSeconds)", source, StringComparison.Ordinal);
+        Assert.Contains("ServerTrackIndex = track.Index", source, StringComparison.Ordinal);
+        Assert.Contains("AddSubtitle(newUrl, win.Label, win.Language, select: true)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BitstreamPassthroughUsesAnAudioClockWithoutResamplingAtmos()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+
+        Assert.Contains("bitstream ? \"ac3,eac3,dts-hd,truehd\" : \"\"", source, StringComparison.Ordinal);
+        Assert.Contains("mpv.SetProperty(\"video-sync\", bitstream ? \"audio\" : \"display-resample\")", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DetailPlaybackReusesWatchDataAndDoesNotWaitBeforeSessionReplacement()
+    {
+        var root = FindRepositoryRoot();
+        var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var detail = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
+
+        Assert.Contains("WatchDetailResponse? prefetchedWatchDetail = null", service, StringComparison.Ordinal);
+        Assert.Contains("string.Equals(prefetchedWatchDetail.ContentId, contentId, StringComparison.Ordinal)", service, StringComparison.Ordinal);
+        Assert.Contains("prefetchedWatchDetail:", detail, StringComparison.Ordinal);
+
+        var methodStart = detail.IndexOf("private void NavigateToPlayer", StringComparison.Ordinal);
+        var methodEnd = detail.IndexOf("private void SetNextEpisodeHintIfApplicable", methodStart, StringComparison.Ordinal);
+        Assert.True(methodStart >= 0 && methodEnd > methodStart);
+        var method = detail[methodStart..methodEnd];
+        Assert.DoesNotContain("Task.Delay(300)", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("CloseAsync()", method, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RemuxAndHlsSeekRestartDoesNotWaitForProgressPersistence()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var methodStart = source.IndexOf("private async Task RestartTransportForSeekAsync", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private async Task ReportSeekProgressAsync", methodStart, StringComparison.Ordinal);
+        Assert.True(methodStart >= 0 && methodEnd > methodStart);
+        var method = source[methodStart..methodEnd];
+
+        Assert.Contains("_ = ReportSeekProgressAsync(mediaPosition, seekPaused)", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("await ReportSeekProgressAsync(mediaPosition, seekPaused)", method, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExplicitPrePlaySubtitleSelectionMapsAcrossDifferentInventoryOrdering()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var methodStart = source.IndexOf("private void ResolveInitialSubtitleSelection", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private void ApplyPendingSubtitleSelection", methodStart, StringComparison.Ordinal);
+        Assert.True(methodStart >= 0 && methodEnd > methodStart);
+        var method = source[methodStart..methodEnd];
+
+        Assert.Contains("requested.External == true ? \"external\" : \"embedded\"", method, StringComparison.Ordinal);
+        Assert.Contains("sourceInventory.IndexOf(requested)", method, StringComparison.Ordinal);
+        Assert.Contains("ElementAtOrDefault(sourceOrdinal)", method, StringComparison.Ordinal);
+        Assert.Contains("string.Equals(track.Source, requestedSource", method, StringComparison.Ordinal);
+    }
+
+
+
+
+
+    [Fact]
     public void LiveSubtitleTranslationStreamsCuesWithoutRestartingPlayback()
     {
         var root = FindRepositoryRoot();
@@ -262,6 +339,45 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("EventReceived", websocket);
         Assert.Contains("MarkersChanged", playerService);
         Assert.Contains("ApplyRealtimeMarkersUpdated", playerService);
+    }
+
+    [Fact]
+    public void PlaybackWebSocketReconnectsWithTheCurrentAccessToken()
+    {
+        var playerService = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+        var websocket = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlaybackWebSocket.cs"));
+
+        Assert.Contains("ReconnectDelays", websocket);
+        Assert.Contains("while (!ct.IsCancellationRequested)", websocket);
+        Assert.Contains("_tokenProvider()", websocket);
+        Assert.Contains("_seenCommandIds", websocket);
+        Assert.Contains("() => _apiClient.AccessToken", playerService);
+    }
+
+    [Fact]
+    public void RemotePositiveVolumeCommandAlsoUnmutesLikeCurrentWebUi()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        Assert.Contains("case \"set_volume\":", source);
+        Assert.Contains("var normalizedVolume = Math.Min(1, Math.Max(0, vol.Value));", source);
+        Assert.Contains("if (normalizedVolume > 0)", source);
+        Assert.Contains("_mpv?.SetMute(false);", source);
     }
 
     [Fact]

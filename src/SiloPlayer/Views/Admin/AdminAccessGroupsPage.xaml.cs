@@ -16,6 +16,7 @@ public sealed partial class AdminAccessGroupsPage : Page
     public AdminAccessGroupsPage()
     {
         InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
         SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 

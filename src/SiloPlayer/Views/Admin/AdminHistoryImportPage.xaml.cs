@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using SiloPlayer.Helpers;
 using System.Collections.ObjectModel;
 using Windows.UI;
+using Microsoft.UI.Xaml.Navigation;
 
 namespace SiloPlayer.Views.Admin;
 
@@ -60,6 +61,7 @@ public sealed partial class AdminHistoryImportPage : Page
         _adminApi = App.Services.GetRequiredService<AdminApi>();
         _importApi = App.Services.GetRequiredService<HistoryImportApi>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
     }
 
     public AdminHistoryImportViewModel ViewModel { get; } = new();

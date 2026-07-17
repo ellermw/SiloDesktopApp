@@ -65,7 +65,7 @@
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
-            <StackPanel x:Name="CollectionEditorShell" MaxWidth="800" Margin="48,24,48,48" Spacing="24">
+            <StackPanel x:Name="CollectionEditorShell" MaxWidth="1400" Margin="48,24,48,48" Spacing="24">
 
                 <!-- ===== Header ===== -->
                 <Grid>
@@ -116,6 +116,61 @@
                         FontSize="13"
                         TextWrapping="Wrap" />
                 </Border>
+
+                <Border x:Name="ImportedSourceBanner" Visibility="Collapsed"
+                        Background="{StaticResource CardBackgroundBrush}"
+                        BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
+                        CornerRadius="27" Padding="28">
+                    <Grid ColumnSpacing="20">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Border Width="72" Height="72" CornerRadius="18"
+                                Background="{StaticResource AccentBackgroundBrush}"
+                                BorderBrush="{StaticResource AccentBrush}" BorderThickness="1">
+                            <TextBlock x:Name="SourceBrandInitials" Text="Mb" FontSize="22" FontWeight="Bold"
+                                       Foreground="{StaticResource AccentBrush}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Border Padding="10,4" CornerRadius="12" Background="{StaticResource AccentBackgroundBrush}">
+                                    <TextBlock x:Name="SourceBrandLabel" Text="MDBLIST" FontSize="10" FontWeight="SemiBold"
+                                               CharacterSpacing="180" Foreground="{StaticResource AccentBrush}" />
+                                </Border>
+                                <TextBlock x:Name="SourcePresetLabel" FontSize="14" FontWeight="Medium"
+                                           VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                            </StackPanel>
+                            <TextBlock x:Name="SourceBannerDescription" FontSize="13" TextWrapping="Wrap"
+                                       Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock x:Name="SourceBannerSyncStatus" FontSize="12"
+                                       Foreground="{StaticResource TertiaryTextBrush}" />
+                        </StackPanel>
+                        <StackPanel x:Name="SourceBannerActions" Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                                    VerticalAlignment="Center">
+                            <Button x:Name="OpenSourceButton" Content="Open source"
+                                    Style="{StaticResource OutlineButtonStyle}" Click="OpenSource_Click" />
+                            <Button Content="Sync now" Style="{StaticResource AccentButtonStyle}" Click="SyncNow_Click" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Grid x:Name="EditorBodyGrid" ColumnSpacing="32">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition x:Name="EditorSidebarColumn" Width="352" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <StackPanel x:Name="EditorPrimaryColumn" Grid.Column="0" Spacing="24">
 
                 <!-- ===== Basic Info Section ===== -->
                 <Border x:Name="BasicInfoSection" Style="{StaticResource EditorGroupStyle}">
@@ -500,6 +555,38 @@
                             Margin="0,8,0,8" />
                     </StackPanel>
                 </Border>
+
+                    </StackPanel>
+
+                    <StackPanel x:Name="EditorSidebar" Grid.Column="1" Spacing="18">
+                        <Border Style="{StaticResource EditorGroupStyle}" CornerRadius="24">
+                            <StackPanel Spacing="16">
+                                <TextBlock Text="Collection Summary" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="Preview and sharing stay visible while you edit." FontSize="12"
+                                           Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                <Grid RowSpacing="12" ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="Mode" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock x:Name="SummaryModeText" Grid.Column="1" FontWeight="Medium" Text="Manual" />
+                                    <TextBlock Grid.Row="1" Text="Libraries" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock x:Name="SummaryLibrariesText" Grid.Row="1" Grid.Column="1" FontWeight="Medium" Text="All libraries" TextTrimming="CharacterEllipsis" MaxWidth="190" />
+                                    <TextBlock Grid.Row="2" Text="Shared" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock x:Name="SummarySharedText" Grid.Row="2" Grid.Column="1" FontWeight="Medium" Text="No" />
+                                    <TextBlock Grid.Row="3" Text="Profiles" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock x:Name="SummaryProfilesText" Grid.Row="3" Grid.Column="1" FontWeight="Medium" Text="All profiles" />
+                                    <TextBlock Grid.Row="4" Text="In my library tab" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock x:Name="SummaryLibraryTabText" Grid.Row="4" Grid.Column="1" FontWeight="Medium" Text="No" />
+                                    <TextBlock Grid.Row="5" Text="Collection" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock x:Name="SummaryCollectionText" Grid.Row="5" Grid.Column="1" FontWeight="Medium" Text="New" TextTrimming="CharacterEllipsis" MaxWidth="190" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Grid>
 
                 <!-- ===== Action Buttons ===== -->
                 <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right">

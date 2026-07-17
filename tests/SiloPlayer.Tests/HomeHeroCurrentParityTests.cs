@@ -28,6 +28,8 @@ public sealed class HomeHeroCurrentParityTests
         Assert.Contains("FormatRuntime(item.DurationSeconds", code);
         Assert.Contains("AddHeroMeta($\"IMDb", code);
         Assert.Contains("root.ActualWidth >= 1400 ? 68d", code);
+        Assert.Contains("Math.Clamp(root.ActualHeight * heightRatio, 350, 700)", code);
+        Assert.Contains("_sizeRoot.SizeChanged -= SizeRoot_SizeChanged", code);
         Assert.Contains("RootGrid_PointerEntered", code);
         Assert.Contains("PauseCarouselButton_Click", code);
         Assert.Contains("private bool _isPaused;", code);

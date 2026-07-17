@@ -1036,8 +1036,9 @@
             </Border>
 
             <!-- Admin page content frame -->
-            <Frame
-                x:Name="AdminContentFrame"
+        <Frame
+            x:Name="AdminContentFrame"
+            CacheSize="30"
                 MaxWidth="1640"
                 HorizontalAlignment="Center"
                 Navigated="AdminContentFrame_Navigated"

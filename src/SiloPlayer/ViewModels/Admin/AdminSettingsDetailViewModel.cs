@@ -66,22 +66,14 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
 
         try
         {
-            _settings = await _adminApi.GetAdminSettingsAsync();
-            try
-            {
-                var (configured, managed) = await _adminApi.GetSensitiveStatusAsync();
-                _sensitiveConfigured = configured;
-                _managedByEnv = managed;
-            }
-            catch { _sensitiveConfigured = new(); _managedByEnv = new(); }
-            try { RateLimitConfig = await _adminApi.GetRateLimitConfigAsync(); }
-            catch
-            {
-                // Route may be disabled on servers without rate-limit middleware.
-                // Fall back to the webui DEFAULT_CONFIG so the tab still renders
-                // and the admin can at least edit + try to save.
-                RateLimitConfig = BuildDefaultRateLimitConfig();
-            }
+            var settingsTask = _adminApi.GetAdminSettingsAsync();
+            var sensitiveTask = LoadSensitiveStatusSafeAsync();
+            var rateLimitTask = LoadRateLimitConfigSafeAsync();
+            await Task.WhenAll(settingsTask, sensitiveTask, rateLimitTask);
+
+            _settings = await settingsTask;
+            (_sensitiveConfigured, _managedByEnv) = await sensitiveTask;
+            RateLimitConfig = await rateLimitTask;
             DirtyRateLimitConfig = null;
             _dirtySettings.Clear();
             HasDirtyChanges = false;
@@ -196,6 +188,23 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
         finally
         {
             IsSaving = false;
+        }
+    }
+
+    private async Task<(HashSet<string> Configured, HashSet<string> ManagedByEnv)> LoadSensitiveStatusSafeAsync()
+    {
+        try { return await _adminApi.GetSensitiveStatusAsync(); }
+        catch { return ([], []); }
+    }
+
+    private async Task<RateLimitConfig> LoadRateLimitConfigSafeAsync()
+    {
+        try { return await _adminApi.GetRateLimitConfigAsync(); }
+        catch
+        {
+            // Route may be disabled on servers without rate-limit middleware.
+            // Fall back to the WebUI default so the tab remains editable.
+            return BuildDefaultRateLimitConfig();
         }
     }
 

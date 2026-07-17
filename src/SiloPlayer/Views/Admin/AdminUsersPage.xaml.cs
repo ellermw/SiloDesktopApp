@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using System.Collections.Specialized;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
@@ -30,6 +31,7 @@ public sealed partial class AdminUsersPage : Page
         ViewModel = App.Services.GetRequiredService<AdminUsersViewModel>();
         InviteCodesViewModel = App.Services.GetRequiredService<AdminInviteCodesViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
         SizeChanged += AdminUsersPage_SizeChanged;
     }
 

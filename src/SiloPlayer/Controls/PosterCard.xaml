@@ -30,7 +30,7 @@
         </Grid.RenderTransform>
 
         <Grid.RowDefinitions>
-            <RowDefinition Height="267" />
+            <RowDefinition x:Name="PosterRow" Height="267" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 

@@ -21,6 +21,7 @@ public sealed partial class AdminDevicesPage : Page
     public AdminDevicesPage()
     {
         InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
         SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 

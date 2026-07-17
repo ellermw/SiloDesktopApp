@@ -12,7 +12,8 @@
     Loaded="OnLoaded"
     Unloaded="OnUnloaded">
 
-    <!-- Height set in code-behind to 72% of window (matching web UI min-h-[72dvh]) -->
+    <!-- Height is set in code-behind from the current WebUI contract:
+         50vh below desktop, 60vh on desktop, clamped to 350-700px. -->
     <Grid
         x:Name="RootGrid"
         PointerEntered="RootGrid_PointerEntered"

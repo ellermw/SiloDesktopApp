@@ -18,6 +18,7 @@ public sealed partial class HeroCarousel : UserControl
     private int _currentIndex;
     private DispatcherTimer? _autoAdvanceTimer;
     private CancellationTokenSource? _imageCts;
+    private FrameworkElement? _sizeRoot;
     private readonly AsyncLoadVersionGate _imageLoadGate = new();
     // Match the WebUI's single carousel pause state. Hover/focus pauses it,
     // leaving the hero resumes it, and the explicit control can resume while
@@ -44,6 +45,19 @@ public sealed partial class HeroCarousel : UserControl
         set => SetValue(ItemsSourceProperty, value);
     }
 
+    public static readonly DependencyProperty IsTallProperty =
+        DependencyProperty.Register(
+            nameof(IsTall),
+            typeof(bool),
+            typeof(HeroCarousel),
+            new PropertyMetadata(false, OnIsTallChanged));
+
+    public bool IsTall
+    {
+        get => (bool)GetValue(IsTallProperty);
+        set => SetValue(IsTallProperty, value);
+    }
+
     public HeroCarousel()
     {
         this.InitializeComponent();
@@ -66,16 +80,27 @@ public sealed partial class HeroCarousel : UserControl
         StartAutoAdvance();
         UpdateHeightFromWindow();
 
+        DetachSizeRoot();
         if (XamlRoot?.Content is FrameworkElement root)
-            root.SizeChanged += (_, _) => UpdateHeightFromWindow();
+        {
+            _sizeRoot = root;
+            _sizeRoot.SizeChanged += SizeRoot_SizeChanged;
+        }
     }
 
     private void UpdateHeightFromWindow()
     {
-        // Match web UI: min-h-[72dvh] — 72% of viewport height
+        // Current WebUI contracts:
+        // Home:    h-[50vh] min-h-[350px] max-h-[700px] lg:h-[60vh]
+        // Library: h-[60vh] min-h-[420px] max-h-[760px] lg:h-[72vh]
         if (XamlRoot?.Content is FrameworkElement root && root.ActualHeight > 0)
         {
-            Height = Math.Max(350, root.ActualHeight * 0.72);
+            var heightRatio = IsTall
+                ? root.ActualWidth >= 1024 ? 0.72 : 0.60
+                : root.ActualWidth >= 1024 ? 0.60 : 0.50;
+            Height = IsTall
+                ? Math.Clamp(root.ActualHeight * heightRatio, 420, 760)
+                : Math.Clamp(root.ActualHeight * heightRatio, 350, 700);
             var titleSize = root.ActualWidth >= 1400 ? 68d : root.ActualWidth >= 1024 ? 60d : 48d;
             HeroTitle.FontSize = titleSize;
             HeroTitleShadow.FontSize = titleSize;
@@ -88,6 +113,16 @@ public sealed partial class HeroCarousel : UserControl
     {
         StopAutoAdvance();
         CancelBackdropLoad(clearImages: false);
+        DetachSizeRoot();
+    }
+
+    private void SizeRoot_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateHeightFromWindow();
+
+    private void DetachSizeRoot()
+    {
+        if (_sizeRoot == null) return;
+        _sizeRoot.SizeChanged -= SizeRoot_SizeChanged;
+        _sizeRoot = null;
     }
 
     private void StartAutoAdvance()
@@ -287,6 +322,12 @@ public sealed partial class HeroCarousel : UserControl
         {
             App.MainWindowInstance?.ShowPlaybackError($"Failed to start playback: {ex.Message}");
         }
+    }
+
+    private static void OnIsTallChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is HeroCarousel carousel)
+            carousel.UpdateHeightFromWindow();
     }
 
     private void MoreInfoButton_Click(object sender, RoutedEventArgs e)

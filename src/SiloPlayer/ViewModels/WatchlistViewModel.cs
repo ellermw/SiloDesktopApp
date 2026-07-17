@@ -11,6 +11,7 @@ namespace SiloPlayer.ViewModels;
 public partial class WatchlistViewModel : ObservableObject, IRecipient<MediaSurfaceChanged>
 {
     private readonly CatalogApi _catalogApi;
+    private bool _loadInProgress;
 
     public WatchlistViewModel(CatalogApi catalogApi)
     {
@@ -53,9 +54,10 @@ public partial class WatchlistViewModel : ObservableObject, IRecipient<MediaSurf
     [RelayCommand]
     private async Task LoadAsync()
     {
-        if (IsLoading) return;
+        if (_loadInProgress) return;
 
-        IsLoading = true;
+        _loadInProgress = true;
+        IsLoading = Items.Count == 0;
         ErrorMessage = null;
 
         try
@@ -74,6 +76,7 @@ public partial class WatchlistViewModel : ObservableObject, IRecipient<MediaSurf
         finally
         {
             IsLoading = false;
+            _loadInProgress = false;
         }
     }
 }

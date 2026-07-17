@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
@@ -18,13 +19,15 @@ public sealed partial class AdminApiKeysPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminApiKeysViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
         SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         ApplyResponsiveLayout();
-        ViewModel.ApiKeys.CollectionChanged += (_, _) => ScheduleRebuild();
+        ViewModel.ApiKeys.CollectionChanged += ApiKeys_CollectionChanged;
+        if (ViewModel.ApiKeys.Count > 0) RebuildRows();
 
         try
         {
@@ -35,6 +38,15 @@ public sealed partial class AdminApiKeysPage : Page
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
     }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        ViewModel.ApiKeys.CollectionChanged -= ApiKeys_CollectionChanged;
+        base.OnNavigatedFrom(e);
+    }
+
+    private void ApiKeys_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuild();
 
     private void ApplyResponsiveLayout()
     {

@@ -32,6 +32,7 @@ public sealed partial class AdminDashboardPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminDashboardViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Required;
     }
 
     private void ContentScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -185,7 +186,9 @@ public sealed partial class AdminDashboardPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        _loaded = false;
         _autoRefreshTimer?.Stop();
+        _autoRefreshTimer = null;
         if (_eventChannel != null)
         {
             _eventChannel.SnapshotReceived -= OnSnapshotReceived;

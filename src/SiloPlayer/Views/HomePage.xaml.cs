@@ -17,44 +17,63 @@ public sealed partial class HomePage : Page
     // data. When the user navigates away and back, skip rebuilding so we
     // don't spike the UI thread tearing down and rebuilding ~60 PosterCards.
     private bool _contentBuilt;
+    private bool _isRefreshingLayout;
+    private bool _layoutChangedWhileRefreshing;
     private string? _failedHeroSectionId;
 
     public HomePage()
     {
         ViewModel = App.Services.GetRequiredService<HomeViewModel>();
         this.InitializeComponent();
+        // Reuse the mounted home surface instead of reconstructing its hero,
+        // section rows, and cards on every top-level navigation.
+        NavigationCacheMode = NavigationCacheMode.Required;
+        SizeChanged += HomePage_SizeChanged;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         try
         {
-            if (ViewModel.Sections.Count == 0 && ViewModel.FeaturedSections.Count == 0)
-            {
-                await ViewModel.LoadCommand.ExecuteAsync(null);
-                _contentBuilt = false; // fresh data → rebuild
-            }
+            AttachViewModelEvents();
 
-            if (!_contentBuilt)
+            _layoutChangedWhileRefreshing = false;
+            _isRefreshingLayout = true;
+            await ViewModel.LoadCommand.ExecuteAsync(null);
+            _isRefreshingLayout = false;
+
+            if (!_contentBuilt || _layoutChangedWhileRefreshing)
             {
                 BuildContent();
                 _contentBuilt = true;
-            }
-
-            if (!_eventsAttached)
-            {
-                _eventsAttached = true;
-                ViewModel.FeaturedSections.CollectionChanged += OnSectionsChanged;
-                ViewModel.Sections.CollectionChanged += OnSectionsChanged;
-                ViewModel.PropertyChanged += OnViewModelPropertyChanged;
             }
 
             await UpdateTasteSeedBannerAsync();
         }
         catch (Exception ex)
         {
+            _isRefreshingLayout = false;
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
+    }
+
+    private void AttachViewModelEvents()
+    {
+        if (_eventsAttached) return;
+
+        _eventsAttached = true;
+        ViewModel.FeaturedSections.CollectionChanged += OnSectionsChanged;
+        ViewModel.Sections.CollectionChanged += OnSectionsChanged;
+        ViewModel.PropertyChanged += OnViewModelPropertyChanged;
+    }
+
+    private void HomePage_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var ratio = e.NewSize.Width >= 1024 ? 0.60 : 0.50;
+        var heroHeight = Math.Clamp(e.NewSize.Height * ratio, 350, 700);
+        InitialHeroSkeleton.Height = heroHeight;
+        HeroLoadingSkeleton.Height = heroHeight;
+        HeroErrorPanel.Height = heroHeight;
     }
 
     private void BuildContent()
@@ -166,6 +185,14 @@ public sealed partial class HomePage : Page
 
     private void OnSectionsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
+        if (_isRefreshingLayout)
+        {
+            // A layout refresh clears and repopulates both collections. Fold
+            // that burst into one rebuild so rows never tear down one-by-one.
+            _layoutChangedWhileRefreshing = true;
+            return;
+        }
+
         // Incremental updates only. Before: any CollectionChanged event fired
         // BuildContent() which cleared and recreated every SectionRow. During
         // a home load this rebuilt ~15 rows up to 15 times on the UI thread,

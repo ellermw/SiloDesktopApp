@@ -14,6 +14,7 @@ public sealed partial class WatchlistPage : Page
     {
         ViewModel = App.Services.GetRequiredService<WatchlistViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
 
         PosterRepeater.ItemsSource = ViewModel.Items;
 

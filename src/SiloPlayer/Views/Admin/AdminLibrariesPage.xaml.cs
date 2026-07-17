@@ -48,6 +48,7 @@ public sealed partial class AdminLibrariesPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminLibrariesViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Required;
         _scanUiRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(ScanUiRefreshMs) };
         _scanUiRefreshTimer.Tick += ScanUiRefreshTimer_Tick;
         ScanQueueFlyout.Opened += (_, _) =>
@@ -186,7 +187,22 @@ public sealed partial class AdminLibrariesPage : Page
         if (_loaded) return; // Prevent double-subscription on re-navigation
         _loaded = true;
         CacheBrushes();
-        BuildLibraryLoadingRows();
+        if (ViewModel.Libraries.Count > 0)
+        {
+            // A cached page should paint its last complete snapshot immediately;
+            // the server refresh below reconciles it without returning to a blank
+            // table or skeleton-only state on every admin navigation.
+            BuildLibraryRows();
+            BuildScanQueuePopover();
+            BuildUnmatchedItemsSection();
+            BuildAmbiguousRootsSection();
+            BuildSkippedRootsRows();
+            BuildStaleIdsSection();
+        }
+        else
+        {
+            BuildLibraryLoadingRows();
+        }
 
         try
         {
@@ -230,6 +246,7 @@ public sealed partial class AdminLibrariesPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        _loaded = false;
         _scanUiRefreshTimer?.Stop();
         if (_eventChannel != null)
         {

@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.ViewModels.Admin;
@@ -20,14 +21,17 @@ public sealed partial class AdminNodesPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminNodesViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
         SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         ApplyResponsiveLayout();
-        ViewModel.ProxyNodes.CollectionChanged += (_, _) => ScheduleRebuildProxy();
-        ViewModel.TranscodeNodes.CollectionChanged += (_, _) => ScheduleRebuildTranscode();
+        ViewModel.ProxyNodes.CollectionChanged += ProxyNodes_CollectionChanged;
+        ViewModel.TranscodeNodes.CollectionChanged += TranscodeNodes_CollectionChanged;
+        if (ViewModel.ProxyNodes.Count > 0) RebuildProxyRows();
+        if (ViewModel.TranscodeNodes.Count > 0) RebuildTranscodeRows();
 
         try
         {
@@ -38,6 +42,19 @@ public sealed partial class AdminNodesPage : Page
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
     }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        ViewModel.ProxyNodes.CollectionChanged -= ProxyNodes_CollectionChanged;
+        ViewModel.TranscodeNodes.CollectionChanged -= TranscodeNodes_CollectionChanged;
+        base.OnNavigatedFrom(e);
+    }
+
+    private void ProxyNodes_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuildProxy();
+
+    private void TranscodeNodes_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuildTranscode();
 
     private void ApplyResponsiveLayout()
     {

@@ -30,11 +30,16 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains(">= 1000 => 8", page);
         Assert.Contains("itemWidth * 1.5", page);
         Assert.Contains("isAudiobook ? itemWidth", page);
+        Assert.Contains("string.Equals(item.Type, \"audiobook\"", card);
+        Assert.Contains("SetLayout(Width, itemPosterHeight, Height)", card);
         Assert.Contains("MoreButton_Click", card);
         Assert.Contains("OverlayRegistry.All", card);
         Assert.Contains("PosterCard.BuildBadge", card);
         Assert.Contains("case \"date_viewed\"", display);
         Assert.Contains("case \"narrator\"", display);
+        Assert.Contains("\"series\" or \"tv\" when browseType == \"episode\" => \"episode\"", page);
+        Assert.Contains("scope is \"ebook\" or \"manga\" ? \"Date Read\" : \"Date Viewed\"", page);
+        Assert.Contains("scope is \"ebook\" or \"manga\" ? \"Reads\" : \"Plays\"", page);
     }
 
     [Fact]
@@ -45,10 +50,25 @@ public sealed class CurrentLibraryParitySourceTests
         var api = ReadRepoFile("src", "SiloPlayer.Core", "Api", "CatalogApi.cs");
 
         Assert.Contains("x:Name=\"MinimumRatingBox\"", xaml);
+        Assert.Contains("x:Name=\"DecadeComboBox\"", xaml);
+        Assert.Contains("Content=\"2030s\" Tag=\"2030\"", xaml);
+        Assert.Contains("Text=\"Year From\"", xaml);
+        Assert.Contains("Text=\"Year To\"", xaml);
         Assert.Contains("x:Name=\"WatchStatusComboBox\"", xaml);
         Assert.Contains("x:Name=\"DolbyVisionToggle\"", xaml);
+        Assert.Contains("Content=\"DOVI\"", xaml);
+        Assert.Contains("Content=\"Movies &amp; Series\" Tag=\"video\"", xaml);
+        Assert.Contains("Content=\"Audiobooks\" Tag=\"audiobook\"", xaml);
+        Assert.Contains("Content=\"Ebooks\" Tag=\"ebook\"", xaml);
+        Assert.Contains("Content=\"Manga\" Tag=\"manga\"", xaml);
+        Assert.Contains("x:Name=\"GenreMultiSelectButton\"", xaml);
+        Assert.Contains("Items must match all selected genres.", xaml);
+        Assert.Contains("x:Name=\"OriginalLanguageMultiSelectButton\"", xaml);
         Assert.Contains("Add(\"dolby_vision\", \"is\", true)", viewModel);
         Assert.Contains("Add(\"watched\", \"is\", false)", viewModel);
+        Assert.Contains("public IReadOnlyList<string> SelectedGenres", viewModel);
+        Assert.Contains("public IReadOnlyList<string> SelectedOriginalLanguages", viewModel);
+        Assert.Contains("Match = \"any\"", viewModel);
         Assert.Contains("extraRules", api);
         Assert.Contains("FormatRuleValue", api);
     }
@@ -92,6 +112,9 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("x:Name=\"AudiobookGroupsPanel\"", xaml);
         Assert.Contains("AudiobookGroupsPanel_ViewChanged", page);
         Assert.Contains("SelectAudiobookGroupAsync", page);
+        Assert.Contains("BuildAudiobookGroupSkeletons", page);
+        Assert.Contains("viewportWidth >= 1280 ? 6", page);
+        Assert.Contains("viewportWidth >= 1280 ? 3", page);
         Assert.Contains("GetAudiobookGroupsAsync", api);
         Assert.Contains("NowListeningHero", ReadRepoFile("src", "SiloPlayer", "Controls", "NowListeningHero.xaml"));
         Assert.Contains("AudiobookSquareCard", ReadRepoFile("src", "SiloPlayer", "Controls", "AudiobookSquareCard.xaml"));
@@ -106,7 +129,14 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("Text=\"Collections\"", xaml);
         Assert.Contains("FontSize=\"48\"", xaml);
         Assert.Contains("MaxWidth=\"1320\"", xaml);
+        Assert.Contains("Padding=\"40,56,40,56\"", xaml);
+        Assert.Contains("CornerRadius=\"32\"", xaml);
+        Assert.Contains("HorizontalAlignment=\"Stretch\"", xaml);
         Assert.Contains("x:Name=\"CollectionsSkeletonHost\"", xaml);
+        Assert.Contains("x:Name=\"CollectionsHeader\"", xaml);
+        Assert.Contains("CollectionsHeader.Visibility = Visibility.Collapsed", page);
+        Assert.Contains("CollectionsHeader.Visibility = Visibility.Visible", page);
+        Assert.Contains("Math.Clamp(width * 0.04, 32, 48)", page);
         Assert.Contains("var posterHeight = cardWidth * 1.5", page);
         Assert.Contains("User collection", page);
         Assert.Contains("ToggleSidebarPinAsync", page);
@@ -121,7 +151,10 @@ public sealed class CurrentLibraryParitySourceTests
         var shell = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
 
         Assert.Contains("x:Name=\"RecommendedHeroSkeleton\"", xaml);
+        Assert.Contains("IsTall=\"True\"", xaml);
         Assert.Contains("GetLibraryLayoutAsync", page);
+        Assert.Contains("RecommendedLoading.Visibility = Visibility.Collapsed", page);
+        Assert.DoesNotContain("No recommendations available yet.", page);
         Assert.Contains("new SemaphoreSlim(4, 4)", page);
         Assert.Contains("GetLibrarySectionItemsAsync", page);
         Assert.Contains("RetryLibrarySectionAsync", page);
@@ -131,6 +164,26 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("/layout", api);
         Assert.Contains("HomeSectionItemsResponse", api);
         Assert.Contains("GetSidebarPins", shell);
+        Assert.Contains("Math.Clamp(e.NewSize.Height * tallHeroRatio, 420, 760)", page);
+        var hero = ReadRepoFile("src", "SiloPlayer", "Controls", "HeroCarousel.xaml.cs");
+        Assert.Contains("root.ActualWidth >= 1024 ? 0.72 : 0.60", hero);
+        Assert.Contains("Math.Clamp(root.ActualHeight * heightRatio, 420, 760)", hero);
+    }
+
+    [Fact]
+    public void LibraryRouteRetainsItsPopulatedWindowButResetsForAnotherLibrary()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
+        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "LibraryViewModel.cs");
+
+        Assert.Contains("NavigationCacheMode = NavigationCacheMode.Required", page);
+        Assert.Contains("var sameLibrary = _activeLibraryId == library.Id", page);
+        Assert.Contains("if (!sameLibrary)", page);
+        Assert.Contains("ViewModel.CancelCatalogLoads()", page);
+        Assert.Contains("ViewModel.SuspendCatalogLoads()", page);
+        Assert.DoesNotContain("DetachViewModelEvents();\n        ClearVirtualCards();", page.Replace("\r\n", "\n"));
+        Assert.Contains("public void SuspendCatalogLoads()", viewModel);
+        Assert.DoesNotContain("public void SuspendCatalogLoads()\n    {\n        CancelCatalogLoads();", viewModel.Replace("\r\n", "\n"));
     }
 
     private static string ReadRepoFile(params string[] parts)

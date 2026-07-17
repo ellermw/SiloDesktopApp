@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.45**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.45/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.46**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.46/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `5728C8490CB456260C2481C6C565DF47BA4EA34AB9FA61A133E9DA77E0175497`
+SHA-256: `9315C2404F24B98F3402F5C723ABC2B94C0C4ACB128F89BCA7488539D7DFC5CB`
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -48,6 +48,14 @@ Status meanings:
 | Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
 
 ## Recent release work
+
+### 1.1.46
+
+- Re-audited the desktop app against current public Silo Server commit `b96e359b4ebe3e6aea68ce327d180578bf0b04d0` from July 16, 2026.
+- Expanded current Home, Library, Catalog, Collections, Calendar, Search, Recommendations, Requests, Notifications, Settings, Watch Party, and admin route contracts and presentation.
+- Hardened direct/remux/HLS playback startup, prefetched watch data, session recovery, realtime token refresh, track switching, subtitle inventory, remote volume behavior, and current cinema-control geometry.
+- Removed whole-page navigation flashes, retained populated top-level routes during refresh and return navigation, fixed the sidebar's stranded compact state, and coalesced expensive collection/card rebuilds.
+- Expanded regression coverage to 466 passing tests with a zero-warning x64 build.
 
 ### 1.1.45
 
@@ -249,4 +257,4 @@ powershell -ExecutionPolicy Bypass -File installer/build.ps1
 
 ## Reference source
 
-Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Release 1.1.42 was compared against Silo Server commit `28c6ddc237b9a3ef0102a9ec7514e5654865a3fe` from July 11, 2026.
+Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Release 1.1.46 was compared against Silo Server commit `b96e359b4ebe3e6aea68ce327d180578bf0b04d0` from July 16, 2026.

@@ -138,6 +138,8 @@ public sealed class MpvOscScriptTests
         var script = File.ReadAllText(FindOscScriptPath());
 
         Assert.Contains("hud_height          = 172", script);
+        Assert.Contains("hide_timeout        = 3.0", script);
+        Assert.Contains("fade_duration       = 0.30", script);
         Assert.Contains("x = W / 2 - main_size / 2", script);
         Assert.Contains("L.metadata =", script);
         Assert.Contains("Seek rail spans the frame", script);
@@ -150,6 +152,18 @@ public sealed class MpvOscScriptTests
         Assert.Contains("osc-set-chapters", script);
         Assert.Contains("render_chapter_menu", script);
         Assert.DoesNotContain("-- 2. Bar background", script);
+    }
+
+    [Fact]
+    public void VolumeRailMatchesCurrentWebUiPersistentSliderAndDivider()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("volume_bar_width    = 96", script);
+        Assert.Contains("volume_bar_height   = 3", script);
+        Assert.Contains("local volume_hover = state.dragging_volume", script);
+        Assert.Contains("if volume_hover then", script);
+        Assert.Contains("L.utility_divider_x", script);
     }
 
     [Fact]
@@ -194,6 +208,8 @@ public sealed class MpvOscScriptTests
         Assert.Contains("table.insert(badges, \"DEFAULT\")", script);
         Assert.Contains("track.sample_rate", script);
         Assert.Contains("track.bit_depth", script);
+        Assert.Contains("DOWNLOADED", script);
+        Assert.Contains("string.format(\"%d Hz\"", script);
     }
 
     [Fact]

@@ -17,7 +17,11 @@ public sealed class CurrentCollectionsParitySourceTests
         Assert.Contains("BuildCollectionGroupSection", code);
         Assert.Contains("BuildServerCollectionRows", code);
         Assert.Contains("Move to group", code);
-        Assert.Contains("Move group earlier", code);
+        Assert.Contains("GroupDragPrefix", code);
+        Assert.Contains("DropGroupAsync", viewModel);
+        Assert.Contains("DropCollectionAsync", viewModel);
+        Assert.Contains("CollectionsLoadingRepeater", xaml);
+        Assert.Contains("IsLoadingServerCollections", viewModel);
         Assert.Contains("GetServerCollectionsAsync", viewModel);
         Assert.Contains("CreateGroupAsync", viewModel);
         Assert.Contains("MoveCollectionToGroupAsync", viewModel);
@@ -66,12 +70,20 @@ public sealed class CurrentCollectionsParitySourceTests
         Assert.Contains("x:Name=\"CollectionsHeaderActions\"", listXaml);
         Assert.Contains("CollectionsPage_SizeChanged", listCode);
         Assert.Contains("x:Name=\"SortCombo\"", browseXaml);
+        Assert.Contains("x:Name=\"MediaScopeCombo\"", browseXaml);
+        Assert.Contains("x:Name=\"FiltersSheet\"", browseXaml);
+        Assert.Contains("x:Name=\"LoadingPosterRepeater\"", browseXaml);
         Assert.Contains("ViewChanged=\"ContentScroll_ViewChanged\"", browseXaml);
         Assert.Contains("const int PageSize = 60", browseCode);
         Assert.Contains("LoadMoreAsync", browseCode);
         Assert.Contains("response.Total", browseCode);
         Assert.Contains("CollectionBrowsePage_SizeChanged", browseCode);
+        Assert.Contains("BuildExtraRules", browseCode);
+        Assert.Contains("SetCatalogGridLayout", browseCode);
         Assert.Contains("CollectionEditorPage_SizeChanged", editorCode);
+        Assert.Contains("ImportedSourceBanner", ReadRepoFile("src", "SiloPlayer", "Views", "CollectionEditorPage.xaml"));
+        Assert.Contains("EditorBodyGrid", ReadRepoFile("src", "SiloPlayer", "Views", "CollectionEditorPage.xaml"));
+        Assert.Contains("manual-item:", editorCode);
     }
 
     private static string ReadRepoFile(params string[] parts)

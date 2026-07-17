@@ -34,6 +34,8 @@ public sealed partial class SettingsPage : Page
     private CancellationTokenSource? _themeCssSaveCts;
     private bool _themeCssLoaded;
     private bool _rememberLibraryPagesLoaded;
+    private bool _pageInitialized;
+    private DateTime _loadedAtUtc;
     // Start suppressed — handlers that fire during XAML parse (before all sibling
     // x:Name fields are assigned) would otherwise null-ref on their forward references
     // and surface as a cryptic "Failed to assign to RangeBase.Value" XamlParseException.
@@ -92,6 +94,7 @@ public sealed partial class SettingsPage : Page
         ViewModel = App.Services.GetRequiredService<SettingsViewModel>();
         _cardOverlayService = App.Services.GetRequiredService<CardOverlayService>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Required;
         PopulateProfileLanguageChoices();
 
         ViewModel.LibraryCards.CollectionChanged += LibraryCards_CollectionChanged;
@@ -204,19 +207,26 @@ public sealed partial class SettingsPage : Page
     {
         base.OnNavigatedTo(e);
 
-        await ViewModel.LoadCommand.ExecuteAsync(null);
-        SyncComboBoxes();
-        await LoadRememberLibraryPagesAsync();
-        SyncSubtitleAppearanceControls();
-        BuildThemeCards();
-        UpdateCurrentThemeDisplay();
-        BuildDateTimeFormatControls();
-        BuildAccessibilityControls();
-        BuildThemeTokenEditor();
-        ThemeCatalogRefreshButton.Visibility = string.Equals(
-            App.Services.GetRequiredService<SiloPlayer.Core.Services.SettingsService>().Load().LastUserRole,
-            "admin", StringComparison.OrdinalIgnoreCase) ? Visibility.Visible : Visibility.Collapsed;
-        AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Services.SettingsService>().Load().AudioBitstreamPassthrough;
+        var stale = !_pageInitialized || DateTime.UtcNow - _loadedAtUtc > TimeSpan.FromMinutes(2);
+        if (stale)
+        {
+            var rememberLibraryPagesTask = LoadRememberLibraryPagesAsync();
+            await ViewModel.LoadCommand.ExecuteAsync(null);
+            await rememberLibraryPagesTask;
+            SyncComboBoxes();
+            SyncSubtitleAppearanceControls();
+            BuildThemeCards();
+            UpdateCurrentThemeDisplay();
+            BuildDateTimeFormatControls();
+            BuildAccessibilityControls();
+            BuildThemeTokenEditor();
+            ThemeCatalogRefreshButton.Visibility = string.Equals(
+                App.Services.GetRequiredService<SiloPlayer.Core.Services.SettingsService>().Load().LastUserRole,
+                "admin", StringComparison.OrdinalIgnoreCase) ? Visibility.Visible : Visibility.Collapsed;
+            AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Services.SettingsService>().Load().AudioBitstreamPassthrough;
+            _pageInitialized = true;
+            _loadedAtUtc = DateTime.UtcNow;
+        }
 
         if (e.Parameter is string requestedTab)
         {

@@ -69,6 +69,8 @@ public partial class LibraryViewModel : ObservableObject
     [ObservableProperty]
     private string? _selectedGenre;
 
+    public IReadOnlyList<string> SelectedGenres { get; set; } = [];
+
     [ObservableProperty]
     private string? _selectedType;
 
@@ -105,6 +107,7 @@ public partial class LibraryViewModel : ObservableObject
 
     [ObservableProperty] private string? _selectedMinimumRating;
     [ObservableProperty] private string? _selectedOriginalLanguage;
+    public IReadOnlyList<string> SelectedOriginalLanguages { get; set; } = [];
     [ObservableProperty] private string? _selectedActor;
     [ObservableProperty] private string? _selectedDirector;
     [ObservableProperty] private string? _selectedWriter;
@@ -541,6 +544,21 @@ public partial class LibraryViewModel : ObservableObject
         IsLoading = false;
     }
 
+    /// <summary>
+    /// Stops requests owned by a page that is leaving the frame while retaining
+    /// the populated catalog window. A cached LibraryPage can therefore return
+    /// immediately without flashing an empty grid or re-fetching the same items.
+    /// </summary>
+    public void SuspendCatalogLoads()
+    {
+        CancelWindowLoad();
+        CancelCurrentCatalogQuery();
+        _catalogQueryCts = new CancellationTokenSource();
+        _queryVersion++;
+        _loadingPages.Clear();
+        IsLoading = false;
+    }
+
     private void CancelCurrentCatalogQuery()
     {
         try { _catalogQueryCts.Cancel(); } catch { }
@@ -730,7 +748,10 @@ public partial class LibraryViewModel : ObservableObject
         if (double.TryParse(SelectedMinimumRating, System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var minimumRating))
             Add("rating_imdb", "gte", minimumRating);
-        Add("original_language", "is", SelectedOriginalLanguage);
+        foreach (var genre in SelectedGenres)
+            Add("genre", "is", genre);
+        if (SelectedOriginalLanguages.Count <= 1)
+            Add("original_language", "is", SelectedOriginalLanguages.FirstOrDefault() ?? SelectedOriginalLanguage);
         Add("actor", "is", SelectedActor);
         Add("director", "is", SelectedDirector);
         Add("writer", "is", SelectedWriter);
@@ -788,7 +809,20 @@ public partial class LibraryViewModel : ObservableObject
 
     private IReadOnlyList<QueryGroup>? BuildAdvancedGroups()
     {
-        if (!UseAdvancedRules) return null;
+        if (!UseAdvancedRules)
+        {
+            if (SelectedOriginalLanguages.Count <= 1) return null;
+            return
+            [
+                new QueryGroup
+                {
+                    Match = "any",
+                    Rules = SelectedOriginalLanguages
+                        .Select(language => new QueryRule { Field = "original_language", Op = "is", Value = language })
+                        .ToList(),
+                },
+            ];
+        }
 
         return AdvancedGroups
             .Select(group => new QueryGroup

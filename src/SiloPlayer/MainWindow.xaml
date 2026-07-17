@@ -31,23 +31,37 @@
             IsBackButtonVisible="Collapsed"
             IsPaneToggleButtonVisible="False"
             IsSettingsVisible="False"
+            IsPaneOpen="True"
+            CompactPaneLength="64"
             OpenPaneLength="{StaticResource SidebarWidth}"
             PaneDisplayMode="Left"
             Background="{StaticResource AppBackgroundBrush}"
             ItemInvoked="NavView_ItemInvoked"
+            PaneClosing="NavView_PaneClosing"
             Loaded="NavView_Loaded">
 
             <NavigationView.PaneHeader>
-                <StackPanel Margin="16,20,16,16">
+                <Grid x:Name="SidebarBrandHost" Height="88">
                     <Image
-                        x:Name="SiloBrandImage"
+                        x:Name="SiloWordmarkImage"
                         Source="ms-appx:///Assets/silo-wordmark-sidebar.png"
                         Width="112"
                         Height="48"
                         Stretch="Uniform"
                         HorizontalAlignment="Left"
+                        Margin="16,20,0,16"
                         AutomationProperties.Name="Silo" />
-                </StackPanel>
+                    <Image
+                        x:Name="SiloMarkImage"
+                        Source="ms-appx:///Assets/silo-mark-transparent.png"
+                        Width="36"
+                        Height="36"
+                        Stretch="Uniform"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed"
+                        AutomationProperties.Name="Silo" />
+                </Grid>
             </NavigationView.PaneHeader>
 
             <NavigationView.MenuItems>
@@ -98,23 +112,23 @@
                         <FontIcon Glyph="&#xE735;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem x:Name="RequestsNavItem" Content="Requests" Tag="Requests" Visibility="Collapsed">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE8F4;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
                 <NavigationViewItem Content="Calendar" Tag="Calendar">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE787;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="Catalog" Tag="Catalog">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE8B7;" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem Content="Requests" Tag="Requests">
-                    <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE8F4;" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem Content="Notifications" Tag="Notifications">
+                <NavigationViewItem x:Name="NotificationsNavItem" Content="Notifications" Tag="Notifications">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE7F4;" />
                     </NavigationViewItem.Icon>
+                    <NavigationViewItem.InfoBadge>
+                        <InfoBadge x:Name="NotificationUnreadBadge" Visibility="Collapsed" />
+                    </NavigationViewItem.InfoBadge>
                 </NavigationViewItem>
 
                 <!-- YOUR STUFF section header -->
@@ -175,9 +189,10 @@
                         CornerRadius="12"
                         Visibility="Collapsed"
                         Click="Admin_Click">
-                        <StackPanel Orientation="Horizontal" Spacing="10">
+                        <StackPanel x:Name="AdminButtonContent" Orientation="Horizontal" Spacing="10">
                             <FontIcon Glyph="&#xE7EF;" FontSize="18" Foreground="{StaticResource SecondaryTextBrush}" />
                             <TextBlock
+                                x:Name="AdminButtonLabel"
                                 Text="Admin"
                                 Foreground="{StaticResource SecondaryTextBrush}"
                                 VerticalAlignment="Center"
@@ -314,7 +329,7 @@
                     EndImpersonationRequested="ImpersonationBanner_EndRequested" />
 
                 <!-- Page content -->
-                <Frame x:Name="ContentFrame" Grid.Row="1" />
+                <Frame x:Name="ContentFrame" Grid.Row="1" CacheSize="16" />
 
                 <!-- Server Activity button (overlay on top of ContentFrame). -->
                 <controls:ServerActivityButton

@@ -13,6 +13,7 @@ using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
+using SiloPlayer.Controls;
 
 namespace SiloPlayer.Views;
 
@@ -30,20 +31,27 @@ public sealed partial class CalendarPage : Page
     private bool _suppressLibraryEvent;
     private string? _selectedDay;
     private readonly Dictionary<string, FrameworkElement> _dayGroups = new(StringComparer.Ordinal);
+    private readonly List<Border> _skeletonPosters = [];
+    private readonly List<FrameworkElement> _skeletonRows = [];
+    private bool _contentBuilt;
+    private bool _daysBuildQueued;
+    private bool _suppressPresetEvent;
+    private int _layoutBucket = -1;
+    private double _gutter = 48;
+    private double _eventCardWidth = 185;
 
     public CalendarPage()
     {
         ViewModel = App.Services.GetRequiredService<CalendarViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Required;
+        BuildLoadingSkeleton();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         try
         {
-            if (ViewModel.Days.Count == 0 && ViewModel.ErrorMessage == null)
-                await ViewModel.LoadCommand.ExecuteAsync(null);
-
             if (!_eventsAttached)
             {
                 _eventsAttached = true;
@@ -52,7 +60,11 @@ public sealed partial class CalendarPage : Page
                 ViewModel.Libraries.CollectionChanged += OnLibrariesChanged;
             }
 
-            RebuildAll();
+            if (!ViewModel.HasLoaded && ViewModel.ErrorMessage == null)
+                await ViewModel.LoadCommand.ExecuteAsync(null);
+
+            if (!_contentBuilt)
+                RebuildAll();
         }
         catch (Exception ex)
         {
@@ -75,19 +87,34 @@ public sealed partial class CalendarPage : Page
     // ---------- Reactive wiring ----------
 
     private void OnDaysChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-        => DispatcherQueue.TryEnqueue(BuildDayRows);
+    {
+        if (_daysBuildQueued) return;
+        _daysBuildQueued = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _daysBuildQueued = false;
+            BuildWeekStrip();
+            BuildDayRows();
+            _contentBuilt = true;
+        });
+    }
 
     private void OnLibrariesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         => DispatcherQueue.TryEnqueue(BuildLibraryDropdown);
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(ViewModel.WeekStart)
-            or nameof(ViewModel.Filter)
-            or nameof(ViewModel.IsEmpty))
-        {
-            DispatcherQueue.TryEnqueue(RebuildAll);
-        }
+        if (e.PropertyName == nameof(ViewModel.WeekStart))
+            DispatcherQueue.TryEnqueue(BuildWeekStrip);
+        else if (e.PropertyName == nameof(ViewModel.Filter))
+            DispatcherQueue.TryEnqueue(() => { BuildFilterPills(); UpdateEmptyState(); });
+        else if (e.PropertyName == nameof(ViewModel.IsEmpty))
+            DispatcherQueue.TryEnqueue(UpdateEmptyState);
+        else if (e.PropertyName == nameof(ViewModel.IsLoading))
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!ViewModel.IsLoading) UpdateEmptyState();
+            });
     }
 
     private void RebuildAll()
@@ -97,6 +124,7 @@ public sealed partial class CalendarPage : Page
         BuildLibraryDropdown();
         BuildDayRows();
         UpdateEmptyState();
+        _contentBuilt = true;
     }
 
     // ---------- Header: filter pills ----------
@@ -106,6 +134,17 @@ public sealed partial class CalendarPage : Page
         ApplyPillStyle(FilterFollowingBtn, ViewModel.Filter == "following");
         ApplyPillStyle(FilterTrendingBtn, ViewModel.Filter == "trending");
         ApplyPillStyle(FilterEverythingBtn, ViewModel.Filter == "everything");
+        _suppressPresetEvent = true;
+        try
+        {
+            CompactPresetComboBox.SelectedIndex = ViewModel.Filter switch
+            {
+                "trending" => 1,
+                "everything" => 2,
+                _ => 0,
+            };
+        }
+        finally { _suppressPresetEvent = false; }
     }
 
     private void ApplyPillStyle(Button btn, bool active)
@@ -122,6 +161,12 @@ public sealed partial class CalendarPage : Page
 
     private async void FilterEverythingBtn_Click(object sender, RoutedEventArgs e)
         => await ViewModel.SetFilterAsync("everything");
+
+    private async void CompactPresetComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressPresetEvent || CompactPresetComboBox.SelectedItem is not ComboBoxItem item) return;
+        await ViewModel.SetFilterAsync(item.Tag?.ToString() ?? "following");
+    }
 
     private async void ShowTrending_Click(object sender, RoutedEventArgs e)
         => await ViewModel.SetFilterAsync("trending");
@@ -325,7 +370,7 @@ public sealed partial class CalendarPage : Page
         container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         // --- Heading row: "Monday, April 7th" + optional "Today" pill ---
-        var headingGrid = new Grid { Margin = new Thickness(48, 0, 48, 12) };
+        var headingGrid = new Grid { Margin = new Thickness(_gutter, 0, _gutter, 12) };
         headingGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         headingGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
@@ -381,7 +426,7 @@ public sealed partial class CalendarPage : Page
         {
             Orientation = Orientation.Horizontal,
             Spacing = 16,
-            Margin = new Thickness(48, 0, 48, 0),
+            Margin = new Thickness(_gutter, 0, _gutter, 0),
         };
 
         foreach (var ev in day.Items)
@@ -398,8 +443,8 @@ public sealed partial class CalendarPage : Page
     {
         // Mirrors web CalendarEventCard: poster (2:3), title, subtitle (e.g. S1 · E3), optional air time,
         // plus top-left badge pills from ev.Badges.
-        const double cardWidth = 160;
-        const double posterHeight = 240; // 2:3 aspect
+        var cardWidth = _eventCardWidth;
+        var posterHeight = cardWidth * 1.5; // 2:3 aspect
 
         var root = new Grid { Width = cardWidth, Margin = new Thickness(0) };
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(posterHeight) });
@@ -649,6 +694,103 @@ public sealed partial class CalendarPage : Page
             };
             EmptyActionsPanel.Visibility = ViewModel.Filter == "everything"
                 ? Visibility.Collapsed : Visibility.Visible;
+        }
+    }
+
+    private void BuildLoadingSkeleton()
+    {
+        CalendarLoadingSkeleton.Children.Clear();
+        _skeletonPosters.Clear();
+        _skeletonRows.Clear();
+
+        for (var day = 0; day < 7; day++)
+        {
+            var group = new StackPanel { Spacing = 12 };
+            var heading = new SkeletonText
+            {
+                Width = 170 + (day % 3) * 22,
+                Height = 16,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(_gutter, 0, _gutter, 0),
+                Tag = "edge",
+            };
+            _skeletonRows.Add(heading);
+            group.Children.Add(heading);
+
+            var cards = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 20,
+                Margin = new Thickness(_gutter, 0, _gutter, 0),
+                Tag = "edge",
+            };
+            _skeletonRows.Add(cards);
+            for (var item = 0; item < 18; item++)
+            {
+                var poster = new Border
+                {
+                    Width = _eventCardWidth,
+                    Height = _eventCardWidth * 1.5,
+                    CornerRadius = new CornerRadius(12),
+                    Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
+                    Opacity = 0.62,
+                };
+                _skeletonPosters.Add(poster);
+                cards.Children.Add(poster);
+            }
+
+            group.Children.Add(new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                HorizontalScrollMode = ScrollMode.Disabled,
+                VerticalScrollMode = ScrollMode.Disabled,
+                Content = cards,
+            });
+            CalendarLoadingSkeleton.Children.Add(group);
+        }
+    }
+
+    private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var width = e.NewSize.Width;
+        if (width <= 0) return;
+        _gutter = width < 640 ? 16 : width < 1024 ? 24 : width < 1280 ? 40 : 48;
+
+        HeaderGrid.Margin = new Thickness(_gutter, width < 1024 ? 20 : 28, _gutter, 20);
+        WeekNavigatorBorder.Margin = new Thickness(_gutter, 0, _gutter, 24);
+        SelectedDayEmptyState.Margin = new Thickness(_gutter, 0, _gutter, 16);
+        EmptyState.Margin = new Thickness(_gutter, 32, _gutter, 48);
+        EmptyState.MinWidth = 0;
+        EmptyState.HorizontalAlignment = HorizontalAlignment.Stretch;
+
+        var stackHeader = width < 700;
+        Grid.SetRow(HeaderActions, stackHeader ? 1 : 0);
+        Grid.SetColumn(HeaderActions, stackHeader ? 0 : 1);
+        Grid.SetColumnSpan(HeaderActions, stackHeader ? 2 : 1);
+        HeaderActions.HorizontalAlignment = stackHeader ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+
+        PresetPillGroup.Visibility = width >= 1024 ? Visibility.Visible : Visibility.Collapsed;
+        CompactPresetComboBox.Visibility = width < 1024 ? Visibility.Visible : Visibility.Collapsed;
+        WeekNavigatorBorder.Padding = width < 640 ? new Thickness(8) : new Thickness(16, 12, 16, 12);
+        WeekStripPanel.ColumnSpacing = width < 640 ? 4 : 6;
+
+        var bucket = width < 640 ? 0 : width < 1024 ? 1 : 2;
+        _eventCardWidth = bucket switch { 0 => 140, 1 => 160, _ => 185 };
+        foreach (var poster in _skeletonPosters)
+        {
+            poster.Width = _eventCardWidth;
+            poster.Height = _eventCardWidth * 1.5;
+        }
+        foreach (var element in _skeletonRows)
+            element.Margin = new Thickness(_gutter, 0, _gutter, 0);
+
+        if (_layoutBucket != bucket)
+        {
+            var hadLayout = _layoutBucket >= 0;
+            _layoutBucket = bucket;
+            if (hadLayout && ViewModel.HasLoaded)
+                BuildDayRows();
         }
     }
 }

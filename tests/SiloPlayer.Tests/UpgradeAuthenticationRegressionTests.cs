@@ -104,6 +104,24 @@ public sealed class UpgradeAuthenticationRegressionTests
     }
 
     [Fact]
+    public void SuccessfulProfileTransitionRestoresTheExpandedNavigationPane()
+    {
+        var mainWindow = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
+        var showStart = mainWindow.IndexOf("public void ShowMainNavigation()", StringComparison.Ordinal);
+        var showEnd = mainWindow.IndexOf("private async Task LoadShellNavigationAsync", StringComparison.Ordinal);
+        var showNavigation = mainWindow[showStart..showEnd];
+        var restoreStart = mainWindow.IndexOf("public void RestoreMainPane()", StringComparison.Ordinal);
+        var restoreEnd = mainWindow.IndexOf("private void OnPlayerStateChanged", StringComparison.Ordinal);
+        var restoreNavigation = mainWindow[restoreStart..restoreEnd];
+
+        Assert.Contains("NavView.IsPaneVisible = true;", showNavigation);
+        Assert.Contains("NavView.IsPaneOpen = true;", showNavigation);
+        Assert.Contains("NavView.IsPaneOpen = true;", restoreNavigation);
+        Assert.DoesNotContain("!IsDetailPage(pageType)", showNavigation);
+        Assert.Contains("UpdateSidebarPanePresentation(NavView.IsPaneOpen)", showNavigation);
+    }
+
+    [Fact]
     public void ThemeSynchronizationCannotBlockSessionRestoreOrProfileSelection()
     {
         var mainWindow = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
@@ -18,6 +19,7 @@ public sealed partial class RecommendationsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<RecommendationsViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Required;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
@@ -126,7 +128,7 @@ public sealed partial class RecommendationsPage : Page
             Child = new TextBlock
             {
                 Text = text,
-                FontSize = 11,
+                FontSize = 12,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"]
             }
@@ -144,7 +146,7 @@ public sealed partial class RecommendationsPage : Page
             Child = new TextBlock
             {
                 Text = text,
-                FontSize = 11,
+                FontSize = 12,
                 Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"]
             }
         };
@@ -174,6 +176,7 @@ public sealed partial class RecommendationsPage : Page
             var sectionRow = new SectionRow();
             if (!string.IsNullOrWhiteSpace(row.SectionKind))
             {
+                sectionRow.UseTitleViewLink = true;
                 sectionRow.OnViewAll = () =>
                 {
                     var nav = App.Services.GetRequiredService<NavigationService>();
@@ -201,8 +204,37 @@ public sealed partial class RecommendationsPage : Page
         var hasContent = loaded && !hasError && ViewModel.Rows.Any(row => row.Items.Count > 0);
 
         ErrorState.Visibility = hasError ? Visibility.Visible : Visibility.Collapsed;
-        RowsScrollViewer.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        RowsPanel.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
         EmptyState.Visibility = loaded && !hasError && !hasContent
             ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void HeaderGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var width = e.NewSize.Width;
+        var pageWidth = ActualWidth > 0 ? ActualWidth : width;
+        var gutter = pageWidth < 640 ? 16d
+            : pageWidth < 1024 ? 24d
+            : pageWidth < 1280 ? 40d
+            : 48d;
+
+        HeaderGrid.Margin = new Thickness(gutter, 24, gutter, 16);
+        LoadingState.Padding = new Thickness(gutter, 2, gutter, 24);
+        HeaderTitleText.FontSize = pageWidth < 640 ? 24 : 30;
+
+        var stackHeader = pageWidth < 640;
+        Grid.SetRow(TasteProfileLoadingPanel, stackHeader ? 1 : 0);
+        Grid.SetColumn(TasteProfileLoadingPanel, stackHeader ? 0 : 1);
+        Grid.SetRow(TasteProfilePanel, stackHeader ? 1 : 0);
+        Grid.SetColumn(TasteProfilePanel, stackHeader ? 0 : 1);
+
+        var profileMargin = stackHeader ? new Thickness(0, 24, 0, 0) : new Thickness(24, 0, 0, 0);
+        TasteProfileLoadingPanel.Margin = profileMargin;
+        TasteProfilePanel.Margin = profileMargin;
+        TasteProfileLoadingPanel.HorizontalAlignment = stackHeader
+            ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+        TasteProfilePanel.HorizontalAlignment = stackHeader
+            ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+        TasteProfilePanel.MaxWidth = stackHeader ? Math.Max(260, pageWidth - gutter * 2) : 360;
     }
 }

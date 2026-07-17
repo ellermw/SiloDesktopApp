@@ -10,7 +10,8 @@
     xmlns:playback="using:SiloPlayer.Core.Models.Playback"
     xmlns:models="using:SiloPlayer.Core.Models.Home"
     mc:Ignorable="d"
-    Background="{StaticResource AppBackgroundBrush}">
+    Background="{StaticResource AppBackgroundBrush}"
+    SizeChanged="Page_SizeChanged">
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
@@ -18,19 +19,23 @@
     </Page.Resources>
 
     <ScrollViewer>
-        <Grid Padding="40,28,40,42">
-            <StackPanel MaxWidth="1040" HorizontalAlignment="Stretch" Spacing="20">
+        <Grid x:Name="PageShell" Padding="40,28,40,42">
+            <StackPanel x:Name="RoomContent" MaxWidth="1040" HorizontalAlignment="Center" Spacing="20">
 
                 <!-- Current WebUI room header bar. -->
                 <Border Background="{StaticResource SurfaceBrush}"
                         BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                         CornerRadius="12" Padding="20,14">
-                    <Grid ColumnSpacing="18">
+                    <Grid x:Name="RoomHeaderGrid" ColumnSpacing="18" RowSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="20">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <StackPanel x:Name="RoomHeaderSummary" Grid.Column="0" Orientation="Horizontal" Spacing="20">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="WATCH PARTY" FontSize="10" FontWeight="SemiBold"
                                            CharacterSpacing="200" Foreground="{StaticResource SecondaryTextBrush}" />
@@ -49,7 +54,7 @@
                                 </StackPanel>
                             </StackPanel>
                         </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <controls:WrapPanel x:Name="RoomHeaderActions" Grid.Column="1" HorizontalSpacing="8" VerticalSpacing="8">
                             <Button x:Name="CopyInviteButton" Style="{StaticResource OutlineButtonStyle}"
                                     Padding="12,8" FontSize="13" Click="CopyInviteButton_Click" Visibility="Collapsed">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
@@ -74,7 +79,7 @@
                                     <TextBlock Text="Leave" />
                                 </StackPanel>
                             </Button>
-                        </StackPanel>
+                        </controls:WrapPanel>
                     </Grid>
                 </Border>
 
@@ -101,7 +106,7 @@
                 <!-- Current WebUI Now Playing hero. -->
                 <Border x:Name="NowPlayingPanel" Visibility="Collapsed"
                         BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12">
-                    <Grid Height="150">
+                    <Grid x:Name="NowPlayingGrid" Height="150">
                         <Image x:Name="NowPlayingBackdrop" Stretch="UniformToFill" Opacity="0.25" />
                         <Rectangle>
                             <Rectangle.Fill>
@@ -139,16 +144,16 @@
                                 </LinearGradientBrush>
                             </Rectangle.Fill>
                         </Rectangle>
-                        <Grid Padding="22" ColumnSpacing="20">
+                        <Grid x:Name="CandidateContentGrid" Padding="22" ColumnSpacing="20">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="116" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0" Width="116" Height="174" CornerRadius="10"
+                            <Border x:Name="CandidatePosterBorder" Grid.Column="0" Width="116" Height="174" CornerRadius="10"
                                     Background="{StaticResource SurfaceRaisedBrush}" VerticalAlignment="Center">
                                 <Image x:Name="CandidatePoster" Stretch="UniformToFill" />
                             </Border>
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="8">
+                            <StackPanel x:Name="CandidateTextPanel" Grid.Column="1" VerticalAlignment="Center" Spacing="8">
                                 <TextBlock x:Name="CandidateKindLabel" Text="READY TO PLAY" FontSize="10"
                                            CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBlock x:Name="CandidateTitle" FontSize="24" FontWeight="SemiBold" />

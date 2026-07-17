@@ -32,8 +32,12 @@ public sealed partial class MainWindow : Window
     private readonly SiloApiClient _apiClient;
     private readonly SettingsApi _settingsApi;
     private readonly CatalogApi _catalogApi;
+    private readonly RequestsApi _requestsApi;
+    private readonly NotificationsApi _notificationsApi;
     private readonly PlayerService _playerService;
     private readonly ThemeService _themeService;
+    private bool _notificationsAvailable = true;
+    private int _notificationUnreadCount;
 
     public MainWindow()
     {
@@ -64,7 +68,13 @@ public sealed partial class MainWindow : Window
         _apiClient = App.Services.GetRequiredService<SiloApiClient>();
         _settingsApi = App.Services.GetRequiredService<SettingsApi>();
         _catalogApi = App.Services.GetRequiredService<CatalogApi>();
+        _requestsApi = App.Services.GetRequiredService<RequestsApi>();
+        _notificationsApi = App.Services.GetRequiredService<NotificationsApi>();
         _themeService = App.Services.GetRequiredService<ThemeService>();
+
+        NavView.PaneOpened += (_, _) => UpdateSidebarPanePresentation(isOpen: true);
+        NavView.PaneClosed += (_, _) => UpdateSidebarPanePresentation(isOpen: false);
+        UpdateSidebarPanePresentation(NavView.IsPaneOpen);
 
         _navigationService.Frame = ContentFrame;
 
@@ -72,6 +82,7 @@ public sealed partial class MainWindow : Window
         _navigationService.Navigated += OnNavigated_UpdateWindowTitle;
         _navigationService.Navigated += OnNavigated_ApplyAccessibility;
         _navigationService.Navigated += OnNavigated_SynchronizeShellChrome;
+        _navigationService.Navigated += OnNavigated_AnimatePageEntrance;
         if (AppWindow != null) AppWindow.Title = DocumentTitle.AppName;
 
         // F2: register the toast host with the ToastService so any VM/page
@@ -520,7 +531,11 @@ public sealed partial class MainWindow : Window
         // visible at all.
         if (NavView.IsPaneVisible)
         {
-            NavView.IsPaneOpen = !IsDetailPage(pageType);
+            // NavigationView's compact rail cannot reproduce the WebUI's
+            // hover-to-expand overlay. Keep authenticated navigation open so
+            // detail routes cannot strand or clip the custom footer controls.
+            NavView.IsPaneOpen = true;
+            UpdateSidebarPanePresentation(isOpen: true);
         }
     }
 
@@ -695,6 +710,14 @@ public sealed partial class MainWindow : Window
         _navigationService.Navigate<ServerSelectPage>();
     }
 
+    private static void OnNavigated_AnimatePageEntrance(
+        object? sender,
+        Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        if (e.Content is FrameworkElement content)
+            PageTransitionHelper.AnimateEntrance(content);
+    }
+
     private async Task<bool> CompleteAutoLoginAsync(
         ServerEntry server,
         AppSettings settings,
@@ -797,6 +820,13 @@ public sealed partial class MainWindow : Window
         TryShellAction("shell_visibility", () =>
         {
             NavView.IsPaneVisible = true;
+            // HideMainNavigation closes the pane while login/profile selection
+            // owns the window. Reopening only IsPaneVisible leaves NavigationView
+            // in its 64px compact state, which clips the custom Admin/profile
+            // footer controls. Restore the route-appropriate pane state as part
+            // of the same authenticated shell transition.
+            NavView.IsPaneOpen = true;
+            UpdateSidebarPanePresentation(NavView.IsPaneOpen);
 
             // Always update admin button and profile display for current user.
             bool isAdmin = AuthorizationPolicy.IsActingAdmin(_authService);
@@ -804,6 +834,7 @@ public sealed partial class MainWindow : Window
             MainServerActivityButton.SetHostVisibility(isAdmin);
         });
         _ = RunShellWorkAsync("profile_display", UpdateProfileDisplayAsync);
+        _ = RunShellWorkAsync("user_navigation_capabilities", RefreshUserNavigationCapabilitiesAsync);
         TryShellAction("theme_switcher", BuildThemeDots);
         _ = RunShellWorkAsync("plugin_navigation", RefreshPluginAppsAsync);
 
@@ -840,6 +871,75 @@ public sealed partial class MainWindow : Window
             return;
 
         await RefreshSidebarPinsAsync();
+    }
+
+    private async Task RefreshUserNavigationCapabilitiesAsync()
+    {
+        try
+        {
+            var requestStatus = await _requestsApi.GetStatusAsync();
+            RequestsNavItem.Visibility = requestStatus.RequestsEnabled
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+        catch
+        {
+            // WebUI keeps Requests hidden until the capability explicitly says
+            // it is enabled.
+            RequestsNavItem.Visibility = Visibility.Collapsed;
+        }
+
+        try
+        {
+            var capability = await _notificationsApi.GetCapabilityAsync();
+            _notificationsAvailable = capability.InApp.Enabled;
+            NotificationsNavItem.Visibility = _notificationsAvailable
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            _notificationUnreadCount = _notificationsAvailable
+                ? await _notificationsApi.GetUnreadCountAsync()
+                : 0;
+        }
+        catch
+        {
+            // Worker modes and older servers may not expose notification APIs.
+            _notificationsAvailable = false;
+            _notificationUnreadCount = 0;
+            NotificationsNavItem.Visibility = Visibility.Collapsed;
+        }
+
+        UpdateSidebarPanePresentation(NavView.IsPaneOpen);
+    }
+
+    private void UpdateSidebarPanePresentation(bool isOpen)
+    {
+        SiloWordmarkImage.Visibility = isOpen ? Visibility.Visible : Visibility.Collapsed;
+        SiloMarkImage.Visibility = isOpen ? Visibility.Collapsed : Visibility.Visible;
+
+        AdminButtonLabel.Visibility = isOpen ? Visibility.Visible : Visibility.Collapsed;
+        AdminButtonContent.Spacing = isOpen ? 10 : 0;
+        AdminButton.HorizontalAlignment = isOpen ? HorizontalAlignment.Stretch : HorizontalAlignment.Center;
+        AdminButton.Width = isOpen ? double.NaN : 40;
+        AdminButton.Height = isOpen ? double.NaN : 40;
+        AdminButton.Padding = isOpen ? new Thickness(16, 10, 16, 10) : new Thickness(0);
+        AdminButton.HorizontalContentAlignment = isOpen
+            ? HorizontalAlignment.Left
+            : HorizontalAlignment.Center;
+
+        ProfileNameText.Visibility = isOpen ? Visibility.Visible : Visibility.Collapsed;
+        ProfileFooterButton.HorizontalAlignment = isOpen ? HorizontalAlignment.Stretch : HorizontalAlignment.Center;
+        ProfileFooterButton.Width = isOpen ? double.NaN : 40;
+        ProfileFooterButton.Height = isOpen ? double.NaN : 40;
+        ProfileFooterButton.Padding = isOpen ? new Thickness(16, 10, 16, 10) : new Thickness(0);
+        ProfileFooterButton.HorizontalContentAlignment = isOpen
+            ? HorizontalAlignment.Left
+            : HorizontalAlignment.Center;
+
+        var hasUnread = _notificationsAvailable && _notificationUnreadCount > 0;
+        NotificationUnreadBadge.Visibility = hasUnread ? Visibility.Visible : Visibility.Collapsed;
+        // InfoBadge renders Value=-1 as a compact dot and values above 99 as
+        // 99+, matching the current WebUI's compact/open notification states.
+        NotificationUnreadBadge.Value = isOpen ? _notificationUnreadCount : -1;
     }
 
     private async Task RunShellWorkAsync(string stage, Func<Task> work)
@@ -1001,8 +1101,10 @@ public sealed partial class MainWindow : Window
 
     public void HideMainNavigation()
     {
-        NavView.IsPaneOpen = false;
+        // Hide the pane before closing it so the authenticated-pane guard does
+        // not treat login/profile transitions as an accidental collapse.
         NavView.IsPaneVisible = false;
+        NavView.IsPaneOpen = false;
         RemoveDynamicLibraryNavItems();
         BuildPluginApps([]);
         _sidebarPins = [];
@@ -1010,6 +1112,22 @@ public sealed partial class MainWindow : Window
         // while the nav is hidden (login / profile select / setup), no admin
         // chrome should be visible.
         MainServerActivityButton.SetHostVisibility(false);
+    }
+
+    private void NavView_PaneClosing(
+        NavigationView sender,
+        NavigationViewPaneClosingEventArgs args)
+    {
+        // This shell has no compact-mode toggle. Allowing NavigationView to
+        // auto-close at a transient width leaves the custom Admin/profile
+        // footer inside a clipped 64px rail and it can remain stranded there
+        // after the window grows again. Authenticated navigation is therefore
+        // persistently open, matching the desktop WebUI sidebar.
+        if (sender.IsPaneVisible && CanExposeAuthenticatedNavigation)
+        {
+            args.Cancel = true;
+            UpdateSidebarPanePresentation(isOpen: true);
+        }
     }
 
     public void RestoreMainPane()
@@ -1021,6 +1139,8 @@ public sealed partial class MainWindow : Window
         }
 
         NavView.IsPaneVisible = true;
+        NavView.IsPaneOpen = true;
+        UpdateSidebarPanePresentation(NavView.IsPaneOpen);
         MainServerActivityButton.SetHostVisibility(AuthorizationPolicy.IsActingAdmin(_authService));
     }
 
@@ -1391,6 +1511,9 @@ public sealed partial class MainWindow : Window
             .Select(pin => (pin.Id, pin.Label))
             .ToList();
     }
+
+    public Library? FindLibrary(int libraryId)
+        => _viewModel.Libraries.FirstOrDefault(library => library.Id == libraryId);
 
     public async Task<bool> ToggleSidebarPinAsync(
         int libraryId,

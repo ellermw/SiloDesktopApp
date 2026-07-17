@@ -20,31 +20,51 @@ namespace SiloPlayer.Views;
 public sealed partial class WatchTogetherJoinPage : Page
 {
     public WatchTogetherJoinViewModel ViewModel { get; }
+    private bool _subscribed;
 
     public WatchTogetherJoinPage()
     {
         ViewModel = App.Services.GetRequiredService<WatchTogetherJoinViewModel>();
         this.InitializeComponent();
-        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        SubscribeToViewModel();
         UpdateSelectionButtons();
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        SubscribeToViewModel();
 
         // Deep-link: invite token auto-joins
         if (e.Parameter is string token && !string.IsNullOrWhiteSpace(token))
         {
             HeadlineText.Text = "Joining Watch Party";
+            AutoJoinPanel.Visibility = Visibility.Visible;
+            ContentStack.Visibility = Visibility.Collapsed;
             await ViewModel.JoinByInviteTokenAsync(token.Trim());
+            if (ViewModel.LastResponse == null)
+            {
+                AutoJoinPanel.Visibility = Visibility.Collapsed;
+                ContentStack.Visibility = Visibility.Visible;
+            }
         }
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
-        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        if (_subscribed)
+        {
+            ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+            _subscribed = false;
+        }
+    }
+
+    private void SubscribeToViewModel()
+    {
+        if (_subscribed) return;
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        _subscribed = true;
     }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -80,6 +100,22 @@ public sealed partial class WatchTogetherJoinPage : Page
         ViewModel.SelectionMode = "vote";
     }
 
+    private void SelectionButton_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key is VirtualKey.Right or VirtualKey.Down or VirtualKey.End)
+        {
+            ViewModel.SelectionMode = "vote";
+            VoteButton.Focus(FocusState.Keyboard);
+            e.Handled = true;
+        }
+        else if (e.Key is VirtualKey.Left or VirtualKey.Up or VirtualKey.Home)
+        {
+            ViewModel.SelectionMode = "host_pick";
+            HostPickButton.Focus(FocusState.Keyboard);
+            e.Handled = true;
+        }
+    }
+
     private void UpdateSelectionButtons()
     {
         // Style swaps in WinUI 3 are expensive — the framework invalidates
@@ -113,6 +149,30 @@ public sealed partial class WatchTogetherJoinPage : Page
         if (e.Key == VirtualKey.Enter && !ViewModel.IsBusy)
         {
             await ViewModel.JoinByCodeCommand.ExecuteAsync(null);
+        }
+    }
+
+    private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var width = e.NewSize.Width;
+        if (width <= 0) return;
+        var compact = width < 700;
+        var narrow = width < 900;
+        PageShell.Padding = new Thickness(width < 640 ? 16 : width < 1024 ? 32 : 40, width < 640 ? 24 : 40, width < 640 ? 16 : width < 1024 ? 32 : 40, 40);
+        HeadlineText.FontSize = width < 640 ? 30 : 36;
+
+        for (var index = 0; index < InfoGrid.Children.Count; index++)
+        {
+            if (InfoGrid.Children[index] is not FrameworkElement child) continue;
+            Grid.SetColumn(child, compact ? 0 : index);
+            Grid.SetRow(child, compact ? index : 0);
+        }
+
+        for (var index = 0; index < ActionGrid.Children.Count; index++)
+        {
+            if (ActionGrid.Children[index] is not FrameworkElement child) continue;
+            Grid.SetColumn(child, narrow ? 0 : index);
+            Grid.SetRow(child, narrow ? index : 0);
         }
     }
 }

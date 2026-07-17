@@ -40,13 +40,13 @@ local config = {
     seek_y_offset       = 106,        -- visual center above the transport row
 
     -- Volume
-    volume_bar_width    = 60,
-    volume_bar_height   = 4,
-    volume_thumb_radius = 5,
+    volume_bar_width    = 96,
+    volume_bar_height   = 3,
+    volume_thumb_radius = 6,
 
     -- Timing
-    hide_timeout        = 2.5,
-    fade_duration       = 0.25,
+    hide_timeout        = 3.0,
+    fade_duration       = 0.30,
 
     -- Stats overlay
     stats_padding       = 14,
@@ -1365,6 +1365,7 @@ local function compute_layout()
         x = rx_cursor, y = controls_y - math.floor(config.volume_bar_height * sc) / 2,
         w = math.floor(config.volume_bar_width * sc), h = math.floor(config.volume_bar_height * sc), cy = controls_y
     }
+    L.utility_divider_x = L.volume_bar.x + L.volume_bar.w + math.floor(3 * sc)
     rx_cursor = rx_cursor - math.floor(4 * sc)
     L.btn_volume = place_utility()
 
@@ -1864,7 +1865,11 @@ local function render_osc()
     local vol_ratio = state.dragging_volume
         and clamp(state.volume_drag_val / 100, 0, 1)
         or clamp(state.volume / 100, 0, 1)
-    local volume_h = math.max(3, math.floor(config.volume_bar_height * sc))
+    local volume_hover = state.dragging_volume
+        or (state.mouse_x >= vb.x and state.mouse_x <= vb.x + vb.w
+            and state.mouse_y >= vb.cy - math.floor(12 * sc)
+            and state.mouse_y <= vb.cy + math.floor(12 * sc))
+    local volume_h = math.max(3, math.floor((volume_hover and 5 or config.volume_bar_height) * sc))
     draw_rounded_rect(ass, vb.x, vb.cy - volume_h / 2, vb.x + vb.w, vb.cy + volume_h / 2,
         volume_h / 2, config.text_color, "D9", ma)
     local vol_fill_x = vb.x + vb.w * vol_ratio
@@ -1872,8 +1877,23 @@ local function render_osc()
         draw_rounded_rect(ass, vb.x, vb.cy - volume_h / 2, vol_fill_x, vb.cy + volume_h / 2,
             volume_h / 2, config.text_color, "00", ma)
     end
-    draw_circle(ass, vol_fill_x, vb.cy, math.floor(config.volume_thumb_radius * sc),
-        config.text_color, "00", ma)
+    if volume_hover then
+        draw_circle(ass, vol_fill_x, vb.cy, math.floor(config.volume_thumb_radius * sc),
+            config.text_color, "00", ma)
+    end
+
+    -- The WebUI separates the always-visible volume group from the rest of
+    -- the utility rail with a subtle vertical divider.
+    if L.utility_divider_x then
+        local divider_x = L.utility_divider_x
+        local divider_half_h = math.floor(16 * sc)
+        draw_gradient(ass, divider_x, controls_y - divider_half_h,
+            divider_x + math.max(1, math.floor(sc)), controls_y,
+            config.text_color, "FF", "DB", ma, 4)
+        draw_gradient(ass, divider_x, controls_y,
+            divider_x + math.max(1, math.floor(sc)), controls_y + divider_half_h,
+            config.text_color, "DB", "FF", ma, 4)
+    end
 
     local bcc = L.btn_cc
     local cc_active = state.sub_track > 0 or state.subtitle_menu_visible
@@ -2603,7 +2623,7 @@ local function render_subtitle_menu()
             fs, text_color, "00", 1.0, 4)
 
         local source_labels = {
-            embedded = "EMBEDDED", external = "EXTERNAL", downloaded = "EXTERNAL",
+            embedded = "EMBEDDED", external = "EXTERNAL", downloaded = "DOWNLOADED",
             ai_generated = "AI GENERATED", generated = "AI GENERATED",
         }
         local source_badge = source_labels[track.source or "embedded"]
@@ -3078,11 +3098,8 @@ local function render_audio_menu()
         if bitrate > 0 then table.insert(meta, string.format("%d kbps", math.floor(bitrate + 0.5))) end
         local sample_rate = tonumber(track.sample_rate) or 0
         if sample_rate > 0 then
-            local sample_label = sample_rate >= 1000
-                and string.format("%.1f kHz", sample_rate / 1000)
-                or string.format("%d Hz", sample_rate)
-            sample_label = sample_label:gsub("%.0 kHz", " kHz")
-            table.insert(meta, sample_label)
+            -- WebUI mediaFormat.ts presents the source value in hertz.
+            table.insert(meta, string.format("%d Hz", math.floor(sample_rate + 0.5)))
         end
         local bit_depth = tonumber(track.bit_depth) or 0
         if bit_depth > 0 then table.insert(meta, tostring(bit_depth) .. "-bit") end

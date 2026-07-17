@@ -18,22 +18,29 @@
     </Page.Resources>
 
     <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
-
+        <!-- The WebUI scrolls the header and recommendation rows as one page. -->
+        <ScrollViewer
+            x:Name="PageScrollViewer"
+            HorizontalScrollMode="Disabled"
+            HorizontalScrollBarVisibility="Disabled"
+            VerticalScrollBarVisibility="Auto">
+            <StackPanel Padding="0,0,0,40">
         <!-- Header: title + subtitle on left, TasteProfile card on right (web parity) -->
-        <Grid Grid.Row="0" Margin="40,24,40,20">
+        <Grid x:Name="HeaderGrid" Margin="40,24,40,20" SizeChanged="HeaderGrid_SizeChanged">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <StackPanel Grid.Column="0" Spacing="6">
+            <StackPanel x:Name="HeaderTitlePanel" Grid.Row="0" Grid.Column="0" Spacing="4">
                 <TextBlock
+                    x:Name="HeaderTitleText"
                     Text="Recommendations"
-                    FontSize="{StaticResource FontSizeDisplayLarge}"
+                    FontSize="30"
                     FontWeight="Bold"
                     Foreground="{StaticResource PrimaryTextBrush}" />
                 <TextBlock
@@ -43,12 +50,13 @@
             </StackPanel>
 
             <Border
+                x:Name="TasteProfileLoadingPanel"
+                Grid.Row="0"
                 Grid.Column="1"
                 Background="{StaticResource SurfaceBrush}"
-                CornerRadius="16"
-                Padding="20,16"
+                CornerRadius="12"
+                Padding="20"
                 MinWidth="260"
-                Height="92"
                 VerticalAlignment="Top"
                 Visibility="{x:Bind ViewModel.IsTasteProfileLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                 <StackPanel Spacing="12">
@@ -60,10 +68,11 @@
             <!-- Taste Profile card (web: TasteProfileCard) -->
             <Border
                 x:Name="TasteProfilePanel"
+                Grid.Row="0"
                 Grid.Column="1"
                 Background="{StaticResource SurfaceBrush}"
-                CornerRadius="16"
-                Padding="20,16"
+                CornerRadius="12"
+                Padding="20"
                 MinWidth="260"
                 MaxWidth="360"
                 VerticalAlignment="Top"
@@ -77,13 +86,13 @@
                         <TextBlock
                             Grid.Column="0"
                             Text="Your Taste Profile"
-                            FontSize="14"
+                            FontSize="16"
                             FontWeight="SemiBold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
                             x:Name="TasteSignalCountText"
                             Grid.Column="1"
-                            FontSize="11"
+                            FontSize="12"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </Grid>
 
@@ -91,7 +100,7 @@
                     <StackPanel x:Name="TopGenresPanel" Spacing="6" Visibility="Collapsed">
                         <TextBlock
                             Text="TOP GENRES"
-                            FontSize="10"
+                            FontSize="12"
                             FontWeight="SemiBold"
                             CharacterSpacing="120"
                             Foreground="{StaticResource SecondaryTextBrush}" />
@@ -105,7 +114,7 @@
                     <StackPanel x:Name="FavoriteDirectorsPanel" Spacing="6" Visibility="Collapsed">
                         <TextBlock
                             Text="FAVORITE DIRECTORS"
-                            FontSize="10"
+                            FontSize="12"
                             FontWeight="SemiBold"
                             CharacterSpacing="120"
                             Foreground="{StaticResource SecondaryTextBrush}" />
@@ -119,13 +128,15 @@
         </Grid>
 
         <!-- Skeleton while recommendations load (approximates row layout). -->
-        <ScrollViewer Grid.Row="1"
-                      VerticalScrollBarVisibility="Disabled"
-                      Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
-            <StackPanel Padding="40,0,40,24" Spacing="36">
+        <StackPanel x:Name="LoadingState"
+                    Padding="40,2,40,24"
+                    Spacing="40"
+                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                 <StackPanel Spacing="12">
                     <controls:SkeletonText Width="180" Height="18" HorizontalAlignment="Left" />
                     <StackPanel Orientation="Horizontal" Spacing="12">
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
@@ -143,11 +154,15 @@
                         <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
                     </StackPanel>
                 </StackPanel>
                 <StackPanel Spacing="12">
                     <controls:SkeletonText Width="200" Height="18" HorizontalAlignment="Left" />
                     <StackPanel Orientation="Horizontal" Spacing="12">
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
@@ -165,17 +180,17 @@
                         <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
                     </StackPanel>
                 </StackPanel>
-            </StackPanel>
-        </ScrollViewer>
+        </StackPanel>
 
         <!-- Error -->
         <StackPanel
             x:Name="ErrorState"
-            Grid.Row="1"
             HorizontalAlignment="Center"
-            VerticalAlignment="Center"
+            Margin="0,96,0,96"
             Spacing="12"
             Visibility="Collapsed">
             <TextBlock
@@ -195,21 +210,15 @@
         </StackPanel>
 
         <!-- All recommendation rows (web: rows.map(row => <MediaCarousel title={row.label}>)) -->
-        <ScrollViewer
-            x:Name="RowsScrollViewer"
-            Grid.Row="1"
-            Visibility="Collapsed">
-            <StackPanel x:Name="RowsPanel" Spacing="8" />
-        </ScrollViewer>
+        <StackPanel x:Name="RowsPanel" Spacing="8" Visibility="Collapsed" />
 
         <!-- Empty state (web: DiscoverEmptyState) -->
         <StackPanel
             x:Name="EmptyState"
-            Grid.Row="1"
-            VerticalAlignment="Center"
             HorizontalAlignment="Center"
             Spacing="12"
-            Padding="40"
+            Margin="0,96,0,96"
+            Padding="40,0"
             Visibility="Collapsed">
             <FontIcon
                 Glyph="&#xE735;"
@@ -218,18 +227,20 @@
                 HorizontalAlignment="Center" />
             <TextBlock
                 Text="Not enough data yet"
-                FontSize="{StaticResource FontSizeTitle}"
+                FontSize="14"
                 FontWeight="SemiBold"
                 Foreground="{StaticResource PrimaryTextBrush}"
                 HorizontalAlignment="Center" />
             <TextBlock
                 Text="Watch and rate more content to unlock personalized recommendations."
-                FontSize="14"
+                FontSize="12"
                 Foreground="{StaticResource SecondaryTextBrush}"
                 HorizontalAlignment="Center"
                 TextAlignment="Center"
                 TextWrapping="Wrap"
                 MaxWidth="420" />
         </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
     </Grid>
 </Page>

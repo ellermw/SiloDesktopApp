@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using System.Text.Json;
 using Windows.UI;
 using Windows.ApplicationModel.DataTransfer;
@@ -25,6 +26,7 @@ public sealed partial class AdminSectionsPage : Page
     private TaskCompletionSource<GalleryRecipeChoice?>? _galleryCompletion;
     private DispatcherTimer? _sectionPreviewTimer;
     private Func<Task>? _sectionPreviewAction;
+    private bool _loaded;
 
     // Section type labels — matches sectionTypes.ts exactly
     private static readonly Dictionary<string, string> SectionTypeLabels = new()
@@ -51,18 +53,29 @@ public sealed partial class AdminSectionsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminSectionsViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        if (_loaded) return;
+        _loaded = true;
         try
         {
             _adminShell = FindAncestor<AdminShellPage>(this);
             _adminShell?.AttachPageOverlay(GalleryOverlay);
             _adminShell?.AttachPageOverlay(SectionEditorOverlay);
-            ViewModel.Sections.CollectionChanged += (_, _) => ScheduleRebuild();
-            SetScopeActive("home");
-            BuildLoadingSkeletons();
+            ViewModel.Sections.CollectionChanged += Sections_CollectionChanged;
+            SetScopeActive(_currentScope);
+            if (ViewModel.Sections.Count > 0)
+            {
+                PopulateLibraryPicker();
+                BuildSectionRows();
+            }
+            else
+            {
+                BuildLoadingSkeletons();
+            }
             await ViewModel.LoadCommand.ExecuteAsync(null);
             PopulateLibraryPicker();
             BuildSectionRows();
@@ -81,6 +94,16 @@ public sealed partial class AdminSectionsPage : Page
         _adminShell?.DetachPageOverlay(SectionEditorOverlay);
         _adminShell = null;
     }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        _loaded = false;
+        ViewModel.Sections.CollectionChanged -= Sections_CollectionChanged;
+        base.OnNavigatedFrom(e);
+    }
+
+    private void Sections_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuild();
 
     private static T? FindAncestor<T>(DependencyObject child) where T : DependencyObject
     {
@@ -170,14 +193,27 @@ public sealed partial class AdminSectionsPage : Page
         NoLibrariesText.Visibility = Visibility.Collapsed;
 
         _suppressPickerChange = true;
+        var selectedLibraryId = ViewModel.SelectedLibraryId;
         LibraryPicker.Items.Clear();
         foreach (var lib in ViewModel.Libraries)
             LibraryPicker.Items.Add(new ComboBoxItem { Content = lib.Name, Tag = lib.Id });
 
         if (LibraryPicker.Items.Count > 0)
         {
-            LibraryPicker.SelectedIndex = 0;
-            if (LibraryPicker.Items[0] is ComboBoxItem first && first.Tag is int id)
+            var selectedIndex = 0;
+            if (selectedLibraryId.HasValue)
+            {
+                for (var index = 0; index < LibraryPicker.Items.Count; index++)
+                {
+                    if (LibraryPicker.Items[index] is ComboBoxItem { Tag: int candidateId } && candidateId == selectedLibraryId.Value)
+                    {
+                        selectedIndex = index;
+                        break;
+                    }
+                }
+            }
+            LibraryPicker.SelectedIndex = selectedIndex;
+            if (LibraryPicker.Items[selectedIndex] is ComboBoxItem first && first.Tag is int id)
                 ViewModel.SelectedLibraryId = id;
         }
         _suppressPickerChange = false;

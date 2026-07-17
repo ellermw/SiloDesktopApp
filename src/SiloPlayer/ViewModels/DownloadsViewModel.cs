@@ -9,6 +9,7 @@ namespace SiloPlayer.ViewModels;
 public partial class DownloadsViewModel : ObservableObject
 {
     private readonly DownloadsApi _downloadsApi;
+    private bool _loadInProgress;
 
     public DownloadsViewModel(DownloadsApi downloadsApi)
     {
@@ -29,9 +30,13 @@ public partial class DownloadsViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadDownloadsAsync()
     {
-        if (IsLoading) return;
+        if (_loadInProgress) return;
 
-        IsLoading = true;
+        _loadInProgress = true;
+        // Keep populated rows visible during a background refresh. Replacing
+        // the entire page with a spinner on every visit creates a visible
+        // reload even when the cached data is already usable.
+        IsLoading = Downloads.Count == 0;
         ErrorMessage = null;
 
         try
@@ -50,6 +55,7 @@ public partial class DownloadsViewModel : ObservableObject
         finally
         {
             IsLoading = false;
+            _loadInProgress = false;
         }
     }
 

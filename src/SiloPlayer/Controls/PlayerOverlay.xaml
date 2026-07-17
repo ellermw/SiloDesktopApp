@@ -63,7 +63,7 @@
         <!-- Video is rendered by the mpv GPU popup window positioned over the
              XAML tree — this control hosts only the chrome overlays. -->
 
-        <!-- Loading overlay â€” current WebUI keeps a solid black frame and
+        <!-- Loading overlay — current WebUI keeps a solid black frame and
              exposes only the compact white spinner until first frame. -->
         <Grid x:Name="LoadingOverlay" Background="Black" Visibility="Collapsed">
             <ProgressRing IsActive="True" Width="32" Height="32"
@@ -346,10 +346,8 @@
                             </Grid>
                         </Button>
 
-                        <!-- PiP — collapses player to mini bar at the bottom so the user
-                             can navigate the app while video keeps playing. True detached-
-                             window PiP is tracked as a follow-up (requires a separate
-                             top-most WinUI window hosting its own mpv popup). -->
+                        <!-- PiP — moves the native mpv surface into a detached,
+                             always-on-top 16:9 window while playback continues. -->
                         <Button x:Name="PipButton" Style="{StaticResource PlayerUtilityBtnStyle}"
                                 ToolTipService.ToolTip="Picture in Picture (P)"
                                 Click="PipButton_Click">

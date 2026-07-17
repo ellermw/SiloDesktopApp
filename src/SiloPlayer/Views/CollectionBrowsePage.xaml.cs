@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Helpers;
 
@@ -37,10 +38,12 @@ public sealed partial class CollectionBrowsePage : Page
     private CancellationTokenSource? _loadCts;
     private string? _sort;
     private string? _order;
+    private string? _mediaScope;
     private int _total;
     private bool _hasMore;
     private bool _isLoadingMore;
     private bool _suppressSortEvents = true;
+    private double _catalogCardWidth = 178;
     private const int PageSize = 60;
 
     public CollectionBrowsePage()
@@ -48,8 +51,9 @@ public sealed partial class CollectionBrowsePage : Page
         _catalogApi = App.Services.GetRequiredService<CatalogApi>();
         this.InitializeComponent();
         PosterRepeater.ItemsSource = _items;
+        LoadingPosterRepeater.ItemsSource = Enumerable.Range(0, 24).ToArray();
         SortCombo.SelectedIndex = 0;
-        OrderButton.IsEnabled = false;
+        OrderCombo.IsEnabled = false;
         _suppressSortEvents = false;
         SizeChanged += CollectionBrowsePage_SizeChanged;
     }
@@ -61,19 +65,11 @@ public sealed partial class CollectionBrowsePage : Page
 
         _currentArgs = args;
         TitleText.Text = args.Title;
-        SubtitleText.Text = args.Subtitle ?? (args.IsUserCollection ? "User collection" : "Library collection");
+        SubtitleText.Text = "Refine the archive by type, era, rating, or genre.";
 
-        // Pin button only applies to library collections (user collections
-        // aren't scoped to a library's sidebar section).
-        if (!args.IsUserCollection && args.LibraryId.HasValue)
-        {
-            PinButton.Visibility = Visibility.Visible;
-            _ = SyncPinStateAsync();
-        }
-        else
-        {
-            PinButton.Visibility = Visibility.Collapsed;
-        }
+        // Pinning is exposed on the library collection cards, matching the
+        // WebUI. The catalog result header itself has no extra pin control.
+        PinButton.Visibility = Visibility.Collapsed;
 
         await LoadFirstPageAsync();
     }
@@ -111,9 +107,22 @@ public sealed partial class CollectionBrowsePage : Page
     {
         if (_currentArgs is not { } args)
             throw new InvalidOperationException("Collection navigation details are unavailable.");
-        return args.IsUserCollection
-            ? _catalogApi.BrowseUserCollectionAsync(args.CollectionId, _sort, _order, PageSize, offset, ct)
-            : _catalogApi.BrowseLibraryCollectionAsync(args.CollectionId, _sort, _order, PageSize, offset, ct);
+        return _catalogApi.GetCatalogAsync(
+            libraryId: null,
+            sort: _sort,
+            order: _order,
+            type: _mediaScope,
+            yearMin: EmptyToNull(YearMinBox.Text),
+            yearMax: EmptyToNull(YearMaxBox.Text),
+            studio: EmptyToNull(StudioBox.Text),
+            contentRating: EmptyToNull(ContentRatingBox.Text),
+            country: EmptyToNull(CountryBox.Text),
+            source: args.IsUserCollection ? "user_collection" : "library_collection",
+            collectionId: args.CollectionId,
+            extraRules: BuildExtraRules(),
+            limit: PageSize,
+            offset: offset,
+            ct: ct);
     }
 
     private async Task LoadMoreAsync()
@@ -150,8 +159,8 @@ public sealed partial class CollectionBrowsePage : Page
     {
         var count = _total > 0 ? _total : _items.Count;
         ItemCountText.Text = count.ToString("N0");
-        ItemCountLabel.Text = count == 1 ? "item" : "items";
-        CountPanel.Visibility = count > 0 && ActualWidth >= 720 ? Visibility.Visible : Visibility.Collapsed;
+        ItemCountLabel.Text = count == 1 ? "RESULT" : "RESULTS";
+        CountPanel.Visibility = ActualWidth >= 720 ? Visibility.Visible : Visibility.Collapsed;
         LoadedCountText.Text = _hasMore
             ? $"Showing {_items.Count:N0} of {count:N0}"
             : $"{count:N0} {(count == 1 ? "item" : "items")}";
@@ -170,29 +179,157 @@ public sealed partial class CollectionBrowsePage : Page
             ? value
             : null;
         _order = _sort is "title" or "content_rating" or "author" or "narrator" or "series" ? "asc" : "desc";
-        OrderButton.IsEnabled = _sort != null;
-        OrderIcon.Glyph = _order == "asc" ? "\uE74A" : "\uE74B";
+        OrderCombo.IsEnabled = _sort != null;
+        _suppressSortEvents = true;
+        OrderCombo.SelectedIndex = _order == "asc" ? 1 : 0;
+        _suppressSortEvents = false;
         await LoadFirstPageAsync();
     }
 
-    private async void OrderButton_Click(object sender, RoutedEventArgs e)
+    private async void OrderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_sort == null) return;
-        _order = string.Equals(_order, "asc", StringComparison.OrdinalIgnoreCase) ? "desc" : "asc";
-        OrderIcon.Glyph = _order == "asc" ? "\uE74A" : "\uE74B";
-        ToolTipService.SetToolTip(OrderButton, _order == "asc" ? "Ascending" : "Descending");
+        if (_suppressSortEvents || _sort == null || _currentArgs == null) return;
+        _order = OrderCombo.SelectedItem is ComboBoxItem { Tag: string order } ? order : "desc";
         await LoadFirstPageAsync();
     }
+
+    private async void MediaScopeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressSortEvents || _currentArgs == null) return;
+        _mediaScope = MediaScopeCombo.SelectedItem is ComboBoxItem { Tag: string scope } && !string.IsNullOrWhiteSpace(scope)
+            ? scope
+            : null;
+        await LoadFirstPageAsync();
+    }
+
+    private void FiltersButton_Click(object sender, RoutedEventArgs e) => FiltersSheet.IsOpen = true;
+
+    private async void ApplyFilters_Click(object sender, RoutedEventArgs e)
+    {
+        FiltersSheet.IsOpen = false;
+        UpdateActiveFilterBadge();
+        await LoadFirstPageAsync();
+    }
+
+    private async void ClearFilters_Click(object sender, RoutedEventArgs e)
+    {
+        GenresBox.Text = "";
+        YearMinBox.Text = "";
+        YearMaxBox.Text = "";
+        MinimumRatingBox.Text = "";
+        ContentRatingBox.Text = "";
+        OriginalLanguageBox.Text = "";
+        StudioBox.Text = "";
+        CountryBox.Text = "";
+        FourKToggle.IsChecked = false;
+        HdrToggle.IsChecked = false;
+        DolbyVisionToggle.IsChecked = false;
+        UpdateActiveFilterBadge();
+        await LoadFirstPageAsync();
+    }
+
+    private List<QueryRule> BuildExtraRules()
+    {
+        var rules = GenresBox.Text
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(genre => new QueryRule { Field = "genre", Op = "is", Value = genre })
+            .ToList();
+        AddTextRule("rating_imdb", "gte", MinimumRatingBox.Text);
+        AddTextRule("original_language", "is", OriginalLanguageBox.Text);
+        if (FourKToggle.IsChecked == true) rules.Add(new QueryRule { Field = "resolution", Op = "is", Value = "4k" });
+        if (HdrToggle.IsChecked == true) rules.Add(new QueryRule { Field = "hdr", Op = "is", Value = true });
+        if (DolbyVisionToggle.IsChecked == true) rules.Add(new QueryRule { Field = "dolby_vision", Op = "is", Value = true });
+        return rules;
+
+        void AddTextRule(string field, string op, string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                rules.Add(new QueryRule { Field = field, Op = op, Value = value.Trim() });
+        }
+    }
+
+    private void UpdateActiveFilterBadge()
+    {
+        var count = BuildExtraRules().Count;
+        if (!string.IsNullOrWhiteSpace(YearMinBox.Text) || !string.IsNullOrWhiteSpace(YearMaxBox.Text)) count++;
+        if (!string.IsNullOrWhiteSpace(ContentRatingBox.Text)) count++;
+        if (!string.IsNullOrWhiteSpace(StudioBox.Text)) count++;
+        if (!string.IsNullOrWhiteSpace(CountryBox.Text)) count++;
+        ActiveFilterCountText.Text = count.ToString();
+        ActiveFilterCountBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static string? EmptyToNull(string value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private void CollectionBrowsePage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         var compact = e.NewSize.Width < 720;
-        var gutter = e.NewSize.Width < 600 ? 16 : compact ? 24 : 40;
-        CollectionHeaderGrid.Margin = new Thickness(gutter, 20, gutter, 16);
+        var gutter = e.NewSize.Width < 640 ? 16 : e.NewSize.Width < 1024 ? 24 : 40;
+        CollectionHeaderGrid.Margin = new Thickness(gutter, e.NewSize.Width < 640 ? 16 : 24, gutter, 16);
         CollectionToolbar.Margin = new Thickness(gutter, 0, gutter, 14);
         ContentScroll.Padding = new Thickness(gutter, 0, gutter, 24);
-        CountPanel.Visibility = !compact && _items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        LoadedCountText.Visibility = e.NewSize.Width < 520 ? Visibility.Collapsed : Visibility.Visible;
+        LoadingSkeleton.Padding = new Thickness(gutter, 0, gutter, 24);
+        CountPanel.Visibility = !compact ? Visibility.Visible : Visibility.Collapsed;
+        ReflowToolbar(e.NewSize.Width);
+        UpdateCatalogGridLayout(e.NewSize.Width, gutter);
+    }
+
+    private void ReflowToolbar(double width)
+    {
+        var narrow = width < 560;
+        var compact = width < 760;
+        foreach (var control in new FrameworkElement[] { MediaScopeCombo, SortCombo, OrderCombo, FiltersButton, LoadedCountText })
+        {
+            Grid.SetRow(control, 0);
+            Grid.SetColumnSpan(control, 1);
+        }
+
+        if (!compact)
+        {
+            Grid.SetColumn(MediaScopeCombo, 0);
+            Grid.SetColumn(SortCombo, 1);
+            Grid.SetColumn(OrderCombo, 2);
+            Grid.SetColumn(FiltersButton, 3);
+            Grid.SetColumn(LoadedCountText, 4);
+            return;
+        }
+
+        MediaScopeCombo.MinWidth = narrow ? 132 : 150;
+        SortCombo.MinWidth = narrow ? 154 : 180;
+        Grid.SetColumn(MediaScopeCombo, 0);
+        Grid.SetColumn(SortCombo, 1);
+        Grid.SetColumn(OrderCombo, narrow ? 0 : 2);
+        Grid.SetRow(OrderCombo, narrow ? 1 : 0);
+        Grid.SetColumn(FiltersButton, narrow ? 1 : 0);
+        Grid.SetRow(FiltersButton, 1);
+        Grid.SetColumn(LoadedCountText, narrow ? 0 : 1);
+        Grid.SetRow(LoadedCountText, narrow ? 2 : 1);
+        Grid.SetColumnSpan(LoadedCountText, 4);
+    }
+
+    private void UpdateCatalogGridLayout(double viewportWidth, double gutter)
+    {
+        var columns = viewportWidth >= 1280 ? 8
+            : viewportWidth >= 1024 ? 7
+            : viewportWidth >= 768 ? 5
+            : viewportWidth >= 640 ? 4
+            : 3;
+        var contentWidth = Math.Max(320, Math.Min(1400, viewportWidth - (gutter * 2)));
+        _catalogCardWidth = Math.Max(96, (contentWidth - (12 * (columns - 1))) / columns);
+        PosterGridLayout.MaximumRowsOrColumns = columns;
+        PosterGridLayout.MinItemWidth = _catalogCardWidth;
+        PosterGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + 56;
+
+        for (var index = 0; index < _items.Count; index++)
+            if (PosterRepeater.TryGetElement(index) is SiloPlayer.Controls.PosterCard card)
+                card.SetCatalogGridLayout(_catalogCardWidth);
+    }
+
+    private void PosterRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
+    {
+        if (args.Element is SiloPlayer.Controls.PosterCard card)
+            card.SetCatalogGridLayout(_catalogCardWidth);
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -218,7 +355,7 @@ public sealed partial class CollectionBrowsePage : Page
 
     private void ShowLoading()
     {
-        LoadingRing.Visibility = Visibility.Visible;
+        LoadingSkeleton.Visibility = Visibility.Visible;
         ContentScroll.Visibility = Visibility.Collapsed;
         EmptyState.Visibility = Visibility.Collapsed;
         ErrorText.Visibility = Visibility.Collapsed;
@@ -226,7 +363,7 @@ public sealed partial class CollectionBrowsePage : Page
 
     private void ShowContent()
     {
-        LoadingRing.Visibility = Visibility.Collapsed;
+        LoadingSkeleton.Visibility = Visibility.Collapsed;
         ContentScroll.Visibility = Visibility.Visible;
         EmptyState.Visibility = Visibility.Collapsed;
         ErrorText.Visibility = Visibility.Collapsed;
@@ -234,7 +371,7 @@ public sealed partial class CollectionBrowsePage : Page
 
     private void ShowEmpty()
     {
-        LoadingRing.Visibility = Visibility.Collapsed;
+        LoadingSkeleton.Visibility = Visibility.Collapsed;
         ContentScroll.Visibility = Visibility.Collapsed;
         EmptyState.Visibility = Visibility.Visible;
         ErrorText.Visibility = Visibility.Collapsed;
@@ -242,7 +379,7 @@ public sealed partial class CollectionBrowsePage : Page
 
     private void ShowError(string message)
     {
-        LoadingRing.Visibility = Visibility.Collapsed;
+        LoadingSkeleton.Visibility = Visibility.Collapsed;
         ContentScroll.Visibility = Visibility.Collapsed;
         EmptyState.Visibility = Visibility.Collapsed;
         ErrorText.Text = $"Could not load collection: {message}";

@@ -187,6 +187,14 @@ public sealed class LibraryGridCard : Canvas
     {
         CancelPosterLoad(clearImage: true);
 
+        // ItemGrid uses square artwork for audiobook items even inside a mixed
+        // library. Keep the virtual row height stable, but size the individual
+        // artwork from the item type just as the WebUI does.
+        var itemPosterHeight = string.Equals(item.Type, "audiobook", StringComparison.OrdinalIgnoreCase)
+            ? Width
+            : Width * 1.5;
+        SetLayout(Width, itemPosterHeight, Height);
+
         MediaItem = item;
         SortKey = sortKey;
         IsHitTestVisible = true;

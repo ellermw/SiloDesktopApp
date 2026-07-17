@@ -58,12 +58,14 @@ public class CatalogApi(SiloApiClient client)
         string extraRulesMatch = "all",
         IReadOnlyList<QueryGroup>? queryGroups = null,
         string queryGroupsMatch = "all",
+        string? collectionId = null,
         CancellationToken ct = default)
     {
         var query = $"/api/v1/catalog?limit={limit}&offset={offset}";
         if (!string.IsNullOrWhiteSpace(source)) query += $"&source={Uri.EscapeDataString(source)}";
         if (!string.IsNullOrWhiteSpace(scope)) query += $"&scope={Uri.EscapeDataString(scope)}";
         if (!string.IsNullOrWhiteSpace(sectionId)) query += $"&section_id={Uri.EscapeDataString(sectionId)}";
+        if (!string.IsNullOrWhiteSpace(collectionId)) query += $"&collection_id={Uri.EscapeDataString(collectionId)}";
         if (libraryId is > 0) query += $"&library_id={libraryId.Value}";
         if (sort != null) query += $"&sort={Uri.EscapeDataString(sort)}";
         if (order != null) query += $"&order={Uri.EscapeDataString(order)}";

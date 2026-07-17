@@ -17,7 +17,7 @@ public sealed partial class AdminAutoscanPage : Page
     private bool _loaded;
     private readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     public AdminAutoscanViewModel ViewModel { get; } = App.Services.GetRequiredService<AdminAutoscanViewModel>();
-    public AdminAutoscanPage() { InitializeComponent(); _refreshTimer.Tick += async (_, _) => { if (ViewModel.SelectedTabIndex == 1 && !ViewModel.IsBusy) await ViewModel.RefreshActivityAsync(); }; }
+    public AdminAutoscanPage() { InitializeComponent(); NavigationCacheMode = NavigationCacheMode.Enabled; _refreshTimer.Tick += async (_, _) => { if (ViewModel.SelectedTabIndex == 1 && !ViewModel.IsBusy) await ViewModel.RefreshActivityAsync(); }; }
     private void ContentScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         var width = Math.Max(0, e.NewSize.Width);
@@ -35,8 +35,8 @@ public sealed partial class AdminAutoscanPage : Page
         PageHeaderActions.HorizontalAlignment = wrapHeader ? HorizontalAlignment.Left : HorizontalAlignment.Right;
         PageTitleText.FontSize = contentWidth < 640 ? 30 : 36;
     }
-    private async void Page_Loaded(object sender, RoutedEventArgs e) { await ViewModel.LoadAsync(); _loaded = true; UpdateTabVisuals(); UpdateEnabledBadge(); UpdateActivityViewVisuals(); _refreshTimer.Start(); }
-    protected override void OnNavigatedFrom(NavigationEventArgs e) { _refreshTimer.Stop(); ViewModel.Cancel(); base.OnNavigatedFrom(e); }
+    private async void Page_Loaded(object sender, RoutedEventArgs e) { if (_loaded) return; UpdateTabVisuals(); UpdateEnabledBadge(); UpdateActivityViewVisuals(); await ViewModel.LoadAsync(); _loaded = true; UpdateTabVisuals(); UpdateEnabledBadge(); UpdateActivityViewVisuals(); _refreshTimer.Start(); }
+    protected override void OnNavigatedFrom(NavigationEventArgs e) { _loaded = false; _refreshTimer.Stop(); ViewModel.Cancel(); base.OnNavigatedFrom(e); }
     private async void Enabled_Toggled(object sender, RoutedEventArgs e) { if (_loaded) { await ViewModel.SaveSettingsAsync(((ToggleSwitch)sender).IsOn); UpdateEnabledBadge(); } }
     private async void SourceEnabled_Toggled(object sender, RoutedEventArgs e)
     {

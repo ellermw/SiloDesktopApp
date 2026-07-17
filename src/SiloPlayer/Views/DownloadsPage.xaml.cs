@@ -9,27 +9,33 @@ namespace SiloPlayer.Views;
 public sealed partial class DownloadsPage : Page
 {
     public DownloadsViewModel ViewModel { get; }
+    private bool _downloadBuildQueued;
 
     public DownloadsPage()
     {
         ViewModel = App.Services.GetRequiredService<DownloadsViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
 
-        ViewModel.Downloads.CollectionChanged += (_, _) =>
+        ViewModel.Downloads.CollectionChanged += (_, _) => QueueDownloadBuild();
+    }
+
+    private void QueueDownloadBuild()
+    {
+        if (_downloadBuildQueued) return;
+        _downloadBuildQueued = true;
+        DispatcherQueue.TryEnqueue(() =>
         {
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                BuildDownloadRows();
-                UpdateCounts();
-            });
-        };
+            _downloadBuildQueued = false;
+            BuildDownloadRows();
+            UpdateCounts();
+        });
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         await ViewModel.LoadDownloadsCommand.ExecuteAsync(null);
-        BuildDownloadRows();
-        UpdateCounts();
+        QueueDownloadBuild();
     }
 
     private void UpdateCounts()

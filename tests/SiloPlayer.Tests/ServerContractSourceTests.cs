@@ -71,7 +71,7 @@ public sealed class ServerContractSourceTests
         Assert.Contains("/api/v1/recommendations/section/", api);
         Assert.Contains("DiscoverResponse", models);
         Assert.Contains("SectionKind", models);
-        Assert.Contains("LoadDiscoverRowsAsync", viewModel);
+        Assert.Contains("GetDiscoverRowsAsync", viewModel);
         Assert.Contains("GetDiscoverAsync", viewModel);
     }
 
@@ -102,7 +102,7 @@ public sealed class ServerContractSourceTests
         var adminSections = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "Admin", "AdminSectionsPage.xaml.cs"));
 
         Assert.Contains("Tag=\"episode\"", libraryXaml);
-        Assert.Contains("\"episode\" => 3", libraryPage);
+        Assert.Contains("\"episode\" => 4", libraryPage);
         Assert.Contains("Episodes", adminSections);
         Assert.Contains("Tag = \"episode\"", adminSections);
     }

@@ -8,21 +8,27 @@
     xmlns:controls="using:SiloPlayer.Controls"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}"
-    Loaded="Page_Loaded">
+    Loaded="Page_Loaded"
+    SizeChanged="Page_SizeChanged">
 
     <ScrollViewer x:Name="PageScrollViewer" VerticalScrollBarVisibility="Auto">
-        <StackPanel Padding="40,28,40,48" Spacing="28">
+        <StackPanel x:Name="PageContent" Padding="40,28,40,48" Spacing="28">
             <StackPanel Spacing="12" MaxWidth="760" HorizontalAlignment="Left">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <FontIcon Glyph="&#xE735;" FontSize="16" Foreground="#FFF4C95D" />
                     <TextBlock Text="YOUR WISHLIST" FontSize="11" FontWeight="SemiBold" CharacterSpacing="220" Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
-                <TextBlock Text="Find something worth waiting for." FontSize="40" FontWeight="Bold" Foreground="{StaticResource PrimaryTextBrush}" TextWrapping="Wrap" />
+                <TextBlock x:Name="PageTitleText" Text="Find something worth waiting for." FontSize="40" FontWeight="Bold" Foreground="{StaticResource PrimaryTextBrush}" TextWrapping="Wrap" />
                 <TextBlock Text="Browse what’s trending, search the full TMDB catalog, and watch your requests move from pending to ready." FontSize="14" LineHeight="24" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" MaxWidth="650" />
             </StackPanel>
 
             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="8">
-                <Grid ColumnSpacing="8">
+                <Grid x:Name="SearchBarGrid" ColumnSpacing="8" RowSpacing="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="150" />
                         <ColumnDefinition Width="*" />
@@ -33,7 +39,7 @@
                         <ComboBoxItem Content="Movies" Tag="movie" />
                         <ComboBoxItem Content="Series" Tag="series" />
                     </ComboBox>
-                    <Grid Grid.Column="1">
+                    <Grid x:Name="SearchInputGrid" Grid.Column="1">
                         <TextBox x:Name="SearchBox" PlaceholderText="Search TMDB by title…" Padding="36,8,38,8" KeyDown="SearchBox_KeyDown" TextChanged="SearchBox_TextChanged" />
                         <FontIcon Glyph="&#xE721;" FontSize="15" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0" IsHitTestVisible="False" />
                         <Button x:Name="ClearSearchButton" Style="{StaticResource GhostButtonStyle}" Width="30" Height="30" Padding="0" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0" Click="ClearSearch_Click" Visibility="Collapsed" AutomationProperties.Name="Clear search"><FontIcon Glyph="&#xE711;" FontSize="12" /></Button>
@@ -86,9 +92,9 @@
             </StackPanel>
 
             <StackPanel x:Name="MyRequestsSection" Spacing="28" Visibility="Collapsed">
-                <StackPanel x:Name="MineSummaryPanel" Orientation="Horizontal" Spacing="8" />
+                <controls:WrapPanel x:Name="MineSummaryPanel" HorizontalSpacing="8" VerticalSpacing="8" />
                 <Border x:Name="StatusGuide" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="20">
-                    <Grid ColumnSpacing="28"><Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Grid x:Name="StatusGuideGrid" ColumnSpacing="28" RowSpacing="20"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                         <StackPanel Spacing="5"><TextBlock Text="Status guide" FontWeight="SemiBold" /><TextBlock Text="Statuses update automatically as Silo checks the library and connected request integrations." FontSize="13" LineHeight="20" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" /></StackPanel>
                         <StackPanel Grid.Column="1" Spacing="7"><TextBlock Text="Request progress" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /><TextBlock Text="Pending  ·  Waiting for admin approval" FontSize="12" /><TextBlock Text="Approved  ·  Approved and preparing" FontSize="12" /><TextBlock Text="Queued  ·  Sent to automation" FontSize="12" /><TextBlock Text="Downloading  ·  Acquisition in progress" FontSize="12" /><TextBlock Text="Completed  ·  Ready in your library" FontSize="12" /></StackPanel>
                         <StackPanel Grid.Column="2" Spacing="7"><TextBlock Text="Needs attention" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /><TextBlock Text="Declined  ·  Declined by an admin" FontSize="12" /><TextBlock Text="Cancelled  ·  Cancelled before completion" FontSize="12" /><TextBlock Text="Failed  ·  Automation reported an error" FontSize="12" /></StackPanel>

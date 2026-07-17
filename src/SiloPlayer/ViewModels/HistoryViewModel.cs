@@ -68,24 +68,24 @@ public partial class HistoryViewModel : ObservableObject,
     private string _selectedTab = "in_progress";
 
     private int _offset;
+    private bool _loadInProgress;
     private const int PageSize = 30;
 
     [RelayCommand]
     private async Task LoadAsync()
     {
-        if (IsLoading) return;
+        if (_loadInProgress) return;
 
         _offset = 0;
-        Items.Clear();
         HasMore = false;
 
-        await LoadPageAsync();
+        await LoadPageAsync(replace: true);
     }
 
     [RelayCommand]
     private async Task LoadMoreAsync()
     {
-        if (!HasMore || IsLoading) return;
+        if (!HasMore || _loadInProgress) return;
         await LoadPageAsync();
     }
 
@@ -118,9 +118,10 @@ public partial class HistoryViewModel : ObservableObject,
         await LoadAsync();
     }
 
-    private async Task LoadPageAsync()
+    private async Task LoadPageAsync(bool replace = false)
     {
-        IsLoading = true;
+        _loadInProgress = true;
+        IsLoading = Items.Count == 0;
         ErrorMessage = null;
 
         try
@@ -183,6 +184,9 @@ public partial class HistoryViewModel : ObservableObject,
                 TotalCount = response.Total;
                 HasMore = response.HasMore;
 
+                if (replace)
+                    Items.Clear();
+
                 foreach (var entry in response.Items)
                 {
                     Items.Add(new HistoryDisplayItem
@@ -213,6 +217,7 @@ public partial class HistoryViewModel : ObservableObject,
         finally
         {
             IsLoading = false;
+            _loadInProgress = false;
         }
     }
 }

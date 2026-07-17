@@ -3292,12 +3292,6 @@ public sealed partial class ItemDetailPage : Page
     {
         var playerService = App.Services.GetRequiredService<Services.PlayerService>();
         playerService.NextEpisodeContentId = null;
-        if (playerService.State != Services.PlayerState.Idle)
-        {
-            await playerService.CloseAsync();
-            await Task.Delay(300);
-        }
-
         await playerService.PlayAsync(contentId);
     }
 
@@ -3367,7 +3361,7 @@ public sealed partial class ItemDetailPage : Page
         }
     }
 
-    private async void NavigateToPlayer(string contentId, bool fromStart = false, int? fileId = null)
+    private void NavigateToPlayer(string contentId, bool fromStart = false, int? fileId = null)
     {
         var playerService = App.Services.GetRequiredService<Services.PlayerService>();
 
@@ -3376,19 +3370,16 @@ public sealed partial class ItemDetailPage : Page
         // when this is a series episode with a known successor.
         SetNextEpisodeHintIfApplicable(playerService, contentId);
 
-        // Close any existing playback before starting new
-        if (playerService.State != Services.PlayerState.Idle)
-        {
-            await playerService.CloseAsync();
-            await Task.Delay(300); // Let server process the session stop
-        }
         // Phase 2a + 2b: pass pre-play audio + subtitle selections through.
         _ = playerService.PlayAsync(
             contentId,
             fromStart: fromStart,
             fileId: fileId,
             audioTrackIndex: _selectedAudioTrackIndex,
-            subtitleSelection: _selectedSubtitleIndex);
+            subtitleSelection: _selectedSubtitleIndex,
+            prefetchedWatchDetail: string.Equals(_watchDetail?.ContentId, contentId, StringComparison.Ordinal)
+                ? _watchDetail
+                : null);
     }
 
     /// <summary>
@@ -3825,10 +3816,10 @@ public sealed partial class ItemDetailPage : Page
 
     /// <summary>
     /// Rebuild the Subtitles popover for the currently-selected file version.
-    /// Shows "Off" + "Auto" + each embedded subtitle track. Selection applied
-    /// client-side by setting mpv's "sid" property before loadfile — subtitles
-    /// aren't baked into the stream, mpv reads them live from the MKV/MP4
-    /// container and picks based on the sid property.
+    /// Shows "Off" + "Auto" + the selected version's embedded and external
+    /// subtitle inventory. PlayerService maps the choice to the playback
+    /// session's source-specific track order and uses either the native stream
+    /// (direct play) or Silo's sidecar URL (remux/HLS).
     /// </summary>
     private void BuildSubtitlesPopoverFlyout(FileVersion? version)
     {
@@ -3866,7 +3857,7 @@ public sealed partial class ItemDetailPage : Page
 
             SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutSeparator());
 
-            // Explicit embedded tracks
+            // Explicit embedded and external tracks
             for (int i = 0; i < subs.Count; i++)
             {
                 var idx = i;

@@ -46,6 +46,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminPlaybackHistoryViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
     }
 
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)

@@ -15,6 +15,8 @@ public partial class SearchViewModel : ObservableObject
     private readonly RequestsApi _requestsApi;
     private readonly SettingsApi _settingsApi;
     private CancellationTokenSource? _searchCts;
+    private string? _snapshot;
+    private bool _hasMore;
 
     public SearchViewModel(CatalogApi catalogApi, PeopleApi peopleApi, RequestsApi requestsApi, SettingsApi settingsApi)
     {
@@ -33,6 +35,9 @@ public partial class SearchViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isLoading;
+
+    [ObservableProperty]
+    private bool _isLoadingMore;
 
     [ObservableProperty]
     private string? _errorMessage;
@@ -82,11 +87,11 @@ public partial class SearchViewModel : ObservableObject
 
     public async Task SetMediaTypeAsync(string? type)
     {
-        MediaType = type is "video" or "movie" or "series" or "audiobook" ? type : null;
+        MediaType = type is "video" or "movie" or "series" or "episode" or "audiobook" or "ebook" or "manga" ? type : null;
         MediaScope = MediaType switch
         {
             "audiobook" => "audiobook",
-            "video" or "movie" or "series" => "video",
+            "video" or "movie" or "series" or "episode" or "ebook" or "manga" => "video",
             _ => "all"
         };
         try { await _settingsApi.PutSettingAsync("search.media_scope", MediaScope); } catch { }
@@ -101,6 +106,8 @@ public partial class SearchViewModel : ObservableObject
         _searchCts?.Dispose();
         _searchCts = new CancellationTokenSource();
         var ct = _searchCts.Token;
+        _snapshot = null;
+        _hasMore = false;
 
         if (string.IsNullOrWhiteSpace(Query))
         {
@@ -116,24 +123,8 @@ public partial class SearchViewModel : ObservableObject
 
         try
         {
-            // Small delay for debounce
-            await Task.Delay(300, ct);
-            if (ct.IsCancellationRequested) return;
-
             // Search catalog and people in parallel
-            var catalogTask = _catalogApi.GetCatalogAsync(
-                null,
-                sort: SortField,
-                order: SortOrder,
-                genre: Genre,
-                contentRating: ContentRating,
-                resolution: Resolution,
-                country: Country,
-                q: Query,
-                type: MediaType,
-                limit: 60,
-                source: "query",
-                ct: ct);
+            var catalogTask = FetchCatalogPageAsync(0, null, ct);
             var includeVideoDiscovery = MediaScope is "all" or "video";
             // The dedicated Catalog page does not render people; global search
             // owns that surface. Avoid an invisible extra network request.
@@ -161,6 +152,8 @@ public partial class SearchViewModel : ObservableObject
             foreach (var item in response.Items)
                 Results.Add(item);
             TotalCount = response.Total > 0 ? response.Total : response.Items.Count;
+            _snapshot = response.Snapshot;
+            _hasMore = response.HasMore || (response.Items.Count == 60 && (response.Total <= 0 || response.Items.Count < response.Total));
         }
         catch (OperationCanceledException)
         {
@@ -176,6 +169,52 @@ public partial class SearchViewModel : ObservableObject
                 IsLoading = false;
         }
     }
+
+    public async Task LoadMoreAsync()
+    {
+        if (IsLoading || IsLoadingMore || !_hasMore || string.IsNullOrWhiteSpace(Query)) return;
+        IsLoadingMore = true;
+        var ct = _searchCts?.Token ?? CancellationToken.None;
+        try
+        {
+            var response = await FetchCatalogPageAsync(Results.Count, _snapshot, ct);
+            var existingIds = Results.Select(item => item.ContentId).ToHashSet(StringComparer.Ordinal);
+            foreach (var item in response.Items)
+                if (existingIds.Add(item.ContentId)) Results.Add(item);
+            if (response.Total > 0) TotalCount = response.Total;
+            _snapshot ??= response.Snapshot;
+            _hasMore = response.HasMore || (response.Items.Count > 0 && (response.Total <= 0 || Results.Count < response.Total));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Could not load more search results: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingMore = false;
+        }
+    }
+
+    private Task<CatalogResponse> FetchCatalogPageAsync(int offset, string? snapshot, CancellationToken ct)
+        => _catalogApi.GetCatalogAsync(
+            null,
+            sort: SortField,
+            order: SortOrder,
+            genre: Genre,
+            contentRating: ContentRating,
+            resolution: Resolution,
+            country: Country,
+            q: Query,
+            type: MediaType,
+            limit: 60,
+            offset: offset,
+            includeTotal: false,
+            snapshot: snapshot,
+            source: "query",
+            ct: ct);
 
     private async Task<List<RequestMediaResult>> SearchOutsideLibraryAsync(string query, CancellationToken ct)
     {

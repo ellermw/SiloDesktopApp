@@ -3,6 +3,7 @@ using SiloPlayer.Core.Models.Admin;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 
 namespace SiloPlayer.Views.Admin;
 
@@ -33,6 +34,7 @@ public sealed partial class AdminSubtitlesPage : Page
     {
         _adminApi = App.Services.GetRequiredService<AdminApi>();
         InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
 
         Loaded += AdminSubtitlesPage_Loaded;
         SizeChanged += (_, _) => ApplyResponsiveLayout();
@@ -48,10 +50,12 @@ public sealed partial class AdminSubtitlesPage : Page
     private async void AdminSubtitlesPage_Loaded(object sender, RoutedEventArgs e)
     {
         ApplyResponsiveLayout();
-        if (_ready) return;
-        PopulateLanguageFilter();
-        await LoadUsersAsync();
-        _ready = true;
+        if (!_ready)
+        {
+            PopulateLanguageFilter();
+            await LoadUsersAsync();
+            _ready = true;
+        }
         await LoadSubtitlesAsync();
     }
 

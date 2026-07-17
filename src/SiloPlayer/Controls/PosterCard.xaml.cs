@@ -11,6 +11,19 @@ namespace SiloPlayer.Controls;
 
 public sealed partial class PosterCard : UserControl
 {
+    public void SetCatalogGridLayout(double width)
+    {
+        var safeWidth = Math.Max(96, width);
+        var posterHeight = safeWidth * 1.5;
+        var totalHeight = posterHeight + 56;
+        Width = safeWidth;
+        Height = totalHeight;
+        RootGrid.Width = safeWidth;
+        RootGrid.Height = totalHeight;
+        PosterRow.Height = new GridLength(posterHeight);
+        FallbackTitle.MaxWidth = Math.Max(72, safeWidth - 32);
+    }
+
     private CancellationTokenSource? _loadCts;
     private MediaItem? _deferredPosterItem;
     private MediaItem? _deferredOverlayItem;

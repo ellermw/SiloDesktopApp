@@ -25,7 +25,7 @@
         </Grid.RowDefinitions>
 
         <!-- Header: back button + title + item count -->
-        <Grid x:Name="CollectionHeaderGrid" Grid.Row="0" Margin="40,24,40,20" RowSpacing="12">
+        <Grid x:Name="CollectionHeaderGrid" Grid.Row="0" MaxWidth="1400" HorizontalAlignment="Center" Margin="40,24,40,20" RowSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -86,71 +86,119 @@
             <Border
                 Grid.Column="2"
                 x:Name="CountPanel"
-                Background="{StaticResource SurfaceBrush}"
-                CornerRadius="20"
-                Padding="20,16"
-                MinWidth="140"
+                Background="Transparent"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1,0,0,0"
+                CornerRadius="0"
+                Padding="20,0,0,0"
                 VerticalAlignment="Center"
                 Visibility="Collapsed">
-                <StackPanel HorizontalAlignment="Right">
-                    <TextBlock
-                        Text="COLLECTION"
-                        FontSize="10"
-                        FontWeight="SemiBold"
-                        CharacterSpacing="160"
-                        Foreground="{StaticResource SecondaryTextBrush}" />
+                <StackPanel Orientation="Horizontal" Spacing="7" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <TextBlock
                         x:Name="ItemCountText"
-                        FontSize="24"
-                        FontWeight="SemiBold"
+                        FontSize="30"
+                        FontWeight="ExtraLight"
                         Foreground="{StaticResource PrimaryTextBrush}"
-                        Margin="0,4,0,0" />
+                        VerticalAlignment="Center" />
                     <TextBlock
                         x:Name="ItemCountLabel"
                         FontSize="12"
+                        FontWeight="Medium"
+                        CharacterSpacing="110"
                         Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
             </Border>
         </Grid>
 
-        <Grid x:Name="CollectionToolbar" Grid.Row="1" Margin="40,0,40,16" ColumnSpacing="8">
+        <Grid x:Name="CollectionToolbar" Grid.Row="1" MaxWidth="1400" HorizontalAlignment="Center" Margin="40,0,40,16" ColumnSpacing="10">
             <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
-            <TextBlock x:Name="LoadedCountText" Grid.Column="0" VerticalAlignment="Center"
-                       FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
-            <ComboBox x:Name="SortCombo" Grid.Column="1" MinWidth="170" CornerRadius="16"
+            <ComboBox x:Name="MediaScopeCombo" Grid.Column="0" MinWidth="150"
+                      SelectionChanged="MediaScopeCombo_SelectionChanged">
+                <ComboBoxItem Content="All Media" Tag="" IsSelected="True" />
+                <ComboBoxItem Content="Movies &amp; Series" Tag="video" />
+                <ComboBoxItem Content="Movies" Tag="movie" />
+                <ComboBoxItem Content="Series" Tag="series" />
+                <ComboBoxItem Content="Audiobooks" Tag="audiobook" />
+                <ComboBoxItem Content="Ebooks" Tag="ebook" />
+                <ComboBoxItem Content="Manga" Tag="manga" />
+            </ComboBox>
+            <ComboBox x:Name="SortCombo" Grid.Column="1" MinWidth="180"
                       SelectionChanged="SortCombo_SelectionChanged">
                 <ComboBoxItem Content="Collection Order" Tag="" />
                 <ComboBoxItem Content="Title" Tag="title" />
                 <ComboBoxItem Content="Date Added" Tag="added_at" />
                 <ComboBoxItem Content="Release Date" Tag="release_date" />
+                <ComboBoxItem Content="Latest Episode Air Date" Tag="last_air_date" />
+                <ComboBoxItem Content="Latest Episode Added" Tag="latest_episode_added" />
                 <ComboBoxItem Content="Year" Tag="year" />
+                <ComboBoxItem Content="Content Rating" Tag="content_rating" />
+                <ComboBoxItem Content="Duration" Tag="runtime" />
                 <ComboBoxItem Content="IMDb Rating" Tag="rating_imdb" />
-                <ComboBoxItem Content="Runtime" Tag="runtime" />
+                <ComboBoxItem Content="TMDB Rating" Tag="rating_tmdb" />
+                <ComboBoxItem Content="RT Critic Rating" Tag="rating_rt_critic" />
+                <ComboBoxItem Content="RT Audience Rating" Tag="rating_rt_audience" />
+                <ComboBoxItem Content="Resolution" Tag="resolution" />
+                <ComboBoxItem Content="Bitrate" Tag="bitrate" />
+                <ComboBoxItem Content="Author" Tag="author" />
+                <ComboBoxItem Content="Narrator" Tag="narrator" />
+                <ComboBoxItem Content="Series" Tag="series" />
             </ComboBox>
-            <Button x:Name="OrderButton" Grid.Column="2" Style="{StaticResource SecondaryButtonStyle}"
-                    Width="40" Height="40" Padding="0" CornerRadius="20"
-                    Click="OrderButton_Click" ToolTipService.ToolTip="Descending">
-                <FontIcon x:Name="OrderIcon" Glyph="&#xE74B;" FontSize="14" />
+            <ComboBox x:Name="OrderCombo" Grid.Column="2" MinWidth="125"
+                      SelectionChanged="OrderCombo_SelectionChanged">
+                <ComboBoxItem Content="Descending" Tag="desc" IsSelected="True" />
+                <ComboBoxItem Content="Ascending" Tag="asc" />
+            </ComboBox>
+            <Button x:Name="FiltersButton" Grid.Column="3" Style="{StaticResource OutlineButtonStyle}"
+                    Click="FiltersButton_Click">
+                <StackPanel Orientation="Horizontal" Spacing="7">
+                    <FontIcon Glyph="&#xE71C;" FontSize="14" />
+                    <TextBlock Text="Filters" />
+                    <Border x:Name="ActiveFilterCountBadge" Padding="6,1" CornerRadius="6"
+                            Background="{StaticResource AccentBrush}" Visibility="Collapsed">
+                        <TextBlock x:Name="ActiveFilterCountText" FontSize="10"
+                                   Foreground="{StaticResource AccentForegroundBrush}" />
+                    </Border>
+                </StackPanel>
             </Button>
+            <TextBlock x:Name="LoadedCountText" Grid.Column="4" VerticalAlignment="Center"
+                       HorizontalAlignment="Left" FontSize="14" Foreground="{StaticResource TertiaryTextBrush}"
+                       Visibility="Collapsed" />
         </Grid>
 
-        <!-- Loading -->
-        <ProgressRing
+        <!-- Loading: mirror the WebUI ItemGrid skeleton so the layout stays stable. -->
+        <ScrollViewer
             Grid.Row="2"
-            x:Name="LoadingRing"
-            IsActive="True"
+            x:Name="LoadingSkeleton"
             Visibility="Collapsed"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Width="48" Height="48" />
+            Padding="40,0,40,24">
+            <ItemsRepeater x:Name="LoadingPosterRepeater" MaxWidth="1400" HorizontalAlignment="Center">
+                <ItemsRepeater.Layout>
+                    <UniformGridLayout MinItemWidth="178" MinItemHeight="310"
+                                       MinColumnSpacing="12" MinRowSpacing="16" ItemsStretch="None" />
+                </ItemsRepeater.Layout>
+                <ItemsRepeater.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Width="178" Spacing="9">
+                            <Border Width="178" Height="267" CornerRadius="12"
+                                    Background="{StaticResource SurfaceBrush}" Opacity="0.62" />
+                            <Border Width="132" Height="15" CornerRadius="5"
+                                    Background="{StaticResource SurfaceBrush}" Opacity="0.62" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsRepeater.ItemTemplate>
+            </ItemsRepeater>
+        </ScrollViewer>
 
         <!-- Error -->
         <TextBlock
@@ -167,10 +215,11 @@
         <!-- Content grid -->
         <ScrollViewer Grid.Row="2" x:Name="ContentScroll" Padding="40,0,40,24"
                       ViewChanged="ContentScroll_ViewChanged">
-            <StackPanel Spacing="16">
-                <ItemsRepeater x:Name="PosterRepeater">
+            <StackPanel Spacing="16" MaxWidth="1400" HorizontalAlignment="Center">
+                <ItemsRepeater x:Name="PosterRepeater" ElementPrepared="PosterRepeater_ElementPrepared">
                     <ItemsRepeater.Layout>
                         <UniformGridLayout
+                            x:Name="PosterGridLayout"
                             MinItemWidth="{StaticResource PosterCardWidth}"
                             MinItemHeight="{StaticResource PosterCardTotalHeight}"
                             MinColumnSpacing="12"
@@ -197,19 +246,8 @@
             Spacing="12"
             Padding="40"
             Visibility="Collapsed">
-            <FontIcon
-                Glyph="&#xE8FD;"
-                FontSize="40"
-                Foreground="{StaticResource SecondaryTextBrush}"
-                HorizontalAlignment="Center" />
             <TextBlock
-                Text="This collection is empty"
-                FontSize="{StaticResource FontSizeTitle}"
-                FontWeight="SemiBold"
-                Foreground="{StaticResource PrimaryTextBrush}"
-                HorizontalAlignment="Center" />
-            <TextBlock
-                Text="Add items to this collection to see them here."
+                Text="No items found."
                 FontSize="14"
                 Foreground="{StaticResource SecondaryTextBrush}"
                 HorizontalAlignment="Center"
@@ -217,5 +255,70 @@
                 TextWrapping="Wrap"
                 MaxWidth="400" />
         </StackPanel>
+
+        <controls:SlideSheet x:Name="FiltersSheet" Grid.RowSpan="3" Canvas.ZIndex="100" Title="Filters">
+            <controls:SlideSheet.SheetContent>
+                <Grid RowSpacing="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Refine your catalog results" FontSize="13"
+                               Foreground="{StaticResource SecondaryTextBrush}" />
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Spacing="14" Padding="0,4,8,12">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Genres" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBox x:Name="GenresBox" PlaceholderText="Comma-separated genres" />
+                                <TextBlock Text="Items must match all selected genres." FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" />
+                            </StackPanel>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Year From" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBox x:Name="YearMinBox" PlaceholderText="e.g. 2000" InputScope="Number" />
+                            </StackPanel>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Year To" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBox x:Name="YearMaxBox" PlaceholderText="e.g. 2025" InputScope="Number" />
+                            </StackPanel>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Minimum IMDb Rating" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBox x:Name="MinimumRatingBox" PlaceholderText="0.0 - 10.0" InputScope="Number" />
+                            </StackPanel>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Content Rating" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBox x:Name="ContentRatingBox" PlaceholderText="Any rating" />
+                            </StackPanel>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Original Language" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBox x:Name="OriginalLanguageBox" PlaceholderText="e.g. en" />
+                            </StackPanel>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Studio" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBox x:Name="StudioBox" PlaceholderText="Any studio" />
+                            </StackPanel>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Country" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBox x:Name="CountryBox" PlaceholderText="Any country" />
+                            </StackPanel>
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Video Quality" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <ToggleButton x:Name="FourKToggle" Content="4K" Height="32" Padding="12,0" />
+                                    <ToggleButton x:Name="HdrToggle" Content="HDR" Height="32" Padding="12,0" />
+                                    <ToggleButton x:Name="DolbyVisionToggle" Content="DOVI" Height="32" Padding="12,0" />
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                    <Border Grid.Row="2" Padding="0,12,0,0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Button Content="Clear All" Style="{StaticResource OutlineButtonStyle}" Click="ClearFilters_Click" />
+                            <Button Grid.Column="1" Content="Done" Style="{StaticResource PrimaryButtonStyle}" Click="ApplyFilters_Click" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </controls:SlideSheet.SheetContent>
+        </controls:SlideSheet>
     </Grid>
 </Page>

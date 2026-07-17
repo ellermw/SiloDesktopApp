@@ -430,87 +430,107 @@ public partial class SettingsViewModel : ObservableObject
                 }
             }
 
-            // Load libraries and playback prefs for the Libraries tab
-            await LoadLibraryCardsAsync();
-
-            // Load key-value settings
-            try
+            // These settings live behind independent endpoints. The old serial chain
+            // made opening Settings cost the sum of every network round trip and left
+            // the page visibly filling in for several seconds. Load them concurrently,
+            // while retaining the same per-setting fallback behavior.
+            async Task LoadThemeAsync()
             {
-                var theme = await _settingsApi.GetSettingAsync("ui_theme");
-                UiTheme = theme.Value;
-                // Apply the server-side theme if it differs from the locally saved one
-                if (!string.IsNullOrEmpty(UiTheme))
-                    _themeService.ApplyTheme(UiTheme);
+                try
+                {
+                    var theme = await _settingsApi.GetSettingAsync("ui_theme");
+                    UiTheme = theme.Value;
+                    if (!string.IsNullOrEmpty(UiTheme)) _themeService.ApplyTheme(UiTheme);
+                }
+                catch { UiTheme = ""; }
             }
-            catch { UiTheme = ""; }
 
-            try
+            async Task LoadDateAsync()
             {
-                var date = await _settingsApi.GetSettingAsync("ui.date_format");
-                DateFormat = NormalizeDateFormat(date.Value);
+                try { DateFormat = NormalizeDateFormat((await _settingsApi.GetSettingAsync("ui.date_format")).Value); }
+                catch { DateFormat = NormalizeDateFormat(_settingsService.Load().UiDateFormat); }
             }
-            catch { DateFormat = NormalizeDateFormat(_settingsService.Load().UiDateFormat); }
 
-            try
+            async Task LoadTimeAsync()
             {
-                var time = await _settingsApi.GetSettingAsync("ui.time_format");
-                TimeFormat = NormalizeTimeFormat(time.Value);
+                try { TimeFormat = NormalizeTimeFormat((await _settingsApi.GetSettingAsync("ui.time_format")).Value); }
+                catch { TimeFormat = NormalizeTimeFormat(_settingsService.Load().UiTimeFormat); }
             }
-            catch { TimeFormat = NormalizeTimeFormat(_settingsService.Load().UiTimeFormat); }
+
+            async Task LoadAccessibilityAsync()
+            {
+                try
+                {
+                    var accessibility = await _settingsApi.GetEffectiveSettingsAsync(
+                        ["ui_text_scale", "ui_text_weight", "ui_high_contrast"]);
+                    var scaleValue = accessibility.Settings.FirstOrDefault(x => x.Key == "ui_text_scale")?.EffectiveValue;
+                    TextScale = scaleValue is "large" or "x-large" ? scaleValue : "default";
+                    TextWeight = accessibility.Settings.FirstOrDefault(x => x.Key == "ui_text_weight")?.EffectiveValue == "strong" ? "strong" : "default";
+                    HighContrast = string.Equals(accessibility.Settings.FirstOrDefault(x => x.Key == "ui_high_contrast")?.EffectiveValue, "true", StringComparison.OrdinalIgnoreCase);
+                }
+                catch
+                {
+                    var local = _settingsService.Load();
+                    TextScale = local.UiTextScale;
+                    TextWeight = local.UiTextWeight;
+                    HighContrast = local.UiHighContrast;
+                }
+                _accessibilityService.Apply(TextScale, TextWeight, HighContrast);
+            }
+
+            async Task LoadCustomThemeAsync()
+            {
+                try
+                {
+                    var customTheme = await _settingsApi.GetSettingAsync("ui_custom_theme_vars");
+                    var overrides = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(customTheme.Value) ?? [];
+                    _themeService.SetThemeOverridesFromServer(overrides);
+                }
+                catch { }
+            }
+
+            async Task LoadNextUpAsync()
+            {
+                try
+                {
+                    var nextUp = await _settingsApi.GetSettingAsync("next_up_mode");
+                    NextUpMode = string.IsNullOrWhiteSpace(nextUp.Value) ? "combined" : nextUp.Value;
+                }
+                catch { NextUpMode = "combined"; }
+            }
+
+            async Task LoadAutoPlayAsync()
+            {
+                try
+                {
+                    var autoPlay = await _settingsApi.GetEffectiveSettingsAsync(["playback.auto_play_next"]);
+                    AutoPlayNext = !string.Equals(autoPlay.Settings.FirstOrDefault()?.EffectiveValue, "false", StringComparison.OrdinalIgnoreCase);
+                }
+                catch { AutoPlayNext = true; }
+            }
+
+            async Task LoadSectionOverridesAsync()
+            {
+                try { SectionOverrides = (await _settingsApi.GetSettingAsync("section_overrides:home:")).Value; }
+                catch { SectionOverrides = ""; }
+            }
+
+            await Task.WhenAll(
+                LoadLibraryCardsAsync(),
+                LoadThemeAsync(),
+                LoadDateAsync(),
+                LoadTimeAsync(),
+                LoadAccessibilityAsync(),
+                LoadCustomThemeAsync(),
+                LoadNextUpAsync(),
+                LoadAutoPlayAsync(),
+                LoadSubtitleAppearanceAsync(),
+                LoadSectionOverridesAsync());
 
             var localAppearance = _settingsService.Load();
             localAppearance.UiDateFormat = DateFormat;
             localAppearance.UiTimeFormat = TimeFormat;
             _settingsService.Save(localAppearance);
-
-            try
-            {
-                var accessibility = await _settingsApi.GetEffectiveSettingsAsync(
-                    ["ui_text_scale", "ui_text_weight", "ui_high_contrast"]);
-                var scaleValue = accessibility.Settings.FirstOrDefault(x => x.Key == "ui_text_scale")?.EffectiveValue;
-                TextScale = scaleValue is "large" or "x-large" ? scaleValue : "default";
-                TextWeight = accessibility.Settings.FirstOrDefault(x => x.Key == "ui_text_weight")?.EffectiveValue == "strong" ? "strong" : "default";
-                HighContrast = string.Equals(accessibility.Settings.FirstOrDefault(x => x.Key == "ui_high_contrast")?.EffectiveValue, "true", StringComparison.OrdinalIgnoreCase);
-            }
-            catch
-            {
-                var local = _settingsService.Load();
-                TextScale = local.UiTextScale;
-                TextWeight = local.UiTextWeight;
-                HighContrast = local.UiHighContrast;
-            }
-            _accessibilityService.Apply(TextScale, TextWeight, HighContrast);
-
-            try
-            {
-                var customTheme = await _settingsApi.GetSettingAsync("ui_custom_theme_vars");
-                var overrides = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(customTheme.Value) ?? [];
-                _themeService.SetThemeOverridesFromServer(overrides);
-            }
-            catch { }
-
-            try
-            {
-                var nextUp = await _settingsApi.GetSettingAsync("next_up_mode");
-                NextUpMode = string.IsNullOrWhiteSpace(nextUp.Value) ? "combined" : nextUp.Value;
-            }
-            catch { NextUpMode = "combined"; }
-
-            try
-            {
-                var autoPlay = await _settingsApi.GetEffectiveSettingsAsync(["playback.auto_play_next"]);
-                AutoPlayNext = !string.Equals(autoPlay.Settings.FirstOrDefault()?.EffectiveValue, "false", StringComparison.OrdinalIgnoreCase);
-            }
-            catch { AutoPlayNext = true; }
-
-            await LoadSubtitleAppearanceAsync();
-
-            try
-            {
-                var overrides = await _settingsApi.GetSettingAsync("section_overrides:home:");
-                SectionOverrides = overrides.Value;
-            }
-            catch { SectionOverrides = ""; }
 
             _suppressSave = false;
         }

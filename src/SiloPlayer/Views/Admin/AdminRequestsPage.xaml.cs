@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Plugins;
@@ -27,6 +28,8 @@ public sealed partial class AdminRequestsPage : Page
     private List<PluginInstallation> _pluginInstallations = [];
     private List<AdminUser> _users = [];
     private RequestUserLimit? _selectedLimit;
+    private bool _loaded;
+    private string _activeTab = "queue";
 
     public AdminRequestsPage()
     {
@@ -36,6 +39,7 @@ public sealed partial class AdminRequestsPage : Page
         _pluginsApi = App.Services.GetRequiredService<PluginsApi>();
         _toasts = App.Services.GetRequiredService<ToastService>();
         InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
         SizeChanged += AdminRequestsPage_SizeChanged;
     }
 
@@ -49,13 +53,32 @@ public sealed partial class AdminRequestsPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        if (_loaded) return;
+        _loaded = true;
         _ready = true;
-        SetActiveTab("queue");
-        await LoadQueueAsync();
+        SetActiveTab(_activeTab);
+        switch (_activeTab)
+        {
+            case "settings": await LoadSettingsAsync(); break;
+            case "integrations": await LoadIntegrationsAsync(); break;
+            case "overrides": await LoadUsersAsync(); break;
+            default:
+                if (ViewModel.Requests.Count > 0) RenderQueue();
+                await LoadQueueAsync(ViewModel.Requests.Count == 0);
+                break;
+        }
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        _loaded = false;
+        _ready = false;
+        base.OnNavigatedFrom(e);
     }
 
     private void SetActiveTab(string tab)
     {
+        _activeTab = tab;
         QueuePanel.Visibility = tab == "queue" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPanel.Visibility = tab == "settings" ? Visibility.Visible : Visibility.Collapsed;
         IntegrationsPanel.Visibility = tab == "integrations" ? Visibility.Visible : Visibility.Collapsed;
@@ -82,9 +105,9 @@ public sealed partial class AdminRequestsPage : Page
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await LoadQueueAsync();
     private async void Filter_Changed(object sender, SelectionChangedEventArgs e) { if (_ready) await LoadQueueAsync(); }
 
-    private async Task LoadQueueAsync()
+    private async Task LoadQueueAsync(bool showSkeleton = true)
     {
-        ShowQueueSkeletons();
+        if (showSkeleton) ShowQueueSkeletons();
         ViewModel.StatusFilter = SelectedTag(StatusFilterComboBox, "all");
         ViewModel.OutcomeFilter = SelectedTag(OutcomeFilterComboBox, "all");
         var queueTask = ViewModel.LoadCommand.ExecuteAsync(null);

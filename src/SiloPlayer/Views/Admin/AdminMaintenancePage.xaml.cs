@@ -37,15 +37,19 @@ public sealed partial class AdminMaintenancePage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminMaintenanceViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Enabled;
         SizeChanged += (_, _) => ApplyResponsiveLayout();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         ApplyResponsiveLayout();
-        ViewModel.ImportJobs.CollectionChanged += (_, _) => ScheduleRebuildImports();
-        ViewModel.ExportJobs.CollectionChanged += (_, _) => ScheduleRebuildExports();
-        ViewModel.AllJobs.CollectionChanged += (_, _) => ScheduleRebuildAll();
+        ViewModel.ImportJobs.CollectionChanged += ImportJobs_CollectionChanged;
+        ViewModel.ExportJobs.CollectionChanged += ExportJobs_CollectionChanged;
+        ViewModel.AllJobs.CollectionChanged += AllJobs_CollectionChanged;
+        if (ViewModel.ImportJobs.Count > 0) RebuildImportJobs();
+        if (ViewModel.ExportJobs.Count > 0) RebuildExportJobs();
+        if (ViewModel.AllJobs.Count > 0) RebuildAllJobs();
         try { await ViewModel.LoadCommand.ExecuteAsync(null); }
         catch (Exception ex) { ViewModel.ErrorMessage = $"Error: {ex.Message}"; }
 
@@ -75,9 +79,21 @@ public sealed partial class AdminMaintenancePage : Page
         base.OnNavigatedFrom(e);
         if (_eventChannel != null)
             _eventChannel.EventReceived -= OnEventReceived;
+        ViewModel.ImportJobs.CollectionChanged -= ImportJobs_CollectionChanged;
+        ViewModel.ExportJobs.CollectionChanged -= ExportJobs_CollectionChanged;
+        ViewModel.AllJobs.CollectionChanged -= AllJobs_CollectionChanged;
         _eventSubscription?.Dispose();
         _eventSubscription = null;
     }
+
+    private void ImportJobs_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuildImports();
+
+    private void ExportJobs_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuildExports();
+
+    private void AllJobs_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuildAll();
 
     private void OnEventReceived(string channel, string eventName, System.Text.Json.JsonElement data)
     {

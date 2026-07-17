@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Controls;
 
 namespace SiloPlayer.Views;
@@ -30,13 +31,35 @@ public sealed partial class CatalogPage : Page
     private bool _initializing = true;
     private long _loadGeneration;
     private bool _selectionMode;
+    private double _catalogCardWidth = 154;
     private string _source = "library";
     private string? _scope;
     private string? _sectionId;
     private int? _fixedLibraryId;
     private string? _snapshot;
     private readonly HashSet<string> _selectedIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<QueryRule> _advancedRules = [];
+    private bool _advancedMode;
     private const int PageSize = 60;
+
+    private static readonly (string Label, string Value)[] AdvancedFields =
+    [
+        ("Genre", "genre"), ("Year", "year"), ("IMDb Rating", "rating_imdb"),
+        ("Type", "type"), ("Content Rating", "content_rating"), ("Studio", "studio"),
+        ("Actor", "actor"), ("Director", "director"), ("Writer", "writer"),
+        ("Producer", "producer"), ("Network", "network"), ("Country", "country"),
+        ("Status", "status"), ("Added", "added_at"), ("Release Date", "release_date"),
+        ("Watched", "watched"), ("Favorited", "favorited"), ("In Watchlist", "in_watchlist"),
+        ("In Progress", "in_progress"), ("Resolution", "resolution"), ("HDR", "hdr"),
+        ("Dolby Vision", "dolby_vision"), ("Bitrate", "bitrate")
+    ];
+
+    private static readonly (string Label, string Value)[] AdvancedOperators =
+    [
+        ("is", "is"), ("is not", "is_not"), ("contains", "contains"),
+        (">=", "gte"), ("<=", "lte"), (">", "gt"), ("<", "lt"),
+        ("in the last", "in_last")
+    ];
 
     public CatalogPage() { InitializeComponent(); ItemsRepeater.ItemsSource = _items; }
 
@@ -107,6 +130,13 @@ public sealed partial class CatalogPage : Page
         Fill(RatingCombo, "All ratings", filtersTask.Result.ContentRatings);
         Fill(ResolutionCombo, "All resolutions", filtersTask.Result.Resolutions);
         Fill(CountryCombo, "All countries", filtersTask.Result.Countries);
+        Fill(StudioCombo, "All studios", filtersTask.Result.Studios);
+        Fill(NetworkCombo, "All networks", filtersTask.Result.Networks);
+        Fill(OriginalLanguageCombo, "All languages", filtersTask.Result.OriginalLanguages);
+        Fill(AudioLanguageCombo, "All languages", filtersTask.Result.AudioLanguages);
+        Fill(AuthorCombo, "All authors", filtersTask.Result.Authors);
+        Fill(NarratorCombo, "All narrators", filtersTask.Result.Narrators);
+        Fill(SeriesCombo, "All series", filtersTask.Result.Series);
     }
 
     private static void Fill(ComboBox combo, string all, IEnumerable<string> values)
@@ -135,14 +165,24 @@ public sealed partial class CatalogPage : Page
         {
             var sort = SelectedTag(SortCombo);
             var isSection = _source == "section";
+            var useGuidedFilters = !isSection && !_advancedMode;
+            var queryRules = isSection
+                ? null
+                : _advancedMode
+                    ? BuildAdvancedRules()
+                    : BuildGuidedRules();
             var response = await _api.GetCatalogAsync(
                 isSection ? _fixedLibraryId : SelectedLibrary(),
                 sort: isSection ? null : sort,
                 order: isSection || sort == null ? null : SelectedTag(OrderCombo),
-                genre: isSection ? null : SelectedTag(GenreCombo),
-                contentRating: isSection ? null : SelectedTag(RatingCombo),
-                country: isSection ? null : SelectedTag(CountryCombo),
-                resolution: isSection ? null : SelectedTag(ResolutionCombo),
+                genre: useGuidedFilters ? SelectedTag(GenreCombo) : null,
+                studio: useGuidedFilters ? SelectedTag(StudioCombo) : null,
+                contentRating: useGuidedFilters ? SelectedTag(RatingCombo) : null,
+                country: useGuidedFilters ? SelectedTag(CountryCombo) : null,
+                resolution: useGuidedFilters ? SelectedTag(ResolutionCombo) : null,
+                audioLanguage: useGuidedFilters ? SelectedTag(AudioLanguageCombo) : null,
+                yearMin: useGuidedFilters ? TextOrNull(YearFromBox) : null,
+                yearMax: useGuidedFilters ? TextOrNull(YearToBox) : null,
                 q: isSection ? null : QueryBox.Text.Trim(),
                 type: isSection ? null : SelectedTag(TypeCombo),
                 limit: PageSize,
@@ -151,6 +191,8 @@ public sealed partial class CatalogPage : Page
                 source: _source == "library" ? null : _source,
                 scope: _scope,
                 sectionId: _sectionId,
+                extraRules: queryRules,
+                extraRulesMatch: _advancedMode ? SelectedTag(AdvancedMatchCombo) ?? "all" : "all",
                 ct: _loadCts.Token);
             if (generation != Volatile.Read(ref _loadGeneration)) return;
             foreach (var item in response.Items) _items.Add(item);
@@ -188,7 +230,7 @@ public sealed partial class CatalogPage : Page
         if (_initializing) return;
         UpdateFilterCount();
         _debounce?.Stop();
-        _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(ReferenceEquals(sender, QueryBox) ? 300 : 40) };
+        _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(sender is TextBox ? 300 : 40) };
         _debounce.Tick += async (_, _) => { _debounce?.Stop(); await LoadAsync(true); };
         _debounce.Start();
     }
@@ -215,6 +257,7 @@ public sealed partial class CatalogPage : Page
         card.SelectionToggled -= PosterCard_SelectionToggled;
         card.SelectionMode = _selectionMode;
         card.IsSelected = _selectedIds.Contains(item.ContentId);
+        card.SetCatalogGridLayout(_catalogCardWidth);
         card.SelectionToggled += PosterCard_SelectionToggled;
     }
 
@@ -315,14 +358,176 @@ public sealed partial class CatalogPage : Page
     private void OpenFilters_Click(object sender, RoutedEventArgs e) => FiltersSheet.IsOpen = true;
     private void CloseFilters_Click(object sender, RoutedEventArgs e) => FiltersSheet.IsOpen = false;
 
+    private async void FilterMode_Click(object sender, RoutedEventArgs e)
+    {
+        var advanced = (sender as FrameworkElement)?.Tag?.ToString() == "advanced";
+        if (_advancedMode == advanced) return;
+        _advancedMode = advanced;
+        GuidedFiltersPanel.Visibility = advanced ? Visibility.Collapsed : Visibility.Visible;
+        AdvancedFiltersPanel.Visibility = advanced ? Visibility.Visible : Visibility.Collapsed;
+        var outline = Application.Current.Resources["OutlineButtonStyle"] as Style;
+        GuidedModeButton.Style = advanced ? outline : null;
+        AdvancedModeButton.Style = advanced ? null : outline;
+        UpdateFilterCount();
+        await LoadAsync(true);
+    }
+
+    private void AddAdvancedRule_Click(object sender, RoutedEventArgs e)
+    {
+        _advancedRules.Add(new QueryRule { Field = "genre", Op = "is", Value = "" });
+        BuildAdvancedRulesUi();
+        UpdateFilterCount();
+    }
+
+    private void AdvancedRule_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || !_advancedMode) return;
+        Filter_Changed(sender, e);
+    }
+
+    private void BuildAdvancedRulesUi()
+    {
+        AdvancedRulesPanel.Children.Clear();
+        NoAdvancedRulesText.Visibility = _advancedRules.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var rule in _advancedRules.ToList())
+        {
+            var row = new Grid { ColumnSpacing = 8 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.15, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(.8, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var field = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+            foreach (var option in AdvancedFields)
+                field.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Value });
+            field.SelectedIndex = Math.Max(0, Array.FindIndex(AdvancedFields, option => option.Value == rule.Field));
+
+            var operation = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+            foreach (var option in AdvancedOperators)
+                operation.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Value });
+            operation.SelectedIndex = Math.Max(0, Array.FindIndex(AdvancedOperators, option => option.Value == rule.Op));
+
+            var value = CreateAdvancedValueEditor(rule);
+            var remove = new Button { Content = "Remove", Padding = new Thickness(9, 5, 9, 5), Tag = rule };
+            if (Application.Current.Resources["OutlineButtonStyle"] is Style outline) remove.Style = outline;
+
+            Grid.SetColumn(operation, 1);
+            Grid.SetColumn(value, 2);
+            Grid.SetColumn(remove, 3);
+            row.Children.Add(field);
+            row.Children.Add(operation);
+            row.Children.Add(value);
+            row.Children.Add(remove);
+
+            field.SelectionChanged += (_, _) =>
+            {
+                rule.Field = SelectedTag(field) ?? "genre";
+                rule.Op = DefaultOperator(rule.Field);
+                rule.Value = DefaultAdvancedValue(rule.Field);
+                BuildAdvancedRulesUi();
+                Filter_Changed(field, new SelectionChangedEventArgs([], []));
+            };
+            operation.SelectionChanged += (_, _) =>
+            {
+                rule.Op = SelectedTag(operation) ?? "is";
+                Filter_Changed(operation, new SelectionChangedEventArgs([], []));
+            };
+            remove.Click += (_, _) =>
+            {
+                _advancedRules.Remove(rule);
+                BuildAdvancedRulesUi();
+                Filter_Changed(remove, new RoutedEventArgs());
+            };
+            AdvancedRulesPanel.Children.Add(row);
+        }
+    }
+
+    private FrameworkElement CreateAdvancedValueEditor(QueryRule rule)
+    {
+        if (IsBooleanField(rule.Field))
+        {
+            var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+            combo.Items.Add(new ComboBoxItem { Content = "True", Tag = "true" });
+            combo.Items.Add(new ComboBoxItem { Content = "False", Tag = "false" });
+            combo.SelectedIndex = rule.Value is false || string.Equals(rule.Value?.ToString(), "false", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+            combo.SelectionChanged += (_, e) =>
+            {
+                rule.Value = SelectedTag(combo) == "true";
+                Filter_Changed(combo, e);
+            };
+            return combo;
+        }
+
+        var box = new TextBox
+        {
+            Text = rule.Value?.ToString() ?? "",
+            PlaceholderText = rule.Op == "in_last" ? "e.g. 30d, 2w" : "Value",
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        if (IsNumberField(rule.Field)) box.InputScope = new Microsoft.UI.Xaml.Input.InputScope { Names = { new Microsoft.UI.Xaml.Input.InputScopeName(Microsoft.UI.Xaml.Input.InputScopeNameValue.Number) } };
+        box.TextChanged += (_, e) =>
+        {
+            rule.Value = IsNumberField(rule.Field) && double.TryParse(box.Text, out var number) ? number : box.Text.Trim();
+            Filter_Changed(box, e);
+        };
+        return box;
+    }
+
+    private static string DefaultOperator(string field) => field switch
+    {
+        "rating_imdb" or "bitrate" => "gte",
+        "added_at" or "release_date" => "in_last",
+        _ => "is"
+    };
+
+    private static object DefaultAdvancedValue(string field) => IsBooleanField(field) ? true : IsNumberField(field) ? 0d : "";
+    private static bool IsBooleanField(string field) => field is "watched" or "favorited" or "in_watchlist" or "in_progress" or "hdr" or "dolby_vision";
+    private static bool IsNumberField(string field) => field is "year" or "rating_imdb" or "bitrate";
+
+    private List<QueryRule> BuildAdvancedRules() => _advancedRules
+        .Where(rule => rule.Value is bool || !string.IsNullOrWhiteSpace(rule.Value?.ToString()))
+        .Select(rule => new QueryRule { Field = rule.Field, Op = rule.Op, Value = rule.Value })
+        .ToList();
+
     private async void ClearFilters_Click(object sender, RoutedEventArgs e)
     {
         _initializing = true;
+        if (_advancedMode)
+        {
+            _advancedRules.Clear();
+            AdvancedMatchCombo.SelectedIndex = 0;
+            BuildAdvancedRulesUi();
+            _initializing = false;
+            UpdateFilterCount();
+            await LoadAsync(true);
+            return;
+        }
         if (_fixedLibraryId is not > 0) LibraryCombo.SelectedIndex = 0;
         GenreCombo.SelectedIndex = 0;
         RatingCombo.SelectedIndex = 0;
         ResolutionCombo.SelectedIndex = 0;
         CountryCombo.SelectedIndex = 0;
+        StudioCombo.SelectedIndex = 0;
+        NetworkCombo.SelectedIndex = 0;
+        OriginalLanguageCombo.SelectedIndex = 0;
+        AudioLanguageCombo.SelectedIndex = 0;
+        AuthorCombo.SelectedIndex = 0;
+        NarratorCombo.SelectedIndex = 0;
+        SeriesCombo.SelectedIndex = 0;
+        MinimumRatingCombo.SelectedIndex = 0;
+        StatusCombo.SelectedIndex = 0;
+        WatchStatusCombo.SelectedIndex = 0;
+        AddedInLastCombo.SelectedIndex = 0;
+        ReleasedInLastCombo.SelectedIndex = 0;
+        YearFromBox.Text = "";
+        YearToBox.Text = "";
+        ActorBox.Text = "";
+        DirectorBox.Text = "";
+        WriterBox.Text = "";
+        ProducerBox.Text = "";
+        FourKCheckBox.IsChecked = false;
+        HdrCheckBox.IsChecked = false;
+        DolbyVisionCheckBox.IsChecked = false;
         _initializing = false;
         UpdateFilterCount();
         await LoadAsync(true);
@@ -330,15 +535,121 @@ public sealed partial class CatalogPage : Page
 
     private void UpdateFilterCount()
     {
+        if (_advancedMode)
+        {
+            var advancedCount = BuildAdvancedRules().Count;
+            FilterCountText.Text = advancedCount.ToString();
+            FilterCountBadge.Visibility = advancedCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+            return;
+        }
         var count = 0;
         if (_fixedLibraryId is not > 0 && SelectedLibrary() is > 0) count++;
         if (SelectedTag(GenreCombo) != null) count++;
         if (SelectedTag(RatingCombo) != null) count++;
         if (SelectedTag(ResolutionCombo) != null) count++;
         if (SelectedTag(CountryCombo) != null) count++;
+        if (SelectedTag(StudioCombo) != null) count++;
+        if (SelectedTag(NetworkCombo) != null) count++;
+        if (SelectedTag(OriginalLanguageCombo) != null) count++;
+        if (SelectedTag(AudioLanguageCombo) != null) count++;
+        if (SelectedTag(MinimumRatingCombo) != null) count++;
+        if (TextOrNull(YearFromBox) != null || TextOrNull(YearToBox) != null) count++;
+        if (TextOrNull(ActorBox) != null || TextOrNull(DirectorBox) != null || TextOrNull(WriterBox) != null || TextOrNull(ProducerBox) != null) count++;
+        if (SelectedTag(StatusCombo) != null) count++;
+        if (SelectedTag(WatchStatusCombo) != null) count++;
+        if (SelectedTag(AddedInLastCombo) != null) count++;
+        if (SelectedTag(ReleasedInLastCombo) != null) count++;
+        if (SelectedTag(AuthorCombo) != null || SelectedTag(NarratorCombo) != null || SelectedTag(SeriesCombo) != null) count++;
+        if (FourKCheckBox.IsChecked == true) count++;
+        if (HdrCheckBox.IsChecked == true) count++;
+        if (DolbyVisionCheckBox.IsChecked == true) count++;
         FilterCountText.Text = count.ToString();
         FilterCountBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
     private int? SelectedLibrary() => (LibraryCombo.SelectedItem as ComboBoxItem)?.Tag as int?;
     private static string? SelectedTag(ComboBox combo) { var value = (combo.SelectedItem as ComboBoxItem)?.Tag?.ToString(); return string.IsNullOrWhiteSpace(value) ? null : value; }
+    private static string? TextOrNull(TextBox box) => string.IsNullOrWhiteSpace(box.Text) ? null : box.Text.Trim();
+
+    private List<QueryRule> BuildGuidedRules()
+    {
+        var rules = new List<QueryRule>();
+        AddTextRule(rules, "original_language", SelectedTag(OriginalLanguageCombo));
+        AddTextRule(rules, "network", SelectedTag(NetworkCombo));
+        AddTextRule(rules, "actor", TextOrNull(ActorBox));
+        AddTextRule(rules, "director", TextOrNull(DirectorBox));
+        AddTextRule(rules, "writer", TextOrNull(WriterBox));
+        AddTextRule(rules, "producer", TextOrNull(ProducerBox));
+        AddTextRule(rules, "author", SelectedTag(AuthorCombo));
+        AddTextRule(rules, "narrator", SelectedTag(NarratorCombo));
+        AddTextRule(rules, "series", SelectedTag(SeriesCombo));
+        AddTextRule(rules, "status", SelectedTag(StatusCombo));
+
+        if (double.TryParse(SelectedTag(MinimumRatingCombo), out var rating))
+            rules.Add(new QueryRule { Field = "rating_imdb", Op = "gte", Value = rating });
+
+        switch (SelectedTag(WatchStatusCombo))
+        {
+            case "watched":
+                rules.Add(new QueryRule { Field = "watched", Op = "is", Value = true });
+                break;
+            case "in_progress":
+                rules.Add(new QueryRule { Field = "in_progress", Op = "is", Value = true });
+                break;
+            case "unwatched":
+                rules.Add(new QueryRule { Field = "watched", Op = "is", Value = false });
+                rules.Add(new QueryRule { Field = "in_progress", Op = "is", Value = false });
+                break;
+        }
+
+        AddTextRule(rules, "added_at", SelectedTag(AddedInLastCombo), "in_last");
+        AddTextRule(rules, "release_date", SelectedTag(ReleasedInLastCombo), "in_last");
+        if (FourKCheckBox.IsChecked == true)
+            rules.Add(new QueryRule { Field = "resolution", Op = "is", Value = "2160p" });
+        if (HdrCheckBox.IsChecked == true)
+            rules.Add(new QueryRule { Field = "hdr", Op = "is", Value = true });
+        if (DolbyVisionCheckBox.IsChecked == true)
+            rules.Add(new QueryRule { Field = "dolby_vision", Op = "is", Value = true });
+        return rules;
+    }
+
+    private static void AddTextRule(List<QueryRule> rules, string field, string? value, string op = "is")
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            rules.Add(new QueryRule { Field = field, Op = op, Value = value });
+    }
+
+    private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var windowWidth = e.NewSize.Width;
+        if (windowWidth <= 0) return;
+        var width = Math.Min(windowWidth, 1400);
+        PageShell.Width = width;
+        PageShell.HorizontalAlignment = HorizontalAlignment.Center;
+        var gutter = width < 640 ? 16d : width < 1024 ? 24d : 40d;
+        HeaderGrid.Margin = new Thickness(gutter, width < 640 ? 16 : 24, gutter, 24);
+        FilterPanel.Margin = new Thickness(gutter, 0, gutter, 18);
+        LockedFiltersPanel.Margin = new Thickness(gutter, 0, gutter, 18);
+        HistoryActions.Margin = new Thickness(gutter, 0, gutter, 18);
+        CatalogScrollViewer.Padding = new Thickness(gutter, 0, gutter, 28);
+
+        PageTitleText.FontSize = width < 640 ? 32 : width < 1024 ? 44 : 56;
+        var compactHeader = width < 640;
+        Grid.SetRow(CountPanel, compactHeader ? 1 : 0);
+        Grid.SetColumn(CountPanel, compactHeader ? 0 : 1);
+        CountPanel.HorizontalAlignment = compactHeader ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        CountText.FontSize = compactHeader ? 20 : 30;
+
+        var compactHistory = width < 700;
+        Grid.SetRow(HistoryButtonsPanel, compactHistory ? 1 : 0);
+        Grid.SetColumn(HistoryButtonsPanel, compactHistory ? 0 : 1);
+        Grid.SetColumnSpan(HistoryButtonsPanel, compactHistory ? 2 : 1);
+
+        var columns = width < 640 ? 3 : width < 768 ? 4 : width < 1024 ? 5 : width < 1280 ? 7 : 8;
+        _catalogCardWidth = Math.Max(96, Math.Floor((width - gutter * 2 - (columns - 1) * 12) / columns));
+        CatalogGridLayout.MinItemWidth = _catalogCardWidth;
+        CatalogGridLayout.MinItemHeight = _catalogCardWidth * 1.5 + 56;
+        for (var i = 0; i < _items.Count; i++)
+            if (ItemsRepeater.TryGetElement(i) is PosterCard card)
+                card.SetCatalogGridLayout(_catalogCardWidth);
+    }
 }

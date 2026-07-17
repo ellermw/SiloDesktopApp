@@ -9,6 +9,9 @@ namespace SiloPlayer.ViewModels;
 public partial class RequestsViewModel : ObservableObject
 {
     private readonly RequestsApi _requestsApi;
+    private DateTime _lastLoadedAt = DateTime.MinValue;
+    private bool _loadInProgress;
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     public RequestsViewModel(RequestsApi requestsApi)
     {
@@ -35,13 +38,16 @@ public partial class RequestsViewModel : ObservableObject
     [ObservableProperty] private int _searchPage = 1;
     [ObservableProperty] private int _searchTotalPages;
     [ObservableProperty] private int _searchTotalResults;
+    [ObservableProperty] private int _dataVersion;
 
     [RelayCommand]
     private async Task LoadAsync()
     {
-        if (IsLoading) return;
+        if (_loadInProgress) return;
+        if (DataVersion > 0 && DateTime.UtcNow - _lastLoadedAt < CacheDuration) return;
 
-        IsLoading = true;
+        _loadInProgress = true;
+        IsLoading = DataVersion == 0;
         ErrorMessage = null;
         StatusMessage = "Loading requests...";
 
@@ -54,6 +60,8 @@ public partial class RequestsViewModel : ObservableObject
                 DiscoverySections.Clear();
                 MyRequests.Clear();
                 StatusMessage = "Requests are disabled on this server.";
+                _lastLoadedAt = DateTime.UtcNow;
+                DataVersion++;
                 return;
             }
 
@@ -63,6 +71,8 @@ public partial class RequestsViewModel : ObservableObject
             await Task.WhenAll(mineTask, discoveryTask, brandsTask);
 
             StatusMessage = MyRequests.Count > 0 ? $"{MyRequests.Count:N0} request(s) loaded." : "";
+            _lastLoadedAt = DateTime.UtcNow;
+            DataVersion++;
         }
         catch (Exception ex)
         {
@@ -71,6 +81,7 @@ public partial class RequestsViewModel : ObservableObject
         }
         finally
         {
+            _loadInProgress = false;
             IsLoading = false;
         }
     }
@@ -202,6 +213,7 @@ public partial class RequestsViewModel : ObservableObject
                 PosterPath = result.PosterPath,
                 BackdropPath = result.BackdropPath,
             });
+            InvalidateCache();
             await LoadAsync();
             if (!string.IsNullOrWhiteSpace(SearchQuery))
                 await SearchAsync();
@@ -223,6 +235,7 @@ public partial class RequestsViewModel : ObservableObject
         try
         {
             await _requestsApi.CancelAsync(request.Id);
+            InvalidateCache();
             await LoadAsync();
             StatusMessage = "Request cancelled.";
         }
@@ -231,4 +244,6 @@ public partial class RequestsViewModel : ObservableObject
             ErrorMessage = $"Failed to cancel request: {ex.Message}";
         }
     }
+
+    public void InvalidateCache() => _lastLoadedAt = DateTime.MinValue;
 }

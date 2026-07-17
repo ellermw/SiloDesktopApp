@@ -122,6 +122,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         _settingsApi = App.Services.GetRequiredService<SettingsApi>();
         _apiClient = App.Services.GetRequiredService<SiloApiClient>();
         this.InitializeComponent();
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)

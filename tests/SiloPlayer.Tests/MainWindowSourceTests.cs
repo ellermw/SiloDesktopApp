@@ -3,6 +3,26 @@ namespace SiloPlayer.Tests;
 public sealed class MainWindowSourceTests
 {
     [Fact]
+    public void SharedNavigationSuppressesStockSlidesAndWholePageOpacityFlashes()
+    {
+        var root = FindRepositoryRoot();
+        var navigation = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Helpers", "NavigationService.cs"));
+        var shell = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml.cs"));
+        var transition = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Helpers", "PageTransitionHelper.cs"));
+
+        Assert.Contains("new SuppressNavigationTransitionInfo()", navigation);
+        Assert.Contains("_currentPageType == pageType", navigation);
+        Assert.Contains("OnNavigated_AnimatePageEntrance", shell);
+        Assert.Contains("PageTransitionHelper.AnimateEntrance", shell);
+        Assert.Contains("content.Opacity = 1", transition);
+        Assert.Contains("content.RenderTransform = null", transition);
+        Assert.DoesNotContain("Storyboard", transition);
+        Assert.DoesNotContain("DoubleAnimation", transition);
+        Assert.DoesNotContain("TranslateY = 6", transition);
+        Assert.DoesNotContain("ScaleX = 0.985", transition);
+    }
+
+    [Fact]
     public void PlayingNextOverlayShowsDedicatedCountdownBadge()
     {
         var root = FindRepositoryRoot();
@@ -50,6 +70,61 @@ public sealed class MainWindowSourceTests
         Assert.Contains("GetEffectiveSettingsAsync", settingsApi);
         Assert.Contains("PutDeviceSettingAsync", settingsApi);
         Assert.Contains("DeviceId", appSettings);
+    }
+
+    [Fact]
+    public void SidebarMatchesCurrentCapabilityAndCompactPresentationContracts()
+    {
+        var root = FindRepositoryRoot();
+        var xaml = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml"));
+        var code = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml.cs"));
+
+        Assert.Contains("x:Name=\"SiloWordmarkImage\"", xaml);
+        Assert.Contains("x:Name=\"SiloMarkImage\"", xaml);
+        Assert.Contains("x:Name=\"RequestsNavItem\"", xaml);
+        Assert.Contains("x:Name=\"NotificationsNavItem\"", xaml);
+        Assert.Contains("x:Name=\"NotificationUnreadBadge\"", xaml);
+        Assert.Contains("IsPaneOpen=\"True\"", xaml);
+        Assert.Contains("PaneClosing=\"NavView_PaneClosing\"", xaml);
+        Assert.Contains("CompactPaneLength=\"64\"", xaml);
+        Assert.DoesNotContain("Content=\"Catalog\" Tag=\"Catalog\"", xaml);
+        Assert.Contains("RefreshUserNavigationCapabilitiesAsync", code);
+        Assert.Contains("requestStatus.RequestsEnabled", code);
+        Assert.Contains("capability.InApp.Enabled", code);
+        Assert.Contains("NotificationUnreadBadge.Value = isOpen ? _notificationUnreadCount : -1", code);
+        Assert.Contains("UpdateSidebarPanePresentation", code);
+        Assert.Contains("args.Cancel = true", code);
+    }
+
+    [Fact]
+    public void CachedTopLevelPagesKeepPopulatedContentVisibleDuringRefresh()
+    {
+        var root = FindRepositoryRoot();
+        var collectionsPage = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "CollectionsPage.xaml.cs"));
+        var downloadsPage = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "DownloadsPage.xaml.cs"));
+        var favoritesPage = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "FavoritesPage.xaml.cs"));
+        var historyPage = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "HistoryPage.xaml.cs"));
+        var watchlistPage = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "WatchlistPage.xaml.cs"));
+        var collectionsVm = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "CollectionsViewModel.cs"));
+        var downloadsVm = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "DownloadsViewModel.cs"));
+        var favoritesVm = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "FavoritesViewModel.cs"));
+        var historyVm = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "HistoryViewModel.cs"));
+        var watchlistVm = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "WatchlistViewModel.cs"));
+
+        Assert.Contains("NavigationCacheMode.Required", collectionsPage);
+        Assert.Contains("NavigationCacheMode.Required", downloadsPage);
+        Assert.Contains("IsLoading = Collections.Count == 0 && Groups.Count == 0", collectionsVm);
+        Assert.Contains("IsLoading = Downloads.Count == 0", downloadsVm);
+        Assert.Contains("_loadInProgress", collectionsVm);
+        Assert.Contains("_loadInProgress", downloadsVm);
+        Assert.Contains("QueueDownloadBuild", downloadsPage);
+        Assert.Contains("NavigationCacheMode.Required", favoritesPage);
+        Assert.Contains("NavigationCacheMode.Required", historyPage);
+        Assert.Contains("NavigationCacheMode.Required", watchlistPage);
+        Assert.Contains("IsLoading = Items.Count == 0", favoritesVm);
+        Assert.Contains("IsLoading = Items.Count == 0", historyVm);
+        Assert.Contains("IsLoading = Items.Count == 0", watchlistVm);
+        Assert.Contains("QueueCardBuild", historyPage);
     }
 
     private static string FindRepositoryRoot()

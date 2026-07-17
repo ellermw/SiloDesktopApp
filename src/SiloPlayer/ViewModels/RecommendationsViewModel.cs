@@ -11,6 +11,9 @@ public partial class RecommendationsViewModel : ObservableObject
 {
     private readonly CatalogApi _catalogApi;
     private readonly RecommendationsApi _recommendationsApi;
+    private DateTime _lastLoadedAt = DateTime.MinValue;
+    private bool _loadInProgress;
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     public RecommendationsViewModel(CatalogApi catalogApi, RecommendationsApi recommendationsApi)
     {
@@ -37,53 +40,69 @@ public partial class RecommendationsViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadAsync()
     {
-        if (IsLoading) return;
+        if (_loadInProgress) return;
+        if (Rows.Count > 0 && DateTime.UtcNow - _lastLoadedAt < CacheDuration) return;
 
-        IsLoading = true;
-        IsTasteProfileLoading = true;
-        ErrorMessage = null;
-        Rows.Clear();
-        TasteProfile = null;
+        _loadInProgress = true;
+        var isInitialLoad = Rows.Count == 0;
+        IsLoading = isInitialLoad;
+        IsTasteProfileLoading = TasteProfile == null;
+        if (isInitialLoad)
+            ErrorMessage = null;
 
         try
         {
-            // Load taste profile and recommendation rows in parallel (web parity).
-            var profileTask = LoadTasteProfileAsync();
-            var rowsTask = LoadDiscoverRowsAsync();
+            // Match React Query's behavior: retain the mounted result while a
+            // stale refresh runs, then replace the rows in one UI-thread pass.
+            // This avoids flashing an empty page and rebuilding each row twice.
+            var profileTask = GetTasteProfileAsync();
+            var rowsTask = GetDiscoverRowsAsync();
             await Task.WhenAll(profileTask, rowsTask);
+
+            var profile = await profileTask;
+            var rows = await rowsTask;
+
+            TasteProfile = profile;
+            Rows.Clear();
+            foreach (var row in rows)
+                Rows.Add(row);
+
+            ErrorMessage = null;
+            _lastLoadedAt = DateTime.UtcNow;
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"Recommendations load failed: {ex}");
-            ErrorMessage = "Failed to load recommendations.";
+            if (Rows.Count == 0)
+                ErrorMessage = "Failed to load recommendations.";
         }
         finally
         {
+            _loadInProgress = false;
             IsLoading = false;
-        }
-    }
-
-    private async Task LoadTasteProfileAsync()
-    {
-        try
-        {
-            TasteProfile = await _recommendationsApi.GetTasteProfileAsync();
-        }
-        catch
-        {
-            // Non-fatal: section is just hidden if no profile is available.
-        }
-        finally
-        {
             IsTasteProfileLoading = false;
         }
     }
 
-    private async Task LoadDiscoverRowsAsync()
+    private async Task<TasteProfileResponse?> GetTasteProfileAsync()
+    {
+        try
+        {
+            return await _recommendationsApi.GetTasteProfileAsync();
+        }
+        catch
+        {
+            // Non-fatal: section is just hidden if no profile is available.
+            return TasteProfile;
+        }
+    }
+
+    private async Task<IReadOnlyList<RecommendationRowDisplay>> GetDiscoverRowsAsync()
     {
         try
         {
             var response = await _recommendationsApi.GetDiscoverAsync();
+            var rows = new List<RecommendationRowDisplay>();
 
             foreach (var row in response.Rows)
             {
@@ -99,14 +118,16 @@ public partial class RecommendationsViewModel : ObservableObject
                     displayRow.Items.Add(item);
 
                 if (displayRow.Items.Count > 0)
-                    Rows.Add(displayRow);
+                    rows.Add(displayRow);
             }
+
+            return rows;
         }
         catch (Exception discoverError)
         {
             try
             {
-                await LoadLegacyForYouRowsAsync();
+                return await GetLegacyForYouRowsAsync();
             }
             catch (Exception legacyError)
             {
@@ -115,9 +136,10 @@ public partial class RecommendationsViewModel : ObservableObject
         }
     }
 
-    private async Task LoadLegacyForYouRowsAsync()
+    private async Task<IReadOnlyList<RecommendationRowDisplay>> GetLegacyForYouRowsAsync()
     {
         var response = await _catalogApi.GetRecommendationsAsync();
+        var rows = new List<RecommendationRowDisplay>();
 
         foreach (var row in response.Rows)
         {
@@ -162,8 +184,10 @@ public partial class RecommendationsViewModel : ObservableObject
             }
 
             if (displayRow.Items.Count > 0)
-                Rows.Add(displayRow);
+                rows.Add(displayRow);
         }
+
+        return rows;
     }
 }
 

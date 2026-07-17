@@ -4,8 +4,9 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:SiloPlayer.Controls"
     xmlns:models="using:SiloPlayer.Core.Models.Home"
-    Background="{StaticResource AppBackgroundBrush}">
-    <Grid>
+    Background="{StaticResource AppBackgroundBrush}"
+    SizeChanged="Page_SizeChanged">
+    <Grid x:Name="PageShell" MaxWidth="1400" HorizontalAlignment="Stretch">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -14,7 +15,8 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" Margin="40,24,40,24" ColumnDefinitions="*,Auto">
+        <Grid x:Name="HeaderGrid" Grid.Row="0" Margin="40,24,40,24" ColumnDefinitions="*,Auto" RowSpacing="12">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <StackPanel Spacing="8">
                 <TextBlock x:Name="PageTitleText" Text="Catalog" FontSize="56" FontWeight="Bold"
                            Foreground="{StaticResource PrimaryTextBrush}" />
@@ -29,7 +31,7 @@
             </StackPanel>
         </Grid>
 
-        <StackPanel x:Name="FilterPanel" Grid.Row="1" Margin="40,0,40,18" Orientation="Horizontal" Spacing="10">
+        <controls:WrapPanel x:Name="FilterPanel" Grid.Row="1" Margin="40,0,40,18" HorizontalSpacing="10" VerticalSpacing="10">
             <TextBox x:Name="QueryBox" Visibility="Collapsed" TextChanged="Filter_Changed" />
             <ComboBox x:Name="TypeCombo" Width="190" SelectionChanged="Filter_Changed">
                 <ComboBoxItem Content="All Media" Tag="" IsSelected="True" />
@@ -77,7 +79,7 @@
                     </Border>
                 </StackPanel>
             </Button>
-        </StackPanel>
+        </controls:WrapPanel>
 
         <Border x:Name="LockedFiltersPanel" Grid.Row="1" Margin="40,0,40,18" Padding="16"
                 CornerRadius="8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Visibility="Collapsed">
@@ -89,29 +91,30 @@
 
         <Border x:Name="HistoryActions" Grid.Row="3" Margin="40,0,40,18" Padding="16" CornerRadius="16"
                 Background="{StaticResource SurfaceBrush}" Visibility="Collapsed">
-            <Grid ColumnSpacing="16" ColumnDefinitions="*,Auto">
+            <Grid x:Name="HistoryActionsGrid" ColumnSpacing="16" RowSpacing="12" ColumnDefinitions="*,Auto">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <StackPanel VerticalAlignment="Center" Spacing="3">
                     <TextBlock Text="Watch History" FontSize="15" FontWeight="SemiBold" />
                     <TextBlock Text="Removing items clears watch history, watched status, and resume progress for this profile."
                                FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <controls:WrapPanel x:Name="HistoryButtonsPanel" Grid.Column="1" HorizontalSpacing="8" VerticalSpacing="8" VerticalAlignment="Center">
                     <TextBlock x:Name="SelectedCountText" Text="0 selected" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
                     <Button x:Name="SelectLoadedButton" Content="Select Loaded" Click="SelectLoaded_Click" Visibility="Collapsed" />
                     <Button x:Name="ClearSelectionButton" Content="Clear" Click="ClearSelection_Click" Visibility="Collapsed" />
                     <Button x:Name="RemoveSelectedButton" Content="Remove Selected" Click="RemoveSelected_Click" Visibility="Collapsed" />
                     <Button x:Name="SelectionModeButton" Content="Select" Click="SelectionMode_Click" />
-                </StackPanel>
+                </controls:WrapPanel>
             </Grid>
         </Border>
 
-        <ScrollViewer Grid.Row="4" Padding="40,0,40,28" ViewChanged="CatalogScroll_ViewChanged">
+        <ScrollViewer x:Name="CatalogScrollViewer" Grid.Row="4" Padding="40,0,40,28" ViewChanged="CatalogScroll_ViewChanged">
             <StackPanel Spacing="16">
                 <TextBlock x:Name="ErrorText" Visibility="Collapsed" Foreground="{StaticResource ErrorBrush}"
                            TextWrapping="Wrap" HorizontalAlignment="Center" />
                 <ItemsRepeater x:Name="ItemsRepeater" ElementPrepared="ItemsRepeater_ElementPrepared">
                     <ItemsRepeater.Layout>
-                        <UniformGridLayout MinItemWidth="150" MinItemHeight="260" MinColumnSpacing="12"
+                        <UniformGridLayout x:Name="CatalogGridLayout" MinItemWidth="150" MinItemHeight="260" MinColumnSpacing="12"
                                            MinRowSpacing="16" ItemsStretch="Fill" MaximumRowsOrColumns="8" />
                     </ItemsRepeater.Layout>
                     <ItemsRepeater.ItemTemplate>
@@ -128,23 +131,98 @@
         <controls:SlideSheet x:Name="FiltersSheet" Title="Filters">
             <controls:SlideSheet.SheetContent>
                 <Grid RowDefinitions="Auto,*,Auto" RowSpacing="12">
-                    <StackPanel Spacing="2">
-                        <TextBlock Text="Filters" FontSize="18" FontWeight="SemiBold" />
-                        <TextBlock Text="Refine your catalog results" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
-                    </StackPanel>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Filters" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="Refine your catalog results" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                            <Button x:Name="GuidedModeButton" Content="Guided" Padding="10,5" Click="FilterMode_Click" Tag="guided" />
+                            <Button x:Name="AdvancedModeButton" Content="Advanced" Padding="10,5" Style="{StaticResource OutlineButtonStyle}" Click="FilterMode_Click" Tag="advanced" />
+                        </StackPanel>
+                    </Grid>
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                        <StackPanel Spacing="12" Padding="0,4,8,12">
+                        <Grid Padding="0,4,8,12">
+                        <StackPanel x:Name="GuidedFiltersPanel" Spacing="12">
                             <TextBlock Text="Library" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                             <ComboBox x:Name="LibraryCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
                             <TextBlock Text="Genre" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                             <ComboBox x:Name="GenreCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
+                            <TextBlock Text="Year range" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                                <TextBox x:Name="YearFromBox" PlaceholderText="From" InputScope="Number" TextChanged="Filter_Changed" />
+                                <TextBox x:Name="YearToBox" Grid.Column="1" PlaceholderText="To" InputScope="Number" TextChanged="Filter_Changed" />
+                            </Grid>
+                            <TextBlock Text="Minimum IMDb rating" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="MinimumRatingCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed">
+                                <ComboBoxItem Content="Any rating" Tag="" IsSelected="True" />
+                                <ComboBoxItem Content="5+" Tag="5" /><ComboBoxItem Content="6+" Tag="6" />
+                                <ComboBoxItem Content="7+" Tag="7" /><ComboBoxItem Content="8+" Tag="8" /><ComboBoxItem Content="9+" Tag="9" />
+                            </ComboBox>
                             <TextBlock Text="Content Rating" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                             <ComboBox x:Name="RatingCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
+                            <TextBlock Text="Original Language" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="OriginalLanguageCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
+                            <TextBlock Text="People" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBox x:Name="ActorBox" PlaceholderText="Actor" TextChanged="Filter_Changed" />
+                            <TextBox x:Name="DirectorBox" PlaceholderText="Director" TextChanged="Filter_Changed" />
+                            <TextBox x:Name="WriterBox" PlaceholderText="Writer" TextChanged="Filter_Changed" />
+                            <TextBox x:Name="ProducerBox" PlaceholderText="Producer" TextChanged="Filter_Changed" />
+                            <TextBlock Text="Studio and Network" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="StudioCombo" PlaceholderText="All studios" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
+                            <ComboBox x:Name="NetworkCombo" PlaceholderText="All networks" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
                             <TextBlock Text="Resolution" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                             <ComboBox x:Name="ResolutionCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
+                            <TextBlock Text="Audio Language" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="AudioLanguageCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
                             <TextBlock Text="Country" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                             <ComboBox x:Name="CountryCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
+                            <TextBlock Text="Series status" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="StatusCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed">
+                                <ComboBoxItem Content="Any status" Tag="" IsSelected="True" /><ComboBoxItem Content="Returning Series" Tag="Returning Series" />
+                                <ComboBoxItem Content="Ended" Tag="Ended" /><ComboBoxItem Content="Canceled" Tag="Canceled" />
+                                <ComboBoxItem Content="In Production" Tag="In Production" /><ComboBoxItem Content="Planned" Tag="Planned" />
+                            </ComboBox>
+                            <TextBlock Text="Watch status" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="WatchStatusCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed">
+                                <ComboBoxItem Content="Any" Tag="" IsSelected="True" /><ComboBoxItem Content="Watched" Tag="watched" />
+                                <ComboBoxItem Content="In progress" Tag="in_progress" /><ComboBoxItem Content="Unwatched" Tag="unwatched" />
+                            </ComboBox>
+                            <TextBlock Text="Added in the last" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="AddedInLastCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed">
+                                <ComboBoxItem Content="Any time" Tag="" IsSelected="True" /><ComboBoxItem Content="7 days" Tag="7d" />
+                                <ComboBoxItem Content="30 days" Tag="30d" /><ComboBoxItem Content="90 days" Tag="90d" /><ComboBoxItem Content="1 year" Tag="1y" />
+                            </ComboBox>
+                            <TextBlock Text="Released in the last" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="ReleasedInLastCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed">
+                                <ComboBoxItem Content="Any time" Tag="" IsSelected="True" /><ComboBoxItem Content="30 days" Tag="30d" />
+                                <ComboBoxItem Content="90 days" Tag="90d" /><ComboBoxItem Content="1 year" Tag="1y" /><ComboBoxItem Content="5 years" Tag="5y" />
+                            </ComboBox>
+                            <TextBlock Text="Book and audiobook" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="AuthorCombo" PlaceholderText="All authors" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
+                            <ComboBox x:Name="NarratorCombo" PlaceholderText="All narrators" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
+                            <ComboBox x:Name="SeriesCombo" PlaceholderText="All series" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
+                            <TextBlock Text="Video features" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <controls:WrapPanel HorizontalSpacing="14" VerticalSpacing="8">
+                                <CheckBox x:Name="FourKCheckBox" Content="4K" Click="Filter_Changed" />
+                                <CheckBox x:Name="HdrCheckBox" Content="HDR" Click="Filter_Changed" />
+                                <CheckBox x:Name="DolbyVisionCheckBox" Content="Dolby Vision" Click="Filter_Changed" />
+                            </controls:WrapPanel>
                         </StackPanel>
+                        <StackPanel x:Name="AdvancedFiltersPanel" Spacing="12" Visibility="Collapsed">
+                            <TextBlock Text="Match" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <ComboBox x:Name="AdvancedMatchCombo" SelectionChanged="AdvancedRule_Changed">
+                                <ComboBoxItem Content="All rules" Tag="all" IsSelected="True" />
+                                <ComboBoxItem Content="Any rule" Tag="any" />
+                            </ComboBox>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="Rules" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Add Rule" Click="AddAdvancedRule_Click" />
+                            </Grid>
+                            <StackPanel x:Name="AdvancedRulesPanel" Spacing="8" />
+                            <TextBlock x:Name="NoAdvancedRulesText" Text="No rules defined. Add a rule to build an advanced query." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        </Grid>
                     </ScrollViewer>
                     <Grid Grid.Row="2" ColumnDefinitions="*,Auto">
                         <Button Content="Clear All" Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Left" Click="ClearFilters_Click" />

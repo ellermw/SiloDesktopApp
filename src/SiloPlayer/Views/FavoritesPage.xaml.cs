@@ -14,6 +14,7 @@ public sealed partial class FavoritesPage : Page
     {
         ViewModel = App.Services.GetRequiredService<FavoritesViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
 
         PosterRepeater.ItemsSource = ViewModel.Items;
 

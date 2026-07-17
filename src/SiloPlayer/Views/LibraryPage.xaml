@@ -398,6 +398,7 @@
                         Visibility="Collapsed" />
                 <controls:HeroCarousel
                     x:Name="RecommendedHeroCarousel"
+                    IsTall="True"
                     Margin="0,0,0,24"
                     Visibility="Collapsed" />
                 <controls:NowListeningHero
@@ -438,18 +439,20 @@
         <ScrollViewer
             x:Name="CollectionsPanel"
             Grid.Row="3"
-            Padding="40,0,40,24"
+            Padding="40,56,40,56"
             SizeChanged="CollectionsPanel_SizeChanged"
             Visibility="Collapsed">
             <StackPanel Spacing="24" MaxWidth="1320" HorizontalAlignment="Center">
                 <!-- Collections header (web: page-header) -->
-                <StackPanel Spacing="6">
+                <StackPanel x:Name="CollectionsHeader" Spacing="6" Visibility="Collapsed">
                     <TextBlock
+                        x:Name="CollectionsTitle"
                         Text="Collections"
                         FontSize="48"
                         FontWeight="Bold"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock
+                        x:Name="CollectionsSubtitle"
                         Text="Browse hand-picked shelves and smart lists created for this library."
                         FontSize="14"
                         Foreground="{StaticResource SecondaryTextBrush}" />
@@ -459,9 +462,9 @@
                 <Border
                     x:Name="CollectionsEmptyCard"
                     Background="{StaticResource SurfaceBrush}"
-                    CornerRadius="24"
+                    CornerRadius="32"
                     Padding="40,40"
-                    HorizontalAlignment="Center">
+                    HorizontalAlignment="Stretch">
                     <StackPanel HorizontalAlignment="Center" Spacing="8">
                         <TextBlock
                             Text="No collections yet"
@@ -538,85 +541,101 @@
                     <ScrollViewer x:Name="GuidedFiltersScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto">
                         <StackPanel Spacing="14" Padding="0,4,8,12">
                             <StackPanel x:Name="MediaTypeFilterField" Spacing="6">
-                                <TextBlock Text="Media type" FontSize="12" FontWeight="SemiBold"
+                                <TextBlock Text="Media Type" FontSize="12" FontWeight="SemiBold"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                                 <ComboBox x:Name="MediaTypeComboBox" HorizontalAlignment="Stretch"
                                           SelectionChanged="MediaTypeComboBox_SelectionChanged">
                                     <ComboBoxItem Content="All Media" Tag="" IsSelected="True" />
+                                    <ComboBoxItem Content="Movies &amp; Series" Tag="video" />
                                     <ComboBoxItem Content="Movies" Tag="movie" />
                                     <ComboBoxItem Content="Series" Tag="series" />
                                     <ComboBoxItem Content="Episodes" Tag="episode" />
+                                    <ComboBoxItem Content="Audiobooks" Tag="audiobook" />
+                                    <ComboBoxItem Content="Ebooks" Tag="ebook" />
+                                    <ComboBoxItem Content="Manga" Tag="manga" />
                                 </ComboBox>
                             </StackPanel>
 
                             <StackPanel Spacing="6">
-                                <TextBlock Text="Genre" FontSize="12" FontWeight="SemiBold"
+                                <TextBlock Text="Genres" FontSize="12" FontWeight="SemiBold"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
-                                <ComboBox x:Name="GenreComboBox" HorizontalAlignment="Stretch"
-                                          SelectionChanged="GenreComboBox_SelectionChanged"
-                                          PlaceholderText="All Genres" />
+                                <Button x:Name="GenreMultiSelectButton" HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left" Click="GenreMultiSelect_Click">
+                                    <TextBlock x:Name="GenreMultiSelectText" Text="Select genres..."
+                                               TextTrimming="CharacterEllipsis" />
+                                </Button>
+                                <ComboBox x:Name="GenreComboBox" Visibility="Collapsed"
+                                          SelectionChanged="GenreComboBox_SelectionChanged" />
+                                <TextBlock Text="Items must match all selected genres." FontSize="11"
+                                           Foreground="{StaticResource TertiaryTextBrush}" />
                             </StackPanel>
 
                             <StackPanel Spacing="6">
-                                <TextBlock Text="Content rating" FontSize="12" FontWeight="SemiBold"
+                                <TextBlock Text="Decade" FontSize="12" FontWeight="SemiBold"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
-                                <ComboBox x:Name="ContentRatingComboBox" HorizontalAlignment="Stretch"
-                                          SelectionChanged="ContentRatingComboBox_SelectionChanged"
-                                          PlaceholderText="All Ratings" />
+                                <ComboBox x:Name="DecadeComboBox" HorizontalAlignment="Stretch"
+                                          SelectionChanged="DecadeComboBox_SelectionChanged">
+                                    <ComboBoxItem Content="Custom" Tag="" IsSelected="True" />
+                                    <ComboBoxItem Content="2030s" Tag="2030" />
+                                    <ComboBoxItem Content="2020s" Tag="2020" />
+                                    <ComboBoxItem Content="2010s" Tag="2010" />
+                                    <ComboBoxItem Content="2000s" Tag="2000" />
+                                    <ComboBoxItem Content="1990s" Tag="1990" />
+                                    <ComboBoxItem Content="1980s" Tag="1980" />
+                                    <ComboBoxItem Content="1970s" Tag="1970" />
+                                    <ComboBoxItem Content="1960s" Tag="1960" />
+                                    <ComboBoxItem Content="1950s" Tag="1950" />
+                                    <ComboBoxItem Content="1940s" Tag="1940" />
+                                    <ComboBoxItem Content="1930s" Tag="1930" />
+                                    <ComboBoxItem Content="1920s" Tag="1920" />
+                                    <ComboBoxItem Content="1910s" Tag="1910" />
+                                    <ComboBoxItem Content="1900s" Tag="1900" />
+                                </ComboBox>
                             </StackPanel>
 
                             <StackPanel Spacing="6">
-                                <TextBlock Text="Release year" FontSize="12" FontWeight="SemiBold"
+                                <TextBlock Text="Year From" FontSize="12" FontWeight="SemiBold"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
-                                <Grid ColumnDefinitions="*,Auto,*" ColumnSpacing="8">
-                                    <TextBox x:Name="YearMinBox" Grid.Column="0" PlaceholderText="From"
-                                             TextChanged="YearFilter_TextChanged" InputScope="Number" />
-                                    <TextBlock Grid.Column="1" Text="&#x2013;" VerticalAlignment="Center"
-                                               Foreground="{StaticResource TertiaryTextBrush}" />
-                                    <TextBox x:Name="YearMaxBox" Grid.Column="2" PlaceholderText="To"
-                                             TextChanged="YearFilter_TextChanged" InputScope="Number" />
-                                </Grid>
+                                <TextBox x:Name="YearMinBox" PlaceholderText="e.g. 2000"
+                                         TextChanged="YearFilter_TextChanged" InputScope="Number" />
                             </StackPanel>
 
                             <StackPanel Spacing="6">
-                                <TextBlock Text="Studio" FontSize="12" FontWeight="SemiBold"
+                                <TextBlock Text="Year To" FontSize="12" FontWeight="SemiBold"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
-                                <ComboBox x:Name="StudioComboBox" HorizontalAlignment="Stretch"
-                                          SelectionChanged="StudioComboBox_SelectionChanged"
-                                          PlaceholderText="All Studios" />
+                                <TextBox x:Name="YearMaxBox" PlaceholderText="e.g. 2025"
+                                         TextChanged="YearFilter_TextChanged" InputScope="Number" />
                             </StackPanel>
 
-                            <StackPanel Spacing="6">
-                                <TextBlock Text="Country" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" />
-                                <ComboBox x:Name="CountryComboBox" HorizontalAlignment="Stretch"
-                                          SelectionChanged="CountryComboBox_SelectionChanged"
-                                          PlaceholderText="All Countries" />
-                            </StackPanel>
-
-                            <StackPanel Spacing="6">
-                                <TextBlock Text="Quality" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" />
-                                <ComboBox x:Name="ResolutionComboBox" HorizontalAlignment="Stretch"
-                                          SelectionChanged="ResolutionComboBox_SelectionChanged"
-                                          PlaceholderText="All Quality" />
-                            </StackPanel>
-
-                            <StackPanel Spacing="6">
-                                <TextBlock Text="Audio language" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" />
-                                <ComboBox x:Name="AudioLangComboBox" HorizontalAlignment="Stretch"
-                                          SelectionChanged="AudioLangComboBox_SelectionChanged"
-                                          PlaceholderText="All Audio" />
-                            </StackPanel>
-
-                            <StackPanel x:Name="VideoMetadataFilters" Spacing="14">
+                            <StackPanel x:Name="VideoRatingFilters" Spacing="14">
                                 <StackPanel Spacing="6">
-                                    <TextBlock Text="Minimum IMDb rating" FontSize="12" FontWeight="SemiBold"
+                                    <TextBlock Text="Minimum IMDb Rating" FontSize="12" FontWeight="SemiBold"
                                                Foreground="{StaticResource SecondaryTextBrush}" />
                                     <TextBox x:Name="MinimumRatingBox" PlaceholderText="0.0 - 10.0"
                                              InputScope="Number" TextChanged="AdvancedTextFilter_TextChanged" />
                                 </StackPanel>
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="Content Rating" FontSize="12" FontWeight="SemiBold"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <ComboBox x:Name="ContentRatingComboBox" HorizontalAlignment="Stretch"
+                                              SelectionChanged="ContentRatingComboBox_SelectionChanged"
+                                              PlaceholderText="Select rating..." />
+                                </StackPanel>
+                            </StackPanel>
+
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Original Language" FontSize="12" FontWeight="SemiBold"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                <Button x:Name="OriginalLanguageMultiSelectButton" HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left" Click="OriginalLanguageMultiSelect_Click">
+                                    <TextBlock x:Name="OriginalLanguageMultiSelectText" Text="Select languages..."
+                                               TextTrimming="CharacterEllipsis" />
+                                </Button>
+                                <ComboBox x:Name="OriginalLanguageComboBox" Visibility="Collapsed"
+                                          SelectionChanged="AdvancedComboFilter_SelectionChanged" />
+                            </StackPanel>
+
+                            <StackPanel x:Name="VideoPeopleFilters" Spacing="14">
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Actor" FontSize="12" FontWeight="SemiBold"
                                                Foreground="{StaticResource SecondaryTextBrush}" />
@@ -640,6 +659,13 @@
                                                Foreground="{StaticResource SecondaryTextBrush}" />
                                     <TextBox x:Name="ProducerBox" PlaceholderText="Any producer"
                                              TextChanged="AdvancedTextFilter_TextChanged" />
+                                </StackPanel>
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="Studio" FontSize="12" FontWeight="SemiBold"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <ComboBox x:Name="StudioComboBox" HorizontalAlignment="Stretch"
+                                              SelectionChanged="StudioComboBox_SelectionChanged"
+                                              PlaceholderText="Select studio..." />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Network" FontSize="12" FontWeight="SemiBold"
@@ -672,15 +698,21 @@
                             </StackPanel>
 
                             <StackPanel Spacing="6">
-                                <TextBlock Text="Original language" FontSize="12" FontWeight="SemiBold"
+                                <TextBlock Text="Country" FontSize="12" FontWeight="SemiBold"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
-                                <ComboBox x:Name="OriginalLanguageComboBox" HorizontalAlignment="Stretch"
-                                          PlaceholderText="All Languages"
-                                          SelectionChanged="AdvancedComboFilter_SelectionChanged" />
+                                <ComboBox x:Name="CountryComboBox" HorizontalAlignment="Stretch"
+                                          SelectionChanged="CountryComboBox_SelectionChanged"
+                                          PlaceholderText="Select country..." />
                             </StackPanel>
 
+                            <!-- Kept for restoring older desktop-only saved filters. Current WebUI exposes these through Advanced rules. -->
+                            <ComboBox x:Name="ResolutionComboBox" Visibility="Collapsed"
+                                      SelectionChanged="ResolutionComboBox_SelectionChanged" />
+                            <ComboBox x:Name="AudioLangComboBox" Visibility="Collapsed"
+                                      SelectionChanged="AudioLangComboBox_SelectionChanged" />
+
                             <StackPanel x:Name="MatchStatusFilterField" Spacing="6">
-                                <TextBlock Text="Match status" FontSize="12" FontWeight="SemiBold"
+                                <TextBlock Text="Match Status" FontSize="12" FontWeight="SemiBold"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                                 <ComboBox x:Name="MatchStatusComboBox" HorizontalAlignment="Stretch"
                                           SelectionChanged="AdvancedComboFilter_SelectionChanged">
@@ -704,28 +736,33 @@
                                 </ComboBox>
                             </StackPanel>
 
+                            <StackPanel x:Name="VideoQualityToggles" Spacing="8">
+                                <TextBlock Text="Video Quality" FontSize="12" FontWeight="SemiBold"
+                                           Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,0,2" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <ToggleButton x:Name="FourKToggle" Content="4K" Height="32" Padding="12,0"
+                                                  Checked="AdvancedToggle_Toggled" Unchecked="AdvancedToggle_Toggled" />
+                                    <ToggleButton x:Name="HdrToggle" Content="HDR" Height="32" Padding="12,0"
+                                                  Checked="AdvancedToggle_Toggled" Unchecked="AdvancedToggle_Toggled" />
+                                    <ToggleButton x:Name="DolbyVisionToggle" Content="DOVI" Height="32" Padding="12,0"
+                                                  Checked="AdvancedToggle_Toggled" Unchecked="AdvancedToggle_Toggled" />
+                                </StackPanel>
+                            </StackPanel>
+
                             <StackPanel Spacing="6">
-                                <TextBlock Text="Added in the last" FontSize="12" FontWeight="SemiBold"
+                                <TextBlock Text="Added in the Last" FontSize="12" FontWeight="SemiBold"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBox x:Name="AddedInLastBox" PlaceholderText="Example: 30 days"
                                          TextChanged="AdvancedTextFilter_TextChanged" />
                             </StackPanel>
 
                             <StackPanel Spacing="6">
-                                <TextBlock Text="Released in the last" FontSize="12" FontWeight="SemiBold"
+                                <TextBlock Text="Released in the Last" FontSize="12" FontWeight="SemiBold"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBox x:Name="ReleasedInLastBox" PlaceholderText="Example: 1 year"
                                          TextChanged="AdvancedTextFilter_TextChanged" />
                             </StackPanel>
 
-                            <StackPanel x:Name="VideoQualityToggles" Spacing="4">
-                                <TextBlock Text="Video quality" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,0,2" />
-                                <ToggleSwitch x:Name="FourKToggle" Header="4K" Toggled="AdvancedToggle_Toggled" />
-                                <ToggleSwitch x:Name="HdrToggle" Header="HDR" Toggled="AdvancedToggle_Toggled" />
-                                <ToggleSwitch x:Name="DolbyVisionToggle" Header="Dolby Vision"
-                                              Toggled="AdvancedToggle_Toggled" />
-                            </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
 

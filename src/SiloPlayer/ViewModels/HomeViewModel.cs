@@ -126,6 +126,7 @@ public partial class HomeViewModel : ObservableObject,
     private int _lastDismissedIndex;
 
     private DateTime _lastLoadedAt = DateTime.MinValue;
+    private bool _loadInProgress;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     // F12: maximum number of concurrent per-section fetches. Matches the
@@ -136,7 +137,7 @@ public partial class HomeViewModel : ObservableObject,
     [RelayCommand]
     private async Task LoadAsync()
     {
-        if (IsLoading) return;
+        if (_loadInProgress) return;
 
         // Skip API call if data was loaded recently and we already have content
         if (FeaturedSections.Count + Sections.Count > 0
@@ -145,7 +146,9 @@ public partial class HomeViewModel : ObservableObject,
             return;
         }
 
-        IsLoading = true;
+        _loadInProgress = true;
+        var hadContent = FeaturedSections.Count + Sections.Count > 0;
+        IsLoading = !hadContent;
         ErrorMessage = null;
 
         try
@@ -190,8 +193,15 @@ public partial class HomeViewModel : ObservableObject,
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load home: {ex.Message}";
+            if (!hadContent)
+                ErrorMessage = $"Failed to load home: {ex.Message}";
+            else
+                LocalLog.AppendLine("home_error.txt", $"layout_refresh | {ex.GetType().Name}: {ex.Message}");
             IsLoading = false;
+        }
+        finally
+        {
+            _loadInProgress = false;
         }
     }
 

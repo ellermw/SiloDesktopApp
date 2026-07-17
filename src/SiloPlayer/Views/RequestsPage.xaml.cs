@@ -5,6 +5,7 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Views;
@@ -13,21 +14,30 @@ public sealed partial class RequestsPage : Page
 {
     public RequestsViewModel ViewModel { get; }
     private string _activeTab = "discover";
+    private int _renderedDataVersion = -1;
+    private int _layoutBucket = -1;
+    private double _requestCardWidth = 184;
 
     public RequestsPage()
     {
         ViewModel = App.Services.GetRequiredService<RequestsViewModel>();
         InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Required;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         await ViewModel.LoadCommand.ExecuteAsync(null);
-        Render();
+        if (_renderedDataVersion != ViewModel.DataVersion)
+        {
+            Render();
+            _renderedDataVersion = ViewModel.DataVersion;
+        }
     }
 
     private async void Refresh_Click(object sender, RoutedEventArgs e)
     {
+        ViewModel.InvalidateCache();
         await ViewModel.LoadCommand.ExecuteAsync(null);
         Render();
     }
@@ -117,7 +127,8 @@ public sealed partial class RequestsPage : Page
 
     private void Render()
     {
-        LoadingSkeleton.Visibility = ViewModel.IsLoading || ViewModel.IsSearching
+        var busy = ViewModel.IsLoading || ViewModel.IsSearching;
+        LoadingSkeleton.Visibility = busy
             ? Visibility.Visible : Visibility.Collapsed;
         var pageError = !ViewModel.RequestsEnabled ? "Requests are disabled on this server."
             : string.IsNullOrWhiteSpace(ViewModel.SearchQuery) ? ViewModel.ErrorMessage ?? "" : "";
@@ -127,11 +138,21 @@ public sealed partial class RequestsPage : Page
         YoursCountText.Text = ViewModel.MyRequests.Count.ToString("N0");
         YoursCountBadge.Visibility = ViewModel.MyRequests.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
+        // Preserve the mounted cards while a request or search is in flight.
+        // The skeleton covers the content state; rebuilding the hidden rows here
+        // caused a visible hitch before and after every search.
+        if (busy)
+        {
+            UpdateTabState();
+            return;
+        }
+
         BuildMyRequests();
         BuildSearchResults();
         BuildDiscovery();
         BuildBrands();
         UpdateTabState();
+        _renderedDataVersion = ViewModel.DataVersion;
     }
 
     private void BuildMyRequests()
@@ -264,12 +285,12 @@ public sealed partial class RequestsPage : Page
 
     private FrameworkElement BuildMediaPosterCard(RequestMediaResult result)
     {
-        var card = new StackPanel { Width = 150, Spacing = 6, Tag = new RequestDetailNavigation(result.MediaType, result.TmdbId) };
+        var card = new StackPanel { Width = _requestCardWidth, Spacing = 6, Tag = new RequestDetailNavigation(result.MediaType, result.TmdbId) };
         card.Tapped += RequestCard_Tapped;
-        var image = new Image { Width = 150, Height = 225, Stretch = Stretch.UniformToFill };
+        var image = new Image { Width = _requestCardWidth, Height = _requestCardWidth * 1.5, Stretch = Stretch.UniformToFill };
         if (!string.IsNullOrWhiteSpace(result.PosterUrl))
             image.Source = new BitmapImage(new Uri(result.PosterUrl));
-        var poster = new Grid { Width = 150, Height = 225 };
+        var poster = new Grid { Width = _requestCardWidth, Height = _requestCardWidth * 1.5 };
         poster.Children.Add(new Border { CornerRadius = new CornerRadius(8), Background = Brush("CardBackgroundBrush"), Child = image });
         var ribbonLabel = !string.IsNullOrWhiteSpace(result.Request.Status) ? FormatStatus(result.Request.Status)
             : result.Availability == "available" ? "In library"
@@ -387,11 +408,11 @@ public sealed partial class RequestsPage : Page
 
     private FrameworkElement BuildRequestPosterCard(MediaRequest request)
     {
-        var panel = new StackPanel { Width = 180, Spacing = 6, Tag = new RequestDetailNavigation(request.MediaType, request.TmdbId) };
+        var panel = new StackPanel { Width = _requestCardWidth, Spacing = 6, Tag = new RequestDetailNavigation(request.MediaType, request.TmdbId) };
         panel.Tapped += RequestCard_Tapped;
-        var image = new Image { Width = 180, Height = 270, Stretch = Stretch.UniformToFill };
+        var image = new Image { Width = _requestCardWidth, Height = _requestCardWidth * 1.5, Stretch = Stretch.UniformToFill };
         if (!string.IsNullOrWhiteSpace(request.PosterPath)) image.Source = new BitmapImage(new Uri($"https://image.tmdb.org/t/p/w342{request.PosterPath}"));
-        var poster = new Grid { Width = 180, Height = 270 };
+        var poster = new Grid { Width = _requestCardWidth, Height = _requestCardWidth * 1.5 };
         poster.Children.Add(new Border { CornerRadius = new CornerRadius(9), Background = Brush("CardBackgroundBrush"), Child = image });
         var failed = request.Outcome is "declined" or "cancelled" or "failed";
         var label = failed ? FormatOutcome(request.Outcome) : FormatStatus(request.Status);
@@ -546,4 +567,48 @@ public sealed partial class RequestsPage : Page
 
     private static string FormatDate(string value)
         => DateTime.TryParse(value, out var dt) ? DateTimeDisplay.FormatDate(new DateTimeOffset(dt), medium: true) : value;
+
+    private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var width = e.NewSize.Width;
+        if (width <= 0) return;
+
+        var gutter = width < 640 ? 16d
+            : width < 1024 ? 24d
+            : width < 1280 ? 40d
+            : 48d;
+        PageContent.Padding = new Thickness(gutter, width < 640 ? 24 : 32, gutter, 48);
+        PageTitleText.FontSize = width < 640 ? 29 : width < 1024 ? 36 : 42;
+
+        var compact = width < 640;
+        Grid.SetRow(MediaTypeComboBox, 0);
+        Grid.SetColumn(MediaTypeComboBox, compact ? 0 : 0);
+        Grid.SetColumnSpan(MediaTypeComboBox, compact ? 3 : 1);
+        Grid.SetRow(SearchInputGrid, compact ? 1 : 0);
+        Grid.SetColumn(SearchInputGrid, compact ? 0 : 1);
+        Grid.SetColumnSpan(SearchInputGrid, compact ? 3 : 1);
+        Grid.SetRow(SearchButton, compact ? 2 : 0);
+        Grid.SetColumn(SearchButton, compact ? 0 : 2);
+        Grid.SetColumnSpan(SearchButton, compact ? 3 : 1);
+        SearchButton.HorizontalAlignment = compact ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+
+        var guideCompact = width < 900;
+        for (var i = 0; i < StatusGuideGrid.Children.Count; i++)
+        {
+            if (StatusGuideGrid.Children[i] is not FrameworkElement child) continue;
+            Grid.SetRow(child, guideCompact ? i : 0);
+            Grid.SetColumn(child, guideCompact ? 0 : i);
+            Grid.SetColumnSpan(child, guideCompact ? 3 : 1);
+        }
+
+        var bucket = width < 640 ? 0 : width < 1024 ? 1 : 2;
+        _requestCardWidth = bucket switch { 0 => 148, 1 => 164, _ => 184 };
+        if (_layoutBucket != bucket)
+        {
+            var hadLayout = _layoutBucket >= 0;
+            _layoutBucket = bucket;
+            if (hadLayout && IsLoaded && _renderedDataVersion >= 0)
+                Render();
+        }
+    }
 }

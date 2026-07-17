@@ -32,6 +32,17 @@ public class RequestMediaResult
     public RequestState Request { get; set; } = new();
     [JsonIgnore] public string? PosterUrl => string.IsNullOrWhiteSpace(PosterPath) ? null : $"https://image.tmdb.org/t/p/w342{PosterPath}";
     [JsonIgnore] public string YearText => Year is > 0 ? Year.Value.ToString() : "";
+    [JsonIgnore] public string DisplayMeta
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (Year is > 0) parts.Add(Year.Value.ToString());
+            parts.Add(string.Equals(MediaType, "series", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie");
+            if (VoteAverage is > 0) parts.Add($"\u2605 {VoteAverage.Value:0.0}");
+            return string.Join(" \u00B7 ", parts);
+        }
+    }
     [JsonIgnore] public string RequestLabel => Request.Requestable ? "Request" : Request.Status switch { "pending" => "Pending", "approved" => "Approved", "queued" => "Queued", "downloading" => "Downloading", "completed" => "Completed", _ => Availability == "available" ? "Available" : "Unavailable" };
 }
 

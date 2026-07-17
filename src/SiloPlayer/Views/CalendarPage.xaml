@@ -8,7 +8,8 @@
     xmlns:converters="using:SiloPlayer.Converters"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}"
-    Loaded="Page_Loaded">
+    Loaded="Page_Loaded"
+    SizeChanged="Page_SizeChanged">
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
@@ -157,7 +158,8 @@
             <StackPanel Padding="0,0,0,32">
 
                 <!-- ===== Header: Title + filter pills + library dropdown ===== -->
-                <Grid Margin="48,28,48,20">
+                <Grid x:Name="HeaderGrid" Margin="48,28,48,20" RowSpacing="12">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
@@ -171,14 +173,14 @@
                             Foreground="{StaticResource PrimaryTextBrush}" />
                     </StackPanel>
 
-                    <StackPanel Grid.Column="1"
+                    <StackPanel x:Name="HeaderActions" Grid.Column="1"
                                 Orientation="Horizontal"
                                 Spacing="10"
                                 VerticalAlignment="Center">
                         <!-- Filter pill group — outer wrapper height = 32 (pill) + 2*4 (padding)
                              = 40. Outer radius 20 is exactly half so ends are semicircles.
                              Inner pills at radius 16 nest neatly inside the 4px padding. -->
-                        <Border
+                        <Border x:Name="PresetPillGroup"
                             Background="{StaticResource SurfaceRaisedBrush}"
                             BorderBrush="{StaticResource BorderBrush}"
                             BorderThickness="1"
@@ -204,6 +206,16 @@
                             </StackPanel>
                         </Border>
 
+                        <ComboBox
+                            x:Name="CompactPresetComboBox"
+                            Style="{StaticResource LibraryComboBoxStyle}"
+                            Visibility="Collapsed"
+                            SelectionChanged="CompactPresetComboBox_SelectionChanged">
+                            <ComboBoxItem Content="Following" Tag="following" IsSelected="True" />
+                            <ComboBoxItem Content="Trending" Tag="trending" />
+                            <ComboBoxItem Content="All" Tag="everything" />
+                        </ComboBox>
+
                         <!-- Library dropdown (hidden when <= 1 library) -->
                         <ComboBox
                             x:Name="LibraryComboBox"
@@ -222,6 +234,7 @@
                      are left-aligned in col 2, so they hug the day strip instead
                      of being pushed to the container edges. -->
                 <Border
+                    x:Name="WeekNavigatorBorder"
                     Margin="48,0,48,24"
                     Padding="16,12"
                     CornerRadius="16"
@@ -281,15 +294,15 @@
                 </Border>
 
                 <!-- Inline loading indicator under the navigator -->
-                <ProgressRing
-                    IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                <StackPanel
+                    x:Name="CalendarLoadingSkeleton"
                     Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                    Width="32" Height="32"
+                    Spacing="24"
                     Margin="0,8,0,16"
-                    HorizontalAlignment="Center" />
+                    HorizontalAlignment="Stretch" />
 
                 <!-- ===== Day groups (populated from code-behind) ===== -->
-                <StackPanel x:Name="DaysPanel" Spacing="32" />
+                <StackPanel x:Name="DaysPanel" Spacing="32" Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}" />
 
                 <!-- Empty state -->
                 <StackPanel

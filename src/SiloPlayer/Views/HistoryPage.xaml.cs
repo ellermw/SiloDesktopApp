@@ -12,16 +12,29 @@ public sealed partial class HistoryPage : Page
     public HistoryViewModel ViewModel { get; }
     private readonly HashSet<string> _selectedIds = [];
     private bool _selectionMode;
+    private bool _cardBuildQueued;
 
     public HistoryPage()
     {
         ViewModel = App.Services.GetRequiredService<HistoryViewModel>();
         this.InitializeComponent();
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
 
         ViewModel.Items.CollectionChanged += (_, _) =>
         {
-            DispatcherQueue.TryEnqueue(BuildCards);
+            QueueCardBuild();
         };
+    }
+
+    private void QueueCardBuild()
+    {
+        if (_cardBuildQueued) return;
+        _cardBuildQueued = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _cardBuildQueued = false;
+            BuildCards();
+        });
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)

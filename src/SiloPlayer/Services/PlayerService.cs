@@ -324,7 +324,12 @@ public class PlayerService : IDisposable
                 () => App.MainWindowInstance?.ShowLoadingOverlay());
             var seekPaused = forceResume ? false : wasPaused;
             manager.UpdatePosition(ToSessionPosition(mediaPosition), seekPaused);
-            await ReportSeekProgressAsync(mediaPosition, seekPaused).ConfigureAwait(false);
+            // Progress persistence is not part of the transport dependency
+            // chain. Waiting on this request before restarting a remux/HLS
+            // stream adds network latency (and up to the full timeout) to
+            // every out-of-window seek. Mirror local seeks: report in the
+            // background while preparing the replacement transport now.
+            _ = ReportSeekProgressAsync(mediaPosition, seekPaused);
 
             PreparedPlaybackTransport prepared;
             if (plan.TransportKind == PlaybackTransportKind.RemuxProgressive)
@@ -605,7 +610,10 @@ public class PlayerService : IDisposable
         else if (_activeHlsRecipe?.SubtitleBurnIn == true)
             await SetBitmapSubtitleBurnInAsync(null);
         else
+        {
+            ClearEmbeddedSubtitleWindows();
             _mpv?.SetSubtitleTrack(mpvTrackIndex);
+        }
 
         var key = GetPrefsKey();
         if (string.IsNullOrEmpty(key)) return;
@@ -1244,7 +1252,8 @@ public class PlayerService : IDisposable
         int? fileId = null,
         int? audioTrackIndex = null,
         int? subtitleSelection = null,
-        double? startPositionOverride = null)
+        double? startPositionOverride = null,
+        WatchDetailResponse? prefetchedWatchDetail = null)
     {
         if (_closing)
             return;
@@ -1272,6 +1281,7 @@ public class PlayerService : IDisposable
                 audioTrackIndex,
                 subtitleSelection,
                 startPositionOverride,
+                prefetchedWatchDetail,
                 ownerCts.Token);
         }
         catch (OperationCanceledException) when (ownerCts.IsCancellationRequested)
@@ -1300,6 +1310,7 @@ public class PlayerService : IDisposable
         int? audioTrackIndex,
         int? subtitleSelection,
         double? startPositionOverride,
+        WatchDetailResponse? prefetchedWatchDetail,
         CancellationToken requestToken)
     {
         ClearLiveSubtitleTranslation(restorePreviousSubtitle: false);
@@ -1376,7 +1387,10 @@ public class PlayerService : IDisposable
             _playbackManager = new PlaybackManager(_playbackApi, _catalogApi, _authService, _apiClient, passthrough);
             _playbackManager.ProgressReportingFailed += OnProgressReportingFailed;
 
-            var watchDetail = await FetchWatchDetailAsync(contentId, requestToken);
+            var watchDetail = prefetchedWatchDetail != null &&
+                              string.Equals(prefetchedWatchDetail.ContentId, contentId, StringComparison.Ordinal)
+                ? prefetchedWatchDetail
+                : await FetchWatchDetailAsync(contentId, requestToken);
             SetTitleFromWatchDetail(watchDetail);
             IsAudiobook = watchDetail.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase);
             if (IsAudiobook)
@@ -1687,6 +1701,11 @@ public class PlayerService : IDisposable
         mpv.SetProperty("audio-spdif", bitstream ? "ac3,eac3,dts-hd,truehd" : "");
         mpv.SetProperty("audio-exclusive", bitstream ? "yes" : "no");
         mpv.SetProperty("audio-channels", bitstream ? "auto" : "auto-safe");
+        // display-resample continuously adjusts PCM audio timing to the
+        // monitor clock. Compressed HDMI bitstreams cannot be resampled, so
+        // using it with TrueHD/Atmos or DTS-HD can disable passthrough or
+        // cause unstable output. Let audio own the clock in passthrough mode.
+        mpv.SetProperty("video-sync", bitstream ? "audio" : "display-resample");
     }
 
     private async Task MonitorFileLoadAsync(
@@ -2165,7 +2184,26 @@ public class PlayerService : IDisposable
             var requested = version.SubtitleTracks?.ElementAtOrDefault(explicitSelection.Value);
             if (requested != null)
             {
-                selectedTrack = session.SubtitleUrls.FirstOrDefault(track =>
+                // Watch detail inventories embedded tracks first and external
+                // tracks second, while playback/start advertises external URLs
+                // first. Resolve the explicit choice within its source group
+                // before falling back to its signature, otherwise duplicate
+                // English tracks can silently select the wrong source.
+                var requestedSource = requested.External == true ? "external" : "embedded";
+                var sourceInventory = version.SubtitleTracks?
+                    .Where(candidate => (candidate.External == true) == (requested.External == true))
+                    .ToList() ?? [];
+                var sourceOrdinal = sourceInventory.IndexOf(requested);
+                if (sourceOrdinal >= 0)
+                {
+                    selectedTrack = session.SubtitleUrls
+                        .Where(track => string.Equals(track.Source, requestedSource, StringComparison.OrdinalIgnoreCase))
+                        .OrderBy(track => track.Index)
+                        .ElementAtOrDefault(sourceOrdinal);
+                }
+
+                selectedTrack ??= session.SubtitleUrls.FirstOrDefault(track =>
+                    string.Equals(track.Source, requestedSource, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(track.Language, requested.Language, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(track.Codec, requested.Codec, StringComparison.OrdinalIgnoreCase) &&
                     (string.IsNullOrWhiteSpace(requested.Title) ||
@@ -3366,6 +3404,7 @@ public class PlayerService : IDisposable
 
     private sealed class EmbeddedSubWindow
     {
+        public int ServerTrackIndex { get; set; }
         public int Sid { get; set; }
         public string BaseUrl { get; set; } = "";
         public string? Label { get; set; }
@@ -3398,6 +3437,15 @@ public class PlayerService : IDisposable
         var codec = track.Codec?.ToLowerInvariant() ?? "";
         return codec is "dvdsub" or "dvd_subtitle" or "vobsub" or "dvbsub" or "dvb_subtitle";
     }
+
+    private static bool IsPgsSubtitle(SubtitleTrackInfo track)
+    {
+        var codec = track.Codec?.ToLowerInvariant() ?? "";
+        return codec is "pgs" or "hdmv_pgs_subtitle" or "sup";
+    }
+
+    private bool CanUseNativeEmbeddedSubtitleTrack()
+        => _activeTransportPlan?.TransportKind == PlaybackTransportKind.DirectProgressive;
 
     /// <summary>
     /// DVD/VOBSUB and DVB bitmap tracks have no usable sidecar representation.
@@ -3525,6 +3573,7 @@ public class PlayerService : IDisposable
         if (_mpv == null) return;
         if (serverTrackIndex < 0)
         {
+            ClearEmbeddedSubtitleWindows();
             if (persist)
                 await SetSubtitleTrackAndPersistAsync(0, null, null);
             else
@@ -3566,10 +3615,22 @@ public class PlayerService : IDisposable
             return;
         }
 
-        if (string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase) &&
+            CanUseNativeEmbeddedSubtitleTrack())
         {
             var sid = ResolveNativeEmbeddedSid(track);
             _mpv.SetSubtitleTrack(sid > 0 ? sid : track.Index + 1);
+            return;
+        }
+
+        // Remux/HLS transports do not carry the source file's embedded
+        // subtitle streams. Load Silo's advertised sidecar instead. Text
+        // extraction is intentionally windowed by the server, so keep a
+        // bounded window around the playhead and slide it before it expires.
+        // PGS is delivered as a complete .sup sidecar and needs no windowing.
+        if (string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase))
+        {
+            SelectEmbeddedSubtitleSidecar(track);
             return;
         }
 
@@ -3588,6 +3649,65 @@ public class PlayerService : IDisposable
         _mpv.AddSubtitle(pair.Value.FullUrl, label, track.Language, select: true);
         var selectedSid = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
         _loadedExternalSubtitleSids[track.Index] = selectedSid;
+    }
+
+    private void SelectEmbeddedSubtitleSidecar(SubtitleTrackInfo track)
+    {
+        if (_mpv == null) return;
+
+        var existing = _embeddedSubWindows.FirstOrDefault(window => window.ServerTrackIndex == track.Index);
+        if (existing != null)
+        {
+            _mpv.SetSubtitleTrack(existing.Sid);
+            return;
+        }
+
+        var pair = _playbackManager?.GetSubtitleUrls()
+            .FirstOrDefault(candidate => candidate.Track.Index == track.Index);
+        if (pair == null || string.IsNullOrWhiteSpace(pair.Value.FullUrl))
+            return;
+
+        ClearEmbeddedSubtitleWindows();
+        var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language ?? "Unknown";
+        if (IsPgsSubtitle(track))
+        {
+            if (_loadedExternalSubtitleSids.TryGetValue(track.Index, out var loadedSid))
+            {
+                _mpv.SetSubtitleTrack(loadedSid);
+                return;
+            }
+            _mpv.AddSubtitle(pair.Value.FullUrl, label, track.Language, select: true);
+            _loadedExternalSubtitleSids[track.Index] = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
+            return;
+        }
+
+        var windowStart = Math.Max(0, CurrentMediaPosition - 30);
+        var windowUrl = AppendPositionDuration(pair.Value.FullUrl, windowStart, SubtitleWindowDurationSeconds);
+        _mpv.AddSubtitle(windowUrl, label, track.Language, select: true);
+        var sid = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
+        _embeddedSubWindows.Add(new EmbeddedSubWindow
+        {
+            ServerTrackIndex = track.Index,
+            Sid = sid,
+            BaseUrl = pair.Value.FullUrl,
+            Label = label,
+            Language = track.Language,
+            WindowStart = windowStart,
+            WindowDuration = SubtitleWindowDurationSeconds,
+        });
+    }
+
+    private void ClearEmbeddedSubtitleWindows()
+    {
+        if (_mpv != null)
+        {
+            foreach (var window in _embeddedSubWindows)
+            {
+                try { _mpv.RemoveSubtitle(window.Sid); }
+                catch { }
+            }
+        }
+        _embeddedSubWindows.Clear();
     }
 
     private int ResolveNativeEmbeddedSid(SubtitleTrackInfo track)
@@ -3644,7 +3764,8 @@ public class PlayerService : IDisposable
             try
             {
                 _mpv.RemoveSubtitle(win.Sid);
-                _mpv.AddSubtitle(newUrl, win.Label, win.Language);
+                _mpv.AddSubtitle(newUrl, win.Label, win.Language, select: true);
+                win.Sid = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
                 win.WindowStart = newStart;
                 win.WindowDuration = SubtitleWindowDurationSeconds;
             }
@@ -4915,9 +5036,7 @@ public class PlayerService : IDisposable
 
         var baseUrl = _apiClient.BaseUrl;
         var sessionId = _playbackManager.SessionId;
-        var token = _apiClient.AccessToken;
-
-        var socket = new PlaybackWebSocket(baseUrl, sessionId, token);
+        var socket = new PlaybackWebSocket(baseUrl, sessionId, () => _apiClient.AccessToken);
         socket.CommandReceived += HandleWebSocketCommand;
         socket.EventReceived += HandleWebSocketEvent;
         _webSocket = socket;
@@ -5406,7 +5525,12 @@ public class PlayerService : IDisposable
             case "set_volume":
                 var vol = cmd.GetNumber("volume", "level");
                 if (vol == null) return Complete(new CommandResult { Status = "rejected", Error = "missing_volume" });
-                _mpv?.SetVolume(Math.Min(100, Math.Max(0, vol.Value * 100)));
+                var normalizedVolume = Math.Min(1, Math.Max(0, vol.Value));
+                _mpv?.SetVolume(normalizedVolume * 100);
+                // Match the WebUI command contract: a positive remote volume
+                // also restores audible output when the player was muted.
+                if (normalizedVolume > 0)
+                    _mpv?.SetMute(false);
                 return Complete(new CommandResult());
 
             case "display_message":
