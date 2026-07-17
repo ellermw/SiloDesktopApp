@@ -55,10 +55,13 @@ public sealed class UpgradeAuthenticationRegressionTests
     public void UpgradeClosesOldProcessAndApplicationRejectsConcurrentSessionOwner()
     {
         var installer = ReadRepoFile("installer", "SiloInstaller.iss");
+        var installerBuild = ReadRepoFile("installer", "build.ps1");
         var app = ReadRepoFile("src", "SiloPlayer", "App.xaml.cs");
 
         Assert.Contains("CloseApplications=force", installer);
         Assert.Contains("RestartApplications=no", installer);
+        Assert.Contains("SiloInstaller-Windows-x64.exe", installerBuild);
+        Assert.Contains("Stable installer alias does not match", installerBuild);
         Assert.Contains("SiloDesktopPlayer-6F4EE0EA-4DA3-49D0-940D-461F977BA343", app);
         Assert.Contains("secondary_instance_blocked", app);
     }
@@ -76,6 +79,46 @@ public sealed class UpgradeAuthenticationRegressionTests
         Assert.Contains("attempt <= 2", hardened);
         Assert.Contains("refresh_terminal", hardened);
         Assert.Contains("CompleteAutoLoginAsync", hardened);
+    }
+
+    [Fact]
+    public void ProfileTransitionCannotBeBlockedBySupplementalShellInitialization()
+    {
+        var mainWindow = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
+        var profilePage = ReadRepoFile("src", "SiloPlayer", "Views", "ProfileSelectPage.xaml.cs");
+        var showStart = mainWindow.IndexOf("public void ShowMainNavigation()", StringComparison.Ordinal);
+        var showEnd = mainWindow.IndexOf("private void AudiobookAccelerator_Invoked", StringComparison.Ordinal);
+        var showNavigation = mainWindow[showStart..showEnd];
+
+        Assert.Contains("TryEnterAuthenticatedPage", mainWindow);
+        Assert.Contains("RunShellWorkAsync", showNavigation);
+        Assert.Contains("TryShellAction", showNavigation);
+        Assert.Contains("LoadShellNavigationAsync", showNavigation);
+        Assert.DoesNotContain("_ = Task.Run", showNavigation);
+        Assert.Contains("navigation_errors.txt", mainWindow);
+        Assert.Contains("Resources.TryGetValue(\"AccentBrush\"", mainWindow);
+        Assert.Contains("TryEnterAuthenticatedPage(typeof(HomePage)", profilePage);
+        Assert.Contains("taste_seed_fallback_to_home", profilePage);
+        Assert.Contains("navigation_errors.txt", profilePage);
+        Assert.DoesNotContain("ex.StackTrace", profilePage);
+    }
+
+    [Fact]
+    public void ThemeSynchronizationCannotBlockSessionRestoreOrProfileSelection()
+    {
+        var mainWindow = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
+        var profileViewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "ProfileSelectViewModel.cs");
+        var restoreStart = mainWindow.IndexOf("private async Task<bool> CompleteAutoLoginAsync", StringComparison.Ordinal);
+        var restoreEnd = mainWindow.IndexOf("private bool _navInitialized", StringComparison.Ordinal);
+        var restore = mainWindow[restoreStart..restoreEnd];
+        var activateStart = profileViewModel.IndexOf("private async Task ActivateProfileAsync", StringComparison.Ordinal);
+        var activate = profileViewModel[activateStart..];
+
+        Assert.DoesNotContain("SyncFromServerAsync", restore);
+        Assert.DoesNotContain("SyncFromServerAsync", activate);
+        Assert.Contains("TryEnterAuthenticatedPage", restore);
+        Assert.Contains("SyncThemeAfterNavigationAsync", mainWindow);
+        Assert.Contains("RunShellWorkAsync(\"theme_sync\"", mainWindow);
     }
 
     private static string ReadRepoFile(params string[] parts)

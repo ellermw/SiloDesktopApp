@@ -761,16 +761,8 @@ public sealed partial class MainWindow : Window
         settings.LastProfileId = selectedProfile.Id;
         server.LastUsed = DateTime.UtcNow;
         _settingsService.Save(settings);
-        try
-        {
-            await _themeService.SyncFromServerAsync(cancellationToken);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            LocalLog.AppendLine("auth_startup.txt", $"theme_sync_skipped | type={ex.GetType().Name}");
-        }
-        ShowMainNavigation();
-        NavigateToHome();
+        if (!TryEnterAuthenticatedPage(typeof(HomePage), null, out var navigationFailure))
+            throw new InvalidOperationException("The authenticated home page could not be opened.", navigationFailure);
         return true;
     }
 
@@ -790,54 +782,86 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        NavView.IsPaneVisible = true;
+        // None of the shell decoration below is allowed to invalidate a
+        // successful profile selection or page navigation. Themes, plugin
+        // links, library pins, and player prewarming are all supplemental.
+        TryShellAction("shell_visibility", () =>
+        {
+            NavView.IsPaneVisible = true;
 
-        // Always update admin button and profile display for current user
-        bool isAdmin = AuthorizationPolicy.IsActingAdmin(_authService);
-        AdminButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
-        // Server Activity button uses the exact same gate as the admin sidebar
-        // button — whatever decision is made here for AdminButton applies to
-        // MainServerActivityButton too. Keeps the two controls in lock-step
-        // regardless of login/logout/navigation timing.
-        MainServerActivityButton.SetHostVisibility(isAdmin);
-        _ = UpdateProfileDisplayAsync();
-        BuildThemeDots();
-        _ = RefreshPluginAppsAsync();
+            // Always update admin button and profile display for current user.
+            bool isAdmin = AuthorizationPolicy.IsActingAdmin(_authService);
+            AdminButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
+            MainServerActivityButton.SetHostVisibility(isAdmin);
+        });
+        _ = RunShellWorkAsync("profile_display", UpdateProfileDisplayAsync);
+        TryShellAction("theme_switcher", BuildThemeDots);
+        _ = RunShellWorkAsync("plugin_navigation", RefreshPluginAppsAsync);
 
         // Build the hidden native video host only after authentication and
         // profile selection, at low dispatcher priority. This keeps the first
         // page paint responsive while removing libmpv cold-start work from the
         // user's first Play click.
-        DispatcherQueue.TryEnqueue(
-            Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
-            () => _playerService.Prewarm());
+        TryShellAction("player_prewarm_queue", () =>
+            DispatcherQueue.TryEnqueue(
+                Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                () => TryShellAction("player_prewarm", () => _playerService.Prewarm())));
 
         if (!_navInitialized)
         {
             _navInitialized = true;
 
-            // Load libraries on first init, then fetch sidebar pins so the
-            // library nav renders pinned collections underneath each library.
-            _ = Task.Run(async () =>
-            {
-                await _viewModel.LoadLibrariesCommand.ExecuteAsync(null);
-                DispatcherQueue.TryEnqueue(async () => await RefreshSidebarPinsAsync());
-            });
-
             // Watch for library changes to update nav (marshal to UI thread)
             _viewModel.Libraries.CollectionChanged += (_, _) =>
             {
-                DispatcherQueue.TryEnqueue(() => UpdateLibraryNavItems());
+                DispatcherQueue.TryEnqueue(() => TryShellAction("library_navigation_rebuild", UpdateLibraryNavItems));
             };
         }
-        else
+
+        // Start on the UI context so ObservableCollection changes remain on
+        // the owning dispatcher after awaited network requests. Task.Run here
+        // previously let sidebar loading race the profile transition.
+        _ = RunShellWorkAsync("library_navigation_load", LoadShellNavigationAsync);
+    }
+
+    private async Task LoadShellNavigationAsync()
+    {
+        await _viewModel.LoadLibrariesCommand.ExecuteAsync(null);
+        if (!CanExposeAuthenticatedNavigation)
+            return;
+
+        await RefreshSidebarPinsAsync();
+    }
+
+    private async Task RunShellWorkAsync(string stage, Func<Task> work)
+    {
+        try
         {
-            _ = Task.Run(async () =>
-            {
-                await _viewModel.LoadLibrariesCommand.ExecuteAsync(null);
-                DispatcherQueue.TryEnqueue(async () => await RefreshSidebarPinsAsync());
-            });
+            await work();
         }
+        catch (Exception ex)
+        {
+            LogNavigationFailure(stage, ex);
+        }
+    }
+
+    private static void TryShellAction(string stage, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            LogNavigationFailure(stage, ex);
+        }
+    }
+
+    private static void LogNavigationFailure(string stage, Exception exception)
+    {
+        LocalLog.AppendLine(
+            "navigation_errors.txt",
+            $"{stage} | {exception.GetType().FullName}: {exception.Message}{Environment.NewLine}{exception}");
     }
 
     private void AudiobookAccelerator_Invoked(
@@ -1114,8 +1138,49 @@ public sealed partial class MainWindow : Window
 
     public void NavigateToHome()
     {
-        _navigationService.Navigate<HomePage>();
+        if (!_navigationService.Navigate<HomePage>())
+            throw new InvalidOperationException("The navigation frame rejected the Home page.");
         NavView.SelectedItem = HomeNavItem;
+    }
+
+    public bool TryEnterAuthenticatedPage(Type pageType, object? parameter, out Exception? failure)
+    {
+        failure = null;
+        if (!CanExposeAuthenticatedNavigation)
+        {
+            failure = new InvalidOperationException("An authenticated profile is required before opening this page.");
+            LogNavigationFailure("authenticated_page_guard", failure);
+            HideMainNavigation();
+            return false;
+        }
+
+        try
+        {
+            if (!_navigationService.Navigate(pageType, parameter))
+                throw new InvalidOperationException($"The navigation frame rejected {pageType.Name}.");
+
+            if (pageType == typeof(HomePage))
+                NavView.SelectedItem = HomeNavItem;
+
+            // Reveal and hydrate the shell only after the destination page is
+            // alive. Supplemental shell failures are isolated and logged by
+            // ShowMainNavigation and cannot undo this navigation.
+            ShowMainNavigation();
+            _ = RunShellWorkAsync("theme_sync", SyncThemeAfterNavigationAsync);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+            LogNavigationFailure($"authenticated_page_{pageType.Name}", ex);
+            return false;
+        }
+    }
+
+    private async Task SyncThemeAfterNavigationAsync()
+    {
+        await _themeService.SyncFromServerAsync();
+        TryShellAction("theme_switcher_refresh", BuildThemeDots);
     }
 
     public void UpdateLibraryNavItems()
@@ -1470,6 +1535,15 @@ public sealed partial class MainWindow : Window
         ThemeDotsPanel.Children.Clear();
         ThemeDotsPanel.Visibility = Visibility.Visible;
 
+        var fallbackAccent = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor("#e8e8ec"));
+        var fallbackBorder = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor("#34343a"));
+        var accentBrush = Application.Current.Resources.TryGetValue("AccentBrush", out var accentResource)
+            ? accentResource as Microsoft.UI.Xaml.Media.Brush ?? fallbackAccent
+            : fallbackAccent;
+        var borderBrush = Application.Current.Resources.TryGetValue("BorderBrush", out var borderResource)
+            ? borderResource as Microsoft.UI.Xaml.Media.Brush ?? fallbackBorder
+            : fallbackBorder;
+
         foreach (var (id, label, bgHex, accentHex) in CuratedThemes)
         {
             bool isActive = id == _activeThemeId;
@@ -1479,8 +1553,8 @@ public sealed partial class MainWindow : Window
                 CornerRadius = new CornerRadius(12),
                 Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor(bgHex)),
                 BorderBrush = isActive
-                    ? (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AccentBrush"]
-                    : (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["BorderBrush"],
+                    ? accentBrush
+                    : borderBrush,
                 BorderThickness = new Thickness(isActive ? 2 : 1),
             };
             // Inner accent dot

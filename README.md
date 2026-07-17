@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.43**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.43/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.44**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.44/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `E877D7FBFABD5594D66CBC066504FEF8A5E9C9E32A45CED52A1B0397E8E47B84`
+SHA-256: `EB649DF4F4299DD0AEDC605BD16E6B1AC827A10CB1EBA404FC42DF73809280A8`
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -48,6 +48,13 @@ Status meanings:
 | Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
 
 ## Recent release work
+
+### 1.1.44
+
+- Fixed the profile-selection transition so Home is created before supplemental navigation-shell work begins; theme dots, profile decoration, plugin links, library pins, and player prewarming can no longer block login.
+- Removed background-thread mutation risk from the sidebar library collection and kept library/pin hydration on the owning UI dispatcher.
+- Added a safe Home fallback if first-run taste setup cannot be opened, plus redacted stage-specific navigation diagnostics in `%LOCALAPPDATA%\SiloPlayer\navigation_errors.txt`.
+- Replaced the oversized exception/stack-trace dialog with a concise recovery message and expanded the regression suite to 451 passing tests.
 
 ### 1.1.43
 

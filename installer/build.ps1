@@ -149,10 +149,23 @@ $SetupExe = Get-ChildItem "$OutputDir\SiloInstaller-*-Setup.exe" -ErrorAction Si
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
 if ($SetupExe) {
+    # GitHub publishes a stable asset name. Always refresh it from the installer
+    # produced by this invocation so a release can never upload an older build.
+    $StableSetupExe = Join-Path $OutputDir "SiloInstaller-Windows-x64.exe"
+    Copy-Item -LiteralPath $SetupExe.FullName -Destination $StableSetupExe -Force
+    $VersionedHash = (Get-FileHash -LiteralPath $SetupExe.FullName -Algorithm SHA256).Hash
+    $StableHash = (Get-FileHash -LiteralPath $StableSetupExe -Algorithm SHA256).Hash
+    if ($VersionedHash -ne $StableHash) {
+        Write-Error "Stable installer alias does not match the versioned build"
+        exit 1
+    }
+
     $SizeMB = [math]::Round($SetupExe.Length / 1MB, 1)
     Write-Host ""
     Write-Host "=== Installer built successfully ==="
     Write-Host "  Output: $($SetupExe.FullName)"
+    Write-Host "  Stable: $StableSetupExe"
+    Write-Host "  SHA256: $VersionedHash"
     Write-Host "  Size:   $SizeMB MB"
 } else {
     Write-Error "Installer output not found"

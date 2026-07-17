@@ -156,7 +156,7 @@ public sealed class CurrentSettingsParitySourceTests
     }
 
     [Fact]
-    public void ProfileThemeIsSynchronizedBeforeTheAuthenticatedUiAppears()
+    public void ProfileThemeIsSynchronizedOnlyAfterAuthenticatedNavigationSucceeds()
     {
         var service = ReadRepoFile("src", "SiloPlayer", "Services", "ThemeService.cs");
         var window = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
@@ -166,11 +166,15 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("GetSettingAsync(\"ui_theme\"", service);
         Assert.Contains("GetServerBrandingAsync", service);
         Assert.Contains("GetSettingAsync(\"ui_custom_theme_vars\"", service);
-        Assert.Contains("await _themeService.SyncFromServerAsync(cancellationToken);", window);
+        var transitionStart = window.IndexOf("public bool TryEnterAuthenticatedPage", StringComparison.Ordinal);
+        var transitionEnd = window.IndexOf("public void UpdateLibraryNavItems", transitionStart, StringComparison.Ordinal);
+        var transition = window[transitionStart..transitionEnd];
+        Assert.Contains("ShowMainNavigation();", transition);
+        Assert.Contains("RunShellWorkAsync(\"theme_sync\"", transition);
         Assert.True(
-            window.IndexOf("await _themeService.SyncFromServerAsync(cancellationToken);", StringComparison.Ordinal) <
-            window.IndexOf("ShowMainNavigation();", StringComparison.Ordinal));
-        Assert.Contains("await _themeService.SyncFromServerAsync();", profiles);
+            transition.IndexOf("ShowMainNavigation();", StringComparison.Ordinal) <
+            transition.IndexOf("RunShellWorkAsync(\"theme_sync\"", StringComparison.Ordinal));
+        Assert.DoesNotContain("SyncFromServerAsync", profiles);
     }
 
     [Fact]

@@ -34,29 +34,55 @@ public sealed partial class ProfileSelectPage : Page
         UpdatePageState();
     }
 
-    private void OnProfileSelected()
+    private async void OnProfileSelected()
     {
-        try
+        var mainWindow = App.MainWindowInstance;
+        if (mainWindow == null)
         {
-            // Show main navigation and go to home
-            App.MainWindowInstance?.ShowMainNavigation();
-            if (ViewModel.ShouldShowTasteSeed)
-                App.Services.GetRequiredService<NavigationService>().Navigate<TasteSeedPage>(false);
-            else
-                App.MainWindowInstance?.NavigateToHome();
+            await ShowNavigationFailureAsync(
+                new InvalidOperationException("The application window is not available."));
+            return;
         }
-        catch (Exception ex)
+
+        Exception? failure;
+        bool entered;
+        if (ViewModel.ShouldShowTasteSeed)
         {
-            System.Diagnostics.Debug.WriteLine($"Navigation crash: {ex}");
-            var dialog = new ContentDialog
+            entered = mainWindow.TryEnterAuthenticatedPage(typeof(TasteSeedPage), false, out failure);
+            if (!entered)
             {
-                Title = "Error",
-                Content = $"Navigation failed: {ex.Message}\n\n{ex.StackTrace}",
-                CloseButtonText = "OK",
-                XamlRoot = this.XamlRoot
-            };
-            _ = dialog.ShowAsync();
+                LocalLog.AppendLine("navigation_errors.txt", "taste_seed_fallback_to_home");
+                entered = mainWindow.TryEnterAuthenticatedPage(typeof(HomePage), null, out failure);
+            }
         }
+        else
+        {
+            entered = mainWindow.TryEnterAuthenticatedPage(typeof(HomePage), null, out failure);
+        }
+
+        if (!entered)
+            await ShowNavigationFailureAsync(failure ?? new InvalidOperationException("The requested page could not be opened."));
+    }
+
+    private async Task ShowNavigationFailureAsync(Exception exception)
+    {
+        LocalLog.AppendLine(
+            "navigation_errors.txt",
+            $"profile_transition | {exception.GetType().FullName}: {exception.Message}{Environment.NewLine}{exception}");
+        System.Diagnostics.Debug.WriteLine($"Profile navigation failed: {exception}");
+
+        var logPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "SiloPlayer",
+            "navigation_errors.txt");
+        var dialog = new ContentDialog
+        {
+            Title = "Unable to open Silo",
+            Content = $"Your profile was selected, but the next page could not be opened. Please try again. Technical details were saved to:\n{logPath}",
+            CloseButtonText = "OK",
+            XamlRoot = XamlRoot
+        };
+        await dialog.ShowAsync();
     }
 
     private async void ProfileButton_Click(object sender, RoutedEventArgs e)
