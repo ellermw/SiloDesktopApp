@@ -117,6 +117,8 @@ public sealed class UpgradeAuthenticationRegressionTests
         Assert.DoesNotContain("SyncFromServerAsync", restore);
         Assert.DoesNotContain("SyncFromServerAsync", activate);
         Assert.Contains("TryEnterAuthenticatedPage", restore);
+        Assert.Contains("home_navigation_failed", restore);
+        Assert.DoesNotContain("The authenticated home page could not be opened", restore);
         Assert.Contains("SyncThemeAfterNavigationAsync", mainWindow);
         Assert.Contains("RunShellWorkAsync(\"theme_sync\"", mainWindow);
     }

@@ -3,6 +3,26 @@ namespace SiloPlayer.Tests;
 public sealed class CurrentHomeParitySourceTests
 {
     [Fact]
+    public void EveryHomeStaticResourceIsDefinedByThePageOrApplicationTheme()
+    {
+        var home = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml");
+        var theme = ReadRepoFile("src", "SiloPlayer", "Themes", "DarkTheme.xaml");
+        var referenced = System.Text.RegularExpressions.Regex.Matches(
+                home,
+                @"\{StaticResource\s+([^}\s]+)\}")
+            .Select(match => match.Groups[1].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var defined = System.Text.RegularExpressions.Regex.Matches(
+                home + Environment.NewLine + theme,
+                "x:Key=\"([^\"]+)\"")
+            .Select(match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Empty(referenced.Where(key => !defined.Contains(key)));
+    }
+
+    [Fact]
     public void HomeUsesCurrentHeroTastePromptAndEmptyState()
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml");

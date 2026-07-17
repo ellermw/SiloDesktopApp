@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.44**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.44/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.45**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.45/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `637842DB2570AB29C737EDD791EEA3DB5DDB756D670C5397167CA66987D39213`
+SHA-256: `PENDING_BUILD_VERIFICATION`
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -48,6 +48,12 @@ Status meanings:
 | Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
 
 ## Recent release work
+
+### 1.1.45
+
+- Fixed the Home-page XAML failure after profile selection by replacing the undefined `AccentSubtleBrush` reference with the application theme's defined accent-background token.
+- Kept a successfully restored authentication/profile session alive if a destination page fails to construct instead of discarding its rotated refresh token and forcing another login.
+- Added an automated audit requiring every Home `StaticResource` reference to resolve from Home or the application theme; the release passes 452 tests.
 
 ### 1.1.44
 

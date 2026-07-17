@@ -762,7 +762,16 @@ public sealed partial class MainWindow : Window
         server.LastUsed = DateTime.UtcNow;
         _settingsService.Save(settings);
         if (!TryEnterAuthenticatedPage(typeof(HomePage), null, out var navigationFailure))
-            throw new InvalidOperationException("The authenticated home page could not be opened.", navigationFailure);
+        {
+            // Authentication and profile restoration already succeeded. A XAML
+            // or page-construction failure must never discard the valid rotated
+            // refresh token and force another login.
+            LocalLog.AppendLine(
+                "auth_startup.txt",
+                $"home_navigation_failed | type={navigationFailure?.GetType().Name ?? "Unknown"}");
+            HideMainNavigation();
+            _navigationService.Navigate<ProfileSelectPage>();
+        }
         return true;
     }
 

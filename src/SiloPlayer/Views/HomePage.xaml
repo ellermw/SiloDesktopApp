@@ -160,7 +160,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <Border Width="40" Height="40" CornerRadius="20" Background="{StaticResource AccentSubtleBrush}">
+                        <Border Width="40" Height="40" CornerRadius="20" Background="{StaticResource AccentBackgroundBrush}">
                             <FontIcon Glyph="&#xE735;" FontSize="20" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
