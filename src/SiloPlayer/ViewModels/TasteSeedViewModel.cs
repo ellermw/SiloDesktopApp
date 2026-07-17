@@ -10,6 +10,7 @@ public partial class TasteSeedViewModel(RecommendationsApi recommendationsApi) :
 {
     private const int MinimumPicks = 3;
     private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _loadMoreCts;
     private int? _nextOffset;
 
     public ObservableCollection<TasteSeedItemViewModel> Items { get; } = [];
@@ -25,6 +26,7 @@ public partial class TasteSeedViewModel(RecommendationsApi recommendationsApi) :
     [ObservableProperty] private bool _hasMore;
 
     public bool CanSubmit => SelectedCount >= MinimumPicks && !IsSaving;
+    public bool HasReachedEnd => HasItems && !HasMore && !IsLoadingMore;
     public string SelectionSummary => SelectedCount == 0
         ? $"Select at least {MinimumPicks} titles to personalize your recommendations"
         : $"{SelectedCount} selected{(SelectedCount < MinimumPicks ? $" — {MinimumPicks - SelectedCount} more to continue" : "")}";
@@ -36,6 +38,9 @@ public partial class TasteSeedViewModel(RecommendationsApi recommendationsApi) :
     }
 
     partial void OnIsSavingChanged(bool value) => OnPropertyChanged(nameof(CanSubmit));
+    partial void OnHasItemsChanged(bool value) => OnPropertyChanged(nameof(HasReachedEnd));
+    partial void OnHasMoreChanged(bool value) => OnPropertyChanged(nameof(HasReachedEnd));
+    partial void OnIsLoadingMoreChanged(bool value) => OnPropertyChanged(nameof(HasReachedEnd));
 
     [RelayCommand]
     public async Task LoadAsync()
@@ -44,6 +49,7 @@ public partial class TasteSeedViewModel(RecommendationsApi recommendationsApi) :
         var previous = Interlocked.Exchange(ref _loadCts, ownerCts);
         previous?.Cancel();
         previous?.Dispose();
+        CancelLoadMore();
         IsLoading = true;
         ErrorMessage = null;
         StatusMessage = null;
@@ -85,10 +91,16 @@ public partial class TasteSeedViewModel(RecommendationsApi recommendationsApi) :
     public async Task LoadMoreAsync()
     {
         if (IsLoadingMore || _nextOffset is not int offset) return;
+        var ownerCts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _loadMoreCts, ownerCts);
+        previous?.Cancel();
+        previous?.Dispose();
         IsLoadingMore = true;
         try
         {
-            var page = await recommendationsApi.GetTasteSeedItemsAsync(30, offset);
+            var page = await recommendationsApi.GetTasteSeedItemsAsync(30, offset, ownerCts.Token);
+            ownerCts.Token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_loadMoreCts, ownerCts)) return;
             var known = Items.Select(item => item.ContentId).ToHashSet(StringComparer.Ordinal);
             foreach (var item in page.Items)
                 if (known.Add(item.ContentId))
@@ -98,13 +110,16 @@ public partial class TasteSeedViewModel(RecommendationsApi recommendationsApi) :
             HasItems = Items.Count > 0;
             UpdateSelectedCount();
         }
+        catch (OperationCanceledException) when (ownerCts.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            ErrorMessage = ex.Message;
+            if (ReferenceEquals(_loadMoreCts, ownerCts)) ErrorMessage = ex.Message;
         }
         finally
         {
-            IsLoadingMore = false;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _loadMoreCts, null, ownerCts), ownerCts))
+                IsLoadingMore = false;
+            ownerCts.Dispose();
         }
     }
 
@@ -147,6 +162,15 @@ public partial class TasteSeedViewModel(RecommendationsApi recommendationsApi) :
         var cts = Interlocked.Exchange(ref _loadCts, null);
         cts?.Cancel();
         cts?.Dispose();
+        CancelLoadMore();
+    }
+
+    private void CancelLoadMore()
+    {
+        var cts = Interlocked.Exchange(ref _loadMoreCts, null);
+        cts?.Cancel();
+        cts?.Dispose();
+        IsLoadingMore = false;
     }
 
     private void UpdateSelectedCount() => SelectedCount = Items.Count(item => item.IsSelected);

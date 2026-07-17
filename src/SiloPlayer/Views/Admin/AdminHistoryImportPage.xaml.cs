@@ -11,6 +11,7 @@ using SiloPlayer.Helpers;
 using System.Collections.ObjectModel;
 using Windows.UI;
 using Microsoft.UI.Xaml.Navigation;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views.Admin;
 
@@ -18,6 +19,7 @@ public sealed partial class AdminHistoryImportPage : Page
 {
     private readonly AdminApi _adminApi;
     private readonly HistoryImportApi _importApi;
+    private readonly ToastService _toastService;
     private List<HistoryImportSource> _sources = [];
     private List<HistoryImportUserMapping> _mappings = [];
     private List<HistoryImportRun> _runs = [];
@@ -60,14 +62,17 @@ public sealed partial class AdminHistoryImportPage : Page
     {
         _adminApi = App.Services.GetRequiredService<AdminApi>();
         _importApi = App.Services.GetRequiredService<HistoryImportApi>();
+        _toastService = App.Services.GetRequiredService<ToastService>();
         this.InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Enabled;
+        SizeChanged += (_, args) => ApplyResponsiveLayout(args.NewSize.Width);
     }
 
     public AdminHistoryImportViewModel ViewModel { get; } = new();
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout(ActualWidth);
         _isPageActive = true;
         _pageLoadCts?.Cancel();
         _pageLoadCts?.Dispose();
@@ -113,7 +118,8 @@ public sealed partial class AdminHistoryImportPage : Page
 
     private async Task LoadSourcesAsync(CancellationToken cancellationToken = default)
     {
-        ViewModel.IsLoading = true;
+        // Preserve cached page content while refreshing, like the WebUI query cache.
+        ViewModel.IsLoading = _sources.Count == 0;
         ViewModel.ErrorMessage = null;
         try
         {
@@ -232,6 +238,44 @@ public sealed partial class AdminHistoryImportPage : Page
             MissingTokenCallout.Visibility = Visibility.Collapsed;
         }
     }
+
+    private void ApplyResponsiveLayout(double width)
+    {
+        if (width <= 0) return;
+
+        var compact = width < 760;
+        var narrow = width < 600;
+        var gutter = narrow ? 16 : compact ? 24 : 40;
+        HistoryImportPageShell.Padding = new Thickness(gutter, compact ? 24 : 32, gutter, 40);
+        HistoryImportTitle.FontSize = narrow ? 34 : compact ? 40 : 48;
+
+        Grid.SetRow(SourceActionsPanel, compact ? 1 : 0);
+        Grid.SetColumn(SourceActionsPanel, compact ? 0 : 1);
+        Grid.SetColumnSpan(SourceActionsPanel, compact ? 2 : 1);
+        SourceActionsPanel.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        SourceUrlText.Visibility = width < 980 ? Visibility.Collapsed : Visibility.Visible;
+        SourceComboBox.Width = narrow ? 190 : 220;
+
+        MoveHeaderActions(MappingsHeaderActions, compact);
+        MoveHeaderActions(RunsFilterBorder, compact);
+
+        var tokenAction = MissingTokenCallout.Children.Count > 2
+            ? MissingTokenCallout.Children[2] as FrameworkElement
+            : null;
+        MissingTokenCallout.ColumnDefinitions[2].Width = narrow ? new GridLength(0) : GridLength.Auto;
+        if (tokenAction is not null)
+            tokenAction.Visibility = narrow ? Visibility.Collapsed : Visibility.Visible;
+
+        static void MoveHeaderActions(FrameworkElement element, bool stack)
+        {
+            Grid.SetRow(element, stack ? 1 : 0);
+            Grid.SetColumn(element, stack ? 0 : 1);
+            Grid.SetColumnSpan(element, stack ? 2 : 1);
+            element.HorizontalAlignment = stack ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        }
+    }
+
+    private void ShowMutationError(Exception exception) => _toastService.Error(exception.Message);
 
     private async Task LoadMappingsAndRunsAsync(int sourceId, CancellationToken cancellationToken = default)
     {
@@ -390,8 +434,12 @@ public sealed partial class AdminHistoryImportPage : Page
         runBtn.Click += async (_, _) =>
         {
             runBtn.IsEnabled = false;
-            try { await _adminApi.RunMappingAsync(capturedMapping.Id); }
-            catch { }
+            try
+            {
+                await _adminApi.RunMappingAsync(capturedMapping.Id);
+                _toastService.Success("Import queued.");
+            }
+            catch (Exception ex) { ShowMutationError(ex); }
             finally { runBtn.IsEnabled = true; }
             if (_selectedSource != null) await LoadRunsAsync(_selectedSource.Id);
         };
@@ -415,8 +463,13 @@ public sealed partial class AdminHistoryImportPage : Page
             };
             if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             {
-                await _adminApi.DeleteMappingAsync(capturedMapping.Id);
-                if (_selectedSource != null) await LoadMappingsAndRunsAsync(_selectedSource.Id);
+                try
+                {
+                    await _adminApi.DeleteMappingAsync(capturedMapping.Id);
+                    _toastService.Success("Mapping removed.");
+                    if (_selectedSource != null) await LoadMappingsAndRunsAsync(_selectedSource.Id);
+                }
+                catch (Exception ex) { ShowMutationError(ex); }
             }
         };
 
@@ -593,9 +646,10 @@ public sealed partial class AdminHistoryImportPage : Page
                 try
                 {
                     await _adminApi.CancelRunAsync(run.Id);
+                    _toastService.Success("Import cancelled.");
                     if (_selectedSource is not null) await LoadRunsAsync(_selectedSource.Id);
                 }
-                catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+                catch (Exception ex) { ShowMutationError(ex); }
                 finally { cancelButton.IsEnabled = true; }
             };
             Grid.SetColumn(cancelButton, 4);
@@ -832,8 +886,9 @@ public sealed partial class AdminHistoryImportPage : Page
                         await _adminApi.SetSourceTokenAsync(created.Id, login.Token);
                 }
                 await LoadSourcesAsync();
+                _toastService.Success("Server added.");
             }
-            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+            catch (Exception ex) { ShowMutationError(ex); }
         }
     }
 
@@ -856,8 +911,9 @@ public sealed partial class AdminHistoryImportPage : Page
                     Name = state.Name, BaseUrl = state.Url, Enabled = state.Enabled
                 });
                 await LoadSourcesAsync();
+                _toastService.Success("Server updated.");
             }
-            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+            catch (Exception ex) { ShowMutationError(ex); }
         }
     }
 
@@ -872,11 +928,16 @@ public sealed partial class AdminHistoryImportPage : Page
         };
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
         {
-            await _adminApi.DeleteHistoryImportSourceAsync(_selectedSource.Id);
-            _selectedSource = null;
-            MappingsSection.Visibility = Visibility.Collapsed;
-            RunsSection.Visibility = Visibility.Collapsed;
-            await LoadSourcesAsync();
+            try
+            {
+                await _adminApi.DeleteHistoryImportSourceAsync(_selectedSource.Id);
+                _selectedSource = null;
+                MappingsSection.Visibility = Visibility.Collapsed;
+                RunsSection.Visibility = Visibility.Collapsed;
+                await LoadSourcesAsync();
+                _toastService.Success("Server deleted.");
+            }
+            catch (Exception ex) { ShowMutationError(ex); }
         }
     }
 
@@ -1099,8 +1160,9 @@ public sealed partial class AdminHistoryImportPage : Page
                     await _adminApi.SetSourceTokenAsync(source.Id, tokenBox.Password.Trim());
                 }
                 await LoadSourcesAsync();
+                _toastService.Success("API key saved.");
             }
-            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+            catch (Exception ex) { ShowMutationError(ex); }
         }
         else if (result == ContentDialogResult.Secondary)
         {
@@ -1108,8 +1170,9 @@ public sealed partial class AdminHistoryImportPage : Page
             {
                 await _adminApi.ClearSourceTokenAsync(source.Id);
                 await LoadSourcesAsync();
+                _toastService.Success("API key removed.");
             }
-            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+            catch (Exception ex) { ShowMutationError(ex); }
         }
     }
 
@@ -1182,7 +1245,7 @@ public sealed partial class AdminHistoryImportPage : Page
         }
         catch (Exception ex)
         {
-            ViewModel.ErrorMessage = $"Discovery failed: {ex.Message}";
+            _toastService.Error($"Discovery failed: {ex.Message}");
             BtnDiscoverUsers.IsEnabled = true;
             DiscoverUsersText.Text = "Discover users";
             return;
@@ -1328,8 +1391,9 @@ public sealed partial class AdminHistoryImportPage : Page
                 ClearSelection();
                 RebuildExternalUsers();
                 await LoadMappingsAndRunsAsync(source.Id);
+                _toastService.Success("Mapping saved.");
             }
-            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+            catch (Exception ex) { ShowMutationError(ex); }
             finally { saveMappingButton.IsEnabled = true; }
         };
 
@@ -1429,8 +1493,9 @@ public sealed partial class AdminHistoryImportPage : Page
                     ProfileId = profileId
                 });
                 await LoadMappingsAndRunsAsync(_selectedSource.Id);
+                _toastService.Success("Mapping created.");
             }
-            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+            catch (Exception ex) { ShowMutationError(ex); }
         }
     }
 
@@ -1445,8 +1510,9 @@ public sealed partial class AdminHistoryImportPage : Page
         {
             await _adminApi.BulkRunSourceAsync(_selectedSource.Id);
             await LoadRunsAsync(_selectedSource.Id);
+            _toastService.Success("Imports queued.");
         }
-        catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+        catch (Exception ex) { ShowMutationError(ex); }
         finally
         {
             BtnBulkRun.IsEnabled = true;

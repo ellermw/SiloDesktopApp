@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Navigation;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using SiloPlayer.Core.Models;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 
@@ -18,6 +20,7 @@ public sealed partial class SetupWizardPage : Page
         ViewModel.SetupCompleted += OnSetupCompleted;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
 
+        PopulateLibraryLanguages();
         BuildStepIndicator();
     }
 
@@ -36,21 +39,32 @@ public sealed partial class SetupWizardPage : Page
 
         // B47: Derive the starting step from current server state instead of always 1.
         await ViewModel.DetermineStartingStepAsync();
+        await ViewModel.PrepareStepAsync(ViewModel.CurrentStep);
+        SyncServerSelections();
         UpdateStepVisibility();
     }
 
-    private void OnSetupCompleted()
+    private void OnSetupCompleted(bool goToAdmin)
     {
-        // Show main navigation and go to home
         App.MainWindowInstance?.ShowMainNavigation();
-        App.MainWindowInstance?.NavigateToHome();
+        if (goToAdmin)
+        {
+            App.Services.GetRequiredService<NavigationService>()
+                .Navigate<Admin.AdminShellPage>(typeof(Admin.AdminLibrariesPage));
+        }
+        else
+        {
+            App.MainWindowInstance?.NavigateToHome();
+        }
     }
 
-    private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    private async void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(ViewModel.CurrentStep))
         {
             UpdateStepVisibility();
+            await ViewModel.PrepareStepAsync(ViewModel.CurrentStep);
+            SyncServerSelections();
         }
     }
 
@@ -60,16 +74,18 @@ public sealed partial class SetupWizardPage : Page
 
         Step1Panel.Visibility = step == 1 ? Visibility.Visible : Visibility.Collapsed;
         Step2Panel.Visibility = step == 2 ? Visibility.Visible : Visibility.Collapsed;
-        Step3Panel.Visibility = step == 3 ? Visibility.Visible : Visibility.Collapsed;
-        Step4Panel.Visibility = step == 4 ? Visibility.Visible : Visibility.Collapsed;
-        Step5IntegrationsPanel.Visibility = step == 5 ? Visibility.Visible : Visibility.Collapsed;
-        Step6DownloadsPanel.Visibility = step == 6 ? Visibility.Visible : Visibility.Collapsed;
-        Step7RecommendationsPanel.Visibility = step == 7 ? Visibility.Visible : Visibility.Collapsed;
+        Step4Panel.Visibility = step == 3 ? Visibility.Visible : Visibility.Collapsed;
+        Step5IntegrationsPanel.Visibility = step == 4 ? Visibility.Visible : Visibility.Collapsed;
+        Step6DownloadsPanel.Visibility = step == 5 ? Visibility.Visible : Visibility.Collapsed;
+        Step7RecommendationsPanel.Visibility = step == 6 ? Visibility.Visible : Visibility.Collapsed;
+        Step3Panel.Visibility = step == 7 ? Visibility.Visible : Visibility.Collapsed;
         Step5Panel.Visibility = step == 8 ? Visibility.Visible : Visibility.Collapsed;
 
         BackButton.Visibility = step > 1 ? Visibility.Visible : Visibility.Collapsed;
         NextButton.Visibility = step < ViewModel.TotalSteps ? Visibility.Visible : Visibility.Collapsed;
+        NextButton.Content = step == 7 ? "Continue" : "Next";
         FinishButton.Visibility = step == ViewModel.TotalSteps ? Visibility.Visible : Visibility.Collapsed;
+        GoToAdminButton.Visibility = step == ViewModel.TotalSteps ? Visibility.Visible : Visibility.Collapsed;
 
         UpdateStepIndicator();
     }
@@ -78,7 +94,7 @@ public sealed partial class SetupWizardPage : Page
     {
         StepIndicator.Children.Clear();
 
-        var labels = new[] { "Account", "Profile", "Library", "Server", "Integrations", "Downloads", "Recommendations", "Metadata" };
+        var labels = new[] { "Account", "Profile", "Server", "Integrations", "Downloads", "Recs", "Library", "Finish" };
 
         for (int i = 0; i < ViewModel.TotalSteps; i++)
         {
@@ -210,12 +226,39 @@ public sealed partial class SetupWizardPage : Page
         ViewModel.Password = SetupPasswordBox.Password;
     }
 
-    private void LibraryTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void SetupConfirmPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
     {
-        if (LibraryTypeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string tag)
+        ViewModel.ConfirmPassword = SetupConfirmPasswordBox.Password;
+    }
+
+    private async void LibraryType_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is ToggleButton button && button.Tag is string tag)
         {
             ViewModel.LibraryType = tag;
+            SyncLibraryTypeChoices();
+            await ViewModel.LoadLibraryProviderDefaultsAsync();
         }
+    }
+
+    private void PopulateLibraryLanguages()
+    {
+        LibraryMetadataLanguageCombo.Items.Clear();
+        foreach (var language in MediaLanguageCatalog.All)
+            LibraryMetadataLanguageCombo.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
+        SelectComboTag(LibraryMetadataLanguageCombo, ViewModel.LibraryMetadataLanguage);
+    }
+
+    private void LibraryMetadataLanguage_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (LibraryMetadataLanguageCombo.SelectedItem is ComboBoxItem item && item.Tag is string code)
+            ViewModel.LibraryMetadataLanguage = code;
+    }
+
+    private void SyncLibraryTypeChoices()
+    {
+        foreach (var button in LibraryTypeChoices.Items.OfType<ToggleButton>())
+            button.IsChecked = string.Equals(button.Tag as string, ViewModel.LibraryType, StringComparison.OrdinalIgnoreCase);
     }
 
     private void HardwareAccelComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -234,12 +277,55 @@ public sealed partial class SetupWizardPage : Page
         }
     }
 
-    private void MetadataProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void SyncServerSelections()
     {
-        if (MetadataProviderComboBox.SelectedItem is ComboBoxItem item && item.Tag is string tag)
+        SelectComboTag(HardwareAccelComboBox, ViewModel.HardwareAccel);
+        SelectComboTag(PublicUrlAuthComboBox, ViewModel.S3PublicUrlAuth);
+        SelectComboTag(NodeTypeComboBox, ViewModel.NodeType);
+        SelectComboTag(LibraryMetadataLanguageCombo, ViewModel.LibraryMetadataLanguage);
+        SyncLibraryTypeChoices();
+    }
+
+    private static void SelectComboTag(ComboBox combo, string value)
+    {
+        foreach (var candidate in combo.Items.OfType<ComboBoxItem>())
         {
-            ViewModel.SelectedProvider = tag;
+            if (candidate.Tag is string tag && string.Equals(tag, value, StringComparison.OrdinalIgnoreCase))
+            {
+                combo.SelectedItem = candidate;
+                return;
+            }
         }
+    }
+
+    private void ProviderPassword_Changed(object sender, RoutedEventArgs e)
+    {
+        if (sender is PasswordBox box && box.Tag is SetupSubtitleProviderItem provider)
+            provider.Password = box.Password;
+    }
+
+    private async void SaveProvider_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.Tag is SetupSubtitleProviderItem provider)
+            await ViewModel.SaveSubtitleProviderAsync(provider);
+    }
+
+    private async void TestProvider_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.Tag is SetupSubtitleProviderItem provider)
+            await ViewModel.TestSubtitleProviderAsync(provider);
+    }
+
+    private void RecommendationToken_Changed(object sender, RoutedEventArgs e)
+    {
+        if (sender is PasswordBox box)
+            ViewModel.RecommendationsAuthToken = box.Password;
+    }
+
+    private void NodeType_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ComboBox combo && combo.SelectedItem is ComboBoxItem item && item.Tag is string type)
+            ViewModel.NodeType = type;
     }
 
     private void RemovePath_Click(object sender, RoutedEventArgs e)
@@ -248,5 +334,142 @@ public sealed partial class SetupWizardPage : Page
         {
             ViewModel.RemoveLibraryPathCommand.Execute(path);
         }
+    }
+
+    private void MoveLibraryProviderUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: SetupLibraryProviderEntry entry })
+            ViewModel.MoveLibraryProvider(entry, -1);
+    }
+
+    private void MoveLibraryProviderDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: SetupLibraryProviderEntry entry })
+            ViewModel.MoveLibraryProvider(entry, 1);
+    }
+
+    private async void BrowseLibraryFolders_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = await BrowseServerFoldersAsync(
+            string.IsNullOrWhiteSpace(ViewModel.NewLibraryPath) ? "/" : ViewModel.NewLibraryPath.Trim());
+        foreach (var path in selected)
+        {
+            if (!ViewModel.LibraryPaths.Contains(path, StringComparer.OrdinalIgnoreCase))
+                ViewModel.LibraryPaths.Add(path);
+        }
+        ViewModel.NewLibraryPath = "";
+    }
+
+    private async Task<IReadOnlyList<string>> BrowseServerFoldersAsync(string initialPath)
+    {
+        var api = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
+        var existing = ViewModel.LibraryPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var currentPath = initialPath.StartsWith('/') ? initialPath : "/";
+        var pathBox = new TextBox { Text = currentPath, PlaceholderText = "/mnt/media" };
+        var status = new TextBlock { FontSize = 12, Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"], TextWrapping = TextWrapping.Wrap };
+        var entries = new StackPanel { Spacing = 3 };
+        var up = new Button { Content = "Up" };
+        var go = new Button { Content = "Browse" };
+        ContentDialog? dialog = null;
+
+        void UpdateButton()
+        {
+            if (dialog == null) return;
+            dialog.PrimaryButtonText = selected.Count == 0
+                ? "Use Current Folder"
+                : $"Add {selected.Count} Folder{(selected.Count == 1 ? "" : "s")}";
+            dialog.IsPrimaryButtonEnabled = selected.Count > 0 || !existing.Contains(currentPath);
+        }
+
+        async Task LoadAsync(string path)
+        {
+            status.Text = "Loading server folders...";
+            entries.Children.Clear();
+            try
+            {
+                var response = await api.BrowseFilesystemAsync(path);
+                currentPath = response.Path;
+                pathBox.Text = currentPath;
+                up.Tag = response.Parent;
+                up.IsEnabled = response.Parent != response.Path;
+                status.Text = response.Entries.Count == 0 ? "No subfolders found here." : "";
+                foreach (var entry in response.Entries)
+                {
+                    var row = new Grid { ColumnSpacing = 6 };
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    var isExisting = existing.Contains(entry.Path);
+                    var check = new CheckBox { IsChecked = isExisting || selected.Contains(entry.Path), IsEnabled = !isExisting };
+                    check.Checked += (_, _) => { if (!isExisting) selected.Add(entry.Path); UpdateButton(); };
+                    check.Unchecked += (_, _) => { selected.Remove(entry.Path); UpdateButton(); };
+                    var open = new Button
+                    {
+                        Content = new StackPanel
+                        {
+                            Orientation = Orientation.Horizontal,
+                            Spacing = 7,
+                            Children =
+                            {
+                                new FontIcon { Glyph = "\uED25", FontSize = 13 },
+                                new TextBlock { Text = entry.Name, FontSize = 13 },
+                            },
+                        },
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                        HorizontalContentAlignment = HorizontalAlignment.Left,
+                    };
+                    var capturedPath = entry.Path;
+                    open.Click += async (_, _) => await LoadAsync(capturedPath);
+                    Grid.SetColumn(open, 1);
+                    row.Children.Add(check);
+                    row.Children.Add(open);
+                    entries.Children.Add(row);
+                }
+                UpdateButton();
+            }
+            catch (Exception ex)
+            {
+                status.Text = ex.Message;
+            }
+        }
+
+        go.Click += async (_, _) => await LoadAsync(pathBox.Text.Trim());
+        up.Click += async (_, _) => { if (up.Tag is string parent) await LoadAsync(parent); };
+        var pathRow = new Grid { ColumnSpacing = 8 };
+        pathRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        pathRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(go, 1);
+        pathRow.Children.Add(pathBox);
+        pathRow.Children.Add(go);
+        var toolbar = new Grid();
+        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        toolbar.Children.Add(new TextBlock { Text = "Select folders or navigate into one.", FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
+        Grid.SetColumn(up, 1);
+        toolbar.Children.Add(up);
+        var content = new StackPanel { Width = 620, Spacing = 9 };
+        content.Children.Add(pathRow);
+        content.Children.Add(status);
+        content.Children.Add(toolbar);
+        content.Children.Add(new Border
+        {
+            Height = 320,
+            BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Child = new ScrollViewer { Content = entries },
+        });
+        dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "Browse Library Folders",
+            Content = content,
+            PrimaryButtonText = "Use Current Folder",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        await LoadAsync(currentPath);
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return [];
+        return selected.Count > 0 ? selected.ToList() : [currentPath];
     }
 }

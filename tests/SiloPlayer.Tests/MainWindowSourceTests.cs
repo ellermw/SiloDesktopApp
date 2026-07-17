@@ -94,6 +94,8 @@ public sealed class MainWindowSourceTests
         Assert.Contains("NotificationUnreadBadge.Value = isOpen ? _notificationUnreadCount : -1", code);
         Assert.Contains("UpdateSidebarPanePresentation", code);
         Assert.Contains("args.Cancel = true", code);
+        Assert.Contains("ContentFrame.Content is Views.Admin.AdminShellPage", code);
+        Assert.Contains("AdminShell owns both its sidebar and ServerActivity button", code);
     }
 
     [Fact]

@@ -12,12 +12,13 @@ public class AdminAutoscanParitySourceTests
         RepoRoot, "src", "SiloPlayer", "ViewModels", "Admin", "AdminAutoscanViewModel.cs"));
 
     [Fact]
-    public void AutoscanUsesCurrentFullWidthTabsAndIconControls()
+    public void AutoscanUsesCurrentLineTabsAndIconControls()
     {
         Assert.Contains("MaxWidth=\"1640\"", Markup, StringComparison.Ordinal);
-        Assert.Contains("ViewModel.HasFeedback", Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("ViewModel.HasFeedback", Markup, StringComparison.Ordinal);
+        Assert.Contains("Loading sources", Markup, StringComparison.Ordinal);
         Assert.Contains("Grid.Column=\"3\"><Button x:Name=\"SettingsTab\"", Markup, StringComparison.Ordinal);
-        Assert.Contains("<TextBlock Text=\"Run now\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"RunNowText\" Text=\"Run now\"", Markup, StringComparison.Ordinal);
         Assert.DoesNotContain("Content=\"▶", Markup, StringComparison.Ordinal);
         Assert.DoesNotContain("Content=\"＋", Markup, StringComparison.Ordinal);
     }
@@ -25,7 +26,8 @@ public class AdminAutoscanParitySourceTests
     [Fact]
     public void SourcesExposeCurrentConnectionIntervalAndNestedSettingsHierarchy()
     {
-        Assert.Contains("ConnectionDisplay", Markup, StringComparison.Ordinal);
+        Assert.Contains("SourceConnectionOptions", Markup, StringComparison.Ordinal);
+        Assert.Contains("Not needed — Sonarr/Radarr deliver directly", Markup, StringComparison.Ordinal);
         Assert.Contains("PollIntervalText", Markup, StringComparison.Ordinal);
         Assert.Contains("Custom label (optional)", Markup, StringComparison.Ordinal);
         Assert.Contains("PathRewriteDisplay", Markup, StringComparison.Ordinal);

@@ -33,6 +33,11 @@ public sealed class AutoscanConnectionInput
 }
 
 public sealed class AutoscanConnectionsResponse { public List<AutoscanConnection> Connections { get; set; } = []; }
+public sealed class AutoscanConnectionOption
+{
+    public string? Id { get; set; }
+    public string Name { get; set; } = "";
+}
 public sealed class AutoscanPathRewrite { public string From { get; set; } = ""; public string To { get; set; } = ""; }
 
 public sealed class AutoscanSource
@@ -72,7 +77,10 @@ public sealed class AutoscanSource
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsCephFs => PluginId.Equals("silo.autoscan.cephfs", StringComparison.OrdinalIgnoreCase) || CapabilityId.Equals("cephfs", StringComparison.OrdinalIgnoreCase);
     [System.Text.Json.Serialization.JsonIgnore]
-    public bool HasLastError => !string.IsNullOrWhiteSpace(IsWebhook ? WebhookLastErrorMessage ?? LastError : LastError);
+    public bool HasLastError => IsWebhook
+        ? !string.IsNullOrWhiteSpace(WebhookLastErrorMessage ?? LastError)
+            && (!WebhookLastReceivedAt.HasValue || !WebhookLastErrorAt.HasValue || WebhookLastErrorAt.Value >= WebhookLastReceivedAt.Value)
+        : !string.IsNullOrWhiteSpace(LastError);
     [System.Text.Json.Serialization.JsonIgnore]
     public string StatusTitle => HasLastError ? "Error" : StatusTimestamp.HasValue ? "OK" : IsWebhook ? "No deliveries yet" : "Not run yet";
     [System.Text.Json.Serialization.JsonIgnore]
@@ -160,17 +168,25 @@ public sealed class AutoscanEvent
     [System.Text.Json.Serialization.JsonIgnore] public string SourceDisplayName { get; set; } = "";
     [System.Text.Json.Serialization.JsonIgnore] public string TimestampDisplay => (CompletedAt ?? StartedAt).ToLocalTime().ToString("MMM d, hh:mm tt");
     [System.Text.Json.Serialization.JsonIgnore] public string DurationDisplay => DurationMs < 1000 ? $"{DurationMs}ms" : TimeSpan.FromMilliseconds(DurationMs).TotalMinutes >= 1 ? $"{(int)TimeSpan.FromMilliseconds(DurationMs).TotalMinutes}m {TimeSpan.FromMilliseconds(DurationMs).Seconds}s" : $"{TimeSpan.FromMilliseconds(DurationMs).TotalSeconds:0.0}s";
+    [System.Text.Json.Serialization.JsonIgnore] public string CountsDisplay => $"{ChangesReturned:N0} changes · {TargetsClaimed:N0} targets";
+    [System.Text.Json.Serialization.JsonIgnore] public string ScanCountsDisplay => $"{ScansCreated:N0} created · {ScansReused:N0} reused · {ScansSuppressed:N0} suppressed";
+    [System.Text.Json.Serialization.JsonIgnore] public string LinkedScansDisplay => $"{ScanRuns.Count:N0} linked";
+    [System.Text.Json.Serialization.JsonIgnore] public string DeliveryDisplay => DeliveryMode?.Equals("webhook", StringComparison.OrdinalIgnoreCase) == true ? string.IsNullOrWhiteSpace(ProviderEventType) ? "Webhook" : $"Webhook · {ProviderEventType}" : "";
 }
 public sealed class AutoscanEventScanRun { public string Id { get; set; } = ""; public int LibraryId { get; set; } public string Mode { get; set; } = ""; public string? Path { get; set; } public string Trigger { get; set; } = ""; public string Status { get; set; } = ""; public DateTimeOffset? RequestedAt { get; set; } public DateTimeOffset? StartedAt { get; set; } public DateTimeOffset? CompletedAt { get; set; } public string? ErrorMessage { get; set; } }
 public sealed class AutoscanEventsResponse { public List<AutoscanEvent> Events { get; set; } = []; public int Total { get; set; } public int Limit { get; set; } public int Offset { get; set; } }
 
 public sealed class AutoscanScan
 {
-    public string Id { get; set; } = ""; public int LibraryId { get; set; } public string Mode { get; set; } = ""; public string? Path { get; set; } public string Trigger { get; set; } = ""; public string Status { get; set; } = ""; public string? ErrorMessage { get; set; } public DateTimeOffset? RequestedAt { get; set; } public DateTimeOffset? StartedAt { get; set; } public DateTimeOffset? CompletedAt { get; set; } public long? AutoscanEventId { get; set; } public string? SourceId { get; set; } public string? PluginId { get; set; } public string? CapabilityId { get; set; }
+    public string Id { get; set; } = ""; public int LibraryId { get; set; } public string Mode { get; set; } = ""; public string? Path { get; set; } public string Trigger { get; set; } = ""; public string Status { get; set; } = ""; public string? EventStatus { get; set; } public string? ErrorMessage { get; set; } public DateTimeOffset? RequestedAt { get; set; } public DateTimeOffset? StartedAt { get; set; } public DateTimeOffset? CompletedAt { get; set; } public long? AutoscanEventId { get; set; } public string? SourceId { get; set; } public string? PluginId { get; set; } public string? CapabilityId { get; set; }
     [System.Text.Json.Serialization.JsonIgnore] public string LibraryDisplayName { get; set; } = "";
     [System.Text.Json.Serialization.JsonIgnore] public string SourceDisplayName { get; set; } = "";
+    [System.Text.Json.Serialization.JsonIgnore] public string ProgressDisplay { get; set; } = "Autoscan";
+    [System.Text.Json.Serialization.JsonIgnore] public string PathDisplay => string.IsNullOrWhiteSpace(Path) ? "Entire library" : Path;
+    [System.Text.Json.Serialization.JsonIgnore] public string StatusDisplay => Status.Equals("accepted", StringComparison.OrdinalIgnoreCase) ? "Queued" : string.IsNullOrWhiteSpace(Status) ? "—" : char.ToUpperInvariant(Status[0]) + Status[1..];
+    [System.Text.Json.Serialization.JsonIgnore] public string ActiveTimeDisplay => Status.Equals("running", StringComparison.OrdinalIgnoreCase) && StartedAt.HasValue ? $"Started {StartedAt.Value.ToLocalTime():MMM d, h:mm tt}" : "Waiting for capacity";
     [System.Text.Json.Serialization.JsonIgnore] public string ScopeDisplay => string.Equals(Mode, "file", StringComparison.OrdinalIgnoreCase) ? "Single file scan" : string.Equals(Mode, "path", StringComparison.OrdinalIgnoreCase) || string.Equals(Mode, "subtree", StringComparison.OrdinalIgnoreCase) ? "Subtree scan" : string.IsNullOrWhiteSpace(Mode) ? "Library scan" : $"{char.ToUpperInvariant(Mode[0])}{Mode[1..]} scan";
     [System.Text.Json.Serialization.JsonIgnore] public string RequestedAtDisplay => (RequestedAt ?? StartedAt ?? CompletedAt)?.ToLocalTime().ToString("MMM d, hh:mm tt") ?? "—";
-    [System.Text.Json.Serialization.JsonIgnore] public string PollDisplay => string.IsNullOrWhiteSpace(ErrorMessage) ? "Success" : "Failed";
+    [System.Text.Json.Serialization.JsonIgnore] public string PollDisplay => string.IsNullOrWhiteSpace(EventStatus) ? "—" : char.ToUpperInvariant(EventStatus[0]) + EventStatus[1..];
 }
 public sealed class AutoscanScansResponse { public List<AutoscanScan> Scans { get; set; } = []; public int Total { get; set; } public int Limit { get; set; } public int Offset { get; set; } }

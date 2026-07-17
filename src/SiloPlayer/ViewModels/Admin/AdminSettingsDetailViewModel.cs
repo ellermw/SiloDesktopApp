@@ -12,6 +12,7 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
     private readonly Dictionary<string, string> _dirtySettings = new();
     private HashSet<string> _sensitiveConfigured = new();
     private HashSet<string> _managedByEnv = new();
+    private CancellationTokenSource? _loadCts;
 
     // Rate limit config (loaded separately)
     public RateLimitConfig? RateLimitConfig { get; private set; }
@@ -58,7 +59,10 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadAsync()
     {
-        if (IsLoading) return;
+        var ownerCts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _loadCts, ownerCts);
+        previous?.Cancel();
+        previous?.Dispose();
 
         IsLoading = true;
         ErrorMessage = null;
@@ -66,10 +70,12 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
 
         try
         {
-            var settingsTask = _adminApi.GetAdminSettingsAsync();
-            var sensitiveTask = LoadSensitiveStatusSafeAsync();
-            var rateLimitTask = LoadRateLimitConfigSafeAsync();
+            var settingsTask = _adminApi.GetAdminSettingsAsync(ownerCts.Token);
+            var sensitiveTask = LoadSensitiveStatusSafeAsync(ownerCts.Token);
+            var rateLimitTask = LoadRateLimitConfigSafeAsync(ownerCts.Token);
             await Task.WhenAll(settingsTask, sensitiveTask, rateLimitTask);
+            ownerCts.Token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_loadCts, ownerCts)) return;
 
             _settings = await settingsTask;
             (_sensitiveConfigured, _managedByEnv) = await sensitiveTask;
@@ -79,14 +85,26 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
             HasDirtyChanges = false;
             DirtyCount = 0;
         }
+        catch (OperationCanceledException) when (ownerCts.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load settings: {ex.Message}";
+            if (ReferenceEquals(_loadCts, ownerCts))
+                ErrorMessage = $"Failed to load settings: {ex.Message}";
         }
         finally
         {
-            IsLoading = false;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _loadCts, null, ownerCts), ownerCts))
+                IsLoading = false;
+            ownerCts.Dispose();
         }
+    }
+
+    public void CancelLoad()
+    {
+        var cts = Interlocked.Exchange(ref _loadCts, null);
+        cts?.Cancel();
+        cts?.Dispose();
+        IsLoading = false;
     }
 
     public bool IsSensitiveConfigured(string key) => _sensitiveConfigured.Contains(key);
@@ -191,15 +209,17 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
         }
     }
 
-    private async Task<(HashSet<string> Configured, HashSet<string> ManagedByEnv)> LoadSensitiveStatusSafeAsync()
+    private async Task<(HashSet<string> Configured, HashSet<string> ManagedByEnv)> LoadSensitiveStatusSafeAsync(CancellationToken ct)
     {
-        try { return await _adminApi.GetSensitiveStatusAsync(); }
+        try { return await _adminApi.GetSensitiveStatusAsync(ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch { return ([], []); }
     }
 
-    private async Task<RateLimitConfig> LoadRateLimitConfigSafeAsync()
+    private async Task<RateLimitConfig> LoadRateLimitConfigSafeAsync(CancellationToken ct)
     {
-        try { return await _adminApi.GetRateLimitConfigAsync(); }
+        try { return await _adminApi.GetRateLimitConfigAsync(ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch
         {
             // Route may be disabled on servers without rate-limit middleware.

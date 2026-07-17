@@ -164,6 +164,16 @@ public sealed class PlaybackManagerTests
     }
 
     [Fact]
+    public void StopSessionAsync_GivesStopFinalizationAnIndependentDeadline()
+    {
+        var source = File.ReadAllText(FindRepositoryFile(
+            "src", "SiloPlayer.Core", "Services", "PlaybackManager.cs"));
+
+        Assert.DoesNotContain("operationCts.CancelAfter(TimeSpan.FromSeconds(5))", source);
+        Assert.Contains("stopCts.CancelAfter(TimeSpan.FromSeconds(15))", source);
+    }
+
+    [Fact]
     public async Task StartReplacementSessionAsync_SwapsBeforeSlowPreviousCleanupCompletes()
     {
         var handler = new ReplacementPlaybackHandler();
@@ -194,6 +204,20 @@ public sealed class PlaybackManagerTests
     {
         var completed = await Task.WhenAny(task, Task.Delay(timeout));
         return completed == task;
+    }
+
+    private static string FindRepositoryFile(params string[] segments)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null)
+        {
+            var path = Path.Combine([directory.FullName, .. segments]);
+            if (File.Exists(path))
+                return path;
+            directory = directory.Parent;
+        }
+
+        throw new FileNotFoundException($"Could not locate {Path.Combine(segments)} from the test output directory.");
     }
 
     private sealed class BlockingPlaybackHandler : HttpMessageHandler

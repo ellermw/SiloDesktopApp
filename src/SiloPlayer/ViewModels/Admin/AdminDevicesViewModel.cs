@@ -21,6 +21,7 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
     [ObservableProperty] private bool _isDetailLoading;
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private bool _overridesOnly;
+    [ObservableProperty] private bool _showAllSettings = true;
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private string _platformFilter = "All platforms";
     [ObservableProperty] private string _recencyFilter = "Any activity";
@@ -31,14 +32,23 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
     [ObservableProperty] private AdminDeviceCardViewModel? _selectedDevice;
     [ObservableProperty] private AdminDeviceDetail? _detail;
     [ObservableProperty] private AdminDeviceProfileOption? _selectedProfile;
+    public bool HasLoaded { get; private set; }
 
     public int TotalDevices => _allDevices.Count;
     public int TotalUsers => _allDevices.Select(d => d.UserId).Distinct().Count();
     public int TotalProfiles => _allDevices.Sum(d => d.ProfileCount);
     public int TotalOverrides => _allDevices.Sum(d => d.OverrideCount);
     public bool HasDevices => Devices.Count > 0;
+    public bool HasAnyDevices => _allDevices.Count > 0;
+    public bool ShowDeviceListEmpty => !IsLoading && !HasDevices;
+    public string DeviceListEmptyTitle => HasAnyDevices ? "No devices match your filters" : "No devices seen yet";
+    public string DeviceListEmptyDescription => HasAnyDevices ? "Try adjusting the search, scope, or filter facets." : "Devices appear after a client has reported profile-specific settings.";
     public bool IsDetailVisible => SelectedDevice is not null;
     public bool IsFleetVisible => SelectedDevice is null;
+    public bool HasProfiles => Profiles.Count > 0;
+    public bool IsSettingsScopeLocked => Detail?.OverrideCount == 0;
+    public int AllSettingCount => AdminDeviceSettingDefinition.All.Count;
+    public int SelectedProfileOverrideCount => Detail is null || SelectedProfile is null ? 0 : Detail.Settings.Count(setting => setting.ProfileId == SelectedProfile.ProfileId);
     public string ResultsLabel => $"{Devices.Count} {(Devices.Count == 1 ? "device" : "devices")}";
     public int DevicesWithOverrides => _allDevices.Count(d => d.OverrideCount > 0);
     private IEnumerable<AdminDeviceSummary> ScopedDevices => OverridesOnly
@@ -51,8 +61,10 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
     public int HeavyCustomizerCount => ScopedDevices.Count(d => d.OverrideCount >= 3);
     public int DormantCount => ScopedDevices.Count(d => AgeInDays(d) > 30);
     public int TvCount => ScopedDevices.Count(d => PlatformKind(d.DevicePlatform) == "TV");
-    public int MobileCount => ScopedDevices.Count(d => PlatformKind(d.DevicePlatform) is "Mobile" or "Tablet");
+    public int MobileCount => ScopedDevices.Count(d => PlatformKind(d.DevicePlatform) == "Mobile");
+    public int TabletCount => ScopedDevices.Count(d => PlatformKind(d.DevicePlatform) == "Tablet");
     public int DesktopCount => ScopedDevices.Count(d => PlatformKind(d.DevicePlatform) == "Desktop");
+    public int OtherCount => ScopedDevices.Count(d => PlatformKind(d.DevicePlatform) == "Other");
     public int NoOverrideCount => ScopedDevices.Count(d => d.OverrideCount == 0);
     public int OneTwoOverrideCount => ScopedDevices.Count(d => d.OverrideCount is >= 1 and <= 2);
     public int ThreeFiveOverrideCount => ScopedDevices.Count(d => d.OverrideCount is >= 3 and <= 5);
@@ -66,10 +78,12 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
     private readonly HashSet<string> _overrideFilters = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _recencyFilters = new(StringComparer.OrdinalIgnoreCase);
 
-    partial void OnSearchTextChanged(string value) => ApplyFilters();
+    public void ApplySearchFilter() => ApplyFilters();
     partial void OnPlatformFilterChanged(string value) => ApplyFilters();
     partial void OnRecencyFilterChanged(string value) => ApplyFilters();
     partial void OnOverridesOnlyChanged(bool value) => ApplyFilters();
+    partial void OnIsLoadingChanged(bool value) => OnPropertyChanged(nameof(ShowDeviceListEmpty));
+    partial void OnShowAllSettingsChanged(bool value) => RebuildSettings();
     partial void OnGroupByChanged(string value) => ApplyFilters();
     partial void OnActiveSavedViewChanged(string? value) => ApplyFilters();
 
@@ -101,8 +115,9 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
     }
 
     [RelayCommand]
-    public async Task LoadAsync()
+    public async Task LoadAsync(bool force = false)
     {
+        if (HasLoaded && !force) return;
         var owner = new CancellationTokenSource();
         var previous = Interlocked.Exchange(ref _loadCts, owner);
         previous?.Cancel();
@@ -117,6 +132,7 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
             _allDevices.Clear();
             _allDevices.AddRange(devices);
             ApplyFilters();
+            HasLoaded = true;
         }
         catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
         catch (Exception ex) { if (ReferenceEquals(_loadCts, owner)) ErrorMessage = ex.Message; }
@@ -131,6 +147,7 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
     public async Task SelectDeviceAsync(AdminDeviceCardViewModel device)
     {
         SelectedDevice = device;
+        ShowAllSettings = !OverridesOnly || device.Source.OverrideCount == 0;
         OnPropertyChanged(nameof(IsDetailVisible));
         OnPropertyChanged(nameof(IsFleetVisible));
         IsDetailLoading = true;
@@ -139,6 +156,7 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
         try
         {
             Detail = await adminApi.GetDeviceAsync(device.Source.UserId, device.Source.DeviceId);
+            if (Detail.OverrideCount == 0) ShowAllSettings = true;
             Profiles.Clear();
             foreach (var profile in Detail.Profiles.OrderBy(p => p.ProfileName, StringComparer.CurrentCultureIgnoreCase))
                 Profiles.Add(new AdminDeviceProfileOption(profile.ProfileId,
@@ -153,10 +171,25 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
                     Profiles.Add(new AdminDeviceProfileOption(profileId, "Unknown profile", 0));
             }
             SelectedProfile = Profiles.FirstOrDefault();
+            OnPropertyChanged(nameof(HasProfiles));
+            OnPropertyChanged(nameof(IsSettingsScopeLocked));
+            OnPropertyChanged(nameof(SelectedProfileOverrideCount));
             RebuildSettings();
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsDetailLoading = false; }
+    }
+
+    public async Task OpenDeviceAsync(int userId, string deviceId)
+    {
+        var source = _allDevices.FirstOrDefault(device => device.UserId == userId &&
+            string.Equals(device.DeviceId, deviceId, StringComparison.Ordinal));
+        if (source is null)
+        {
+            ErrorMessage = "The selected device is no longer registered.";
+            return;
+        }
+        await SelectDeviceAsync(new AdminDeviceCardViewModel(source));
     }
 
     public void CloseDetail()
@@ -170,9 +203,16 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
         StatusMessage = null;
         OnPropertyChanged(nameof(IsDetailVisible));
         OnPropertyChanged(nameof(IsFleetVisible));
+        OnPropertyChanged(nameof(HasProfiles));
+        OnPropertyChanged(nameof(IsSettingsScopeLocked));
+        OnPropertyChanged(nameof(SelectedProfileOverrideCount));
     }
 
-    partial void OnSelectedProfileChanged(AdminDeviceProfileOption? value) => RebuildSettings();
+    partial void OnSelectedProfileChanged(AdminDeviceProfileOption? value)
+    {
+        OnPropertyChanged(nameof(SelectedProfileOverrideCount));
+        RebuildSettings();
+    }
 
     public async Task SaveSettingAsync(AdminDeviceSettingRow row, string value)
     {
@@ -207,6 +247,24 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
         finally { IsBusy = false; }
     }
 
+    public async Task SaveSettingValueOnlyAsync(AdminDeviceSettingRow row, string value)
+    {
+        if (Detail is null || SelectedProfile is null) return;
+        await adminApi.UpdateDeviceSettingAsync(Detail.UserId, SelectedProfile.ProfileId, Detail.DeviceId, row.Key, value);
+    }
+
+    public async Task ResetSettingValueOnlyAsync(AdminDeviceSettingRow row)
+    {
+        if (Detail is null || SelectedProfile is null || !row.IsOverride) return;
+        await adminApi.DeleteDeviceSettingAsync(Detail.UserId, SelectedProfile.ProfileId, Detail.DeviceId, row.Key);
+    }
+
+    public async Task RefreshSelectedDeviceAsync()
+    {
+        await RefreshDetailAsync();
+        StatusMessage = "Subtitle appearance updated.";
+    }
+
     public async Task ResetProfileAsync()
     {
         if (Detail is null || SelectedProfile is null || IsBusy) return;
@@ -228,14 +286,18 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
         if (Detail is null || SelectedProfile is null) return;
         var profileId = SelectedProfile.ProfileId;
         Detail = await adminApi.GetDeviceAsync(Detail.UserId, Detail.DeviceId);
+        if (Detail.OverrideCount == 0) ShowAllSettings = true;
         Profiles.Clear();
         foreach (var profile in Detail.Profiles.OrderBy(p => p.ProfileName))
             Profiles.Add(new(profile.ProfileId,
                 string.IsNullOrWhiteSpace(profile.ProfileName) ? "Unknown profile" : profile.ProfileName,
                 profile.OverrideCount));
         SelectedProfile = Profiles.FirstOrDefault(p => p.ProfileId == profileId) ?? Profiles.FirstOrDefault();
+        OnPropertyChanged(nameof(HasProfiles));
+        OnPropertyChanged(nameof(IsSettingsScopeLocked));
+        OnPropertyChanged(nameof(SelectedProfileOverrideCount));
         RebuildSettings();
-        _ = LoadAsync();
+        _ = LoadAsync(force: true);
     }
 
     private void ApplyFilters()
@@ -267,8 +329,7 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
         if (PlatformFilter != "All platforms")
             query = query.Where(d => PlatformKind(d.DevicePlatform) == PlatformFilter);
         if (_platformFilters.Count > 0)
-            query = query.Where(d => _platformFilters.Contains(PlatformKind(d.DevicePlatform)) ||
-                                     (_platformFilters.Contains("Mobile") && PlatformKind(d.DevicePlatform) == "Tablet"));
+            query = query.Where(d => _platformFilters.Contains(PlatformKind(d.DevicePlatform)));
         if (_overrideFilters.Count > 0)
             query = query.Where(d => _overrideFilters.Contains(OverrideBucket(d.OverrideCount)));
         if (_recencyFilters.Count > 0)
@@ -283,6 +344,10 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
             Devices.Add(new(device, IsAnomalous(device)));
         RebuildGroups();
         OnPropertyChanged(nameof(HasDevices));
+        OnPropertyChanged(nameof(HasAnyDevices));
+        OnPropertyChanged(nameof(ShowDeviceListEmpty));
+        OnPropertyChanged(nameof(DeviceListEmptyTitle));
+        OnPropertyChanged(nameof(DeviceListEmptyDescription));
         OnPropertyChanged(nameof(ResultsLabel));
         OnPropertyChanged(nameof(TotalDevices));
         OnPropertyChanged(nameof(TotalUsers));
@@ -296,7 +361,9 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
         OnPropertyChanged(nameof(DormantCount));
         OnPropertyChanged(nameof(TvCount));
         OnPropertyChanged(nameof(MobileCount));
+        OnPropertyChanged(nameof(TabletCount));
         OnPropertyChanged(nameof(DesktopCount));
+        OnPropertyChanged(nameof(OtherCount));
         OnPropertyChanged(nameof(NoOverrideCount));
         OnPropertyChanged(nameof(OneTwoOverrideCount));
         OnPropertyChanged(nameof(ThreeFiveOverrideCount));
@@ -381,6 +448,7 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
         foreach (var definition in AdminDeviceSettingDefinition.All)
         {
             existing.TryGetValue(definition.Key, out var setting);
+            if (!ShowAllSettings && setting is null) continue;
             Settings.Add(new(definition, setting));
         }
     }
@@ -425,6 +493,8 @@ public sealed class AdminDeviceCardViewModel(AdminDeviceSummary source, bool isA
     public string Overrides => $"{Source.OverrideCount} {(Source.OverrideCount == 1 ? "override" : "overrides")}";
     public string Profiles => $"{Source.ProfileCount} {(Source.ProfileCount == 1 ? "profile" : "profiles")}";
     public bool IsAnomalous { get; } = isAnomalous;
+    public string Status => IsAnomalous ? "Anomaly" : "Normal";
+    public string StatusDetail => IsAnomalous ? "override pattern needs review" : $"aligned with {PlatformKind.ToLowerInvariant()} fleet";
 }
 
 public sealed class AdminDeviceSettingRow(AdminDeviceSettingDefinition definition, AdminDeviceSetting? setting)

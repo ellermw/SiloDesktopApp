@@ -9,10 +9,11 @@
     xmlns:models="using:SiloPlayer.Core.Models.Home"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}"
-    Loaded="Page_Loaded">
+    Loaded="Page_Loaded"
+    SizeChanged="Page_SizeChanged">
 
     <ScrollViewer IsScrollInertiaEnabled="True">
-        <StackPanel Padding="40,24,40,48" Spacing="24">
+        <StackPanel x:Name="PageContent" Padding="40,24,40,48" Spacing="24">
             <Button
                 Style="{StaticResource GhostButtonStyle}"
                 HorizontalAlignment="Left"
@@ -97,7 +98,7 @@
 
             <ItemsRepeater x:Name="ItemsGrid" ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}" Visibility="Collapsed">
                 <ItemsRepeater.Layout>
-                    <UniformGridLayout MinItemWidth="165" MinColumnSpacing="16" MinRowSpacing="24" />
+                    <UniformGridLayout x:Name="ItemsLayout" MinItemWidth="165" MinColumnSpacing="16" MinRowSpacing="24" ItemsStretch="Fill" />
                 </ItemsRepeater.Layout>
                 <ItemsRepeater.ItemTemplate>
                     <DataTemplate x:DataType="models:MediaItem">

@@ -43,6 +43,12 @@ public sealed partial class LoginPage : Page
         await ViewModel.LoadAuthInfoCommand.ExecuteAsync(null);
     }
 
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        ViewModel.CancelDeviceLogin();
+        base.OnNavigatedFrom(e);
+    }
+
     private void OnLoginSucceeded()
     {
         var nav = App.Services.GetRequiredService<NavigationService>();
@@ -100,6 +106,22 @@ public sealed partial class LoginPage : Page
         {
             btn.IsEnabled = true;
         }
+    }
+
+    private async void StartDeviceLoginButton_Click(object sender, RoutedEventArgs e)
+        => await ViewModel.StartDeviceLoginAsync();
+
+    private void ShowDeviceFallbackButton_Click(object sender, RoutedEventArgs e)
+        => ViewModel.ShowDeviceFallback = true;
+
+    private void RestartDeviceLoginButton_Click(object sender, RoutedEventArgs e)
+        => ViewModel.CancelDeviceLogin(clearSession: true);
+
+    private async void OpenDeviceVerificationButton_Click(object sender, RoutedEventArgs e)
+    {
+        var url = ViewModel.DeviceSession?.VerificationUri;
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            await Windows.System.Launcher.LaunchUriAsync(uri);
     }
 
     private async Task ShowOAuthDialogAsync(AuthProvider provider, Uri authorizeUri)

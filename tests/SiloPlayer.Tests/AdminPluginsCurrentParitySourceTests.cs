@@ -13,11 +13,14 @@ public class AdminPluginsCurrentParitySourceTests
     [Fact]
     public void PluginsUsesCurrentPageGeometryAndTabs()
     {
-        Assert.Contains("MaxWidth=\"1560\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("MaxWidth=\"1400\"", Markup, StringComparison.Ordinal);
         Assert.Contains("FontSize=\"48\"", Markup, StringComparison.Ordinal);
         Assert.Contains("Check for updates", Markup, StringComparison.Ordinal);
         Assert.Contains("Search installed plugins", Markup, StringComparison.Ordinal);
         Assert.Contains("Search the plugin catalog", Markup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"PluginsPageShell\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("ApplyResponsiveLayout", CodeBehind, StringComparison.Ordinal);
+        Assert.DoesNotContain("x:Name=\"StatusBanner\"", Markup, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -47,6 +50,9 @@ public class AdminPluginsCurrentParitySourceTests
         Assert.Contains("/api/v1/admin/plugins/uploads/chunked", Api, StringComparison.Ordinal);
         Assert.Contains("DefaultUploadChunkSize", Api, StringComparison.Ordinal);
         Assert.Contains("This plugin has no additional configuration.", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"ManualInstallGrid\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"RepoFormGrid\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("SurfaceViewModelMutationResult", CodeBehind, StringComparison.Ordinal);
     }
 
     [Fact]

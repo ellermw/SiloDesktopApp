@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.46**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.46/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.47**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.47/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `9315C2404F24B98F3402F5C723ABC2B94C0C4ACB128F89BCA7488539D7DFC5CB`
+SHA-256: `431C89D9E21F5FF4F9420F593BBA0FC8E10F324DA8679FCEFD9324EF53EC9BC8`
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -23,7 +23,7 @@ Status meanings:
 
 | Area | Status | Current state |
 |---|---|---|
-| Authentication and profiles | Substantial | Login, refresh tokens, profile selection, PINs, profile management, signup, and setup flows exist. Device login and the complete impersonation lifecycle remain to be finished. |
+| Authentication and profiles | Substantial | Login, refresh tokens, profile selection, PINs, profile management, signup, setup, public server branding, and the current QR/device-login flow are implemented. The complete impersonation lifecycle and final installed visual comparison remain. |
 | Catalog and library browsing | Substantial | Virtualized browsing, filters, sorting, search, collections, favorites, watchlist, history, calendar, recommendations, and requests are implemented. Exact layout details and literary-media browsing still need work. |
 | Home screen | Substantial | Server-defined sections, hero content, continue watching, next up, recommendations, customization, incremental refresh, current card variants, and audiobook rows are implemented. Installed-build visual comparison and remaining responsive edge cases are still required. |
 | Item and person details | Substantial | Movie, series, season, episode, cast/crew, versions, watched/favorite/watchlist/rating, trailers, extras, edition selection, split/marker workflows, and current More actions are implemented. Installed-build comparison and remaining edge cases are still required. |
@@ -48,6 +48,15 @@ Status meanings:
 | Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
 
 ## Recent release work
+
+### 1.1.47
+
+- Added the current WebUI's QR/device-authorization login flow, locally generated QR codes, public server branding, and cancel-safe polling without exposing credentials to a third-party QR service.
+- Kept favorites, watchlist, watched state, and playback progress synchronized in place across active Library and Catalog cards without reloading or losing scroll position.
+- Updated Settings History Import for the current Watchlist and Favorites counters and continued the source audit against public Silo Server commit `b96e359b4ebe3e6aea68ce327d180578bf0b04d0`.
+- Fixed focus-loss video acceleration by keeping audio as mpv's stable playback clock, and made direct-play stalls first reopen the existing byte-range session before falling back to a slower replacement-session request.
+- Verified selected-version detail metadata against the current WebUI contract, including multipart duration and selected-file resolution, HDR/Dolby Vision, and best audio badges.
+- Expanded regression coverage to 532 passing tests with a zero-warning x64 build.
 
 ### 1.1.46
 
@@ -257,4 +266,4 @@ powershell -ExecutionPolicy Bypass -File installer/build.ps1
 
 ## Reference source
 
-Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Release 1.1.46 was compared against Silo Server commit `b96e359b4ebe3e6aea68ce327d180578bf0b04d0` from July 16, 2026.
+Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Release 1.1.47 was compared against Silo Server commit `b96e359b4ebe3e6aea68ce327d180578bf0b04d0` from July 16, 2026.

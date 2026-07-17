@@ -19,6 +19,7 @@ public partial class NotificationsViewModel : ObservableObject
 
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string? _errorMessage;
+    [ObservableProperty] private string? _preferencesErrorMessage;
     [ObservableProperty] private string _statusMessage = "";
     [ObservableProperty] private int _unreadCount;
     [ObservableProperty] private NotificationPreferences _preferences = new();
@@ -28,6 +29,7 @@ public partial class NotificationsViewModel : ObservableObject
     private string? _nextCursor;
     private DateTime _lastLoadedAt = DateTime.MinValue;
     private string? _lastLoadedFilter;
+    private long _preferencesSaveVersion;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(2);
 
     [RelayCommand]
@@ -61,18 +63,40 @@ public partial class NotificationsViewModel : ObservableObject
         try
         {
             if (reset) _nextCursor = null;
+            // These requests are independent in the WebUI. The inbox is the
+            // only page-critical request; an older server or a temporary
+            // preferences/count failure must not replace a valid notification
+            // list with the full-page error state.
             var inboxTask = _notificationsApi.GetNotificationsAsync(StatusFilter, _nextCursor, limit: 25);
-            var unreadTask = reset ? _notificationsApi.GetUnreadCountAsync() : Task.FromResult(UnreadCount);
-            var prefsTask = reset ? _notificationsApi.GetPreferencesAsync() : Task.FromResult(Preferences);
-            await Task.WhenAll(inboxTask, unreadTask, prefsTask);
+            var unreadTask = reset ? TryLoadUnreadCountAsync() : Task.FromResult<int?>(UnreadCount);
+            var prefsTask = reset
+                ? TryLoadPreferencesAsync()
+                : Task.FromResult<(NotificationPreferences? Value, string? Error)>((Preferences, null));
+            var inbox = await inboxTask;
 
             if (reset) Notifications.Clear();
-            foreach (var notification in inboxTask.Result.Notifications)
+            foreach (var notification in inbox.Notifications)
                 if (!Notifications.Any(existing => existing.Id == notification.Id)) Notifications.Add(notification);
 
-            UnreadCount = unreadTask.Result;
-            Preferences = prefsTask.Result;
-            _nextCursor = inboxTask.Result.NextCursor;
+            if (reset)
+            {
+                var unreadCount = await unreadTask;
+                if (unreadCount.HasValue)
+                    UnreadCount = unreadCount.Value;
+
+                var preferencesResult = await prefsTask;
+                if (preferencesResult.Value != null)
+                {
+                    Preferences = preferencesResult.Value;
+                    PreferencesErrorMessage = null;
+                }
+                else
+                {
+                    PreferencesErrorMessage = preferencesResult.Error;
+                }
+            }
+
+            _nextCursor = inbox.NextCursor;
             HasMore = !string.IsNullOrWhiteSpace(_nextCursor);
             IsEmpty = Notifications.Count == 0;
             StatusMessage = "";
@@ -91,6 +115,18 @@ public partial class NotificationsViewModel : ObservableObject
         {
             IsLoading = false;
         }
+    }
+
+    private async Task<int?> TryLoadUnreadCountAsync()
+    {
+        try { return await _notificationsApi.GetUnreadCountAsync(); }
+        catch { return null; }
+    }
+
+    private async Task<(NotificationPreferences? Value, string? Error)> TryLoadPreferencesAsync()
+    {
+        try { return (await _notificationsApi.GetPreferencesAsync(), null); }
+        catch (Exception ex) { return (null, $"Couldn't load preferences: {ex.Message}"); }
     }
 
     [RelayCommand]
@@ -148,15 +184,45 @@ public partial class NotificationsViewModel : ObservableObject
     [RelayCommand]
     private async Task SavePreferencesAsync()
     {
+        var version = Interlocked.Increment(ref _preferencesSaveVersion);
+        var requested = ClonePreferences(Preferences);
         try
         {
-            ErrorMessage = null;
-            Preferences = await _notificationsApi.UpdatePreferencesAsync(Preferences);
-            StatusMessage = "Notification preferences saved.";
+            PreferencesErrorMessage = null;
+            var saved = await _notificationsApi.UpdatePreferencesAsync(requested);
+            if (version == Volatile.Read(ref _preferencesSaveVersion))
+            {
+                Preferences = saved;
+                StatusMessage = "Notification preferences saved.";
+            }
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to save notification preferences: {ex.Message}";
+            if (version != Volatile.Read(ref _preferencesSaveVersion)) return;
+
+            PreferencesErrorMessage = $"Failed to save notification preferences: {ex.Message}";
+            try
+            {
+                // A previous overlapping mutation may already have reached the
+                // server. Re-read the authoritative value rather than guessing
+                // which optimistic switch state should be rolled back.
+                Preferences = await _notificationsApi.GetPreferencesAsync();
+            }
+            catch
+            {
+                // Keep the current controls visible and retain the actionable
+                // failure message. A later page refresh will retry the query.
+            }
         }
     }
+
+    private static NotificationPreferences ClonePreferences(NotificationPreferences source) => new()
+    {
+        ProfileId = source.ProfileId,
+        Enabled = source.Enabled,
+        NotifyFavorites = source.NotifyFavorites,
+        NotifyWatchlist = source.NotifyWatchlist,
+        NotifyContinueWatching = source.NotifyContinueWatching,
+        NotifyNextUp = source.NotifyNextUp,
+    };
 }

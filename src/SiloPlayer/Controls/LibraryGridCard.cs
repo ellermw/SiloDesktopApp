@@ -222,6 +222,14 @@ public sealed class LibraryGridCard : Canvas
         }
     }
 
+    /// <summary>Refreshes mutable profile state without restarting artwork loading.</summary>
+    public void RefreshState()
+    {
+        if (MediaItem is not { } item) return;
+        _subtitleText.Text = MediaItemDisplayText.BuildSubtitle(item, SortKey);
+        UpdateOverlays(item);
+    }
+
     public void SetLayout(double cardWidth, double posterHeight, double cardHeight)
     {
         if (Math.Abs(Width - cardWidth) < 0.5 && Math.Abs(_posterHeight - posterHeight) < 0.5)

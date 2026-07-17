@@ -24,34 +24,23 @@
             <StackPanel x:Name="MaintenancePageShell" Padding="40,24,40,24" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
 
                 <!-- ===== Page header ===== -->
-                <StackPanel Spacing="6">
+                <StackPanel Spacing="12">
                     <TextBlock
                         Text="Maintenance"
                         FontSize="48"
-                        FontWeight="Bold"
+                        FontWeight="ExtraBold"
+                        CharacterSpacing="-50"
+                        LineHeight="46"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock
                         Text="Operational tools that affect the whole catalog live here. Use this page for bulk import/export workflows and other future maintenance actions."
-                        FontSize="14"
+                        FontSize="16"
+                        LineHeight="27"
                         Foreground="{StaticResource SecondaryTextBrush}"
                         TextWrapping="Wrap"
                         MaxWidth="820"
                         HorizontalAlignment="Left" />
                 </StackPanel>
-
-                <!-- Status banner (transient) -->
-                <Border
-                    x:Name="StatusBanner"
-                    Visibility="{x:Bind ViewModel.StatusMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
-                    Background="#22C55E"
-                    CornerRadius="10"
-                    Padding="14,10">
-                    <TextBlock
-                        Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
-                        FontSize="13"
-                        FontWeight="SemiBold"
-                        Foreground="White" />
-                </Border>
 
                 <!-- Inline loading indicator -->
                 <ProgressRing
@@ -86,7 +75,7 @@
                     Background="{StaticResource CardBackgroundBrush}"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
-                    CornerRadius="12"
+                    CornerRadius="8"
                     Padding="20,16">
                     <Grid x:Name="CatalogMaintenanceHeader" ColumnSpacing="16" RowSpacing="12">
                         <Grid.ColumnDefinitions>
@@ -139,7 +128,7 @@
                     Background="{StaticResource CardBackgroundBrush}"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
-                    CornerRadius="12">
+                    CornerRadius="8">
                     <StackPanel>
                         <Grid Padding="20,14" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
@@ -173,7 +162,7 @@
                     Background="{StaticResource CardBackgroundBrush}"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
-                    CornerRadius="12">
+                    CornerRadius="8">
                     <StackPanel>
                         <Grid Padding="20,14" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
@@ -207,7 +196,7 @@
                     Background="{StaticResource CardBackgroundBrush}"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
-                    CornerRadius="12">
+                    CornerRadius="8">
                     <StackPanel>
                         <Grid Padding="20,14" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>

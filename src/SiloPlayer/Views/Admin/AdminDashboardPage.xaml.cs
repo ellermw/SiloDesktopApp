@@ -9,6 +9,7 @@ using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels.Admin;
 
 namespace SiloPlayer.Views.Admin;
@@ -50,6 +51,7 @@ public sealed partial class AdminDashboardPage : Page
         var verticalPadding = width >= 1024 ? 32 : 16;
         AdminPageContent.Padding = new Thickness(horizontalPadding, verticalPadding, horizontalPadding, 40);
         var contentWidth = Math.Max(0, width - AdminPageContent.Padding.Left - AdminPageContent.Padding.Right);
+        AdminPageContent.Spacing = contentWidth >= 1024 ? 32 : 24;
         var statColumns = contentWidth >= 1024 ? 5 : contentWidth >= 640 ? 3 : 2;
         ArrangeGridChildren(StatsGrid, statColumns);
         ArrangeGridChildren(StatsLoadingGrid, statColumns);
@@ -368,19 +370,60 @@ public sealed partial class AdminDashboardPage : Page
             Grid.SetColumn(skeleton, column);
             StreamCardsGrid.Children.Add(skeleton);
         }
-        RecentActivitySection.Visibility = Visibility.Collapsed;
+        RecentActivitySection.Visibility = Visibility.Visible;
+        ActivityPanel.Children.Clear();
+        for (var i = 0; i < 4; i++)
+        {
+            var activitySkeleton = new Grid
+            {
+                ColumnSpacing = 12,
+                Padding = new Thickness(0, 10, 0, 10),
+            };
+            activitySkeleton.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
+            activitySkeleton.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var icon = new SiloPlayer.Controls.SkeletonBox
+            {
+                Width = 30,
+                Height = 30,
+                CornerRadius = new CornerRadius(8),
+            };
+            var copy = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+            copy.Children.Add(new SiloPlayer.Controls.SkeletonBox
+            {
+                Width = 360,
+                MaxWidth = 360,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Height = 12,
+                CornerRadius = new CornerRadius(4),
+            });
+            copy.Children.Add(new SiloPlayer.Controls.SkeletonBox
+            {
+                Width = 120,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Height = 8,
+                CornerRadius = new CornerRadius(4),
+            });
+            Grid.SetColumn(icon, 0);
+            Grid.SetColumn(copy, 1);
+            activitySkeleton.Children.Add(icon);
+            activitySkeleton.Children.Add(copy);
+            ActivityPanel.Children.Add(activitySkeleton);
+        }
         LibrariesPanel.Children.Clear();
         UsersPanel.Children.Clear();
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < 4; i++)
         {
-            LibrariesPanel.Children.Add(new SiloPlayer.Controls.SkeletonBox
+            if (i < 3)
             {
-                Height = 64,
-                CornerRadius = new CornerRadius(6),
-            });
+                LibrariesPanel.Children.Add(new SiloPlayer.Controls.SkeletonBox
+                {
+                    Height = 60,
+                    CornerRadius = new CornerRadius(6),
+                });
+            }
             UsersPanel.Children.Add(new SiloPlayer.Controls.SkeletonBox
             {
-                Height = 42,
+                Height = 40,
                 CornerRadius = new CornerRadius(6),
             });
         }
@@ -428,7 +471,7 @@ public sealed partial class AdminDashboardPage : Page
             return;
         }
         TraktActivityCard.Visibility = Visibility.Visible;
-        var header = new Grid();
+        var header = new Grid { Margin = new Thickness(0, 0, 0, 24) };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var title = new TextBlock { Text = "Trakt Activity", FontSize = 14, FontWeight = FontWeights.Bold, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] };
@@ -1493,6 +1536,8 @@ public sealed partial class AdminDashboardPage : Page
 
         var capturedSession = session;
         var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
+        var toastService = App.Services.GetRequiredService<ToastService>();
+        var supportsPlaybackControl = session.HasPlaybackControl != false;
 
         var pauseItem = new MenuFlyoutItem
         {
@@ -1503,14 +1548,30 @@ public sealed partial class AdminDashboardPage : Page
         {
             try
             {
+                SiloPlayer.Core.Api.AdminSessionCommandResponse response;
                 if (capturedSession.IsPaused)
-                    await adminApi.ResumeSessionAsync(capturedSession.SessionId);
+                    response = await adminApi.ResumeSessionAsync(capturedSession.SessionId);
                 else
-                    await adminApi.PauseSessionAsync(capturedSession.SessionId);
+                    response = await adminApi.PauseSessionAsync(capturedSession.SessionId);
+                toastService.Success(GetSessionCommandToast(capturedSession.IsPaused ? "Resume" : "Pause", response));
             }
-            catch { }
+            catch (Exception ex) { toastService.Error(ex.Message); }
         };
-        flyout.Items.Add(pauseItem);
+        if (supportsPlaybackControl)
+        {
+            flyout.Items.Add(new MenuFlyoutItem { Text = "Playback Actions", IsEnabled = false });
+            flyout.Items.Add(pauseItem);
+        }
+        else
+        {
+            flyout.Items.Add(new MenuFlyoutItem { Text = "Limited Playback Actions", IsEnabled = false });
+            flyout.Items.Add(new MenuFlyoutItem
+            {
+                Text = "This session does not support live pause, resume, or messages.",
+                IsEnabled = false,
+            });
+            flyout.Items.Add(new MenuFlyoutSeparator());
+        }
 
         var stopItem = new MenuFlyoutItem
         {
@@ -1519,34 +1580,63 @@ public sealed partial class AdminDashboardPage : Page
         };
         stopItem.Click += async (_, _) =>
         {
-            try { await adminApi.StopSessionAsync(capturedSession.SessionId); }
-            catch { }
+            try
+            {
+                var response = await adminApi.StopSessionAsync(capturedSession.SessionId);
+                toastService.Success(GetSessionCommandToast("Stop", response));
+            }
+            catch (Exception ex) { toastService.Error(ex.Message); }
         };
         flyout.Items.Add(stopItem);
 
         var msgItem = new MenuFlyoutItem
         {
-            Text = "Message",
+            Text = "Message…",
             Icon = new FontIcon { Glyph = "\uE8BD" },
         };
         msgItem.Click += async (_, _) =>
         {
-            var msgBox = new TextBox { PlaceholderText = "Message to display on player", AcceptsReturn = true, Height = 80 };
+            var msgBox = new TextBox
+            {
+                PlaceholderText = "Server restart in 5 minutes. Please finish this episode soon.",
+                AcceptsReturn = true,
+                TextWrapping = TextWrapping.Wrap,
+                MinHeight = 96,
+            };
+            var dialogContent = new StackPanel { Spacing = 16 };
+            dialogContent.Children.Add(new TextBlock
+            {
+                Text = $"Send a custom message to {capturedSession.Username ?? $"User #{capturedSession.UserId}"} during playback.",
+                FontSize = 13,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+            dialogContent.Children.Add(msgBox);
             var dlg = new ContentDialog
             {
                 Title = "Send Message",
-                Content = msgBox,
-                PrimaryButtonText = "Send",
+                Content = dialogContent,
+                PrimaryButtonText = "Send Message",
                 CloseButtonText = "Cancel",
                 XamlRoot = this.XamlRoot,
+                DefaultButton = ContentDialogButton.Primary,
             };
-            if (await dlg.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(msgBox.Text))
+            if (await dlg.ShowAsync() == ContentDialogResult.Primary)
             {
-                try { await adminApi.MessageSessionAsync(capturedSession.SessionId, msgBox.Text.Trim()); }
-                catch { }
+                if (string.IsNullOrWhiteSpace(msgBox.Text))
+                {
+                    toastService.Error("Message is required");
+                    return;
+                }
+                try
+                {
+                    await adminApi.MessageSessionAsync(capturedSession.SessionId, msgBox.Text.Trim());
+                    toastService.Success("Message sent");
+                }
+                catch (Exception ex) { toastService.Error(ex.Message); }
             }
         };
-        flyout.Items.Add(msgItem);
+        if (supportsPlaybackControl) flyout.Items.Add(msgItem);
 
         flyout.Items.Add(new MenuFlyoutSeparator());
 
@@ -1558,21 +1648,12 @@ public sealed partial class AdminDashboardPage : Page
         };
         terminateItem.Click += async (_, _) =>
         {
-            var dlg = new ContentDialog
+            try
             {
-                Title = "Terminate Session",
-                Content = "This will forcefully terminate the session. This action cannot be undone.",
-                PrimaryButtonText = "Terminate",
-                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
-                CloseButtonText = "Cancel",
-                XamlRoot = this.XamlRoot,
-                DefaultButton = ContentDialogButton.Close,
-            };
-            if (await dlg.ShowAsync() == ContentDialogResult.Primary)
-            {
-                try { await adminApi.TerminateSessionAsync(capturedSession.SessionId); }
-                catch { }
+                var response = await adminApi.TerminateSessionAsync(capturedSession.SessionId);
+                toastService.Success(GetSessionCommandToast("Terminate", response));
             }
+            catch (Exception ex) { toastService.Error(ex.Message); }
         };
         flyout.Items.Add(terminateItem);
 
@@ -1588,4 +1669,9 @@ public sealed partial class AdminDashboardPage : Page
         outerBorder.Child = row;
         return outerBorder;
     }
+
+    private static string GetSessionCommandToast(string action, SiloPlayer.Core.Api.AdminSessionCommandResponse response)
+        => response.Status == "fallback_scheduled"
+            ? $"{action} could not reach the player directly. Silo will end the session shortly instead."
+            : $"{action} command sent";
 }

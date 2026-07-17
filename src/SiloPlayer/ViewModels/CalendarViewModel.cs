@@ -17,6 +17,7 @@ public partial class CalendarViewModel : ObservableObject
 {
     private readonly CatalogApi _catalogApi;
     private readonly SettingsService _settingsService;
+    private CancellationTokenSource? _loadCts;
 
     public CalendarViewModel(CatalogApi catalogApi, SettingsService settingsService)
     {
@@ -65,7 +66,17 @@ public partial class CalendarViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadAsync()
     {
-        if (IsLoading) return;
+        var owner = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _loadCts, owner);
+        previous?.Cancel();
+        var ct = owner.Token;
+
+        // Capture one immutable query key. Filter/week/library controls may be
+        // changed again while the request is in flight; only this owner's
+        // response is allowed to update the visible week.
+        var requestedWeekStart = WeekStart;
+        var requestedFilter = Filter;
+        var requestedLibraryId = LibraryId;
 
         IsLoading = true;
         ErrorMessage = null;
@@ -76,7 +87,8 @@ public partial class CalendarViewModel : ObservableObject
             {
                 try
                 {
-                    var libs = await _catalogApi.GetLibrariesAsync();
+                    var libs = await _catalogApi.GetLibrariesAsync(ct);
+                    ct.ThrowIfCancellationRequested();
                     foreach (var l in libs)
                         Libraries.Add(l);
                 }
@@ -86,17 +98,29 @@ public partial class CalendarViewModel : ObservableObject
                 }
             }
 
-            WeekRangeLabel = FormatWeekRangeLabel(WeekStart);
-            var end = AddDays(WeekStart, 6);
+            var requestedWeekRangeLabel = FormatWeekRangeLabel(requestedWeekStart);
+            var end = AddDays(requestedWeekStart, 6);
 
-            var resp = await _catalogApi.GetCalendarAsync(WeekStart, end, Filter, LibraryId);
+            var resp = await _catalogApi.GetCalendarAsync(
+                requestedWeekStart,
+                end,
+                requestedFilter,
+                requestedLibraryId,
+                ct);
+            ct.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(Volatile.Read(ref _loadCts), owner)) return;
 
+            WeekRangeLabel = requestedWeekRangeLabel;
             Days.Clear();
             foreach (var day in resp.Events ?? [])
                 Days.Add(day);
 
             IsEmpty = Days.Count == 0;
             HasLoaded = true;
+        }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested)
+        {
+            // A newer calendar query owns the surface now.
         }
         catch (Exception ex)
         {
@@ -105,8 +129,16 @@ public partial class CalendarViewModel : ObservableObject
         }
         finally
         {
-            IsLoading = false;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _loadCts, null, owner), owner))
+                IsLoading = false;
+            owner.Dispose();
         }
+    }
+
+    public void CancelLoad()
+    {
+        Interlocked.Exchange(ref _loadCts, null)?.Cancel();
+        IsLoading = false;
     }
 
     [RelayCommand]

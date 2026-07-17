@@ -142,7 +142,7 @@
                             <StackPanel Spacing="12">
                                 <StackPanel Spacing="4">
                                     <TextBlock
-                                        Text="{x:Bind ViewModel.Details.DeviceName, Mode=OneWay, FallbackValue='This device'}"
+                                        Text="{x:Bind ViewModel.DeviceDisplayName, Mode=OneWay}"
                                         FontSize="18"
                                         FontWeight="SemiBold"
                                         Foreground="{StaticResource PrimaryTextBrush}"
@@ -256,7 +256,8 @@
                             Style="{StaticResource OutlineButtonStyle}"
                             HorizontalAlignment="Stretch"
                             Padding="16,10"
-                            Command="{x:Bind ViewModel.ClearCodeCommand}" />
+                            Command="{x:Bind ViewModel.ClearCodeCommand}"
+                            Visibility="{x:Bind ViewModel.CanEnterAnotherCode, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
                     </StackPanel>
                 </StackPanel>
             </Border>

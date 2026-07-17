@@ -16,6 +16,7 @@ public partial class ActivateDeviceViewModel : ObservableObject
 {
     private readonly AuthApi _authApi;
     private readonly AuthService _authService;
+    private CancellationTokenSource? _loadCts;
 
     public ActivateDeviceViewModel(AuthApi authApi, AuthService authService)
     {
@@ -70,6 +71,7 @@ public partial class ActivateDeviceViewModel : ObservableObject
     public bool ShowLoading => HasActiveRequest && IsLoadingDetails;
     public bool ShowNotFound => HasActiveRequest && !IsLoadingDetails && Details == null;
     public bool ShowDetails => HasActiveRequest && !IsLoadingDetails && Details != null;
+    public bool CanEnterAnotherCode => ShowDetails && string.IsNullOrEmpty(ActiveToken);
     public bool IsSignedIn => _authService.IsLoggedIn;
     public bool IsPending => Details?.Status == "pending";
     public bool IsApproved => Details?.Status == "approved";
@@ -85,6 +87,9 @@ public partial class ActivateDeviceViewModel : ObservableObject
         : "Approve sign-in for this device.";
 
     public string? SignedInUsername => _authService.CurrentUser?.Username;
+    public string DeviceDisplayName => string.IsNullOrWhiteSpace(Details?.DeviceName)
+        ? "This device"
+        : Details.DeviceName;
 
     partial void OnActiveCodeChanged(string value) => RaiseDerivedFlags();
     partial void OnActiveTokenChanged(string value) => RaiseDerivedFlags();
@@ -98,6 +103,7 @@ public partial class ActivateDeviceViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowLoading));
         OnPropertyChanged(nameof(ShowNotFound));
         OnPropertyChanged(nameof(ShowDetails));
+        OnPropertyChanged(nameof(CanEnterAnotherCode));
         OnPropertyChanged(nameof(IsSignedIn));
         OnPropertyChanged(nameof(IsPending));
         OnPropertyChanged(nameof(IsApproved));
@@ -110,6 +116,7 @@ public partial class ActivateDeviceViewModel : ObservableObject
         OnPropertyChanged(nameof(ApprovalButtonText));
         OnPropertyChanged(nameof(RequestDescription));
         OnPropertyChanged(nameof(SignedInUsername));
+        OnPropertyChanged(nameof(DeviceDisplayName));
     }
 
     /// <summary>
@@ -165,8 +172,12 @@ public partial class ActivateDeviceViewModel : ObservableObject
     /// </summary>
     public async Task InitializeAsync(string? token, string? code)
     {
+        CancelLoad();
+        Details = null;
+        ErrorMessage = null;
+        StatusMessage = null;
         ActiveToken = token ?? "";
-        ActiveCode = code ?? "";
+        ActiveCode = string.IsNullOrWhiteSpace(token) ? NormalizeCode(code ?? "") : "";
         if (!string.IsNullOrEmpty(ActiveCode))
         {
             CodeInput = ActiveCode;
@@ -185,37 +196,67 @@ public partial class ActivateDeviceViewModel : ObservableObject
             return;
         }
 
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _loadCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
+
+        var token = string.IsNullOrEmpty(ActiveToken) ? null : ActiveToken;
+        var code = string.IsNullOrEmpty(ActiveCode) ? null : ActiveCode;
         IsLoadingDetails = true;
         ErrorMessage = null;
         try
         {
-            Details = await _authApi.DeviceLookupAsync(
-                string.IsNullOrEmpty(ActiveToken) ? null : ActiveToken,
-                string.IsNullOrEmpty(ActiveCode) ? null : ActiveCode);
+            var details = await _authApi.DeviceLookupAsync(token, code, cts.Token);
+            if (ReferenceEquals(_loadCts, cts))
+                Details = details;
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            // A newer lookup owns the page state.
         }
         catch (ApiException ex)
         {
-            Details = null;
-            ErrorMessage = ex.ErrorCode switch
+            if (ReferenceEquals(_loadCts, cts))
             {
-                "not_found" => "That sign-in request could not be found.",
-                _ => ex.Message,
-            };
+                Details = null;
+                ErrorMessage = ex.ErrorCode switch
+                {
+                    "not_found" => "That sign-in request could not be found.",
+                    _ => ex.Message,
+                };
+            }
         }
         catch (HttpRequestException)
         {
-            Details = null;
-            ErrorMessage = "Unable to reach the server. Check your connection.";
+            if (ReferenceEquals(_loadCts, cts))
+            {
+                Details = null;
+                ErrorMessage = "Unable to reach the server. Check your connection.";
+            }
         }
         catch (Exception ex)
         {
-            Details = null;
-            ErrorMessage = ex.Message;
+            if (ReferenceEquals(_loadCts, cts))
+            {
+                Details = null;
+                ErrorMessage = ex.Message;
+            }
         }
         finally
         {
-            IsLoadingDetails = false;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _loadCts, null, cts), cts))
+                IsLoadingDetails = false;
+            cts.Dispose();
         }
+    }
+
+    public void CancelLoad()
+    {
+        var cts = Interlocked.Exchange(ref _loadCts, null);
+        cts?.Cancel();
+        cts?.Dispose();
+        IsLoadingDetails = false;
     }
 
     [RelayCommand]

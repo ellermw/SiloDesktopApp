@@ -8,14 +8,18 @@ using System.Text.Json;
 using Windows.UI;
 using SiloPlayer.Core.Models.Plugins;
 using SiloPlayer.ViewModels.Admin;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views.Admin;
 
 public sealed partial class AdminPluginsPage : Page
 {
     public AdminPluginsViewModel ViewModel { get; }
+    private readonly ToastService _toastService;
     private bool _rebuildPending;
     private bool _syncingCommunityToggle;
+    private bool _hasResponsiveLayout;
+    private bool _compactLayout;
     private int _installedPage;
     private int _catalogPage;
     private int _catalogColumns;
@@ -27,12 +31,15 @@ public sealed partial class AdminPluginsPage : Page
     public AdminPluginsPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminPluginsViewModel>();
+        _toastService = App.Services.GetRequiredService<ToastService>();
         this.InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Enabled;
+        SizeChanged += (_, args) => ApplyResponsiveLayout(args.NewSize.Width);
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout(ActualWidth);
         ViewModel.Installations.CollectionChanged += Plugins_CollectionChanged;
         ViewModel.CatalogEntries.CollectionChanged += Plugins_CollectionChanged;
         ViewModel.Repositories.CollectionChanged += Plugins_CollectionChanged;
@@ -52,11 +59,69 @@ public sealed partial class AdminPluginsPage : Page
         UpdateTabVisuals();
     }
 
+    private void ApplyResponsiveLayout(double width)
+    {
+        if (width <= 0) return;
+        var compact = width < 760;
+        var narrow = width < 600;
+        var breakpointChanged = _hasResponsiveLayout && _compactLayout != compact;
+        _hasResponsiveLayout = true;
+        _compactLayout = compact;
+        var gutter = narrow ? 16 : compact ? 24 : 40;
+        PluginsPageShell.Padding = new Thickness(gutter, compact ? 24 : 32, gutter, 40);
+        PluginsTitle.FontSize = narrow ? 34 : compact ? 40 : 48;
+        Grid.SetRow(CheckUpdatesButton, compact ? 1 : 0);
+        Grid.SetColumn(CheckUpdatesButton, compact ? 0 : 1);
+        Grid.SetColumnSpan(CheckUpdatesButton, compact ? 2 : 1);
+        CheckUpdatesButton.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+
+        ApplyToolbarLayout(InstalledToolbarGrid, InstalledSearchContainer, InstalledMatchText, compact);
+        ApplyToolbarLayout(CatalogToolbarGrid, CatalogSearchContainer, CatalogMatchText, compact);
+
+        ManualInstallGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+        ManualInstallGrid.ColumnDefinitions[1].Width = compact ? new GridLength(0) : GridLength.Auto;
+        Grid.SetColumn(ChoosePluginFileButton, 0);
+        Grid.SetRow(ChoosePluginFileButton, 0);
+        Grid.SetColumn(UploadPluginButton, compact ? 0 : 1);
+        Grid.SetRow(UploadPluginButton, compact ? 1 : 0);
+        UploadPluginButton.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Stretch;
+
+        RepoFormGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+        RepoFormGrid.ColumnDefinitions[1].Width = compact ? new GridLength(0) : new GridLength(2, GridUnitType.Star);
+        RepoFormGrid.ColumnDefinitions[2].Width = compact ? new GridLength(0) : GridLength.Auto;
+        foreach (var (element, index) in new (FrameworkElement Element, int Index)[]
+        {
+            (RepoNameBox, 0), (RepoUrlBox, 1), (SubmitRepoButton, 2),
+        })
+        {
+            Grid.SetColumn(element, compact ? 0 : index);
+            Grid.SetRow(element, compact ? index : 0);
+        }
+
+        if (breakpointChanged && IsLoaded)
+            RebuildInstalled();
+
+        static void ApplyToolbarLayout(Grid grid, FrameworkElement search, FrameworkElement count, bool stack)
+        {
+            grid.ColumnDefinitions[0].Width = stack ? new GridLength(1, GridUnitType.Star) : new GridLength(360);
+            grid.ColumnDefinitions[1].Width = stack ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+            grid.ColumnDefinitions[2].Width = stack ? new GridLength(0) : GridLength.Auto;
+            Grid.SetColumn(search, 0);
+            Grid.SetColumnSpan(search, stack ? 3 : 1);
+            Grid.SetRow(search, 0);
+            Grid.SetColumn(count, stack ? 0 : 2);
+            Grid.SetColumnSpan(count, stack ? 3 : 1);
+            Grid.SetRow(count, stack ? 1 : 0);
+            count.HorizontalAlignment = stack ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        }
+    }
+
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         ViewModel.Installations.CollectionChanged -= Plugins_CollectionChanged;
         ViewModel.CatalogEntries.CollectionChanged -= Plugins_CollectionChanged;
         ViewModel.Repositories.CollectionChanged -= Plugins_CollectionChanged;
+        ViewModel.CancelLoad();
         base.OnNavigatedFrom(e);
     }
 
@@ -75,10 +140,14 @@ public sealed partial class AdminPluginsPage : Page
             await adminApi.RunTaskAsync("check_plugin_updates");
             // Reload plugin catalog + installations after the task triggers.
             await ViewModel.LoadCommand.ExecuteAsync(null);
+            if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+                ShowStatus(ViewModel.ErrorMessage, isError: true);
+            else
+                ShowStatus("Plugin update check started.");
         }
         catch (Exception ex)
         {
-            ViewModel.ErrorMessage = $"Error checking updates: {ex.Message}";
+            ShowStatus($"Error checking updates: {ex.Message}", isError: true);
         }
         finally
         {
@@ -331,7 +400,7 @@ public sealed partial class AdminPluginsPage : Page
         await ViewModel.SetApprovedCommunityCatalogAsync(requested);
         CommunityCatalogToggle.IsEnabled = true;
         SyncCommunityCatalogControl();
-        if (ViewModel.StatusMessage is { } message) ShowStatus(message);
+        SurfaceViewModelMutationResult("Catalog setting updated.");
     }
 
     private void RebuildRepos()
@@ -375,9 +444,11 @@ public sealed partial class AdminPluginsPage : Page
             Padding = new Thickness(20)
         };
 
-        var root = new Grid { ColumnSpacing = 20 };
+        var root = new Grid { ColumnSpacing = 20, RowSpacing = 14 };
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         // Left: the WebUI uses a fixed plugin glyph followed by a dense metadata stack.
         var left = new Grid { ColumnSpacing = 16 };
@@ -470,6 +541,7 @@ public sealed partial class AdminPluginsPage : Page
         Grid.SetColumn(info, 1);
         left.Children.Add(info);
         Grid.SetColumn(left, 0);
+        Grid.SetColumnSpan(left, _compactLayout ? 2 : 1);
         root.Children.Add(left);
 
         // Right: action buttons
@@ -528,8 +600,17 @@ public sealed partial class AdminPluginsPage : Page
         {
             if (updatePolicy.SelectedItem is not ComboBoxItem { Tag: string policy } || string.Equals(policy, capturedPlugin.UpdatePolicy, StringComparison.OrdinalIgnoreCase)) return;
             updatePolicy.IsEnabled = false;
-            await App.Services.GetRequiredService<SiloPlayer.Core.Api.PluginsApi>().UpdateInstallationAsync(capturedPlugin.Id, new SiloPlayer.Core.Models.Plugins.UpdatePluginInstallationRequest { UpdatePolicy = policy });
-            await ViewModel.LoadCommand.ExecuteAsync(null);
+            try
+            {
+                await App.Services.GetRequiredService<SiloPlayer.Core.Api.PluginsApi>().UpdateInstallationAsync(capturedPlugin.Id, new SiloPlayer.Core.Models.Plugins.UpdatePluginInstallationRequest { UpdatePolicy = policy });
+                await ViewModel.LoadCommand.ExecuteAsync(null);
+                SurfaceViewModelMutationResult("Update policy saved.");
+            }
+            catch (Exception ex)
+            {
+                ShowStatus(ex.Message, isError: true);
+                updatePolicy.IsEnabled = true;
+            }
         };
         actions.Children.Add(updatePolicy);
 
@@ -547,6 +628,11 @@ public sealed partial class AdminPluginsPage : Page
             if (enabledToggle.IsOn == capturedPlugin.Enabled) return;
             enabledToggle.IsEnabled = false;
             await ViewModel.TogglePluginCommand.ExecuteAsync(capturedPlugin);
+            if (!SurfaceViewModelMutationResult(capturedPlugin.Enabled ? "Plugin disabled." : "Plugin enabled."))
+            {
+                enabledToggle.IsOn = capturedPlugin.Enabled;
+                enabledToggle.IsEnabled = true;
+            }
         };
         actions.Children.Add(new Border
         {
@@ -582,6 +668,7 @@ public sealed partial class AdminPluginsPage : Page
             {
                 updateBtn.IsEnabled = false;
                 await ViewModel.UpdatePluginCommand.ExecuteAsync(capturedPlugin.Id);
+                if (!SurfaceViewModelMutationResult("Plugin updated.")) updateBtn.IsEnabled = true;
             };
             actions.Children.Add(updateBtn);
         }
@@ -603,12 +690,15 @@ public sealed partial class AdminPluginsPage : Page
             if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             {
                 await ViewModel.DeletePluginCommand.ExecuteAsync(capturedPlugin.Id);
-                ShowStatus("Plugin deleted.");
+                SurfaceViewModelMutationResult("Plugin deleted.");
             }
         };
         actions.Children.Add(deleteBtn);
 
-        Grid.SetColumn(actions, 1);
+        Grid.SetColumn(actions, _compactLayout ? 0 : 1);
+        Grid.SetColumnSpan(actions, _compactLayout ? 2 : 1);
+        Grid.SetRow(actions, _compactLayout ? 1 : 0);
+        actions.HorizontalAlignment = _compactLayout ? HorizontalAlignment.Left : HorizontalAlignment.Right;
         root.Children.Add(actions);
 
         card.Child = root;
@@ -1059,7 +1149,8 @@ public sealed partial class AdminPluginsPage : Page
             if (alreadyInstalled) return;
             installBtn.IsEnabled = false;
             await ViewModel.InstallPluginCommand.ExecuteAsync(capturedEntry);
-            ShowStatus($"Plugin \"{capturedEntry.PluginId}\" installed.");
+            if (!SurfaceViewModelMutationResult($"Plugin \"{capturedEntry.PluginId}\" installed."))
+                installBtn.IsEnabled = true;
         };
 
         Grid.SetColumn(installBtn, 1);
@@ -1128,6 +1219,7 @@ public sealed partial class AdminPluginsPage : Page
         {
             toggleRepo.IsEnabled = false;
             await ViewModel.ToggleRepositoryAsync(capturedRepo);
+            if (!SurfaceViewModelMutationResult("Repository updated.")) toggleRepo.IsEnabled = true;
         };
         actions.Children.Add(toggleRepo);
         var deleteBtn = MakeIconButton("\uE74D", "Delete repository", 28);
@@ -1146,7 +1238,7 @@ public sealed partial class AdminPluginsPage : Page
             if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             {
                 await ViewModel.DeleteRepositoryCommand.ExecuteAsync(capturedRepo.Id);
-                ShowStatus("Repository deleted.");
+                SurfaceViewModelMutationResult("Repository deleted.");
             }
         };
         actions.Children.Add(deleteBtn);
@@ -1172,18 +1264,23 @@ public sealed partial class AdminPluginsPage : Page
     private async void SubmitRepoButton_Click(object sender, RoutedEventArgs e)
     {
         if (string.IsNullOrWhiteSpace(RepoNameBox.Text) || string.IsNullOrWhiteSpace(RepoUrlBox.Text)) return;
-        await ViewModel.AddRepositoryAsync(new CreatePluginRepositoryRequest
+        var repository = await ViewModel.AddRepositoryAsync(new CreatePluginRepositoryRequest
         {
             Url = RepoUrlBox.Text.Trim(),
             DisplayName = RepoNameBox.Text.Trim(),
             Enabled = true
         });
+        if (repository is null)
+        {
+            SurfaceViewModelMutationResult("Repository added.");
+            return;
+        }
         RepoNameBox.Text = "";
         RepoUrlBox.Text = "";
         RepoForm.Visibility = Visibility.Collapsed;
         AddRepoButtonText.Text = "Add";
         AddRepoButtonIcon.Glyph = "\uE710";
-        ShowStatus("Repository added.");
+        SurfaceViewModelMutationResult("Repository added.");
     }
 
     // ===== Helpers =====
@@ -1544,18 +1641,21 @@ public sealed partial class AdminPluginsPage : Page
         return btn;
     }
 
+    private bool SurfaceViewModelMutationResult(string fallbackSuccess)
+    {
+        if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+        {
+            ShowStatus(ViewModel.ErrorMessage, isError: true);
+            return false;
+        }
+
+        ShowStatus(ViewModel.StatusMessage ?? fallbackSuccess);
+        return true;
+    }
+
     private void ShowStatus(string message, bool isError = false)
     {
-        StatusBannerText.Text = message;
-        StatusBanner.Background = isError
-            ? new SolidColorBrush(Color.FromArgb(36, 239, 68, 68))
-            : (Brush)Application.Current.Resources["AccentBackgroundBrush"];
-        StatusBannerText.Foreground = isError
-            ? new SolidColorBrush(Color.FromArgb(255, 248, 113, 113))
-            : (Brush)Application.Current.Resources["AccentBrush"];
-        StatusBanner.Visibility = Visibility.Visible;
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
-        timer.Tick += (_, _) => { StatusBanner.Visibility = Visibility.Collapsed; timer.Stop(); };
-        timer.Start();
+        if (isError) _toastService.Error(message);
+        else _toastService.Success(message);
     }
 }

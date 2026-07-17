@@ -8,6 +8,7 @@ using Windows.UI;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels.Admin;
 
 namespace SiloPlayer.Views.Admin;
@@ -47,6 +48,7 @@ public sealed partial class AdminMaintenancePage : Page
         ViewModel.ImportJobs.CollectionChanged += ImportJobs_CollectionChanged;
         ViewModel.ExportJobs.CollectionChanged += ExportJobs_CollectionChanged;
         ViewModel.AllJobs.CollectionChanged += AllJobs_CollectionChanged;
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         if (ViewModel.ImportJobs.Count > 0) RebuildImportJobs();
         if (ViewModel.ExportJobs.Count > 0) RebuildExportJobs();
         if (ViewModel.AllJobs.Count > 0) RebuildAllJobs();
@@ -82,6 +84,7 @@ public sealed partial class AdminMaintenancePage : Page
         ViewModel.ImportJobs.CollectionChanged -= ImportJobs_CollectionChanged;
         ViewModel.ExportJobs.CollectionChanged -= ExportJobs_CollectionChanged;
         ViewModel.AllJobs.CollectionChanged -= AllJobs_CollectionChanged;
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
         _eventSubscription?.Dispose();
         _eventSubscription = null;
     }
@@ -94,6 +97,14 @@ public sealed partial class AdminMaintenancePage : Page
 
     private void AllJobs_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         => ScheduleRebuildAll();
+
+    private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(ViewModel.StatusMessage) || string.IsNullOrWhiteSpace(ViewModel.StatusMessage)) return;
+        var message = ViewModel.StatusMessage;
+        ViewModel.StatusMessage = null;
+        App.Services.GetRequiredService<ToastService>().Success(message);
+    }
 
     private void OnEventReceived(string channel, string eventName, System.Text.Json.JsonElement data)
     {
@@ -142,12 +153,7 @@ public sealed partial class AdminMaintenancePage : Page
     private async void ImportCatalog_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new CatalogImportDialog(ViewModel) { XamlRoot = this.XamlRoot };
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary && dialog.BuiltRequest != null)
-        {
-            try { await ViewModel.SubmitImportAsync(dialog.BuiltRequest); }
-            catch { /* VM handles error surface */ }
-        }
+        await dialog.ShowAsync();
     }
 
     private async void RefreshImports_Click(object sender, RoutedEventArgs e)

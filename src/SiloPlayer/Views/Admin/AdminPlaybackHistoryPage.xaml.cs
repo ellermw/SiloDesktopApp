@@ -96,6 +96,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page
     {
         _isPageActive = true;
         AttachPageHandlers();
+        ApplyResponsiveLayout(ActualWidth);
 
         await ViewModel.LoadCommand.ExecuteAsync(null);
         if (!_isPageActive) return;
@@ -142,7 +143,41 @@ public sealed partial class AdminPlaybackHistoryPage : Page
     }
 
     private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
-        => PageTitle.FontSize = Math.Clamp(e.NewSize.Width * 0.03, 32, 48);
+        => ApplyResponsiveLayout(e.NewSize.Width);
+
+    private void ApplyResponsiveLayout(double width)
+    {
+        PageTitle.FontSize = Math.Clamp(width * 0.03, 32, 48);
+        var side = width < 640 ? 16 : width < 1024 ? 24 : 40;
+        HistoryPageShell.Padding = new Thickness(side, width < 640 ? 16 : 32, side, 40);
+
+        var actionsBelow = width < 1180;
+        Grid.SetColumn(HistoryHeaderActions, actionsBelow ? 0 : 1);
+        Grid.SetRow(HistoryHeaderActions, actionsBelow ? 1 : 0);
+        Grid.SetColumnSpan(HistoryHeaderActions, actionsBelow ? 2 : 1);
+        HistoryHeaderActions.HorizontalAlignment = actionsBelow ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        HistoryHeaderActions.Orientation = width < 720 ? Orientation.Vertical : Orientation.Horizontal;
+
+        var compactStats = width < 640;
+        HistoryStatsGrid.ColumnDefinitions.Clear();
+        HistoryStatsGrid.RowDefinitions.Clear();
+        if (compactStats)
+        {
+            HistoryStatsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            for (var i = 0; i < 3; i++) HistoryStatsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetColumn(VisibleRowsCard, 0); Grid.SetRow(VisibleRowsCard, 0);
+            Grid.SetColumn(CompletedCard, 0); Grid.SetRow(CompletedCard, 1);
+            Grid.SetColumn(PartialCard, 0); Grid.SetRow(PartialCard, 2);
+        }
+        else
+        {
+            for (var i = 0; i < 3; i++) HistoryStatsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            HistoryStatsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetColumn(VisibleRowsCard, 0); Grid.SetRow(VisibleRowsCard, 0);
+            Grid.SetColumn(CompletedCard, 1); Grid.SetRow(CompletedCard, 0);
+            Grid.SetColumn(PartialCard, 2); Grid.SetRow(PartialCard, 0);
+        }
+    }
 
     private void Items_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
         => ScheduleRebuildItems();

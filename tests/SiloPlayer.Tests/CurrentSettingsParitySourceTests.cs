@@ -191,7 +191,9 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("!item.WasFavorite", viewModel);
         Assert.Contains("ItemsScrollViewer_ViewChanged", page);
         Assert.Contains("LoadMoreAsync", code);
-        Assert.Contains("PosterCard", page);
+        Assert.Contains("Item.PosterUrl", page);
+        Assert.Contains("MaximumRowsOrColumns=\"7\"", page);
+        Assert.DoesNotContain("<controls:PosterCard", page);
     }
 
     [Fact]
@@ -216,6 +218,19 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("/api/v1/notifications/discord-preferences", api);
         Assert.Contains("/api/v1/notifications/webhooks", api);
         Assert.Contains("/api/v1/notifications/web-push/subscriptions", api);
+    }
+
+    [Fact]
+    public void HistoryImportSummaryIncludesCurrentWatchlistAndFavoriteCounters()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml.cs");
+        var model = ReadRepoFile("src", "SiloPlayer.Core", "Models", "HistoryImport", "HistoryImportRun.cs");
+
+        Assert.Contains("run.WatchlistAdded", page);
+        Assert.Contains("run.FavoritesImported", page);
+        Assert.Contains("\"Watchlist\"", page);
+        Assert.Contains("\"Favorites\"", page);
+        Assert.Contains("FavoritesImported", model);
     }
 
     [Fact]

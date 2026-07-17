@@ -66,7 +66,7 @@ public sealed partial class TasteSeedPage : Page
         if (_returningFromSettings)
         {
             if (Frame.CanGoBack) Frame.GoBack();
-            else Frame.Navigate(typeof(SettingsPage), "Personalize");
+            else Frame.Navigate(typeof(SettingsPage), "Playback");
         }
         else
         {

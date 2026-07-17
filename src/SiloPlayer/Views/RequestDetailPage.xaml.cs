@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Requests;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -107,7 +108,13 @@ public sealed partial class RequestDetailPage : Page
             _item = await _api.GetDetailAsync(_item.MediaType, _item.TmdbId, _lifetime.Token);
             BuildActions(_item);
         }
-        catch (Exception ex) { button.IsEnabled = true; button.Content = ex.Message; }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            button.IsEnabled = true;
+            button.Content = $"＋  Request {(_item.MediaType == "series" ? "series" : "movie")}";
+            App.Services.GetRequiredService<ToastService>().Error($"Request failed: {ex.Message}");
+        }
     }
 
     private void BuildCast(IEnumerable<RequestMediaCastMember> cast)
@@ -163,7 +170,8 @@ public sealed partial class RequestDetailPage : Page
         catch (Exception ex)
         {
             button.IsEnabled = true;
-            button.Content = ex.Message;
+            button.Content = "Request";
+            App.Services.GetRequiredService<ToastService>().Error($"Request failed: {ex.Message}");
         }
     }
     private void OpenLibrary_Click(object sender, RoutedEventArgs e) { if (sender is Button { Tag: string id }) App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(id); }

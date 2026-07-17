@@ -35,6 +35,12 @@ public sealed partial class RequestsPage : Page
         }
     }
 
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        ViewModel.CancelSearch();
+        base.OnNavigatedFrom(e);
+    }
+
     private async void Refresh_Click(object sender, RoutedEventArgs e)
     {
         ViewModel.InvalidateCache();

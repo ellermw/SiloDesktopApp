@@ -66,25 +66,13 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- ===== Status message ===== -->
-                <Border
-                    x:Name="StatusBanner"
-                    Background="{StaticResource AccentBackgroundBrush}"
-                    CornerRadius="8"
-                    Padding="14,10"
-                    Visibility="Collapsed">
-                    <TextBlock
-                        x:Name="StatusBannerText"
-                        FontSize="13"
-                        Foreground="{StaticResource AccentBrush}" />
-                </Border>
-
                 <!-- ===== Line-style Tabs: Users / Invite Codes ===== -->
                 <StackPanel Spacing="0">
                     <!-- Tab bar -->
                     <Grid>
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="110" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <Button x:Name="TabUsersButton" Grid.Column="0" Click="TabUsers_Click"
@@ -105,10 +93,11 @@
                     <!-- Tab underline track -->
                     <Grid Height="2">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="110" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <Border Grid.ColumnSpan="2" Background="{StaticResource BorderBrush}" VerticalAlignment="Bottom" Height="1" />
+                        <Border Grid.ColumnSpan="3" Background="{StaticResource BorderBrush}" VerticalAlignment="Bottom" Height="1" />
                         <Border x:Name="TabUsersIndicator" Background="{StaticResource AccentBrush}" Height="2"
                                 Grid.Column="0" HorizontalAlignment="Stretch" VerticalAlignment="Bottom" />
                         <Border x:Name="TabInviteCodesIndicator" Background="{StaticResource AccentBrush}" Height="2"
@@ -118,7 +107,7 @@
                 </StackPanel>
 
                 <!-- ===== Users Tab Content ===== -->
-                <StackPanel x:Name="UsersTabContent" Spacing="12">
+                <StackPanel x:Name="UsersTabContent" Spacing="16">
                     <!-- Search box — matches web UI: search by username or email -->
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -251,7 +240,7 @@
                 </StackPanel>
 
                 <!-- ===== Invite Codes Tab Content ===== -->
-                <StackPanel x:Name="InviteCodesTabContent" Visibility="Collapsed" Spacing="12">
+                <StackPanel x:Name="InviteCodesTabContent" Visibility="Collapsed" Spacing="24">
                     <!-- Create button -->
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                         <Button

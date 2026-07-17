@@ -29,11 +29,14 @@
                     <TextBlock
                         Text="Scheduled Tasks"
                         FontSize="48"
-                        FontWeight="Bold"
+                        FontWeight="ExtraBold"
+                        CharacterSpacing="-50"
+                        LineHeight="46"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock
                         Text="View and manage background tasks. You can trigger tasks manually or adjust their schedules, including whether a task runs on server startup."
-                        FontSize="14"
+                        FontSize="16"
+                        LineHeight="27"
                         Foreground="{StaticResource SecondaryTextBrush}"
                         TextWrapping="Wrap"
                         MaxWidth="720"

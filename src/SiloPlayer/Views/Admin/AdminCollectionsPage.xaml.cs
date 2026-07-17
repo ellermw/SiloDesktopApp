@@ -14,6 +14,7 @@ using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 using SiloPlayer.Views;
 using SiloPlayer.ViewModels;
 using SiloPlayer.ViewModels.Admin;
@@ -23,6 +24,8 @@ namespace SiloPlayer.Views.Admin;
 public sealed partial class AdminCollectionsPage : Page
 {
     public AdminCollectionsViewModel ViewModel { get; }
+    private readonly ToastService _toastService;
+    private readonly DispatcherTimer _templateJobPollTimer;
 
     // Track whether the picker is being updated programmatically so we don't re-trigger a load
     private bool _suppressPickerChange;
@@ -41,14 +44,19 @@ public sealed partial class AdminCollectionsPage : Page
     public AdminCollectionsPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminCollectionsViewModel>();
+        _toastService = App.Services.GetRequiredService<ToastService>();
         this.InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Enabled;
+        SizeChanged += (_, args) => ApplyResponsiveLayout(args.NewSize.Width);
+        _templateJobPollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        _templateJobPollTimer.Tick += async (_, _) => await RefreshTemplateApplyJobAsync();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         if (_loaded) return;
         _loaded = true;
+        ApplyResponsiveLayout(ActualWidth);
         try
         {
             ViewModel.Collections.CollectionChanged += Collections_CollectionChanged;
@@ -62,7 +70,9 @@ public sealed partial class AdminCollectionsPage : Page
             {
                 BuildLoadingSkeletons();
             }
-            await ViewModel.LoadCommand.ExecuteAsync(null);
+            await Task.WhenAll(
+                ViewModel.LoadCommand.ExecuteAsync(null),
+                RefreshTemplateApplyJobAsync());
             PopulateLibraryPicker();
             BuildCollectionRows();
         }
@@ -77,7 +87,119 @@ public sealed partial class AdminCollectionsPage : Page
         _loaded = false;
         ViewModel.Collections.CollectionChanged -= Collections_CollectionChanged;
         ViewModel.CollectionGroups.CollectionChanged -= Collections_CollectionChanged;
+        _templateJobPollTimer.Stop();
+        ViewModel.CancelLoad();
         base.OnNavigatedFrom(e);
+    }
+
+    private void ApplyResponsiveLayout(double width)
+    {
+        if (width <= 0) return;
+        var compact = width < 900;
+        var narrow = width < 600;
+        var gutter = narrow ? 16 : compact ? 24 : 40;
+        AdminPageContent.Padding = new Thickness(gutter, compact ? 24 : 32, gutter, 40);
+        CollectionsTitle.FontSize = narrow ? 34 : compact ? 40 : 48;
+        EditorTitle.FontSize = CollectionsTitle.FontSize;
+
+        Grid.SetRow(CollectionsHeaderActions, compact ? 1 : 0);
+        Grid.SetColumn(CollectionsHeaderActions, compact ? 0 : 1);
+        Grid.SetColumnSpan(CollectionsHeaderActions, compact ? 2 : 1);
+        CollectionsHeaderActions.Orientation = compact ? Orientation.Vertical : Orientation.Horizontal;
+        CollectionsHeaderActions.HorizontalAlignment = compact ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+        LibraryPicker.HorizontalAlignment = compact ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+
+        Grid.SetRow(ChangeSourceButton, compact ? 1 : 0);
+        Grid.SetColumn(ChangeSourceButton, compact ? 0 : 1);
+        Grid.SetColumnSpan(ChangeSourceButton, compact ? 2 : 1);
+        ChangeSourceButton.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+    }
+
+    private async Task RefreshTemplateApplyJobAsync()
+    {
+        try
+        {
+            var response = await App.Services.GetRequiredService<AdminApi>()
+                .GetJobsAsync("template_bundle_apply", 1);
+            var job = response.Jobs.FirstOrDefault();
+            if (job is null || !IsActiveTemplateJob(job) && !IsRecentTemplateJob(job))
+            {
+                TemplateApplyJobBanner.Visibility = Visibility.Collapsed;
+                _templateJobPollTimer.Stop();
+                return;
+            }
+
+            TemplateApplyJobBanner.Visibility = Visibility.Visible;
+            TemplateApplyJobProgress.Visibility = IsActiveTemplateJob(job) ? Visibility.Visible : Visibility.Collapsed;
+            if (job.Status.Equals("failed", StringComparison.OrdinalIgnoreCase))
+            {
+                TemplateApplyJobIcon.Glyph = "\uEA39";
+                TemplateApplyJobIcon.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
+                TemplateApplyJobTitle.Text = "Collection defaults apply failed";
+                TemplateApplyJobMessage.Text = job.ErrorMessage ?? job.Message ?? "The job failed.";
+            }
+            else if (job.Status.Equals("completed", StringComparison.OrdinalIgnoreCase))
+            {
+                TemplateApplyJobIcon.Glyph = "\uE73E";
+                TemplateApplyJobIcon.Foreground = (Brush)Application.Current.Resources["AccentBrush"];
+                TemplateApplyJobTitle.Text = "Collection defaults applied";
+                TemplateApplyJobMessage.Text = TemplateBundleApplySummary(job);
+            }
+            else
+            {
+                TemplateApplyJobIcon.Glyph = "\uE895";
+                TemplateApplyJobIcon.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
+                TemplateApplyJobTitle.Text = "Applying collection defaults";
+                TemplateApplyJobMessage.Text = string.IsNullOrWhiteSpace(job.Message) ? "Working..." : job.Message;
+            }
+
+            if (IsActiveTemplateJob(job))
+            {
+                if (!_templateJobPollTimer.IsEnabled) _templateJobPollTimer.Start();
+            }
+            else
+            {
+                _templateJobPollTimer.Stop();
+            }
+        }
+        catch
+        {
+            // Collection browsing remains usable if the optional job-status request fails.
+        }
+    }
+
+    private static bool IsActiveTemplateJob(AdminJob job)
+        => job.Status is "queued" or "running";
+
+    private static bool IsRecentTemplateJob(AdminJob job)
+    {
+        var timestamp = job.CompletedAt ?? job.RequestedAt;
+        return DateTimeOffset.TryParse(timestamp, out var parsed) &&
+               DateTimeOffset.UtcNow - parsed.ToUniversalTime() < TimeSpan.FromMinutes(10);
+    }
+
+    private static string TemplateBundleApplySummary(AdminJob job)
+    {
+        var created = JobResultCount(job, "created");
+        var skipped = JobResultCount(job, "skipped");
+        var failed = JobResultCount(job, "failed");
+        var queued = JobResultCount(job, "sync_queued");
+        var featured = JobResultCount(job, "featured");
+        var parts = new List<string> { $"Created {created}", $"skipped {skipped}" };
+        if (failed > 0) parts.Add($"failed {failed}");
+        if (queued > 0) parts.Add($"queued {queued} initial syncs");
+        if (featured > 0) parts.Add($"featured {featured}");
+        return string.Join("; ", parts);
+    }
+
+    private static int JobResultCount(AdminJob job, string key)
+    {
+        if (job.ResultPayload is null || !job.ResultPayload.TryGetValue(key, out var value) || value is null)
+            return 0;
+        if (value is System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Array } element)
+            return element.GetArrayLength();
+        if (value is System.Collections.ICollection collection) return collection.Count;
+        return 0;
     }
 
     private void Collections_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
@@ -105,13 +227,13 @@ public sealed partial class AdminCollectionsPage : Page
         LibraryPicker.Items.Clear();
         LibraryPicker.Items.Add(new ComboBoxItem
         {
-            Content = $"All libraries ({ViewModel.Collections.Count})",
+            Content = $"All libraries ({ViewModel.AllCollections.Count})",
             Tag = (int?)null
         });
 
         foreach (var lib in ViewModel.Libraries)
         {
-            var count = ViewModel.Collections.Count(c => CollectionLibraryIds(c).Contains(lib.Id));
+            var count = ViewModel.AllCollections.Count(c => CollectionLibraryIds(c).Contains(lib.Id));
             LibraryPicker.Items.Add(new ComboBoxItem { Content = $"{lib.Name} ({count})", Tag = (int?)lib.Id });
         }
 
@@ -319,9 +441,13 @@ public sealed partial class AdminCollectionsPage : Page
                 if (draggedIds.Count > 0)
                 {
                     args.Handled = true;
-                    await ViewModel.MoveCollectionsToAsync(draggedIds, sectionId);
-                    ClearCollectionSelection();
-                    BuildCollectionRows();
+                    try
+                    {
+                        await ViewModel.MoveCollectionsToAsync(draggedIds, sectionId);
+                        ClearCollectionSelection();
+                        BuildCollectionRows();
+                    }
+                    catch (Exception ex) { _toastService.Error(ex.Message); }
                 }
             };
         }
@@ -411,7 +537,8 @@ public sealed partial class AdminCollectionsPage : Page
                 if (token.StartsWith("section:", StringComparison.Ordinal))
                 {
                     args.Handled = true;
-                    await ViewModel.MoveGroupSectionToAsync(token[8..], capturedSectionId);
+                    try { await ViewModel.MoveGroupSectionToAsync(token[8..], capturedSectionId); }
+                    catch (Exception ex) { _toastService.Error(ex.Message); }
                 }
             };
         }
@@ -559,9 +686,13 @@ public sealed partial class AdminCollectionsPage : Page
                 if (draggedIds.Count > 0)
                 {
                     args.Handled = true;
-                    await ViewModel.MoveCollectionsToAsync(draggedIds, capturedSectionId, capturedCollectionId);
-                    ClearCollectionSelection();
-                    BuildCollectionRows();
+                    try
+                    {
+                        await ViewModel.MoveCollectionsToAsync(draggedIds, capturedSectionId, capturedCollectionId);
+                        ClearCollectionSelection();
+                        BuildCollectionRows();
+                    }
+                    catch (Exception ex) { _toastService.Error(ex.Message); }
                 }
             };
 
@@ -644,7 +775,11 @@ public sealed partial class AdminCollectionsPage : Page
             sync.Click += async (_, _) =>
             {
                 sync.IsEnabled = false;
-                try { await ViewModel.SyncCollectionCommand.ExecuteAsync(col.Id); }
+                try
+                {
+                    await ViewModel.SyncCollectionCommand.ExecuteAsync(col.Id);
+                    SurfaceMutationResult($"Sync started for {col.Title}.");
+                }
                 finally { sync.IsEnabled = true; }
             };
             actions.Children.Add(sync);
@@ -913,6 +1048,7 @@ public sealed partial class AdminCollectionsPage : Page
             try
             {
                 await ViewModel.SyncCollectionCommand.ExecuteAsync(capturedCol.Id);
+                SurfaceMutationResult($"Sync started for {capturedCol.Title}.");
             }
             finally { syncBtn.IsEnabled = true; }
         };
@@ -1392,6 +1528,8 @@ public sealed partial class AdminCollectionsPage : Page
             {
                 await App.Services.GetRequiredService<AdminApi>().QueueCollectionTemplateBundleApplyAsync(bundle.Id, request);
                 dialog.Hide();
+                _toastService.Success("Collection defaults apply queued.");
+                await RefreshTemplateApplyJobAsync();
                 await ViewModel.LoadCommand.ExecuteAsync(null);
                 BuildCollectionRows();
             }
@@ -1509,8 +1647,16 @@ public sealed partial class AdminCollectionsPage : Page
         if (await dialog.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
         {
             var sortMode = (sortCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "manual";
-            try { await ViewModel.CreateGroupAsync(nameBox.Text, sortMode); }
-            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+            try
+            {
+                await ViewModel.CreateGroupAsync(nameBox.Text, sortMode);
+                SurfaceMutationResult("Collection group created.");
+            }
+            catch (Exception ex)
+            {
+                ViewModel.ErrorMessage = ex.Message;
+                _toastService.Error(ex.Message);
+            }
         }
     }
 
@@ -1538,8 +1684,16 @@ public sealed partial class AdminCollectionsPage : Page
         else if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
         {
             var sortMode = (sortCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? group.DefaultSortMode;
-            try { await ViewModel.UpdateGroupAsync(group, nameBox.Text, sortMode); }
-            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+            try
+            {
+                await ViewModel.UpdateGroupAsync(group, nameBox.Text, sortMode);
+                SurfaceMutationResult("Collection group updated.");
+            }
+            catch (Exception ex)
+            {
+                ViewModel.ErrorMessage = ex.Message;
+                _toastService.Error(ex.Message);
+            }
         }
     }
 
@@ -1595,21 +1749,29 @@ public sealed partial class AdminCollectionsPage : Page
 
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
         {
-            try { await ViewModel.DeleteGroupAsync(group); }
-            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+            try
+            {
+                await ViewModel.DeleteGroupAsync(group);
+                SurfaceMutationResult("Collection group deleted.");
+            }
+            catch (Exception ex)
+            {
+                ViewModel.ErrorMessage = ex.Message;
+                _toastService.Error(ex.Message);
+            }
         }
     }
 
     private async Task MoveGroupAsync(LibraryCollectionGroup group, int delta)
     {
         try { await ViewModel.MoveGroupAsync(group, delta); }
-        catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+        catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; _toastService.Error(ex.Message); }
     }
 
     private async Task MoveCollectionInGroupAsync(LibraryCollection collection, int delta)
     {
         try { await ViewModel.MoveCollectionInGroupAsync(collection, delta); }
-        catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+        catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; _toastService.Error(ex.Message); }
     }
 
     // ===== Create Dialog =====
@@ -1684,6 +1846,7 @@ public sealed partial class AdminCollectionsPage : Page
         try
         {
             var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
+            var isCreating = _editingCollection is null;
             var id = _editingCollection?.Id;
             if (_editingCollection == null)
             {
@@ -1705,12 +1868,14 @@ public sealed partial class AdminCollectionsPage : Page
             }
             CloseEditorWorkspace();
             await ViewModel.LoadCommand.ExecuteAsync(null);
+            _toastService.Success(isCreating ? "Collection created." : "Collection updated.");
         }
         catch (Exception ex)
         {
             ViewModel.ErrorMessage = ex.Message;
             EditorError.Text = ex.Message;
             EditorError.Visibility = Visibility.Visible;
+            _toastService.Error(ex.Message);
         }
         finally
         {
@@ -1739,8 +1904,9 @@ public sealed partial class AdminCollectionsPage : Page
             try
             {
                 await ViewModel.DeleteCollectionCommand.ExecuteAsync(col.Id);
+                SurfaceMutationResult("Collection deleted.");
             }
-            catch { }
+            catch (Exception ex) { _toastService.Error(ex.Message); }
         }
     }
 
@@ -2319,5 +2485,17 @@ public sealed partial class AdminCollectionsPage : Page
         };
         ToolTipService.SetToolTip(btn, tooltip);
         return btn;
+    }
+
+    private bool SurfaceMutationResult(string fallbackSuccess)
+    {
+        if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+        {
+            _toastService.Error(ViewModel.ErrorMessage);
+            return false;
+        }
+
+        _toastService.Success(ViewModel.StatusMessage ?? fallbackSuccess);
+        return true;
     }
 }

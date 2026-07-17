@@ -18,7 +18,7 @@
         <!-- WebUI surface-panel rounded-2xl border-0. -->
         <Style x:Key="SurfacePanelStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="20" />
+            <Setter Property="CornerRadius" Value="16" />
             <Setter Property="Padding" Value="12" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
@@ -26,7 +26,7 @@
         <!-- WebUI surface-panel-subtle rounded-xl p-3. -->
         <Style x:Key="SubtlePanelStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
-            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="CornerRadius" Value="12" />
             <Setter Property="Padding" Value="12" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
@@ -43,7 +43,7 @@
         <!-- Playback summary card -->
         <Style x:Key="SummaryCardStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="CornerRadius" Value="8" />
             <Setter Property="Padding" Value="16" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />

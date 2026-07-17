@@ -68,7 +68,15 @@
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
-            <StackPanel x:Name="UserDetailPageShell" Padding="40,28,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Stretch">
+            <StackPanel x:Name="UserDetailPageShell" Padding="40,28,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
+
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Button x:Name="BreadcrumbAdmin" Content="Admin" Background="Transparent" BorderThickness="0" Padding="0" Foreground="{StaticResource SecondaryTextBrush}" />
+                    <TextBlock Text="›" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                    <Button x:Name="BreadcrumbUsers" Content="Users" Background="Transparent" BorderThickness="0" Padding="0" Foreground="{StaticResource SecondaryTextBrush}" />
+                    <TextBlock Text="›" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                    <TextBlock x:Name="BreadcrumbUsername" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </StackPanel>
 
                 <!-- ===== Header ===== -->
                 <Grid x:Name="UserDetailHeader" ColumnSpacing="20" RowSpacing="14">
@@ -89,7 +97,8 @@
                         BorderThickness="0"
                         CornerRadius="16"
                         VerticalAlignment="Center"
-                        ToolTipService.ToolTip="Back to Users">
+                        ToolTipService.ToolTip="Back to Users"
+                        Visibility="Collapsed">
                         <FontIcon Glyph="&#xE72B;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
                     </Button>
 

@@ -45,9 +45,6 @@ public partial class AdminTasksViewModel : ObservableObject
         try
         {
             await _adminApi.RunTaskAsync(key);
-            // Refresh after a short delay so the server has time to transition state
-            await Task.Delay(300);
-            await LoadAsync();
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
     }
@@ -60,8 +57,6 @@ public partial class AdminTasksViewModel : ObservableObject
         try
         {
             await _adminApi.CancelTaskAsync(key);
-            await Task.Delay(300);
-            await LoadAsync();
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
     }

@@ -80,7 +80,7 @@
                             Visibility="Collapsed"
                             Click="ScanQueueButton_Click">
                             <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                                <Ellipse x:Name="ScanQueueDot" Width="8" Height="8" Fill="{StaticResource AccentBrush}" />
+                                <Ellipse x:Name="ScanQueueDot" Width="8" Height="8" Fill="{StaticResource SuccessBrush}" />
                                 <TextBlock x:Name="ScanQueueLabel" Text="0 scans" FontSize="13" />
                             </StackPanel>
                             <Button.Flyout>

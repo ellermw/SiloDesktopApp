@@ -8,6 +8,7 @@ using System.ComponentModel;
 using System.Text.Json;
 using Windows.UI;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels.Admin;
 
 namespace SiloPlayer.Views.Admin;
@@ -23,6 +24,8 @@ public sealed partial class AdminSettingsDetailPage : Page
     private Button? _activeTabButton;
     private readonly List<(Button Button, string TabName)> _tabButtons = [];
     private Border? _inlineSaveBar;
+    private Grid? _inlineSaveGrid;
+    private StackPanel? _inlineStatusStack;
     private TextBlock? _inlineSaveStatusText;
     private Button? _inlineDiscardButton;
     private Button? _inlineSaveButton;
@@ -36,6 +39,8 @@ public sealed partial class AdminSettingsDetailPage : Page
     private readonly List<Action> _fieldRebuilders = [];
     private readonly SettingsApi _settingsApi;
     private readonly SiloApiClient _apiClient;
+    private readonly ToastService _toastService;
+    private bool _compactLayout;
     private CancellationTokenSource? _adminThemeVarsSaveCts;
     private CancellationTokenSource? _adminThemeCssSaveCts;
 
@@ -121,12 +126,15 @@ public sealed partial class AdminSettingsDetailPage : Page
         ViewModel = App.Services.GetRequiredService<AdminSettingsDetailViewModel>();
         _settingsApi = App.Services.GetRequiredService<SettingsApi>();
         _apiClient = App.Services.GetRequiredService<SiloApiClient>();
+        _toastService = App.Services.GetRequiredService<ToastService>();
         this.InitializeComponent();
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
+        SizeChanged += (_, args) => ApplyResponsiveLayout(args.NewSize.Width);
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout(ActualWidth);
         if (!_viewModelEventsAttached)
         {
             ViewModel.PropertyChanged += ViewModel_PropertyChanged;
@@ -170,6 +178,7 @@ public sealed partial class AdminSettingsDetailPage : Page
                 Text = group.Name.ToUpperInvariant(), FontSize = 10, CharacterSpacing = 180,
                 Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
                 Margin = new Thickness(10, 10, 10, 4),
+                Tag = "settingsGroupHeader",
             });
             foreach (var (label, glyph) in groupTabs)
             {
@@ -200,6 +209,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         }
 
         UpdateSettingsSearchStatus(tabs.Length);
+        ApplySettingsRailMode();
     }
 
     private IEnumerable<(string Label, string Glyph)> FilterSettingsTabs()
@@ -349,6 +359,8 @@ public sealed partial class AdminSettingsDetailPage : Page
     private void ShowTab(string tabName)
     {
         _inlineSaveBar = null;
+        _inlineSaveGrid = null;
+        _inlineStatusStack = null;
         _inlineSaveStatusText = null;
         _inlineDiscardButton = null;
         _inlineSaveButton = null;
@@ -414,6 +426,8 @@ public sealed partial class AdminSettingsDetailPage : Page
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var statusText = new TextBlock
         {
@@ -474,11 +488,14 @@ public sealed partial class AdminSettingsDetailPage : Page
         bar.Child = grid;
 
         _inlineSaveBar = bar;
+        _inlineSaveGrid = grid;
+        _inlineStatusStack = statusStack;
         _inlineSaveStatusText = statusText;
         _inlineDiscardButton = discardBtn;
         _inlineSaveButton = saveBtn;
         _inlineRestartButton = restartBtn;
         _inlineRestartNotice = restartNotice;
+        ApplyInlineSaveLayout();
         UpdateInlineSaveBar();
         ContentPanel.Children.Add(bar);
     }
@@ -632,6 +649,84 @@ public sealed partial class AdminSettingsDetailPage : Page
         }
     }
 
+    private void ApplyResponsiveLayout(double width)
+    {
+        if (width <= 0) return;
+        _compactLayout = width < 980;
+        var narrow = width < 600;
+        var gutter = narrow ? 16 : _compactLayout ? 24 : 40;
+        SettingsPageShell.Padding = new Thickness(gutter, _compactLayout ? 24 : 32, gutter, 40);
+        SettingsTitle.FontSize = narrow ? 34 : _compactLayout ? 40 : 48;
+
+        SettingsHeaderGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+        SettingsHeaderGrid.ColumnDefinitions[1].Width = _compactLayout ? new GridLength(0) : new GridLength(384);
+        Grid.SetColumn(SettingsSearchPanel, _compactLayout ? 0 : 1);
+        Grid.SetColumnSpan(SettingsSearchPanel, _compactLayout ? 2 : 1);
+        Grid.SetRow(SettingsSearchPanel, _compactLayout ? 1 : 0);
+
+        SettingsSurfaceGrid.ColumnDefinitions[0].Width = _compactLayout
+            ? new GridLength(1, GridUnitType.Star)
+            : new GridLength(240);
+        SettingsSurfaceGrid.ColumnDefinitions[1].Width = _compactLayout
+            ? new GridLength(0)
+            : new GridLength(1, GridUnitType.Star);
+        Grid.SetColumn(SettingsRailBorder, 0);
+        Grid.SetColumnSpan(SettingsRailBorder, _compactLayout ? 2 : 1);
+        Grid.SetRow(SettingsRailBorder, 0);
+        SettingsRailBorder.MaxHeight = double.PositiveInfinity;
+        SettingsRailBorder.BorderThickness = _compactLayout
+            ? new Thickness(0, 0, 0, 1)
+            : new Thickness(0, 0, 1, 0);
+
+        Grid.SetColumn(SettingsContentScroll, _compactLayout ? 0 : 1);
+        Grid.SetColumnSpan(SettingsContentScroll, _compactLayout ? 2 : 1);
+        Grid.SetRow(SettingsContentScroll, _compactLayout ? 1 : 0);
+        SettingsContentScroll.Padding = new Thickness(narrow ? 16 : 24);
+        ApplySettingsRailMode();
+        ApplyInlineSaveLayout();
+    }
+
+    private void ApplySettingsRailMode()
+    {
+        TabBar.Orientation = _compactLayout ? Orientation.Horizontal : Orientation.Vertical;
+        SettingsRailScroll.HorizontalScrollMode = _compactLayout ? ScrollMode.Enabled : ScrollMode.Disabled;
+        SettingsRailScroll.HorizontalScrollBarVisibility = _compactLayout
+            ? ScrollBarVisibility.Auto
+            : ScrollBarVisibility.Disabled;
+        SettingsRailScroll.VerticalScrollMode = _compactLayout ? ScrollMode.Disabled : ScrollMode.Enabled;
+        SettingsRailScroll.VerticalScrollBarVisibility = _compactLayout
+            ? ScrollBarVisibility.Disabled
+            : ScrollBarVisibility.Auto;
+
+        foreach (var child in TabBar.Children)
+        {
+            if (child is TextBlock { Tag: "settingsGroupHeader" } header)
+                header.Visibility = _compactLayout ? Visibility.Collapsed : Visibility.Visible;
+            else if (child is Button button)
+                button.HorizontalAlignment = _compactLayout ? HorizontalAlignment.Left : HorizontalAlignment.Stretch;
+        }
+    }
+
+    private void ApplyInlineSaveLayout()
+    {
+        if (_inlineSaveGrid is null || _inlineStatusStack is null ||
+            _inlineRestartButton is null || _inlineDiscardButton is null || _inlineSaveButton is null)
+            return;
+
+        Grid.SetRow(_inlineStatusStack, 0);
+        Grid.SetColumn(_inlineStatusStack, 0);
+        Grid.SetColumnSpan(_inlineStatusStack, _compactLayout ? 4 : 1);
+        foreach (var (button, column) in new[]
+        {
+            (_inlineRestartButton, 1), (_inlineDiscardButton, 2), (_inlineSaveButton, 3),
+        })
+        {
+            Grid.SetRow(button, _compactLayout ? 1 : 0);
+            Grid.SetColumn(button, column);
+        }
+        _inlineSaveGrid.RowSpacing = _compactLayout ? 10 : 0;
+    }
+
     protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
@@ -641,6 +736,8 @@ public sealed partial class AdminSettingsDetailPage : Page
             _viewModelEventsAttached = false;
         }
         _inlineSaveBar = null;
+        _inlineSaveGrid = null;
+        _inlineStatusStack = null;
         _inlineSaveStatusText = null;
         _inlineDiscardButton = null;
         _inlineSaveButton = null;
@@ -653,6 +750,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         _adminThemeCssSaveCts?.Cancel();
         _adminThemeCssSaveCts?.Dispose();
         _adminThemeCssSaveCts = null;
+        ViewModel.CancelLoad();
     }
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -6131,6 +6229,10 @@ public sealed partial class AdminSettingsDetailPage : Page
                 ShowTab(_activeTab);
                 ShowStatusToast(ViewModel.StatusMessage);
             }
+            else if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+            {
+                ShowStatusToast(ViewModel.ErrorMessage, isError: true);
+            }
         }
         finally
         {
@@ -6174,7 +6276,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         }
         catch
         {
-            ShowStatusToast("Could not restart server. Please restart manually.");
+            ShowStatusToast("Could not restart server. Please restart manually.", isError: true);
         }
     }
 
@@ -6188,12 +6290,15 @@ public sealed partial class AdminSettingsDetailPage : Page
         UpdateDirtyCountText();
     }
 
-    private async void ShowStatusToast(string message)
+    private void ShowStatusToast(string message, bool? isError = null)
     {
-        StatusToastText.Text = message;
-        StatusToast.Visibility = Visibility.Visible;
-
-        await Task.Delay(3000);
-        StatusToast.Visibility = Visibility.Collapsed;
+        var error = isError ?? (message.Contains("fail", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("could not", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("must ", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("required", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("invalid", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("between ", StringComparison.OrdinalIgnoreCase));
+        if (error) _toastService.Error(message);
+        else _toastService.Success(message);
     }
 }

@@ -17,14 +17,14 @@
         <!-- surface-panel: CardBackgroundBrush, CornerRadius=26, no border -->
         <Style x:Key="SurfacePanelStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="26" />
+            <Setter Property="CornerRadius" Value="16" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
 
         <!-- surface-panel-subtle: slightly transparent, CornerRadius=22, no border -->
         <Style x:Key="SurfacePanelSubtleStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="22" />
+            <Setter Property="CornerRadius" Value="12" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
     </Page.Resources>
@@ -100,8 +100,9 @@
                         <StackPanel x:Name="TitleBadgeRow" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center" />
                         <!-- Description (page-subtitle text-sm) -->
                         <TextBlock
-                            x:Name="DescriptionText"
-                            FontSize="14"
+                        x:Name="DescriptionText"
+                            FontSize="16"
+                            LineHeight="27"
                             Foreground="{StaticResource SecondaryTextBrush}"
                             TextWrapping="WrapWholeWords"
                             MaxWidth="700"
@@ -112,7 +113,7 @@
                     <Button
                         x:Name="ActionButton"
                         Grid.Column="1"
-                        Style="{StaticResource SecondaryButtonStyle}"
+                        Style="{StaticResource OutlineButtonStyle}"
                         VerticalAlignment="Bottom" />
                 </Grid>
 
@@ -180,7 +181,7 @@
                         <Button
                             x:Name="EditScheduleButton"
                             Grid.Column="1"
-                            Style="{StaticResource SecondaryButtonStyle}"
+                            Style="{StaticResource OutlineButtonStyle}"
                             Content="Edit Schedule"
                             FontSize="13"
                             Padding="12,6" />

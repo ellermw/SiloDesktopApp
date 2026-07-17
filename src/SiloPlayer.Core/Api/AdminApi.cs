@@ -596,6 +596,16 @@ public class AdminApi(SiloApiClient client)
     public Task UpdateItemMetadataAsync(string itemId, object request, CancellationToken ct = default)
         => client.PatchAsync<object>($"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/metadata", request, ct);
 
+    public Task<Person> RefreshPersonAsync(string personId, CancellationToken ct = default)
+        => client.PostAsync<Person>(
+            $"/api/v1/admin/people/{Uri.EscapeDataString(personId)}/refresh",
+            new { }, ct);
+
+    public Task<Person> UpdatePersonAsync(string personId, object request, CancellationToken ct = default)
+        => client.PatchAsync<Person>(
+            $"/api/v1/admin/people/{Uri.EscapeDataString(personId)}",
+            request, ct);
+
     public Task<ItemImagesResponse> GetItemImagesAsync(string itemId, CancellationToken ct = default)
         => client.GetAsync<ItemImagesResponse>(
             $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/images",
@@ -914,20 +924,26 @@ public class AdminApi(SiloApiClient client)
 
     // ===== Playback Control =====
 
-    public Task PauseSessionAsync(string sessionId, CancellationToken ct = default)
-        => client.PostNoContentAsync($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/pause", new { }, ct);
+    public Task<AdminSessionCommandResponse> PauseSessionAsync(string sessionId, CancellationToken ct = default)
+        => client.PostAsync<AdminSessionCommandResponse>($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/pause", new { }, ct);
 
-    public Task ResumeSessionAsync(string sessionId, CancellationToken ct = default)
-        => client.PostNoContentAsync($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/resume", new { }, ct);
+    public Task<AdminSessionCommandResponse> ResumeSessionAsync(string sessionId, CancellationToken ct = default)
+        => client.PostAsync<AdminSessionCommandResponse>($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/resume", new { }, ct);
 
-    public Task StopSessionAsync(string sessionId, CancellationToken ct = default)
-        => client.PostNoContentAsync($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/stop", new { }, ct);
+    public Task<AdminSessionCommandResponse> StopSessionAsync(string sessionId, CancellationToken ct = default)
+        => client.PostAsync<AdminSessionCommandResponse>($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/stop", new { }, ct);
 
-    public Task TerminateSessionAsync(string sessionId, CancellationToken ct = default)
-        => client.PostNoContentAsync($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/terminate", new { }, ct);
+    public Task<AdminSessionCommandResponse> TerminateSessionAsync(string sessionId, CancellationToken ct = default)
+        => client.PostAsync<AdminSessionCommandResponse>($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/terminate", new { }, ct);
 
-    public Task MessageSessionAsync(string sessionId, string message, CancellationToken ct = default)
-        => client.PostNoContentAsync($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/message", new { message }, ct);
+    public Task<AdminSessionCommandResponse> MessageSessionAsync(string sessionId, string message, CancellationToken ct = default)
+        => client.PostAsync<AdminSessionCommandResponse>($"/api/v1/admin/sessions/{Uri.EscapeDataString(sessionId)}/message", new { message }, ct);
+}
+
+public sealed class AdminSessionCommandResponse
+{
+    public string CommandId { get; set; } = "";
+    public string Status { get; set; } = "";
 }
 
 public sealed class RedetectIntroResponse

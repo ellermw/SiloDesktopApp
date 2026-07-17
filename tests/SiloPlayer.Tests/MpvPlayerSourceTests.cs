@@ -39,6 +39,20 @@ public sealed class MpvPlayerSourceTests
     }
 
     [Fact]
+    public void GpuPlaybackUsesStableAudioClockAcrossWindowFocusChanges()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer.Player",
+            "MpvPlayer.cs"));
+
+        Assert.True(source.Split("SetOption(\"video-sync\", \"audio\")", StringSplitOptions.None).Length >= 3);
+        Assert.DoesNotContain("SetOption(\"video-sync\", \"display-resample\")", source, StringComparison.Ordinal);
+        Assert.Contains("late video frames are dropped", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SiloOscProtectsFloatingActionButtonsFromVideoClickPause()
     {
         var source = File.ReadAllText(Path.Combine(

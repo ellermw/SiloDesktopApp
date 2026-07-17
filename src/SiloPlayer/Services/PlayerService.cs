@@ -1701,11 +1701,12 @@ public class PlayerService : IDisposable
         mpv.SetProperty("audio-spdif", bitstream ? "ac3,eac3,dts-hd,truehd" : "");
         mpv.SetProperty("audio-exclusive", bitstream ? "yes" : "no");
         mpv.SetProperty("audio-channels", bitstream ? "auto" : "auto-safe");
-        // display-resample continuously adjusts PCM audio timing to the
-        // monitor clock. Compressed HDMI bitstreams cannot be resampled, so
-        // using it with TrueHD/Atmos or DTS-HD can disable passthrough or
-        // cause unstable output. Let audio own the clock in passthrough mode.
-        mpv.SetProperty("video-sync", bitstream ? "audio" : "display-resample");
+        // The video renderer is an owned popup whose presentation cadence can
+        // be throttled by DWM when focus moves to another application. Always
+        // keep audio as the master clock; otherwise display-resample can burst
+        // queued video frames after deactivation while audio stays at 1x.
+        // Audio ownership is also required for compressed HDMI passthrough.
+        mpv.SetProperty("video-sync", "audio");
     }
 
     private async Task MonitorFileLoadAsync(
@@ -1915,6 +1916,44 @@ public class PlayerService : IDisposable
 
         try
         {
+            if (previousPlan != null &&
+                PlaybackRecoveryPolicy.CanReloadCurrentDirectSession(
+                    previousPlan.TransportKind,
+                    reason))
+            {
+                var currentStreamUrl = manager.StreamUrl;
+                if (!string.IsNullOrWhiteSpace(currentStreamUrl))
+                {
+                    var currentVersion = Versions.FirstOrDefault(v => v.FileId == fileId)
+                        ?? throw new InvalidOperationException(
+                            "The active media version is no longer available.");
+                    var reloaded = await PreparePlaybackTransportAsync(
+                        session,
+                        currentVersion,
+                        currentStreamUrl,
+                        resumePosition,
+                        ct).ConfigureAwait(false);
+
+                    if (_closing ||
+                        State == PlayerState.Idle ||
+                        !ReferenceEquals(_playbackManager, manager) ||
+                        ct.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    ApplyPreparedTransport(reloaded);
+                    BeginMpvLoad(reloaded, restorePaused);
+                    IsPaused = restorePaused;
+                    _mpv.SendScriptMessage("osc-set-play-method", PlayMethod ?? "direct");
+                    LogToFile(
+                        "state_trace.txt",
+                        $"Stream recovery ({reason}) reopened the existing direct session " +
+                        $"at mediaPos={resumePosition:F1}");
+                    return;
+                }
+            }
+
             LogToFile("state_trace.txt", $"Stream recovery ({reason}): restarting session fileId={fileId} pos={resumePosition:F1} audioTrack={audioTrackIndex?.ToString() ?? "auto"}");
 
             var newSession = await manager.StartReplacementSessionAsync(

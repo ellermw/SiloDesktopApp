@@ -19,14 +19,15 @@
     </Page.Resources>
 
     <ScrollViewer IsScrollInertiaEnabled="True">
-        <StackPanel Padding="40,32,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
-            <Grid ColumnSpacing="24">
+        <StackPanel x:Name="MarkerHistoryPageShell" Padding="40,32,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
+            <Grid x:Name="MarkerHistoryHeaderGrid" ColumnSpacing="24" RowSpacing="12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <StackPanel Spacing="10">
-                    <TextBlock
+                    <TextBlock x:Name="MarkerHistoryTitle"
                         Text="Marker History"
                         FontSize="48"
                         FontWeight="Bold"
@@ -39,7 +40,7 @@
                         MaxWidth="760"
                         HorizontalAlignment="Left" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <StackPanel x:Name="MarkerHistoryHeaderActions" Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                     <ComboBox
                         x:Name="LimitComboBox"
                         Width="128"
@@ -49,7 +50,8 @@
                         <ComboBoxItem Content="50 rows" Tag="50" />
                         <ComboBoxItem Content="100 rows" Tag="100" />
                     </ComboBox>
-                    <Button Style="{StaticResource SecondaryButtonStyle}" Command="{x:Bind ViewModel.LoadCommand}">
+                    <Button Style="{StaticResource SecondaryButtonStyle}" Command="{x:Bind ViewModel.LoadCommand}"
+                            IsEnabled="{x:Bind ViewModel.CanRefresh, Mode=OneWay}">
                         <StackPanel Orientation="Horizontal" Spacing="7">
                             <SymbolIcon Symbol="Refresh" />
                             <TextBlock Text="Refresh" />
@@ -106,8 +108,8 @@
                 BorderThickness="1"
                 CornerRadius="8"
                 Visibility="{x:Bind ViewModel.HasRows, Mode=OneWay, Converter={StaticResource BoolToVis}}">
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
-                    <Grid>
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled">
+                    <Grid MinWidth="1000">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />

@@ -10,12 +10,13 @@
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
+        <converters:InverseBoolConverter x:Key="InverseBool" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
     </Page.Resources>
     <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
         <Border Padding="28,18" Background="{StaticResource SidebarBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
-            <Grid ColumnSpacing="18">
+            <Grid ColumnSpacing="18" MaxWidth="1152" HorizontalAlignment="Stretch">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <StackPanel Spacing="4">
                     <StackPanel Orientation="Horizontal" Spacing="9">
@@ -25,13 +26,14 @@
                     <TextBlock Text="{x:Bind ViewModel.SelectionSummary, Mode=OneWay}" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                    <Button x:Name="SkipButton" Content="Skip" Style="{StaticResource SecondaryButtonStyle}" Click="Cancel_Click" />
+                    <Button x:Name="SkipButton" Content="Skip" Style="{StaticResource SecondaryButtonStyle}" Click="Cancel_Click"
+                            IsEnabled="{x:Bind ViewModel.IsSaving, Mode=OneWay, Converter={StaticResource InverseBool}}" />
                     <Button x:Name="DoneButton" Content="Done" Style="{StaticResource AccentButtonStyle}" IsEnabled="{x:Bind ViewModel.CanSubmit, Mode=OneWay}" Click="Done_Click" />
                 </StackPanel>
             </Grid>
         </Border>
         <ScrollViewer x:Name="ItemsScrollViewer" Grid.Row="1" ViewChanged="ItemsScrollViewer_ViewChanged">
-            <StackPanel Padding="28" Spacing="20">
+            <StackPanel Padding="24" Spacing="20" MaxWidth="1152" HorizontalAlignment="Center">
                 <StackPanel Orientation="Horizontal" Spacing="12" Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                     <controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster />
                 </StackPanel>
@@ -45,13 +47,15 @@
                 </Border>
                 <ItemsRepeater ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}" Visibility="{x:Bind ViewModel.HasItems, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                     <ItemsRepeater.Layout>
-                        <UniformGridLayout MinItemWidth="178" MinColumnSpacing="12" MinRowSpacing="12" ItemsJustification="Start" />
+                        <UniformGridLayout MinItemWidth="147" MaximumRowsOrColumns="7" MinColumnSpacing="12" MinRowSpacing="12" ItemsJustification="Start" />
                     </ItemsRepeater.Layout>
                     <ItemsRepeater.ItemTemplate>
                         <DataTemplate x:DataType="vm:TasteSeedItemViewModel">
                             <Button Tag="{x:Bind}" Click="Item_Click" Background="Transparent" BorderThickness="0" Padding="0" CornerRadius="12" HorizontalAlignment="Left">
-                                <Grid Width="178" Height="267" CornerRadius="12">
-                                    <controls:PosterCard MediaItem="{x:Bind Item}" IsHitTestVisible="False" VerticalAlignment="Top" />
+                                <Grid Width="147" Height="221" CornerRadius="12" Background="{StaticResource SurfaceBrush}">
+                                    <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" TextAlignment="Center"
+                                               VerticalAlignment="Center" Margin="12" Foreground="{StaticResource SecondaryTextBrush}"/>
+                                    <Image Source="{x:Bind Item.PosterUrl}" Stretch="UniformToFill"/>
                                     <Border Background="#300078D4" Visibility="{x:Bind IsSelected, Mode=OneWay, Converter={StaticResource BoolToVis}}" CornerRadius="12" />
                                     <Border Width="28" Height="28" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0" CornerRadius="14" BorderThickness="1" BorderBrush="White" Background="#70000000">
                                         <FontIcon Glyph="&#xE73E;" FontSize="14" Foreground="White" Visibility="{x:Bind IsSelected, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
@@ -65,6 +69,9 @@
                     <ProgressRing Width="18" Height="18" IsActive="{x:Bind ViewModel.IsLoadingMore, Mode=OneWay}" />
                     <TextBlock Text="Loading more" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
                 </StackPanel>
+                <TextBlock Text="That's everything popular on this server." HorizontalAlignment="Center"
+                           FontSize="12" Foreground="{StaticResource TertiaryTextBrush}"
+                           Visibility="{x:Bind ViewModel.HasReachedEnd, Mode=OneWay, Converter={StaticResource BoolToVis}}"/>
             </StackPanel>
         </ScrollViewer>
     </Grid>

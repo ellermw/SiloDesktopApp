@@ -273,8 +273,15 @@ public class PlaybackManager : IDisposable
         var position = Math.Max(0, finalPosition ?? _lastReportedPosition);
         var paused = isPaused ?? _isPaused;
         var guardEntered = false;
+        // Keep the caller's lifetime cancellation separate from the bounded
+        // network operations below. The old five-second shared deadline let a
+        // slow final progress POST consume three seconds and then canceled the
+        // DELETE less than two seconds later. Silo's stop endpoint also flushes
+        // history/session state and can legitimately take longer than that.
+        // PlayerService detaches this cleanup from the visual close path, so an
+        // independent stop budget improves reliable server cleanup without
+        // making the player window wait.
         using var operationCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        operationCts.CancelAfter(TimeSpan.FromSeconds(5));
 
         try
         {
@@ -311,7 +318,7 @@ public class PlaybackManager : IDisposable
             try
             {
                 using var stopCts = CancellationTokenSource.CreateLinkedTokenSource(operationCts.Token);
-                stopCts.CancelAfter(TimeSpan.FromSeconds(3));
+                stopCts.CancelAfter(TimeSpan.FromSeconds(15));
                 await _playbackApi.StopPlaybackAsync(sessionId, stopCts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)

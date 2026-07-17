@@ -29,6 +29,7 @@ public partial class AdminInviteCodesViewModel : ObservableObject
     {
         IsLoading = true;
         ErrorMessage = null;
+        StatusMessage = null;
         try
         {
             var codesTask = _adminApi.GetInviteCodesAsync();
@@ -49,6 +50,8 @@ public partial class AdminInviteCodesViewModel : ObservableObject
 
     public async Task<bool> SetSignupEnabledAsync(bool enabled)
     {
+        ErrorMessage = null;
+        StatusMessage = null;
         try
         {
             await _adminApi.UpdateAdminSettingAsync("signup.enabled", enabled ? "true" : "false");
@@ -67,6 +70,8 @@ public partial class AdminInviteCodesViewModel : ObservableObject
 
     public async Task<InviteCode?> CreateInviteCodeAsync(CreateInviteCodeRequest request)
     {
+        ErrorMessage = null;
+        StatusMessage = null;
         try
         {
             var code = await _adminApi.CreateInviteCodeAsync(request);
@@ -85,6 +90,8 @@ public partial class AdminInviteCodesViewModel : ObservableObject
 
     public async Task<InviteCode?> TopUpInviteCodeAsync(InviteCode code, int additionalUses)
     {
+        ErrorMessage = null;
+        StatusMessage = null;
         try
         {
             if (additionalUses <= 0)
@@ -113,6 +120,8 @@ public partial class AdminInviteCodesViewModel : ObservableObject
     [RelayCommand]
     public async Task ToggleInviteCodeAsync(InviteCode code)
     {
+        ErrorMessage = null;
+        StatusMessage = null;
         try
         {
             await _adminApi.UpdateInviteCodeAsync(code.Id, new UpdateInviteCodeRequest
@@ -130,6 +139,8 @@ public partial class AdminInviteCodesViewModel : ObservableObject
     [RelayCommand]
     public async Task DeleteInviteCodeAsync(int id)
     {
+        ErrorMessage = null;
+        StatusMessage = null;
         try
         {
             await _adminApi.DeleteInviteCodeAsync(id);

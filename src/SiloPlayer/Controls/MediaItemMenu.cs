@@ -65,7 +65,7 @@ public static class MediaItemMenu
                     if (isWatched)
                     {
                         await catalog.MarkUnwatchedAsync(item.ContentId);
-                        if (item.UserState != null) item.UserState.Played = false;
+                        MediaItemStateUpdater.SetWatched(item, false);
                         WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                             MediaSurfaceChangeKind.WatchedCleared, item.ContentId, item.SeriesId));
                         toast.Success($"Marked unwatched: {item.Title}");
@@ -73,7 +73,7 @@ public static class MediaItemMenu
                     else
                     {
                         await catalog.MarkWatchedAsync(item.ContentId);
-                        if (item.UserState != null) item.UserState.Played = true;
+                        MediaItemStateUpdater.SetWatched(item, true);
                         WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                             MediaSurfaceChangeKind.WatchedMarked, item.ContentId, item.SeriesId));
                         toast.Success($"Marked watched: {item.Title}");
@@ -93,7 +93,7 @@ public static class MediaItemMenu
                     if (isFavorite)
                     {
                         await catalog.RemoveFavoriteAsync(item.ContentId);
-                        if (item.UserState != null) item.UserState.IsFavorite = false;
+                        MediaItemStateUpdater.SetFavorite(item, false);
                         WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                             MediaSurfaceChangeKind.FavoriteRemoved, item.ContentId, item.SeriesId));
                         toast.Success("Removed from favorites");
@@ -101,7 +101,7 @@ public static class MediaItemMenu
                     else
                     {
                         await catalog.AddFavoriteAsync(item.ContentId);
-                        if (item.UserState != null) item.UserState.IsFavorite = true;
+                        MediaItemStateUpdater.SetFavorite(item, true);
                         WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                             MediaSurfaceChangeKind.FavoriteAdded, item.ContentId, item.SeriesId));
                         toast.Success("Added to favorites");
@@ -121,7 +121,7 @@ public static class MediaItemMenu
                     if (inWatchlist)
                     {
                         await catalog.RemoveFromWatchlistAsync(item.ContentId);
-                        if (item.UserState != null) item.UserState.InWatchlist = false;
+                        MediaItemStateUpdater.SetWatchlist(item, false);
                         WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                             MediaSurfaceChangeKind.WatchlistRemoved, item.ContentId, item.SeriesId));
                         toast.Success("Removed from watchlist");
@@ -129,7 +129,7 @@ public static class MediaItemMenu
                     else
                     {
                         await catalog.AddToWatchlistAsync(item.ContentId);
-                        if (item.UserState != null) item.UserState.InWatchlist = true;
+                        MediaItemStateUpdater.SetWatchlist(item, true);
                         WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                             MediaSurfaceChangeKind.WatchlistAdded, item.ContentId, item.SeriesId));
                         toast.Success("Added to watchlist");

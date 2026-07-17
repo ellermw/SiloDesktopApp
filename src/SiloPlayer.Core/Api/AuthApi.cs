@@ -35,12 +35,15 @@ public class AuthApi(SiloApiClient client)
         => client.PostAsync<VerifyPinResponse>($"/api/v1/profiles/{profileId}/verify-pin", new VerifyPinRequest { Pin = pin }, ct);
 
     public Task<Profile> CreateProfileAsync(string name, string? pin = null, bool isChild = false, CancellationToken ct = default)
-        => client.PostAsync<Profile>("/api/v1/profiles", new CreateProfileRequest
+        => CreateProfileAsync(new CreateProfileRequest
         {
             Name = name,
             Pin = string.IsNullOrWhiteSpace(pin) ? null : pin,
             IsChild = isChild,
         }, ct);
+
+    public Task<Profile> CreateProfileAsync(CreateProfileRequest request, CancellationToken ct = default)
+        => client.PostAsync<Profile>("/api/v1/profiles", request, ct);
 
     public Task DeleteProfileAsync(string profileId, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}", ct);
@@ -61,6 +64,26 @@ public class AuthApi(SiloApiClient client)
         if (pin != null) body["pin"] = pin;
         return client.PutAsync<Profile>($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}", body, ct);
     }
+
+    public Task<Profile> UpdateProfileAsync(string profileId, CreateProfileRequest request, CancellationToken ct = default)
+        => client.PutAsync<Profile>($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}", request, ct);
+
+    public Task<Profile> UploadProfileAvatarAsync(
+        string profileId,
+        string fileName,
+        byte[] fileBytes,
+        string contentType,
+        CancellationToken ct = default)
+        => client.PutMultipartAsync<Profile>(
+            $"/api/v1/profiles/{Uri.EscapeDataString(profileId)}/avatar",
+            "avatar",
+            fileName,
+            fileBytes,
+            contentType,
+            ct);
+
+    public Task<Profile> DeleteProfileAvatarAsync(string profileId, CancellationToken ct = default)
+        => client.DeleteReturningAsync<Profile>($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}/avatar", ct);
 
     // ===== Signup =====
 

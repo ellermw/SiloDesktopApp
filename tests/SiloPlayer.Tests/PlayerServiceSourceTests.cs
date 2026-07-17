@@ -23,7 +23,8 @@ public sealed class PlayerServiceSourceTests
         var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
 
         Assert.Contains("bitstream ? \"ac3,eac3,dts-hd,truehd\" : \"\"", source, StringComparison.Ordinal);
-        Assert.Contains("mpv.SetProperty(\"video-sync\", bitstream ? \"audio\" : \"display-resample\")", source, StringComparison.Ordinal);
+        Assert.Contains("mpv.SetProperty(\"video-sync\", \"audio\")", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SetProperty(\"video-sync\", bitstream ? \"audio\" : \"display-resample\")", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -537,6 +538,20 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("mpv.ConfigureNetworkBuffer", service);
         Assert.Contains("SetProperty(\"demuxer-max-bytes\"", mpv);
         Assert.Contains("SetProperty(\"stream-buffer-size\"", mpv);
+    }
+
+    [Fact]
+    public void AudioOutputPreferenceCannotRestoreFocusSensitiveDisplayClock()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        Assert.Contains("mpv.SetProperty(\"video-sync\", \"audio\")", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("bitstream ? \"audio\" : \"display-resample\"", source, StringComparison.Ordinal);
     }
 
     [Fact]

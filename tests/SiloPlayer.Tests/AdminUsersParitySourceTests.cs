@@ -11,6 +11,9 @@ public class AdminUsersParitySourceTests
     private static string CodeBehind => File.ReadAllText(Path.Combine(
         RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminUsersPage.xaml.cs"));
 
+    private static string UserModel => File.ReadAllText(Path.Combine(
+        RepoRoot, "src", "SiloPlayer.Core", "Models", "Admin", "AdminUser.cs"));
+
     [Fact]
     public void UsersPageUsesCurrentHeaderTabsAndActions()
     {
@@ -53,5 +56,27 @@ public class AdminUsersParitySourceTests
         Assert.Contains("x:Name=\"UsersTableScroll\"", Markup, StringComparison.Ordinal);
         Assert.Contains("x:Name=\"InviteCodesTableScroll\"", Markup, StringComparison.Ordinal);
         Assert.Contains("AdminUsersPage_SizeChanged", CodeBehind, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UserFormIncludesCurrentAccessAndAccountContract()
+    {
+        Assert.Contains("Marker Editing", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("Metadata Curation", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("Permissions = permissionList", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("CreateDefaultProfile = true", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("ValidateCreateUser", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("ValidateUpdateUser", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("public List<string> Permissions", UserModel, StringComparison.Ordinal);
+        Assert.Contains("public bool CreateDefaultProfile", UserModel, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InviteMutationsOnlyReportSuccessAfterApiSuccess()
+    {
+        Assert.Contains("InviteCodesViewModel.ErrorMessage", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("var created = await InviteCodesViewModel.CreateInviteCodeAsync", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("Title = \"Top Up Invite Code\"", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("PrimaryButtonText = \"Add Uses\"", CodeBehind, StringComparison.Ordinal);
     }
 }

@@ -217,6 +217,17 @@ public sealed partial class AdminLibrariesPage : Page
 
         try
         {
+            // The WebUI starts its independent diagnostics queries together.
+            // Start them before the library request completes so the lower
+            // sections do not appear an extra API round-trip after the table.
+            var skippedRootsTask = LoadAndRenderAsync(ViewModel.LoadSkippedRootsAsync, BuildSkippedRootsRows);
+            var unmatchedItemsTask = LoadAndRenderAsync(
+                () => ViewModel.LoadUnmatchedItemsAsync(),
+                BuildUnmatchedItemsSection);
+            var staleIdsTask = LoadAndRenderAsync(ViewModel.LoadStaleIdsAsync, BuildStaleIdsSection);
+            var metadataProvidersTask = ViewModel.LoadMetadataProvidersAsync();
+            var activeRefreshJobsTask = ViewModel.LoadActiveRefreshJobsAsync();
+
             await ViewModel.LoadLibrariesAsync();
             // Rebuild ONCE after all data is loaded — no CollectionChanged subscriptions needed for initial load
             BuildLibraryRows();
@@ -229,12 +240,13 @@ public sealed partial class AdminLibrariesPage : Page
                 render();
             }
 
+            await activeRefreshJobsTask;
+            BuildLibraryRows();
             await Task.WhenAll(
-                LoadAndRenderAsync(ViewModel.LoadSkippedRootsAsync, BuildSkippedRootsRows),
-                LoadAndRenderAsync(() => ViewModel.LoadUnmatchedItemsAsync(), BuildUnmatchedItemsSection),
-                LoadAndRenderAsync(ViewModel.LoadStaleIdsAsync, BuildStaleIdsSection),
-                LoadAndRenderAsync(ViewModel.LoadMetadataProvidersAsync, () => { }),
-                LoadAndRenderAsync(ViewModel.LoadActiveRefreshJobsAsync, BuildLibraryRows));
+                skippedRootsTask,
+                unmatchedItemsTask,
+                staleIdsTask,
+                metadataProvidersTask);
         }
         catch (Exception ex)
         {
@@ -2973,17 +2985,36 @@ public sealed partial class AdminLibrariesPage : Page
     //  Form Builder — matches web: Name+Enabled, Paths, Type+Poster, Metadata Providers
     // ===================================================================
 
-    private async Task<string?> BrowseServerFolderAsync(string initialPath)
+    private async Task<IReadOnlyList<string>> BrowseServerFolderAsync(
+        string initialPath,
+        IReadOnlyCollection<string> existingPaths)
     {
+        var existingPathSet = existingPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var currentPath = !string.IsNullOrWhiteSpace(initialPath) && initialPath.Trim().StartsWith('/')
             ? initialPath.Trim()
             : "/";
         var pathBox = new TextBox { Text = currentPath, PlaceholderText = "/mnt/media", FontFamily = new FontFamily("Consolas"), FontSize = 13 };
         var currentLabel = new TextBlock { Text = currentPath, FontFamily = new FontFamily("Consolas"), FontSize = 12, Foreground = _secondaryText, TextWrapping = TextWrapping.Wrap };
         var status = new TextBlock { FontSize = 12, Foreground = _tertiaryText, TextWrapping = TextWrapping.Wrap };
+        var selectionStatus = new TextBlock { FontSize = 11, Foreground = _tertiaryText };
         var entriesPanel = new StackPanel { Spacing = 2 };
         var upButton = new Button { Content = "Up", Style = (Style)Application.Current.Resources["SecondaryButtonStyle"] };
-        var browseButton = new Button { Content = "Browse", Style = (Style)Application.Current.Resources["SecondaryButtonStyle"] };
+        var refreshButton = new Button { Content = new SymbolIcon(Symbol.Refresh), Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+        var browseButton = new Button { Content = "Browse", Style = (Style)Application.Current.Resources["OutlineButtonStyle"] };
+        ContentDialog? dialog = null;
+
+        void UpdateSelectionStatus()
+        {
+            selectionStatus.Text = selectedPaths.Count > 0
+                ? $"{selectedPaths.Count} folder{(selectedPaths.Count == 1 ? "" : "s")} selected"
+                : "Select folders or use current";
+            if (dialog == null) return;
+            dialog.PrimaryButtonText = selectedPaths.Count > 0
+                ? $"Add {selectedPaths.Count} Folder{(selectedPaths.Count == 1 ? "" : "s")}"
+                : "Use Current Folder";
+            dialog.IsPrimaryButtonEnabled = selectedPaths.Count > 0 || !existingPathSet.Contains(currentPath);
+        }
 
         async Task LoadPathAsync(string path)
         {
@@ -3003,21 +3034,47 @@ public sealed partial class AdminLibrariesPage : Page
                 foreach (var entry in response.Entries)
                 {
                     var captured = entry.Path;
-                    var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-                    row.Children.Add(new FontIcon { Glyph = "\uED25", FontSize = 14, Foreground = _tertiaryText });
-                    row.Children.Add(new TextBlock { Text = entry.Name, FontSize = 13, TextTrimming = TextTrimming.CharacterEllipsis });
-                    var button = new Button
+                    var row = new Grid { ColumnSpacing = 4 };
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    var isExisting = existingPathSet.Contains(captured);
+                    var check = new CheckBox
+                    {
+                        IsChecked = isExisting || selectedPaths.Contains(captured),
+                        IsEnabled = !isExisting,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(6, 0, 0, 0),
+                    };
+                    check.Checked += (_, _) =>
+                    {
+                        if (!isExisting) selectedPaths.Add(captured);
+                        UpdateSelectionStatus();
+                    };
+                    check.Unchecked += (_, _) =>
+                    {
+                        selectedPaths.Remove(captured);
+                        UpdateSelectionStatus();
+                    };
+                    var folderContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                    folderContent.Children.Add(new FontIcon { Glyph = "\uED25", FontSize = 14, Foreground = _tertiaryText });
+                    folderContent.Children.Add(new TextBlock { Text = entry.Name, FontSize = 13, TextTrimming = TextTrimming.CharacterEllipsis });
+                    var navigateButton = new Button
                     {
                         HorizontalAlignment = HorizontalAlignment.Stretch,
                         HorizontalContentAlignment = HorizontalAlignment.Left,
                         Background = new SolidColorBrush(Colors.Transparent),
                         BorderThickness = new Thickness(0),
-                        Padding = new Thickness(8, 7, 8, 7),
-                        Content = row,
+                        Padding = new Thickness(4, 7, 8, 7),
+                        Content = folderContent,
                     };
-                    button.Click += async (_, _) => await LoadPathAsync(captured);
-                    entriesPanel.Children.Add(button);
+                    navigateButton.Click += async (_, _) => await LoadPathAsync(captured);
+                    Grid.SetColumn(check, 0);
+                    Grid.SetColumn(navigateButton, 1);
+                    row.Children.Add(check);
+                    row.Children.Add(navigateButton);
+                    entriesPanel.Children.Add(row);
                 }
+                UpdateSelectionStatus();
             }
             catch (Exception ex)
             {
@@ -3041,6 +3098,7 @@ public sealed partial class AdminLibrariesPage : Page
         {
             if (upButton.Tag is string parent) await LoadPathAsync(parent);
         };
+        refreshButton.Click += async (_, _) => await LoadPathAsync(currentPath);
 
         var pathRow = new Grid { ColumnSpacing = 8 };
         pathRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -3050,8 +3108,13 @@ public sealed partial class AdminLibrariesPage : Page
         var toolbar = new Grid();
         toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumn(currentLabel, 0); Grid.SetColumn(upButton, 1);
-        toolbar.Children.Add(currentLabel); toolbar.Children.Add(upButton);
+        Grid.SetColumn(currentLabel, 0);
+        toolbar.Children.Add(currentLabel);
+        var toolbarActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        toolbarActions.Children.Add(upButton);
+        toolbarActions.Children.Add(refreshButton);
+        Grid.SetColumn(toolbarActions, 1);
+        toolbar.Children.Add(toolbarActions);
         var content = new StackPanel { Width = 600, Spacing = 10 };
         content.Children.Add(pathRow); content.Children.Add(status); content.Children.Add(toolbar);
         content.Children.Add(new Border
@@ -3062,7 +3125,8 @@ public sealed partial class AdminLibrariesPage : Page
             CornerRadius = new CornerRadius(8),
             Child = new ScrollViewer { Content = entriesPanel },
         });
-        var dialog = new ContentDialog
+        content.Children.Add(selectionStatus);
+        dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "Browse Library Folders",
@@ -3072,7 +3136,10 @@ public sealed partial class AdminLibrariesPage : Page
             DefaultButton = ContentDialogButton.Primary,
         };
         await LoadPathAsync(currentPath);
-        return await dialog.ShowAsync() == ContentDialogResult.Primary ? currentPath : null;
+        UpdateSelectionStatus();
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            return [];
+        return selectedPaths.Count > 0 ? selectedPaths.ToList() : [currentPath];
     }
 
     private (FrameworkElement Content, Func<object?> GetBody, Func<SetLibraryChainRequest?> GetProviderChain,
@@ -3212,28 +3279,17 @@ public sealed partial class AdminLibrariesPage : Page
             };
             pathInputs.Add(tb);
 
-            var rowGrid = new Grid { ColumnSpacing = 4 };
+            var rowGrid = new Grid { ColumnSpacing = 6 };
+            rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            // Browse button for folder selection
-            var browseBtn = new Button
+            var folderIcon = new FontIcon
             {
-                Width = 36, Height = 36, MinWidth = 36, MinHeight = 36,
-                Padding = new Thickness(0),
-                Background = new SolidColorBrush(Colors.Transparent),
-                BorderThickness = new Thickness(0),
-                CornerRadius = new CornerRadius(6),
-                Content = new FontIcon { Glyph = "\uED25", FontSize = 13 }, // FolderOpen
+                Glyph = "\uED25",
+                FontSize = 16,
+                Foreground = _tertiaryText,
                 VerticalAlignment = VerticalAlignment.Center,
-            };
-            ToolTipService.SetToolTip(browseBtn, "Browse folder");
-            var capturedTb = tb;
-            browseBtn.Click += async (_, _) =>
-            {
-                var selected = await BrowseServerFolderAsync(capturedTb.Text);
-                if (!string.IsNullOrWhiteSpace(selected)) capturedTb.Text = selected;
             };
 
             var deleteBtn = new Button
@@ -3258,11 +3314,11 @@ public sealed partial class AdminLibrariesPage : Page
                 RefreshDeleteButtons();
             };
 
-            Grid.SetColumn(tb, 0);
-            Grid.SetColumn(browseBtn, 1);
+            Grid.SetColumn(folderIcon, 0);
+            Grid.SetColumn(tb, 1);
             Grid.SetColumn(deleteBtn, 2);
+            rowGrid.Children.Add(folderIcon);
             rowGrid.Children.Add(tb);
-            rowGrid.Children.Add(browseBtn);
             rowGrid.Children.Add(deleteBtn);
             pathsPanel.Children.Add(rowGrid);
         }
@@ -3292,7 +3348,7 @@ public sealed partial class AdminLibrariesPage : Page
             Padding = new Thickness(10, 6, 10, 6),
             CornerRadius = new CornerRadius(6),
             HorizontalAlignment = HorizontalAlignment.Left,
-            Style = (Style)Application.Current.Resources["SecondaryButtonStyle"]
+            Style = (Style)Application.Current.Resources["OutlineButtonStyle"]
         };
         var addPathContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         addPathContent.Children.Add(new FontIcon { Glyph = "\uE710", FontSize = 13 });
@@ -3303,6 +3359,43 @@ public sealed partial class AdminLibrariesPage : Page
             AddPathRow("");
             RefreshDeleteButtons();
         };
+
+        var browsePathsBtn = new Button
+        {
+            Padding = new Thickness(10, 6, 10, 6),
+            CornerRadius = new CornerRadius(6),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
+        };
+        var browsePathsContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        browsePathsContent.Children.Add(new FontIcon { Glyph = "\uE8B7", FontSize = 13 });
+        browsePathsContent.Children.Add(new TextBlock { Text = "Browse", FontSize = 12 });
+        browsePathsBtn.Content = browsePathsContent;
+        browsePathsBtn.Click += async (_, _) =>
+        {
+            var initialPath = pathInputs.Select(input => input.Text.Trim()).FirstOrDefault(path => path.Length > 0) ?? "/";
+            var existingPaths = pathInputs
+                .Select(input => input.Text.Trim())
+                .Where(path => path.Length > 0)
+                .ToList();
+            var selectedPaths = await BrowseServerFolderAsync(initialPath, existingPaths);
+            foreach (var selected in selectedPaths)
+            {
+                var emptyInput = pathInputs.FirstOrDefault(input => string.IsNullOrWhiteSpace(input.Text));
+                if (emptyInput != null)
+                {
+                    emptyInput.Text = selected;
+                }
+                else if (!pathInputs.Any(input => string.Equals(input.Text.Trim(), selected, StringComparison.OrdinalIgnoreCase)))
+                {
+                    AddPathRow(selected);
+                }
+            }
+            RefreshDeleteButtons();
+        };
+        var pathActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        pathActions.Children.Add(browsePathsBtn);
+        pathActions.Children.Add(addPathBtn);
 
         // ---- Metadata Providers Section (P0 Item 4) ----
         bool chainDirty = false;
@@ -3348,7 +3441,6 @@ public sealed partial class AdminLibrariesPage : Page
 
         // Row 2: Paths
         var pathsGroup = new StackPanel { Spacing = 6 };
-        pathsGroup.Children.Add(MakeFormLabel("Paths"));
         pathsGroup.Children.Add(pathsPanel);
         var pathsError = new TextBlock
         {
@@ -3358,7 +3450,7 @@ public sealed partial class AdminLibrariesPage : Page
             Visibility = Visibility.Collapsed,
         };
         pathsGroup.Children.Add(pathsError);
-        pathsGroup.Children.Add(addPathBtn);
+        pathsGroup.Children.Add(pathActions);
         foldersPanel.Children.Add(pathsGroup);
 
         // Poster file picker state (for upload after save)
@@ -3366,7 +3458,7 @@ public sealed partial class AdminLibrariesPage : Page
         string? posterFileName = null;
         string? posterContentType = null;
 
-        // Row 3: Type + Poster
+        // Row 3: Type, followed by Enabled and Poster exactly as the WebUI.
         var typeRow = new Grid { RowSpacing = 12 };
         typeRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         typeRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -3377,10 +3469,11 @@ public sealed partial class AdminLibrariesPage : Page
         Grid.SetRow(typeGroup, 0);
         typeRow.Children.Add(typeGroup);
 
+        StackPanel? posterGroup = null;
         // Poster section (only when editing)
         if (editingLib != null)
         {
-            var posterGroup = new StackPanel { Spacing = 6 };
+            posterGroup = new StackPanel { Spacing = 6 };
             posterGroup.Children.Add(MakeFormLabel("Poster"));
 
             var posterRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
@@ -3427,17 +3520,14 @@ public sealed partial class AdminLibrariesPage : Page
             // File picker button
             var pickPosterBtn = new Button
             {
-                Content = new FontIcon { Glyph = "\uEB9F", FontSize = 13 },
-                Width = 36, Height = 36, MinWidth = 36, MinHeight = 36,
-                Padding = new Thickness(0),
-                Background = new SolidColorBrush(Colors.Transparent),
-                BorderBrush = _borderBrush,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4),
+                Content = string.IsNullOrEmpty(editingLib.PosterUrl) ? "Upload" : "Replace",
+                Height = 32,
+                MinHeight = 32,
+                Padding = new Thickness(12, 6, 12, 6),
+                Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
+                FontSize = 12,
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            ToolTipService.SetToolTip(pickPosterBtn, "Upload poster image");
-            var posterPickLabel = new TextBlock { FontSize = 11, Foreground = _tertiaryText, VerticalAlignment = VerticalAlignment.Center };
             pickPosterBtn.Click += async (_, _) =>
             {
                 try
@@ -3456,19 +3546,34 @@ public sealed partial class AdminLibrariesPage : Page
                         posterFileBytes = System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(buf);
                         posterFileName = file.Name;
                         posterContentType = file.ContentType;
-                        posterPickLabel.Text = file.Name;
+                        pickPosterBtn.IsEnabled = false;
+                        pickPosterBtn.Content = "...";
+                        var api = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
+                        await api.SetLibraryPosterAsync(editingLib.Id, posterFileBytes, posterFileName, posterContentType);
+                        posterFileBytes = null;
+                        posterFileName = null;
+                        posterContentType = null;
+                        pickPosterBtn.Content = "Replace";
+                        ShowStatus("Library poster updated.");
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    pickPosterBtn.Content = string.IsNullOrEmpty(editingLib.PosterUrl) ? "Upload" : "Replace";
+                    ShowStatus($"Poster upload failed: {ex.Message}");
+                }
+                finally
+                {
+                    pickPosterBtn.IsEnabled = true;
+                }
             };
             posterRow.Children.Add(pickPosterBtn);
-            posterRow.Children.Add(posterPickLabel);
             if (!string.IsNullOrEmpty(editingLib.PosterUrl))
             {
                 var removePosterBtn = new Button
                 {
                     Content = new FontIcon { Glyph = "\uE74D", FontSize = 13, Foreground = new SolidColorBrush(DestructiveColor) },
-                    Width = 36, Height = 36, MinWidth = 36, MinHeight = 36,
+                    Width = 32, Height = 32, MinWidth = 32, MinHeight = 32,
                     Padding = new Thickness(0),
                     Background = new SolidColorBrush(Colors.Transparent),
                     BorderThickness = new Thickness(0),
@@ -3489,8 +3594,6 @@ public sealed partial class AdminLibrariesPage : Page
             }
 
             posterGroup.Children.Add(posterRow);
-            Grid.SetRow(posterGroup, 1);
-            typeRow.Children.Add(posterGroup);
         }
 
         generalPanel.Children.Add(typeRow);
@@ -3520,6 +3623,8 @@ public sealed partial class AdminLibrariesPage : Page
             Padding = new Thickness(12),
             Child = enabledRow,
         });
+        if (posterGroup != null)
+            generalPanel.Children.Add(posterGroup);
 
         // Metadata Language selector (webui LibraryForm: language select)
         var langCombo = new ComboBox
@@ -3541,35 +3646,114 @@ public sealed partial class AdminLibrariesPage : Page
             Foreground = _secondaryText,
         });
         langField.Children.Add(langCombo);
+        langField.Children.Add(new TextBlock
+        {
+            Text = "Preferred language for titles, summaries, and artwork fetched from providers.",
+            FontSize = 11,
+            Foreground = _tertiaryText,
+            TextWrapping = TextWrapping.Wrap,
+        });
         metadataPanel.Children.Add(langField);
 
         var autoTranslateToggle = new ToggleSwitch
         {
             IsOn = editingLib?.AutoTranslateMetadata ?? false,
-            OnContent = "Auto-translate descriptions",
-            OffContent = "Do not auto-translate descriptions",
+            OnContent = null,
+            OffContent = null,
         };
-        ToolTipService.SetToolTip(autoTranslateToggle,
-            "Use AI description translation when providers have no translation for this library's language.");
-        metadataPanel.Children.Add(autoTranslateToggle);
+        var autoTranslateCopy = new StackPanel { Spacing = 2 };
+        autoTranslateCopy.Children.Add(new TextBlock
+        {
+            Text = "Auto-translate descriptions",
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = _primaryText,
+        });
+        autoTranslateCopy.Children.Add(new TextBlock
+        {
+            Text = "When providers have no translation for this library's language, translate descriptions with AI after each refresh. Requires AI description translation in Admin Settings → AI Services.",
+            FontSize = 11,
+            Foreground = _tertiaryText,
+            TextWrapping = TextWrapping.Wrap,
+        });
+        var autoTranslateRow = new Grid { ColumnSpacing = 12 };
+        autoTranslateRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        autoTranslateRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        autoTranslateRow.Children.Add(autoTranslateCopy);
+        Grid.SetColumn(autoTranslateToggle, 1);
+        autoTranslateRow.Children.Add(autoTranslateToggle);
+        metadataPanel.Children.Add(autoTranslateRow);
+
+        Border MakeAdvancedSettingCard(string title, string description, ToggleSwitch toggle, string? warning = null)
+        {
+            toggle.OnContent = null;
+            toggle.OffContent = null;
+            var copy = new StackPanel { Spacing = 2 };
+            copy.Children.Add(new TextBlock
+            {
+                Text = title,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = _primaryText,
+            });
+            copy.Children.Add(new TextBlock
+            {
+                Text = description,
+                FontSize = 11,
+                Foreground = _tertiaryText,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            if (!string.IsNullOrWhiteSpace(warning))
+            {
+                copy.Children.Add(new TextBlock
+                {
+                    Text = warning,
+                    FontSize = 11,
+                    Foreground = (Brush)Application.Current.Resources["WarningBrush"],
+                    TextWrapping = TextWrapping.Wrap,
+                });
+            }
+
+            var row = new Grid { ColumnSpacing = 16 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.Children.Add(copy);
+            Grid.SetColumn(toggle, 1);
+            row.Children.Add(toggle);
+            return new Border
+            {
+                BorderBrush = _borderBrush,
+                BorderThickness = new Thickness(1),
+                Background = _surfaceBrush,
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(14),
+                Child = row,
+            };
+        }
 
         // Chapter Thumbnails toggle (webui LibraryForm: chapter thumbnails switch)
+        var chapterThumbnailsSupported = editingLib?.ChapterThumbnailsSupported
+            ?? ViewModel.Libraries.FirstOrDefault()?.ChapterThumbnailsSupported
+            ?? true;
         var chapterThumbToggle = new ToggleSwitch
         {
             IsOn = editingLib?.ChapterThumbnailsEnabled ?? false,
-            IsEnabled = editingLib?.ChapterThumbnailsSupported ?? ViewModel.Libraries.FirstOrDefault()?.ChapterThumbnailsSupported ?? true,
-            OnContent = "Chapter thumbnails enabled",
-            OffContent = "Chapter thumbnails disabled",
+            IsEnabled = chapterThumbnailsSupported,
         };
-        advancedPanel.Children.Add(chapterThumbToggle);
+        advancedPanel.Children.Add(MakeAdvancedSettingCard(
+            "Generate chapter thumbnails",
+            "Stores chapter preview images in the configured public asset S3 bucket. Chapter markers and chapter menus still work without thumbnails.",
+            chapterThumbToggle,
+            chapterThumbnailsSupported ? null : "Public asset S3 storage is required before this can be enabled."));
 
         var introDetectionToggle = new ToggleSwitch
         {
             IsOn = editingLib?.IntroDetectionEnabled ?? false,
-            OnContent = "Detect intro markers",
-            OffContent = "Intro marker detection disabled",
         };
-        advancedPanel.Children.Add(introDetectionToggle);
+        advancedPanel.Children.Add(MakeAdvancedSettingCard(
+            "Detect intro markers",
+            "Runs background audio analysis for episodes in this library. Embedded intro chapters are used when available.",
+            introDetectionToggle));
 
         var trailerKinds = new[]
         {
@@ -3589,7 +3773,7 @@ public sealed partial class AdminLibrariesPage : Page
         trailerPanel.Children.Add(MakeFormLabel("Trailer & extras types"));
         trailerPanel.Children.Add(new TextBlock
         {
-            Text = "Video types fetched from metadata providers. Uncheck everything to disable remote trailers.",
+            Text = "Video types fetched from metadata providers during refresh. Uncheck everything to disable remote trailers for this library.",
             FontSize = 11,
             Foreground = _tertiaryText,
             TextWrapping = TextWrapping.Wrap,
@@ -3612,21 +3796,21 @@ public sealed partial class AdminLibrariesPage : Page
         trailerPanel.Children.Add(trailerGrid);
         metadataPanel.Children.Add(trailerPanel);
 
-        // Row 4: Metadata Providers
+        // Row 4: Provider Priority
         var providerWrapper = new StackPanel { Spacing = 6 };
-        providerWrapper.Children.Add(new Border
-        {
-            BorderBrush = new SolidColorBrush(Color.FromArgb(25, 255, 255, 255)),
-            BorderThickness = new Thickness(0, 1, 0, 0),
-            Margin = new Thickness(0, 4, 0, 0),
-        });
         providerWrapper.Children.Add(new TextBlock
         {
-            Text = "Metadata Providers",
+            Text = "Provider Priority",
             FontSize = 13,
             FontWeight = FontWeights.SemiBold,
             Foreground = _primaryText,
-            Margin = new Thickness(0, 4, 0, 0),
+        });
+        providerWrapper.Children.Add(new TextBlock
+        {
+            Text = "Providers are asked in order from top to bottom. Uncheck a provider to skip it for that level.",
+            FontSize = 11,
+            Foreground = _tertiaryText,
+            TextWrapping = TextWrapping.Wrap,
         });
         providerWrapper.Children.Add(providerSection);
         metadataPanel.Children.Add(providerWrapper);
@@ -3823,7 +4007,7 @@ public sealed partial class AdminLibrariesPage : Page
         {
             container.Children.Add(new TextBlock
             {
-                Text = "No metadata providers configured.",
+                Text = "No metadata provider plugins are installed. Install one under Admin → Plugins to fetch artwork and descriptions.",
                 FontSize = 12,
                 Foreground = _tertiaryText,
             });

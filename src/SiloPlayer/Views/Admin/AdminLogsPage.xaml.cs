@@ -20,6 +20,8 @@ public sealed partial class AdminLogsPage : Page
     private OperationalLogEntry? _selectedAppEntry;
     private bool _rebuildAppPending;
     private bool _rebuildAuditPending;
+    private bool _suspendAppCollectionRebuild;
+    private bool _suspendAuditCollectionRebuild;
     private bool _loaded;
     private bool _uiEventsAttached;
 
@@ -45,7 +47,13 @@ public sealed partial class AdminLogsPage : Page
     }
 
     private void ContentScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
-        => AdminPageContent.Width = Math.Min(1640, Math.Max(0, e.NewSize.Width));
+    {
+        var width = Math.Max(0, e.NewSize.Width);
+        AdminPageContent.Width = Math.Min(1640, width);
+        var horizontalPadding = width >= 1280 ? 40 : width >= 1024 ? 32 : width >= 640 ? 24 : 16;
+        var verticalPadding = width >= 1024 ? 32 : 16;
+        AdminPageContent.Padding = new Thickness(horizontalPadding, verticalPadding, horizontalPadding, 40);
+    }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
@@ -129,10 +137,14 @@ public sealed partial class AdminLogsPage : Page
     }
 
     private void AppLogs_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-        => ScheduleRebuildApp();
+    {
+        if (!_suspendAppCollectionRebuild) ScheduleRebuildApp();
+    }
 
     private void AuditLogs_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-        => ScheduleRebuildAudit();
+    {
+        if (!_suspendAuditCollectionRebuild) ScheduleRebuildAudit();
+    }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
     {
@@ -264,9 +276,15 @@ public sealed partial class AdminLogsPage : Page
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            ViewModel.AppLogs.Clear();
-            foreach (var e in entries) ViewModel.AppLogs.Add(e);
+            _suspendAppCollectionRebuild = true;
+            try
+            {
+                ViewModel.AppLogs.Clear();
+                foreach (var e in entries) ViewModel.AppLogs.Add(e);
+            }
+            finally { _suspendAppCollectionRebuild = false; }
             ViewModel.AppLogsNextCursor = nextCursor;
+            RebuildAppTable();
         });
     }
 
@@ -274,9 +292,15 @@ public sealed partial class AdminLogsPage : Page
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            ViewModel.AuditLogs.Clear();
-            foreach (var e in entries) ViewModel.AuditLogs.Add(e);
+            _suspendAuditCollectionRebuild = true;
+            try
+            {
+                ViewModel.AuditLogs.Clear();
+                foreach (var e in entries) ViewModel.AuditLogs.Add(e);
+            }
+            finally { _suspendAuditCollectionRebuild = false; }
             ViewModel.AuditLogsNextCursor = nextCursor;
+            RebuildAuditTable();
         });
     }
 
@@ -284,14 +308,35 @@ public sealed partial class AdminLogsPage : Page
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            // Prepend newest entry at index 0, dedupe by id, cap collection size.
-            for (int i = 0; i < ViewModel.AppLogs.Count; i++)
+            if (_isNavigatedAway) return;
+            _suspendAppCollectionRebuild = true;
+            try
             {
-                if (ViewModel.AppLogs[i].Id == entry.Id) { ViewModel.AppLogs.RemoveAt(i); break; }
+                var existingIndex = -1;
+                for (var i = 0; i < ViewModel.AppLogs.Count; i++)
+                {
+                    if (ViewModel.AppLogs[i].Id == entry.Id) { existingIndex = i; break; }
+                }
+                if (existingIndex >= 0)
+                {
+                    ViewModel.AppLogs.RemoveAt(existingIndex);
+                    if (_isAppTab && existingIndex < AppLogsPanel_Rows.Children.Count)
+                        AppLogsPanel_Rows.Children.RemoveAt(existingIndex);
+                }
+                ViewModel.AppLogs.Insert(0, entry);
+                if (_isAppTab)
+                    AppLogsPanel_Rows.Children.Insert(0, BuildAppLogRow(entry));
+                while (ViewModel.AppLogs.Count > LogStreamCap)
+                {
+                    ViewModel.AppLogs.RemoveAt(ViewModel.AppLogs.Count - 1);
+                    if (_isAppTab && AppLogsPanel_Rows.Children.Count > LogStreamCap)
+                        AppLogsPanel_Rows.Children.RemoveAt(AppLogsPanel_Rows.Children.Count - 1);
+                }
             }
-            ViewModel.AppLogs.Insert(0, entry);
-            while (ViewModel.AppLogs.Count > LogStreamCap)
-                ViewModel.AppLogs.RemoveAt(ViewModel.AppLogs.Count - 1);
+            finally { _suspendAppCollectionRebuild = false; }
+            AppLogsEmpty.Visibility = Visibility.Collapsed;
+            AppLogsLoading.Visibility = Visibility.Collapsed;
+            if (!string.IsNullOrWhiteSpace(ViewModel.PlaybackSessionId)) RebuildPlaybackSummary();
         });
     }
 
@@ -299,13 +344,35 @@ public sealed partial class AdminLogsPage : Page
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            for (int i = 0; i < ViewModel.AuditLogs.Count; i++)
+            if (_isNavigatedAway) return;
+            _suspendAuditCollectionRebuild = true;
+            try
             {
-                if (ViewModel.AuditLogs[i].Id == entry.Id) { ViewModel.AuditLogs.RemoveAt(i); break; }
+                var existingIndex = -1;
+                for (var i = 0; i < ViewModel.AuditLogs.Count; i++)
+                {
+                    if (ViewModel.AuditLogs[i].Id == entry.Id) { existingIndex = i; break; }
+                }
+                if (existingIndex >= 0)
+                {
+                    ViewModel.AuditLogs.RemoveAt(existingIndex);
+                    if (!_isAppTab && existingIndex < AuditLogsPanel_Rows.Children.Count)
+                        AuditLogsPanel_Rows.Children.RemoveAt(existingIndex);
+                }
+                ViewModel.AuditLogs.Insert(0, entry);
+                if (!_isAppTab)
+                    AuditLogsPanel_Rows.Children.Insert(0, BuildAuditLogRow(entry));
+                while (ViewModel.AuditLogs.Count > LogStreamCap)
+                {
+                    ViewModel.AuditLogs.RemoveAt(ViewModel.AuditLogs.Count - 1);
+                    if (!_isAppTab && AuditLogsPanel_Rows.Children.Count > LogStreamCap)
+                        AuditLogsPanel_Rows.Children.RemoveAt(AuditLogsPanel_Rows.Children.Count - 1);
+                }
             }
-            ViewModel.AuditLogs.Insert(0, entry);
-            while (ViewModel.AuditLogs.Count > LogStreamCap)
-                ViewModel.AuditLogs.RemoveAt(ViewModel.AuditLogs.Count - 1);
+            finally { _suspendAuditCollectionRebuild = false; }
+            AuditLogsEmpty.Visibility = Visibility.Collapsed;
+            AuditLogsLoading.Visibility = Visibility.Collapsed;
+            if (!string.IsNullOrWhiteSpace(ViewModel.PlaybackSessionId)) RebuildPlaybackSummary();
         });
     }
 
@@ -350,6 +417,7 @@ public sealed partial class AdminLogsPage : Page
 
         AppLogsPanel.Visibility = appTab ? Visibility.Visible : Visibility.Collapsed;
         AuditLogsPanel.Visibility = !appTab ? Visibility.Visible : Visibility.Collapsed;
+        if (appTab) RebuildAppTable(); else RebuildAuditTable();
 
         // Clear detail panel when switching
         HideAppDetail();
@@ -493,19 +561,8 @@ public sealed partial class AdminLogsPage : Page
         AppLogsEmpty.Visibility = Visibility.Collapsed;
         AppLogsLoading.Visibility = Visibility.Collapsed;
 
-        bool first = true;
         foreach (var entry in logs)
         {
-            if (!first)
-            {
-                AppLogsPanel_Rows.Children.Add(new Border
-                {
-                    BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
-                    BorderThickness = new Thickness(0, 1, 0, 0)
-                });
-            }
-            first = false;
-
             var row = BuildAppLogRow(entry);
             AppLogsPanel_Rows.Children.Add(row);
         }
@@ -527,7 +584,9 @@ public sealed partial class AdminLogsPage : Page
             Tag = entry,
             Background = highlight
                 ? new SolidColorBrush(Color.FromArgb(12, 99, 102, 241))  // bg-primary/5
-                : new SolidColorBrush(Colors.Transparent)
+                : new SolidColorBrush(Colors.Transparent),
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(0, 0, 0, 1),
         };
         // Proportional columns matching XAML header: Time / Level / Component / Status / Duration / Message
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
@@ -791,18 +850,8 @@ public sealed partial class AdminLogsPage : Page
         AuditLogsEmpty.Visibility = Visibility.Collapsed;
         AuditLogsLoading.Visibility = Visibility.Collapsed;
 
-        bool first = true;
         foreach (var entry in logs)
         {
-            if (!first)
-            {
-                AuditLogsPanel_Rows.Children.Add(new Border
-                {
-                    BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
-                    BorderThickness = new Thickness(0, 1, 0, 0)
-                });
-            }
-            first = false;
             AuditLogsPanel_Rows.Children.Add(BuildAuditLogRow(entry));
         }
 
@@ -816,7 +865,9 @@ public sealed partial class AdminLogsPage : Page
         var row = new Grid
         {
             Padding = new Thickness(12, 8, 12, 8),
-            ColumnSpacing = 8
+            ColumnSpacing = 8,
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(0, 0, 0, 1),
         };
         // Proportional columns matching XAML header
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.3, GridUnitType.Star) });

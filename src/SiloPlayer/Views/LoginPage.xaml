@@ -11,16 +11,20 @@
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BoolToVisibilityConverter x:Key="BoolToVisInverse" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
+        <converters:NullToVisibilityConverter x:Key="NullToVisInverse" Invert="True" />
         <converters:InverseBoolConverter x:Key="InverseBool" />
     </Page.Resources>
 
     <!-- Full-page centered auth shell -->
-    <Grid HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
         <StackPanel
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
             MaxWidth="400"
+            Margin="24"
             Spacing="16">
 
             <!-- Glass card -->
@@ -30,14 +34,14 @@
                     <StackPanel Spacing="8">
                         <TextBlock
                             x:Name="ServerNameTitle"
-                            Text="Silo"
+                            Text="{x:Bind ViewModel.ServerName, Mode=OneWay}"
                             FontSize="30"
                             FontWeight="ExtraBold"
                             Foreground="{StaticResource PrimaryTextBrush}"
                             CharacterSpacing="-40" />
 
                         <TextBlock
-                            Text="Sign in to access your media library."
+                            Text="{x:Bind ViewModel.LoginSubtitle, Mode=OneWay}"
                             Style="{StaticResource SecondaryTextStyle}"
                             FontSize="14" />
                     </StackPanel>
@@ -179,6 +183,66 @@
                         HorizontalAlignment="Center"
                         Width="28" Height="28" />
 
+                    <!-- Current WebUI device authorization flow. -->
+                    <StackPanel Spacing="12">
+                        <Border Height="1" Background="{StaticResource BorderBrush}" />
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Use your phone instead" FontSize="14" FontWeight="SemiBold" />
+                            <TextBlock Text="Scan a code, sign in there, and approve this device."
+                                       FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <Button
+                            Content="Show QR code"
+                            Style="{StaticResource OutlineButtonStyle}"
+                            HorizontalAlignment="Stretch"
+                            IsEnabled="{x:Bind ViewModel.IsStartingDeviceLogin, Mode=OneWay, Converter={StaticResource InverseBool}}"
+                            Visibility="{x:Bind ViewModel.DeviceSession, Mode=OneWay, Converter={StaticResource NullToVisInverse}}"
+                            Click="StartDeviceLoginButton_Click" />
+
+                        <Border
+                            Padding="16"
+                            CornerRadius="8"
+                            Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            Visibility="{x:Bind ViewModel.DeviceSession, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                            <StackPanel Spacing="12">
+                                <Border Background="White" CornerRadius="6" Padding="10" HorizontalAlignment="Center">
+                                    <Image Source="{x:Bind ViewModel.DeviceQrImage, Mode=OneWay}"
+                                           Width="176" Height="176" Stretch="Uniform" />
+                                </Border>
+                                <StackPanel Spacing="3" HorizontalAlignment="Center">
+                                    <TextBlock Text="MATCH CODE" FontSize="10" CharacterSpacing="140"
+                                               Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeviceSession.MatchCode, Mode=OneWay}"
+                                               FontSize="19" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                </StackPanel>
+                                <Button Content="Can't scan the QR code?"
+                                        Style="{StaticResource GhostButtonStyle}"
+                                        HorizontalAlignment="Center"
+                                        Visibility="{x:Bind ViewModel.ShowDeviceFallback, Mode=OneWay, Converter={StaticResource BoolToVisInverse}}"
+                                        Click="ShowDeviceFallbackButton_Click" />
+                                <StackPanel Spacing="4"
+                                            Visibility="{x:Bind ViewModel.ShowDeviceFallback, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="ENTER THIS CODE IF NEEDED" FontSize="10" CharacterSpacing="120"
+                                               Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeviceSession.UserCode, Mode=OneWay}"
+                                               FontSize="18" FontWeight="SemiBold" FontFamily="Consolas"
+                                               HorizontalAlignment="Center" />
+                                    <Button Content="Open sign-in page" Style="{StaticResource GhostButtonStyle}"
+                                            HorizontalAlignment="Center" Click="OpenDeviceVerificationButton_Click" />
+                                </StackPanel>
+                                <Button Content="Start over" Style="{StaticResource OutlineButtonStyle}"
+                                        HorizontalAlignment="Stretch" Click="RestartDeviceLoginButton_Click" />
+                                <TextBlock Text="{x:Bind ViewModel.DeviceStatusMessage, Mode=OneWay}"
+                                           FontSize="13" TextAlignment="Center" TextWrapping="Wrap"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
                     <!-- Create account link -->
                     <Button
                         Content="Create Account"
@@ -196,5 +260,5 @@
                 HorizontalAlignment="Center"
                 Click="BackButton_Click" />
         </StackPanel>
-    </Grid>
+    </ScrollViewer>
 </Page>

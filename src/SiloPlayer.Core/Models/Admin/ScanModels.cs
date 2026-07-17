@@ -19,7 +19,11 @@ public class CreateLibraryRequest
     public string Type { get; set; } = "";
     public string Name { get; set; } = "";
     public bool? Enabled { get; set; }
+    public string? MetadataLanguage { get; set; }
+    public bool? AutoTranslateMetadata { get; set; }
+    public bool? ChapterThumbnailsEnabled { get; set; }
     public bool? IntroDetectionEnabled { get; set; }
+    public List<string>? TrailerKinds { get; set; }
 }
 
 public class UpdateLibraryRequest
@@ -28,7 +32,11 @@ public class UpdateLibraryRequest
     public string? Type { get; set; }
     public string? Name { get; set; }
     public bool? Enabled { get; set; }
+    public string? MetadataLanguage { get; set; }
+    public bool? AutoTranslateMetadata { get; set; }
+    public bool? ChapterThumbnailsEnabled { get; set; }
     public bool? IntroDetectionEnabled { get; set; }
+    public List<string>? TrailerKinds { get; set; }
 }
 
 /// <summary>

@@ -4,13 +4,16 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views.Admin;
 
 public sealed partial class AdminSubtitlesPage : Page
 {
     private readonly AdminApi _adminApi;
+    private readonly ToastService _toastService;
     private readonly DispatcherTimer _searchTimer = new() { Interval = TimeSpan.FromMilliseconds(350) };
+    private CancellationTokenSource? _loadCts;
     private bool _ready;
     private int _page;
     private int _pageSize = 25;
@@ -33,12 +36,18 @@ public sealed partial class AdminSubtitlesPage : Page
     public AdminSubtitlesPage()
     {
         _adminApi = App.Services.GetRequiredService<AdminApi>();
+        _toastService = App.Services.GetRequiredService<ToastService>();
         InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Enabled;
+        UpdateProviderFilterButtons();
 
         Loaded += AdminSubtitlesPage_Loaded;
         SizeChanged += (_, _) => ApplyResponsiveLayout();
-        Unloaded += (_, _) => _searchTimer.Stop();
+        Unloaded += (_, _) =>
+        {
+            _searchTimer.Stop();
+            _loadCts?.Cancel();
+        };
         _searchTimer.Tick += async (_, _) =>
         {
             _searchTimer.Stop();
@@ -53,8 +62,9 @@ public sealed partial class AdminSubtitlesPage : Page
         if (!_ready)
         {
             PopulateLanguageFilter();
-            await LoadUsersAsync();
             _ready = true;
+            await Task.WhenAll(LoadUsersAsync(), LoadSubtitlesAsync());
+            return;
         }
         await LoadSubtitlesAsync();
     }
@@ -64,6 +74,12 @@ public sealed partial class AdminSubtitlesPage : Page
         var width = ActualWidth;
         var side = width < 640 ? 16 : width < 1024 ? 24 : 40;
         SubtitlesPageShell.Padding = new Thickness(side, width < 640 ? 16 : 24, side, 40);
+        SubtitlesTitle.FontSize = width < 600 ? 34 : width < 860 ? 40 : 48;
+        foreach (var row in SubtitlesListView.Items.OfType<Grid>())
+        {
+            var actions = row.Children.OfType<StackPanel>().FirstOrDefault(panel => Grid.GetColumn(panel) == 9);
+            if (actions is not null && width < 760) actions.Opacity = 1;
+        }
 
         var stats = new FrameworkElement[] { TotalStoredStat, UploadsStat, ProviderDownloadsStat, LanguagesStat };
         var statColumns = width >= 1280 ? 4 : width >= 640 ? 2 : 1;
@@ -149,10 +165,7 @@ public sealed partial class AdminSubtitlesPage : Page
             var users = await _adminApi.GetUsersAsync();
             foreach (var user in users.OrderBy(u => u.Username))
             {
-                var label = string.IsNullOrWhiteSpace(user.Email)
-                    ? user.Username
-                    : $"{user.Username} ({user.Email})";
-                UserFilterComboBox.Items.Add(new ComboBoxItem { Content = label, Tag = user.Id.ToString() });
+                UserFilterComboBox.Items.Add(new ComboBoxItem { Content = user.Username, Tag = user.Id.ToString() });
             }
         }
         catch
@@ -164,6 +177,11 @@ public sealed partial class AdminSubtitlesPage : Page
     private async Task LoadSubtitlesAsync()
     {
         if (!_ready) return;
+
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        var loadCts = _loadCts = new CancellationTokenSource();
+        var cancellationToken = loadCts.Token;
 
         LoadingRing.Visibility = Visibility.Visible;
         LoadingRing.IsActive = true;
@@ -179,7 +197,8 @@ public sealed partial class AdminSubtitlesPage : Page
                 Query = string.IsNullOrWhiteSpace(SearchBox.Text) ? null : SearchBox.Text.Trim(),
                 Limit = _pageSize,
                 Offset = _page * _pageSize,
-            });
+            }, cancellationToken);
+            if (cancellationToken.IsCancellationRequested || !ReferenceEquals(_loadCts, loadCts)) return;
 
             _total = response.Total;
             TotalStoredText.Text = response.Total.ToString("N0");
@@ -193,27 +212,39 @@ public sealed partial class AdminSubtitlesPage : Page
             foreach (var subtitle in response.Subtitles)
                 SubtitlesListView.Items.Add(BuildSubtitleRow(subtitle));
 
-            if (response.Subtitles.Count == 0)
+            var hasActiveFilters = !string.IsNullOrWhiteSpace(_providerFilter) ||
+                !string.IsNullOrWhiteSpace(SelectedTag(LanguageFilterComboBox)) ||
+                !string.IsNullOrWhiteSpace(SelectedTag(UserFilterComboBox)) ||
+                !string.IsNullOrWhiteSpace(SearchBox.Text);
+            var isEmpty = response.Subtitles.Count == 0;
+            SubtitlesTableScroll.Visibility = isEmpty ? Visibility.Collapsed : Visibility.Visible;
+            SubtitlesEmptyState.Visibility = isEmpty ? Visibility.Visible : Visibility.Collapsed;
+            if (isEmpty)
             {
-                SubtitlesListView.Items.Add(new TextBlock
-                {
-                    Text = "No subtitles match these filters.",
-                    Margin = new Thickness(20),
-                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-                });
+                SubtitlesEmptyTitle.Text = hasActiveFilters
+                    ? "No subtitles match these filters"
+                    : "No stored subtitles yet";
+                SubtitlesEmptyDetail.Text = hasActiveFilters
+                    ? "Try widening the provider, language, or uploader filters to see more results."
+                    : "User uploads and provider downloads will appear here once subtitles are stored in S3.";
+                SubtitlesEmptyResetButton.Visibility = hasActiveFilters ? Visibility.Visible : Visibility.Collapsed;
             }
 
             UpdatePagination(response.Subtitles.Count);
             StatusText.Text = "";
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception ex)
         {
             StatusText.Text = $"Failed to load subtitles: {ex.Message}";
         }
         finally
         {
-            LoadingRing.IsActive = false;
-            LoadingRing.Visibility = Visibility.Collapsed;
+            if (ReferenceEquals(_loadCts, loadCts))
+            {
+                LoadingRing.IsActive = false;
+                LoadingRing.Visibility = Visibility.Collapsed;
+            }
         }
     }
 
@@ -275,7 +306,7 @@ public sealed partial class AdminSubtitlesPage : Page
             Orientation = Orientation.Horizontal,
             Spacing = 8,
             VerticalAlignment = VerticalAlignment.Center,
-            Opacity = 0,
+            Opacity = ActualWidth < 760 ? 1 : 0,
         };
 
         var edit = MakeIconButton(Symbol.Edit, "Edit subtitle", subtitle);
@@ -302,7 +333,7 @@ public sealed partial class AdminSubtitlesPage : Page
         root.PointerExited += (_, _) =>
         {
             pointerOver = false;
-            if (!actions.Children.OfType<Control>().Any(control => control.FocusState != FocusState.Unfocused))
+            if (ActualWidth >= 760 && !actions.Children.OfType<Control>().Any(control => control.FocusState != FocusState.Unfocused))
                 actions.Opacity = 0;
         };
         foreach (var control in actions.Children.OfType<Control>())
@@ -310,7 +341,7 @@ public sealed partial class AdminSubtitlesPage : Page
             control.GettingFocus += (_, _) => actions.Opacity = 1;
             control.LostFocus += (_, _) =>
             {
-                if (!pointerOver)
+                if (ActualWidth >= 760 && !pointerOver)
                     actions.Opacity = 0;
             };
         }
@@ -438,16 +469,17 @@ public sealed partial class AdminSubtitlesPage : Page
                 HearingImpaired = hiToggle.IsOn,
             });
             await LoadSubtitlesAsync();
+            _toastService.Success("Subtitle updated");
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"Failed to update subtitle: {ex.Message}";
+            _toastService.Error($"Failed to update subtitle: {ex.Message}");
         }
     }
 
     private async void DownloadSubtitle_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: AdminDownloadedSubtitle subtitle }) return;
+        if (sender is not Button { Tag: AdminDownloadedSubtitle subtitle } downloadButton) return;
 
         var ext = string.IsNullOrWhiteSpace(subtitle.Format) ? ".srt" : $".{subtitle.Format.TrimStart('.')}";
         var picker = new Windows.Storage.Pickers.FileSavePicker
@@ -464,15 +496,16 @@ public sealed partial class AdminSubtitlesPage : Page
 
         try
         {
-            StatusText.Text = "Downloading subtitle...";
+            downloadButton.IsEnabled = false;
             var bytes = await _adminApi.DownloadDownloadedSubtitleAsync(subtitle.Id);
             await Windows.Storage.FileIO.WriteBytesAsync(file, bytes);
-            StatusText.Text = $"Saved {file.Name}.";
+            _toastService.Success("Subtitle downloaded");
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"Failed to download subtitle: {ex.Message}";
+            _toastService.Error($"Failed to download subtitle: {ex.Message}");
         }
+        finally { downloadButton.IsEnabled = true; }
     }
 
     private async void DeleteSubtitle_Click(object sender, RoutedEventArgs e)
@@ -482,9 +515,10 @@ public sealed partial class AdminSubtitlesPage : Page
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = "Delete Subtitle?",
-            Content = "This removes the stored subtitle file from Silo.",
+            Title = "Delete subtitle?",
+            Content = $"Remove {ProviderLabel(subtitle.Provider)} {subtitle.Language.ToUpperInvariant()} subtitles for \"{(string.IsNullOrWhiteSpace(subtitle.MediaTitle) ? "this media" : subtitle.MediaTitle)}\"? This deletes the stored file from S3.",
             PrimaryButtonText = "Delete",
+            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         };
@@ -495,10 +529,11 @@ public sealed partial class AdminSubtitlesPage : Page
         {
             await _adminApi.DeleteDownloadedSubtitleAsync(subtitle.Id);
             await LoadSubtitlesAsync();
+            _toastService.Success("Subtitle deleted");
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"Failed to delete subtitle: {ex.Message}";
+            _toastService.Error($"Failed to delete subtitle: {ex.Message}");
         }
     }
 
@@ -513,8 +548,7 @@ public sealed partial class AdminSubtitlesPage : Page
     {
         if (sender is not Button button) return;
         _providerFilter = button.Tag?.ToString() ?? "";
-        foreach (var filterButton in new[] { ProviderAllButton, ProviderUploadButton, ProviderOpenSubtitlesButton, ProviderSubDlButton, ProviderSubSourceButton })
-            filterButton.Opacity = ReferenceEquals(filterButton, button) ? 1 : .62;
+        UpdateProviderFilterButtons();
         _page = 0;
         if (_ready) await LoadSubtitlesAsync();
     }
@@ -529,13 +563,30 @@ public sealed partial class AdminSubtitlesPage : Page
     private async void ResetFilters_Click(object sender, RoutedEventArgs e)
     {
         _providerFilter = "";
-        ProviderAllButton.Opacity = 1;
-        ProviderUploadButton.Opacity = ProviderOpenSubtitlesButton.Opacity = ProviderSubDlButton.Opacity = ProviderSubSourceButton.Opacity = .62;
+        UpdateProviderFilterButtons();
         LanguageFilterComboBox.SelectedIndex = 0;
         UserFilterComboBox.SelectedIndex = 0;
         SearchBox.Text = "";
         _page = 0;
         await LoadSubtitlesAsync();
+    }
+
+    private void UpdateProviderFilterButtons()
+    {
+        foreach (var button in new[] { ProviderAllButton, ProviderUploadButton, ProviderOpenSubtitlesButton, ProviderSubDlButton, ProviderSubSourceButton })
+        {
+            var active = string.Equals(button.Tag?.ToString() ?? "", _providerFilter, StringComparison.Ordinal);
+            button.Background = active
+                ? (Brush)Application.Current.Resources["AccentBackgroundBrush"]
+                : (Brush)Application.Current.Resources["SurfaceBrush"];
+            button.BorderBrush = active
+                ? (Brush)Application.Current.Resources["AccentBrush"]
+                : (Brush)Application.Current.Resources["BorderBrush"];
+            button.BorderThickness = new Thickness(1);
+            button.Foreground = active
+                ? (Brush)Application.Current.Resources["PrimaryTextBrush"]
+                : (Brush)Application.Current.Resources["SecondaryTextBrush"];
+        }
     }
 
     private async void PageSize_Changed(object sender, SelectionChangedEventArgs e)
@@ -565,10 +616,11 @@ public sealed partial class AdminSubtitlesPage : Page
 
     private void UpdatePagination(int pageItemCount)
     {
+        SubtitlePaginationGrid.Visibility = _total > 0 ? Visibility.Visible : Visibility.Collapsed;
         var first = _total == 0 ? 0 : _page * _pageSize + 1;
         var last = _total == 0 ? 0 : _page * _pageSize + pageItemCount;
         var pageCount = Math.Max(1, (int)Math.Ceiling(_total / (double)_pageSize));
-        PageSummaryText.Text = _total == 0 ? "No subtitles" : $"Showing {first:N0}-{last:N0} of {_total:N0}";
+        PageSummaryText.Text = _total == 0 ? "No subtitles" : $"Showing {first:N0}–{last:N0} of {_total:N0}";
         PageText.Text = $"Page {_page + 1:N0} of {pageCount:N0}";
         PrevPageButton.IsEnabled = _page > 0;
         NextPageButton.IsEnabled = (_page + 1) * _pageSize < _total;

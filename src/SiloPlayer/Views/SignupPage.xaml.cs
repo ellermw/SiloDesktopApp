@@ -44,10 +44,18 @@ public sealed partial class SignupPage : Page
         await ViewModel.CheckSignupStatusCommand.ExecuteAsync(null);
     }
 
-    private void OnSignupSucceeded()
+    private void OnSignupSucceeded(bool profileSelected)
     {
         var nav = App.Services.GetRequiredService<NavigationService>();
-        nav.Navigate<ProfileSelectPage>();
+        if (profileSelected)
+        {
+            App.MainWindowInstance?.ShowMainNavigation();
+            App.MainWindowInstance?.NavigateToHome();
+        }
+        else
+        {
+            nav.Navigate<ProfileSelectPage>();
+        }
     }
 
     private void BackToLoginButton_Click(object sender, RoutedEventArgs e)
@@ -63,11 +71,21 @@ public sealed partial class SignupPage : Page
     private void PasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
     {
         ViewModel.Password = PasswordBox.Password;
+        UpdatePasswordMismatch();
     }
 
     private void ConfirmPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
     {
         ViewModel.ConfirmPassword = ConfirmPasswordBox.Password;
+        UpdatePasswordMismatch();
+    }
+
+    private void UpdatePasswordMismatch()
+    {
+        PasswordMismatchText.Visibility = ConfirmPasswordBox.Password.Length > 0 &&
+            !string.Equals(PasswordBox.Password, ConfirmPasswordBox.Password, StringComparison.Ordinal)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     private void InputBox_KeyDown(object sender, KeyRoutedEventArgs e)

@@ -9,6 +9,7 @@ namespace SiloPlayer.ViewModels.Admin;
 public partial class AdminPluginsViewModel : ObservableObject
 {
     private readonly PluginsApi _pluginsApi;
+    private CancellationTokenSource? _loadCts;
 
     public AdminPluginsViewModel(PluginsApi pluginsApi)
     {
@@ -30,15 +31,22 @@ public partial class AdminPluginsViewModel : ObservableObject
     [RelayCommand]
     public async Task LoadAsync()
     {
-        IsLoading = true;
+        var ownerCts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _loadCts, ownerCts);
+        previous?.Cancel();
+        previous?.Dispose();
+
+        IsLoading = Installations.Count == 0 && CatalogEntries.Count == 0 && Repositories.Count == 0;
         ErrorMessage = null;
         try
         {
-            var installTask = _pluginsApi.GetInstallationsAsync();
-            var catalogTask = _pluginsApi.GetCatalogAsync();
-            var reposTask = _pluginsApi.GetRepositoriesAsync();
-            var settingsTask = _pluginsApi.GetCatalogSettingsAsync();
+            var installTask = _pluginsApi.GetInstallationsAsync(ownerCts.Token);
+            var catalogTask = _pluginsApi.GetCatalogAsync(ownerCts.Token);
+            var reposTask = _pluginsApi.GetRepositoriesAsync(ownerCts.Token);
+            var settingsTask = _pluginsApi.GetCatalogSettingsAsync(ownerCts.Token);
             await Task.WhenAll(installTask, catalogTask, reposTask, settingsTask);
+            ownerCts.Token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_loadCts, ownerCts)) return;
 
             Installations.Clear();
             foreach (var i in installTask.Result) Installations.Add(i);
@@ -50,8 +58,25 @@ public partial class AdminPluginsViewModel : ObservableObject
             foreach (var r in reposTask.Result) Repositories.Add(r);
             CatalogSettings = settingsTask.Result;
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
-        finally { IsLoading = false; }
+        catch (OperationCanceledException) when (ownerCts.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (ReferenceEquals(_loadCts, ownerCts)) ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _loadCts, null, ownerCts), ownerCts))
+                IsLoading = false;
+            ownerCts.Dispose();
+        }
+    }
+
+    public void CancelLoad()
+    {
+        var cts = Interlocked.Exchange(ref _loadCts, null);
+        cts?.Cancel();
+        cts?.Dispose();
+        IsLoading = false;
     }
 
     public async Task SetApprovedCommunityCatalogAsync(bool included)

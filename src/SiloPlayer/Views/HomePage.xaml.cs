@@ -181,7 +181,7 @@ public sealed partial class HomePage : Page
     }
 
     private void CustomizeHome_Click(object sender, RoutedEventArgs e)
-        => Frame.Navigate(typeof(SettingsPage), "Home");
+        => Frame.Navigate(typeof(SettingsPage), "HomeScreen");
 
     private void OnSectionsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {

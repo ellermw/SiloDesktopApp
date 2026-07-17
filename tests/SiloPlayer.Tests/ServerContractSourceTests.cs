@@ -465,7 +465,7 @@ public sealed class ServerContractSourceTests
 
         Assert.Contains("AppName { get; private set; } = \"Silo\"", documentTitle);
         Assert.Contains("SetServerName", documentTitle);
-        Assert.Contains("Text=\"Silo\"", login);
+        Assert.Contains("ViewModel.ServerName", login);
         Assert.Contains("Text=\"Silo\"", serverSelect);
         Assert.Contains("Text=\"Silo\"", setup);
         Assert.Contains("silo-desktop-", app);

@@ -10,6 +10,7 @@ public sealed record RecommendationSectionNavigationArgs(string Kind, string? Ke
 public partial class RecommendationSectionViewModel : ObservableObject
 {
     private readonly RecommendationsApi _recommendationsApi;
+    private CancellationTokenSource? _loadCts;
 
     public RecommendationSectionViewModel(RecommendationsApi recommendationsApi)
     {
@@ -24,21 +25,30 @@ public partial class RecommendationSectionViewModel : ObservableObject
 
     public async Task LoadAsync(RecommendationSectionNavigationArgs args, CancellationToken ct = default)
     {
-        if (IsLoading) return;
+        var owner = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var previous = Interlocked.Exchange(ref _loadCts, owner);
+        previous?.Cancel();
 
         IsLoading = true;
         ErrorMessage = null;
         Title = string.IsNullOrWhiteSpace(args.Title) ? GetFallbackTitle(args.Kind, args.Key) : args.Title;
-        Items.Clear();
 
         try
         {
-            var response = await _recommendationsApi.GetSectionAsync(args.Kind, args.Key, ct);
+            var response = await _recommendationsApi.GetSectionAsync(args.Kind, args.Key, owner.Token);
+            owner.Token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(Volatile.Read(ref _loadCts), owner)) return;
+
             if (!string.IsNullOrWhiteSpace(response.Label))
                 Title = response.Label;
 
+            Items.Clear();
             foreach (var item in response.Items)
                 Items.Add(item);
+        }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested)
+        {
+            // Superseded or navigated away.
         }
         catch (Exception ex)
         {
@@ -47,8 +57,16 @@ public partial class RecommendationSectionViewModel : ObservableObject
         }
         finally
         {
-            IsLoading = false;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _loadCts, null, owner), owner))
+                IsLoading = false;
+            owner.Dispose();
         }
+    }
+
+    public void CancelLoad()
+    {
+        Interlocked.Exchange(ref _loadCts, null)?.Cancel();
+        IsLoading = false;
     }
 
     internal static string GetFallbackTitle(string kind, string? key) => kind switch

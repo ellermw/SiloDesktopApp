@@ -26,6 +26,7 @@ public partial class AdminAccessGroupsViewModel(AdminApi adminApi) : ObservableO
     [ObservableProperty] private string _newGroupName = "";
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private string? _statusMessage;
+    public bool HasLoaded { get; private set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsListVisible))]
@@ -72,8 +73,13 @@ public partial class AdminAccessGroupsViewModel(AdminApi adminApi) : ObservableO
     public string SaveButtonText => IsBusy ? "Saving..." : "Save changes";
 
     [RelayCommand]
-    public async Task LoadAsync()
+    public Task LoadAsync() => ReloadAsync(force: false);
+
+    private async Task ReloadAsync(bool force)
     {
+        if (HasLoaded && !force)
+            return;
+
         var ownerCts = new CancellationTokenSource();
         var previous = Interlocked.Exchange(ref _loadCts, ownerCts);
         previous?.Cancel();
@@ -104,6 +110,7 @@ public partial class AdminAccessGroupsViewModel(AdminApi adminApi) : ObservableO
 
             HasGroups = Groups.Count > 0;
             ShowEmptyState = Groups.Count == 0 && !IsCreating;
+            HasLoaded = true;
 
             if (selectedId is long id)
             {
@@ -160,7 +167,7 @@ public partial class AdminAccessGroupsViewModel(AdminApi adminApi) : ObservableO
             var created = await adminApi.CreateAccessGroupAsync(trimmed);
             IsCreating = false;
             NewGroupName = "";
-            await LoadAsync();
+            await ReloadAsync(force: true);
             var card = Groups.FirstOrDefault(group => group.Id == created.Id);
             if (card is not null)
                 SelectGroup(card);
@@ -247,7 +254,7 @@ public partial class AdminAccessGroupsViewModel(AdminApi adminApi) : ObservableO
 
             var id = SelectedGroup.Id;
             await adminApi.UpdateAccessGroupAsync(id, request);
-            await LoadAsync();
+            await ReloadAsync(force: true);
             StatusMessage = "Access group saved.";
         }
         catch (Exception ex)
@@ -272,7 +279,7 @@ public partial class AdminAccessGroupsViewModel(AdminApi adminApi) : ObservableO
         {
             await adminApi.DeleteAccessGroupAsync(SelectedGroup.Id);
             SelectedGroup = null;
-            await LoadAsync();
+            await ReloadAsync(force: true);
             StatusMessage = "Access group deleted.";
         }
         catch (Exception ex)

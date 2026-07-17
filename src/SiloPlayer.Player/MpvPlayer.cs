@@ -346,7 +346,13 @@ public sealed class MpvPlayer : IDisposable
         SetOption("network-timeout", "30");
 
         // Performance tuning
-        SetOption("video-sync", "display-resample");
+        // The mpv target is an owned popup window. Windows/DWM may throttle or
+        // change presentation timing when that popup loses foreground focus.
+        // display-resample follows the presentation clock and can then queue a
+        // burst of catch-up video while audio continues normally. Keep audio as
+        // the stable master clock so late video frames are dropped instead of
+        // being presented at an accelerated rate after focus changes.
+        SetOption("video-sync", "audio");
         SetOption("interpolation", "no");
         SetOption("framedrop", "vo");
         SetOption("hr-seek-framedrop", "yes");

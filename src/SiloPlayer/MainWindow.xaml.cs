@@ -819,6 +819,21 @@ public sealed partial class MainWindow : Window
         // links, library pins, and player prewarming are all supplemental.
         TryShellAction("shell_visibility", () =>
         {
+            // Always update admin button and profile display for current user.
+            bool isAdmin = AuthorizationPolicy.IsActingAdmin(_authService);
+            AdminButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
+            var adminShellActive = ContentFrame.Content is Views.Admin.AdminShellPage;
+            if (adminShellActive)
+            {
+                // AdminShell owns both its sidebar and ServerActivity button.
+                // ShowMainNavigation can run immediately after a successful
+                // authenticated navigation, so it must not re-layer the main
+                // shell controls after the Navigated handler hid them.
+                NavView.IsPaneVisible = false;
+                MainServerActivityButton.SetHostVisibility(false);
+                return;
+            }
+
             NavView.IsPaneVisible = true;
             // HideMainNavigation closes the pane while login/profile selection
             // owns the window. Reopening only IsPaneVisible leaves NavigationView
@@ -827,10 +842,6 @@ public sealed partial class MainWindow : Window
             // of the same authenticated shell transition.
             NavView.IsPaneOpen = true;
             UpdateSidebarPanePresentation(NavView.IsPaneOpen);
-
-            // Always update admin button and profile display for current user.
-            bool isAdmin = AuthorizationPolicy.IsActingAdmin(_authService);
-            AdminButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
             MainServerActivityButton.SetHostVisibility(isAdmin);
         });
         _ = RunShellWorkAsync("profile_display", UpdateProfileDisplayAsync);

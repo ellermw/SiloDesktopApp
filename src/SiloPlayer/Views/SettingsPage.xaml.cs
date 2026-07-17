@@ -35,6 +35,7 @@ public sealed partial class SettingsPage : Page
     private bool _themeCssLoaded;
     private bool _rememberLibraryPagesLoaded;
     private bool _pageInitialized;
+    private int _profilesLoadGeneration;
     private DateTime _loadedAtUtc;
     // Start suppressed — handlers that fire during XAML parse (before all sibling
     // x:Name fields are assigned) would otherwise null-ref on their forward references
@@ -2700,10 +2701,14 @@ public sealed partial class SettingsPage : Page
             });
         }
 
-        // Metrics grid (6 boxes)
+        // Current WebUI uses seven columns at desktop widths. The eighth
+        // (Skipped) metric wraps to the next row exactly as its responsive
+        // grid does, while preserving all additive import counters.
         var metricsGrid = new Grid { ColumnSpacing = 10, RowSpacing = 10 };
-        for (int i = 0; i < 6; i++) metricsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        void AddMetric(int col, string label, int value, string? accentColor = null)
+        for (int i = 0; i < 7; i++) metricsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        metricsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        metricsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        void AddMetric(int index, string label, int value, string? accentColor = null)
         {
             var box = new Border
             {
@@ -2730,7 +2735,8 @@ public sealed partial class SettingsPage : Page
                     : (Brush)Application.Current.Resources["PrimaryTextBrush"],
             });
             box.Child = sp;
-            Grid.SetColumn(box, col);
+            Grid.SetColumn(box, index % 7);
+            Grid.SetRow(box, index / 7);
             metricsGrid.Children.Add(box);
         }
         AddMetric(0, "Fetched",  run.Fetched);
@@ -2738,7 +2744,9 @@ public sealed partial class SettingsPage : Page
         AddMetric(2, "Unmatched",run.Unmatched,       "#FBBF24");
         AddMetric(3, "Progress", run.ProgressUpdated, "#4ADE80");
         AddMetric(4, "History",  run.HistoryCreated,  "#4ADE80");
-        AddMetric(5, "Skipped",  run.Skipped);
+        AddMetric(5, "Watchlist", run.WatchlistAdded,   "#4ADE80");
+        AddMetric(6, "Favorites", run.FavoritesImported, "#4ADE80");
+        AddMetric(7, "Skipped",   run.Skipped);
         RunSummaryContainer.Children.Add(metricsGrid);
 
         // Error box
@@ -4644,13 +4652,15 @@ public sealed partial class SettingsPage : Page
 
     private async Task LoadProfilesAsync()
     {
-        ProfileCardsPanel.Children.Clear();
+        var generation = Interlocked.Increment(ref _profilesLoadGeneration);
         _ = LoadHouseholdSessionsAsync();
         try
         {
             var authApi = App.Services.GetRequiredService<AuthApi>();
             var response = await authApi.GetProfilesAsync();
+            if (generation != Volatile.Read(ref _profilesLoadGeneration)) return;
             var profiles = response.Profiles;
+            ProfileCardsPanel.Children.Clear();
 
             if (profiles.Count == 0)
             {
@@ -4667,7 +4677,9 @@ public sealed partial class SettingsPage : Page
                 var card = new Border
                 {
                     Background = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
-                    CornerRadius = new CornerRadius(12),
+                    BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(6),
                     Padding = new Thickness(16, 12, 16, 12),
                 };
                 var row = new Grid { ColumnSpacing = 8 };
@@ -4718,7 +4730,7 @@ public sealed partial class SettingsPage : Page
                         VerticalAlignment = VerticalAlignment.Center,
                         Child = new TextBlock
                         {
-                            Text = "Active", FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                            Text = "Current", FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                             Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AccentBrush"],
                         }
                     });
@@ -4755,7 +4767,16 @@ public sealed partial class SettingsPage : Page
 
                 var useBtn = new Button
                 {
-                    Content = "Use",
+                    Content = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 6,
+                        Children =
+                        {
+                            new FontIcon { Glyph = "\uE77B", FontSize = 12 },
+                            new TextBlock { Text = "Use" },
+                        },
+                    },
                     Padding = new Thickness(11, 5, 11, 5),
                     Visibility = isActive ? Visibility.Collapsed : Visibility.Visible,
                 };
@@ -4768,10 +4789,18 @@ public sealed partial class SettingsPage : Page
                 // exact gating; the desktop shows the button for all rows.
                 var editBtn = new Button
                 {
-                    Width = 32, Height = 32, Padding = new Thickness(0),
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
-                    BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(6),
-                    Content = new FontIcon { Glyph = "\uE70F", FontSize = 12 }, // Edit
+                    Padding = new Thickness(11, 5, 11, 5),
+                    CornerRadius = new CornerRadius(6),
+                    Content = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 6,
+                        Children =
+                        {
+                            new FontIcon { Glyph = "\uE70F", FontSize = 12 },
+                            new TextBlock { Text = "Edit" },
+                        },
+                    },
                 };
                 ToolTipService.SetToolTip(editBtn, "Edit profile");
                 var profileForEdit = profile;
@@ -4781,18 +4810,27 @@ public sealed partial class SettingsPage : Page
                 // Delete button (blocked for active AND primary profiles).
                 // Upstream c3f2da5: primary profiles can only be removed by
                 // deleting the account.
-                var deleteBlocked = isActive || profile.IsPrimary;
+                var deleteBlocked = profiles.Count <= 1 || isActive || profile.IsPrimary;
                 var deleteBtn = new Button
                 {
-                    Width = 32, Height = 32, Padding = new Thickness(0),
-                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
-                    BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(6),
-                    Content = new FontIcon { Glyph = "\uE74D", FontSize = 12 },
+                    Padding = new Thickness(11, 5, 11, 5),
+                    CornerRadius = new CornerRadius(6),
+                    Content = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 6,
+                        Children =
+                        {
+                            new FontIcon { Glyph = "\uE74D", FontSize = 12 },
+                            new TextBlock { Text = "Delete" },
+                        },
+                    },
                     IsEnabled = !deleteBlocked,
                     Opacity = deleteBlocked ? 0.3 : 1.0,
                 };
                 ToolTipService.SetToolTip(deleteBtn,
-                    profile.IsPrimary ? "The primary profile can only be removed by deleting the account."
+                    profiles.Count <= 1 ? "At least one profile is required."
+                    : profile.IsPrimary ? "The primary profile can only be removed by deleting the account."
                     : isActive ? "Can't delete active profile"
                     : "Delete profile");
                 var capturedProfile = profile;
@@ -4844,13 +4882,20 @@ public sealed partial class SettingsPage : Page
 
     private static string BuildProfileAccessSummary(SiloPlayer.Core.Models.Auth.Profile profile)
     {
-        var parts = new List<string>();
-        parts.Add(profile.LibraryRestrictionsEnabled
-            ? $"{profile.AllowedLibraryIds?.Count ?? 0} allowed libraries"
-            : "All libraries");
-        if (!string.IsNullOrWhiteSpace(profile.MaxContentRating)) parts.Add($"Up to {profile.MaxContentRating}");
-        if (!string.IsNullOrWhiteSpace(profile.MaxPlaybackQuality)) parts.Add(profile.MaxPlaybackQuality);
-        return string.Join(" · ", parts);
+        var rating = string.IsNullOrWhiteSpace(profile.MaxContentRating)
+            ? "Any content"
+            : $"{profile.MaxContentRating} max";
+        var libraryCount = profile.AllowedLibraryIds?.Distinct().Count() ?? 0;
+        var libraries = profile.LibraryRestrictionsEnabled
+            ? $"{libraryCount} {(libraryCount == 1 ? "library" : "libraries")}"
+            : "All libraries";
+        var quality = (profile.MaxPlaybackQuality ?? "").Trim().ToLowerInvariant() switch
+        {
+            "2160p" or "4k" or "uhd" or "4320p" => "4K quality",
+            "1080p" or "720p" or "480p" or "standard" => "Standard quality",
+            _ => "Any quality",
+        };
+        return string.Join(" · ", rating, libraries, quality);
     }
 
     private async Task UseProfileAsync(SiloPlayer.Core.Models.Auth.Profile profile)
@@ -5028,7 +5073,7 @@ public sealed partial class SettingsPage : Page
         if (!string.IsNullOrWhiteSpace(session.SourceVideoResolution)) metaParts.Add(session.SourceVideoResolution!);
         if (!string.IsNullOrWhiteSpace(session.SourceVideoCodec)) metaParts.Add(session.SourceVideoCodec!);
         if (session.FileDuration is > 0) metaParts.Add(FormatStreamDuration(session.FileDuration.Value));
-        metaParts.Add(session.HasPlaybackControl ? "Controllable" : "Viewing only");
+        metaParts.Add(session.HasPlaybackControl != false ? "Controllable" : "Viewing only");
 
         textStack.Children.Add(new TextBlock
         {
@@ -5089,114 +5134,21 @@ public sealed partial class SettingsPage : Page
 
     private async void AddProfileButton_Click(object sender, RoutedEventArgs e)
     {
-        var nameBox = new TextBox { PlaceholderText = "Profile name", CornerRadius = new CornerRadius(6), FontSize = 13 };
-        var pinBox = new PasswordBox { PlaceholderText = "PIN (optional, 4 digits)", CornerRadius = new CornerRadius(6), FontSize = 13 };
-
-        var form = new StackPanel { Width = 380, Spacing = 14 };
-        form.Children.Add(new TextBlock { Text = "Name", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-            Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
-        form.Children.Add(nameBox);
-        form.Children.Add(new TextBlock { Text = "PIN", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-            Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
-        form.Children.Add(pinBox);
-
-        var dialog = new ContentDialog
-        {
-            Title = "Create Profile", PrimaryButtonText = "Create", CloseButtonText = "Cancel",
-            XamlRoot = this.XamlRoot, Content = form, DefaultButton = ContentDialogButton.Primary
-        };
-
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
-        {
-            try
-            {
-                var authApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AuthApi>();
-                await authApi.CreateProfileAsync(nameBox.Text.Trim());
-                await LoadProfilesAsync();
-            }
-            catch { }
-        }
+        var saved = await Dialogs.ProfileEditorDialog.ShowAsync(XamlRoot, profile: null);
+        if (saved != null)
+            await LoadProfilesAsync();
     }
 
     /// <summary>
-    /// Profile editor (webui parity, commit c3f2da5). Edits the profile's
-    /// name and optionally sets a new PIN or clears the existing one. PIN
-    /// clear is exposed only when the profile currently has a PIN.
+    /// Opens the current WebUI-equivalent editor for identity, PIN, avatars,
+    /// content limits, playback quality, and library access.
     /// </summary>
     private async Task ShowEditProfileDialogAsync(SiloPlayer.Core.Models.Auth.Profile profile)
     {
-        var nameBox = new TextBox
-        {
-            Text = profile.Name,
-            PlaceholderText = "Profile name",
-            CornerRadius = new CornerRadius(6),
-            FontSize = 13,
-        };
-        var pinBox = new PasswordBox
-        {
-            PlaceholderText = profile.HasPin ? "New PIN (leave blank to keep)" : "PIN (optional, 4 digits)",
-            CornerRadius = new CornerRadius(6),
-            FontSize = 13,
-        };
-        var removePinToggle = new ToggleSwitch
-        {
-            IsOn = false,
-            OnContent = "Remove existing PIN",
-            OffContent = "Keep existing PIN",
-        };
-
-        var form = new StackPanel { Width = 380, Spacing = 14 };
-        form.Children.Add(new TextBlock
-        {
-            Text = "Name", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-            Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-        });
-        form.Children.Add(nameBox);
-        form.Children.Add(new TextBlock
-        {
-            Text = "PIN", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-            Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-        });
-        form.Children.Add(pinBox);
-        // "Remove PIN" toggle only makes sense if the profile currently has one.
-        if (profile.HasPin)
-        {
-            form.Children.Add(removePinToggle);
-            // When user flips the toggle on, disable the new-PIN field so they
-            // can't accidentally submit both a new PIN and a clear request.
-            removePinToggle.Toggled += (_, _) =>
-            {
-                pinBox.IsEnabled = !removePinToggle.IsOn;
-                if (removePinToggle.IsOn) pinBox.Password = "";
-            };
-        }
-
-        var dialog = new ContentDialog
-        {
-            Title = "Edit Profile",
-            PrimaryButtonText = "Save",
-            CloseButtonText = "Cancel",
-            XamlRoot = this.XamlRoot,
-            Content = form,
-            DefaultButton = ContentDialogButton.Primary,
-        };
-
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        if (string.IsNullOrWhiteSpace(nameBox.Text)) return;
-
         try
         {
-            var authApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AuthApi>();
-            string? pin = null;
-            if (profile.HasPin && removePinToggle.IsOn)
-            {
-                pin = ""; // Empty string signals the server to clear the PIN.
-            }
-            else if (!string.IsNullOrEmpty(pinBox.Password))
-            {
-                pin = pinBox.Password;
-            }
-            await authApi.UpdateProfileAsync(profile.Id, nameBox.Text.Trim(), pin);
+            var saved = await Dialogs.ProfileEditorDialog.ShowAsync(XamlRoot, profile);
+            if (saved == null) return;
             await LoadProfilesAsync();
         }
         catch (Exception ex)

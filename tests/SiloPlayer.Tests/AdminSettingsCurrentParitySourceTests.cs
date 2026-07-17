@@ -7,6 +7,7 @@ public class AdminSettingsCurrentParitySourceTests
     private static string CodeBehind => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminSettingsDetailPage.xaml.cs"));
     private static string SettingsApi => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer.Core", "Api", "SettingsApi.cs"));
     private static string AdminApi => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer.Core", "Api", "AdminApi.cs"));
+    private static string ViewModel => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer", "ViewModels", "Admin", "AdminSettingsDetailViewModel.cs"));
 
     [Fact]
     public void ThemingUsesCurrentPreviewFirstAutosaveAndSiloCatalogContract()
@@ -36,6 +37,27 @@ public class AdminSettingsCurrentParitySourceTests
         Assert.Contains("(\"Search\"", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("ContentPanel.ClearValue(FrameworkElement.MaxWidthProperty)", CodeBehind, StringComparison.Ordinal);
         Assert.DoesNotContain("ContentPanel.MaxWidth = 768", CodeBehind, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SettingsRailHeaderAndSaveBarReflowWithoutClipping()
+    {
+        foreach (var name in new[] { "SettingsPageShell", "SettingsHeaderGrid", "SettingsSearchPanel", "SettingsSurfaceGrid", "SettingsRailBorder", "SettingsRailScroll", "SettingsContentScroll" })
+            Assert.Contains($"x:Name=\"{name}\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("ApplyResponsiveLayout", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("ApplySettingsRailMode", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("TabBar.Orientation = _compactLayout ? Orientation.Horizontal", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("ApplyInlineSaveLayout", CodeBehind, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SettingsLoadsAreCancelledOnNavigationAndFeedbackUsesGlobalToasts()
+    {
+        Assert.Contains("CancellationTokenSource? _loadCts", ViewModel, StringComparison.Ordinal);
+        Assert.Contains("public void CancelLoad()", ViewModel, StringComparison.Ordinal);
+        Assert.Contains("ViewModel.CancelLoad()", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("ToastService", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("_toastService.Error(message)", CodeBehind, StringComparison.Ordinal);
     }
 
     [Fact]

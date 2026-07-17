@@ -32,18 +32,22 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
-            <!-- WebUI AdminLayout: 1560px content inside the shell's 40px desktop gutter. -->
-            <StackPanel Padding="40,32,40,40" Spacing="24" MaxWidth="1640" HorizontalAlignment="Stretch">
+            <StackPanel x:Name="SectionsPageShell" Padding="40,32,40,40" Spacing="24"
+                        MaxWidth="1400" HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
-                <Grid>
+                <Grid x:Name="SectionsHeaderGrid" RowSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
                     <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
-                        <TextBlock
+                        <TextBlock x:Name="SectionsTitle"
                             Text="Sections"
                             FontSize="48"
                             FontWeight="Bold"
@@ -55,7 +59,8 @@
                             Visibility="Collapsed" />
                     </StackPanel>
 
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <StackPanel x:Name="SectionsHeaderActions" Grid.Column="1" Orientation="Horizontal"
+                                Spacing="8" VerticalAlignment="Center">
                         <Button
                             x:Name="RestoreDefaultsButton"
                             Style="{StaticResource SecondaryButtonStyle}"
@@ -146,7 +151,9 @@
                     Visibility="Collapsed" />
 
                 <!-- ===== Sections Table — surface-panel, no border, CornerRadius=26 ===== -->
-                <Border
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled"
+                              VerticalScrollBarVisibility="Disabled" VerticalScrollMode="Disabled">
+                <Border MinWidth="900"
                     Background="{StaticResource CardBackgroundBrush}"
                     CornerRadius="16"
                     BorderThickness="0"
@@ -207,26 +214,10 @@
                         </Border>
                     </StackPanel>
                 </Border>
+                </ScrollViewer>
 
             </StackPanel>
         </ScrollViewer>
-
-        <!-- Toast overlay (sonner-style, floats above content) -->
-        <Border
-            x:Name="StatusBanner"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Top"
-            Margin="0,16,0,0"
-            Padding="16,10"
-            CornerRadius="12"
-            Background="#22C55E"
-            Visibility="Collapsed">
-            <TextBlock
-                x:Name="StatusBannerText"
-                FontSize="13"
-                FontWeight="SemiBold"
-                Foreground="White" />
-        </Border>
 
         <!-- Centered recipe gallery. A page-owned overlay avoids the WinUI ContentDialog
              presenter forcing wide custom content against the left edge on ultrawide displays. -->
@@ -234,7 +225,7 @@
             <Button Background="#B3000000" BorderThickness="0" CornerRadius="0"
                     HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                     Click="GalleryOverlayDismiss_Click" />
-            <Border x:Name="GalleryOverlayPanel" Width="800" MaxHeight="820"
+            <Border x:Name="GalleryOverlayPanel" MaxWidth="800" MaxHeight="820" Margin="24"
                     HorizontalAlignment="Center" VerticalAlignment="Center"
                     Background="{StaticResource CardBackgroundBrush}"
                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"

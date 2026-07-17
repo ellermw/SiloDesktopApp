@@ -23,7 +23,9 @@ public class AdminSession
     public string UpdatedAt { get; set; } = "";
     public double PositionSeconds { get; set; }
     public bool IsPaused { get; set; }
-    public bool HasPlaybackControl { get; set; }
+    // Optional on older servers. Missing means supported, matching the WebUI's
+    // `has_playback_control !== false` compatibility behavior.
+    public bool? HasPlaybackControl { get; set; }
     public string? ClientIp { get; set; }
     public string? ClientName { get; set; }
     public string? ClientVersion { get; set; }

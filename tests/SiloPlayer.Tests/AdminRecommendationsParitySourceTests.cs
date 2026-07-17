@@ -39,4 +39,15 @@ public class AdminRecommendationsParitySourceTests
         Assert.Contains("\"Cron expression\", \"0 3 * * *\"", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("Width = 448", CodeBehind, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void PageLoadsResponsivelyAndSurfacesMutationFailures()
+    {
+        Assert.Contains("x:Name=\"RecommendationsPageShell\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"JobCardsGrid\"", Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("x:Name=\"SettingsSectionsPanel\"\n                    Width=\"768\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("ShowLoadingSkeletons", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("ApplyResponsiveLayout(ActualWidth)", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("_toastService.Error(ViewModel.ErrorMessage)", CodeBehind, StringComparison.Ordinal);
+    }
 }

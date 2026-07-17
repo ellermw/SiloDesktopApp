@@ -403,6 +403,29 @@ public class SiloApiClient
     }
 
     /// <summary>
+    /// PUT a multipart/form-data request with a single file field and deserialize
+    /// the JSON response. Profile-avatar uploads return the updated profile.
+    /// </summary>
+    public async Task<T> PutMultipartAsync<T>(
+        string path,
+        string fieldName,
+        string fileName,
+        byte[] fileBytes,
+        string contentType,
+        CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, BuildUrl(path));
+        AddHeaders(request);
+        var form = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(fileBytes);
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue(
+            string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType);
+        form.Add(fileContent, fieldName, fileName);
+        request.Content = form;
+        return await SendAsync<T>(request, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Serialize using property reflection that works in all build modes.
     /// .NET 8 self-contained publish disables System.Text.Json reflection by default,
     /// so we build a dictionary manually from the object's properties.

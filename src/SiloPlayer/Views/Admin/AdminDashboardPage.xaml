@@ -89,7 +89,7 @@
                             MinWidth="132"
                             MinHeight="32"
                             Padding="12,6"
-                            Style="{StaticResource SecondaryButtonStyle}"
+                            Style="{StaticResource OutlineButtonStyle}"
                             Click="RefreshButton_Click">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <SymbolIcon Symbol="Refresh" />
@@ -394,7 +394,7 @@
 
                     <!-- Libraries card -->
                     <Border x:Name="LibrariesCard" Grid.Column="0" Style="{StaticResource SectionCardStyle}">
-                        <StackPanel Spacing="14">
+                        <StackPanel Spacing="36">
                             <!-- Header -->
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -424,7 +424,7 @@
 
                     <!-- Users card -->
                     <Border x:Name="UsersCard" Grid.Column="1" Style="{StaticResource SectionCardStyle}">
-                        <StackPanel Spacing="14">
+                        <StackPanel Spacing="36">
                             <!-- Header -->
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -455,7 +455,7 @@
 
                 <!-- ===== Recent Activity Section ===== -->
                 <Border x:Name="RecentActivitySection" Style="{StaticResource SectionCardStyle}" Visibility="Collapsed">
-                    <StackPanel Spacing="14">
+                    <StackPanel Spacing="36">
                         <!-- Header -->
                         <Grid>
                             <Grid.ColumnDefinitions>

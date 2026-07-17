@@ -19,7 +19,7 @@
         <!-- Borderless surface panel style: rounded-[1.6rem] p-4, no border -->
         <Style x:Key="SurfacePanelStyle" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="20" />
+            <Setter Property="CornerRadius" Value="16" />
             <Setter Property="Padding" Value="16" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>
@@ -145,7 +145,7 @@
                 </Grid>
 
                 <!-- ===== IP Lookup Panel (collapsible, default collapsed — matches webui <details>) ===== -->
-                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="20" BorderThickness="0">
+                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" BorderThickness="0">
                     <Expander
                         x:Name="IpLookupExpander"
                         Header="IP Lookup"
@@ -175,10 +175,14 @@
                             <Button
                                 x:Name="IpLookupButton"
                                 Grid.Column="1"
-                                Content="Lookup"
-                                Style="{StaticResource SecondaryButtonStyle}"
+                                Style="{StaticResource OutlineButtonStyle}"
                                 IsEnabled="False"
-                                Click="IpLookupButton_Click" />
+                                Click="IpLookupButton_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE721;" FontSize="14" />
+                                    <TextBlock Text="Lookup" />
+                                </StackPanel>
+                            </Button>
                         </Grid>
 
                         <!-- IP results table -->
@@ -229,7 +233,7 @@
                         </StackPanel>
 
                         <!-- Node breakdown: conditionally shown when >1 node -->
-                        <Border x:Name="NodeBreakdownPanel" Visibility="Collapsed"
+                        <Border x:Name="NodeBreakdownPanel" Visibility="Collapsed" Margin="0,12,0,0"
                                 BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0"
                                 Padding="0,12,0,0">
                             <StackPanel Spacing="8">
@@ -332,6 +336,15 @@
                     Visibility="Collapsed"
                     Margin="0,0,0,0" />
 
+                <!-- The WebUI replaces the page body with this compact initial-load state. -->
+                <TextBlock
+                    x:Name="InitialLoadingText"
+                    Text="Loading activity..."
+                    FontSize="14"
+                    Foreground="{StaticResource SecondaryTextBrush}"
+                    Padding="32"
+                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
+
                 <!-- ===== Streams Table ===== -->
                 <!-- Web: rounded-lg border (CornerRadius=8, NOT 24) -->
                 <Border
@@ -340,7 +353,8 @@
                     CornerRadius="8"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
-                    Padding="0">
+                    Padding="0"
+                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
                     <ScrollViewer
                         HorizontalScrollMode="Auto"
                         HorizontalScrollBarVisibility="Auto"
@@ -392,14 +406,6 @@
                         </Grid>
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
-
-                        <!-- Inline loading indicator -->
-                        <ProgressRing
-                            IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
-                            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                            HorizontalAlignment="Center"
-                            Margin="0,24"
-                            Width="32" Height="32" />
 
                         <!-- Inline error state -->
                         <StackPanel

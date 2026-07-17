@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 
 namespace SiloPlayer.Views;
@@ -75,6 +76,12 @@ public sealed partial class PersonDetailPage : Page
         }
     }
 
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        ViewModel.Cancel();
+        base.OnNavigatedFrom(e);
+    }
+
     private void UpdateUI()
     {
         var person = ViewModel.Person;
@@ -84,6 +91,9 @@ public sealed partial class PersonDetailPage : Page
         if (App.MainWindowInstance is MainWindow mw)
             mw.SetDynamicTitle(person.Name);
         AgeText.Text = ViewModel.AgeDisplay;
+        AgeBadge.Visibility = string.IsNullOrWhiteSpace(ViewModel.AgeDisplay)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
         DatesText.Text = ViewModel.DatesDisplay;
 
         // Birthplace
@@ -178,6 +188,10 @@ public sealed partial class PersonDetailPage : Page
         await ViewModel.RefreshMetadataCommand.ExecuteAsync(null);
         UpdateUI();
 
+        var toast = App.Services.GetRequiredService<ToastService>();
+        if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)) toast.Error(ViewModel.ErrorMessage);
+        else if (!string.IsNullOrWhiteSpace(ViewModel.StatusMessage)) toast.Success(ViewModel.StatusMessage);
+
         RefreshRing.IsActive = false;
         RefreshRing.Visibility = Visibility.Collapsed;
         RefreshButton.IsEnabled = true;
@@ -223,7 +237,7 @@ public sealed partial class PersonDetailPage : Page
             try
             {
                 var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
-                await adminApi.UpdateItemMetadataAsync(person.Id, new Dictionary<string, object?>
+                ViewModel.Person = await adminApi.UpdatePersonAsync(person.Id, new Dictionary<string, object?>
                 {
                     ["name"] = nameBox.Text.Trim(),
                     ["bio"] = string.IsNullOrWhiteSpace(bioBox.Text) ? null : bioBox.Text.Trim(),
@@ -231,9 +245,8 @@ public sealed partial class PersonDetailPage : Page
                     ["death_date"] = string.IsNullOrWhiteSpace(deathDateBox.Text) ? null : deathDateBox.Text.Trim(),
                     ["birthplace"] = string.IsNullOrWhiteSpace(birthplaceBox.Text) ? null : birthplaceBox.Text.Trim(),
                 });
-                // Refresh
-                await ViewModel.LoadCommand.ExecuteAsync(person.Id);
                 UpdateUI();
+                App.Services.GetRequiredService<ToastService>().Success("Person metadata saved.");
             }
             catch (Exception ex)
             {

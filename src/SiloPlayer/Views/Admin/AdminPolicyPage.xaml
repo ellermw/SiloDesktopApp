@@ -8,9 +8,9 @@
     Loaded="Page_Loaded">
 
     <ScrollViewer IsScrollInertiaEnabled="True">
-        <StackPanel Padding="40,24,40,24" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
+        <StackPanel x:Name="PolicyPageShell" Padding="40,32,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
             <StackPanel Spacing="12">
-                <TextBlock Text="Policy" FontSize="48" FontWeight="Bold" Foreground="{StaticResource PrimaryTextBrush}" />
+                <TextBlock x:Name="PolicyTitle" Text="Policy" FontSize="48" FontWeight="Bold" Foreground="{StaticResource PrimaryTextBrush}" />
                 <TextBlock Text="Household access rules: what Silo allows by default, and where you tighten it."
                            FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
             </StackPanel>
@@ -32,13 +32,14 @@
             </Border>
 
             <Border x:Name="PipelineStrip" Background="{StaticResource SurfaceRaisedBrush}" CornerRadius="16" Padding="16">
-              <Grid ColumnSpacing="14">
+              <Grid x:Name="PipelineGrid" ColumnSpacing="14" RowSpacing="14">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Border Grid.Column="0">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                <Border x:Name="PipelineStepOne" Grid.Column="0">
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <FontIcon Glyph="&#xE8D7;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
                         <StackPanel Spacing="3">
@@ -48,8 +49,8 @@
                         </StackPanel>
                     </StackPanel>
                 </Border>
-                <FontIcon Grid.Column="1" Glyph="&#xE72A;" FontSize="14" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Top" Margin="0,3,0,0" />
-                <Border Grid.Column="2">
+                <FontIcon x:Name="PipelineArrowOne" Grid.Column="1" Glyph="&#xE72A;" FontSize="14" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Top" Margin="0,3,0,0" />
+                <Border x:Name="PipelineStepTwo" Grid.Column="2">
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <FontIcon Glyph="&#xE70F;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
                         <StackPanel Spacing="3">
@@ -59,8 +60,8 @@
                         </StackPanel>
                     </StackPanel>
                 </Border>
-                <FontIcon Grid.Column="3" Glyph="&#xE72A;" FontSize="14" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Top" Margin="0,3,0,0" />
-                <Border Grid.Column="4">
+                <FontIcon x:Name="PipelineArrowTwo" Grid.Column="3" Glyph="&#xE72A;" FontSize="14" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Top" Margin="0,3,0,0" />
+                <Border x:Name="PipelineStepThree" Grid.Column="4">
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <FontIcon Glyph="&#xE8A5;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
                         <StackPanel Spacing="3">
@@ -137,6 +138,13 @@
                                 <StackPanel Spacing="12">
                                     <TextBlock Text="Version history" FontSize="16" FontWeight="SemiBold" />
                                     <StackPanel x:Name="VersionRows" Spacing="1" />
+                                    <StackPanel x:Name="SelectedVersionSourcePanel" Spacing="8" Visibility="Collapsed">
+                                        <TextBlock x:Name="SelectedVersionSourceTitle" Text="Selected Source" FontSize="13" FontWeight="SemiBold" />
+                                        <TextBox x:Name="SelectedVersionSource" IsReadOnly="True" AcceptsReturn="True"
+                                                 FontFamily="Consolas" TextWrapping="NoWrap" MinHeight="260"
+                                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                 ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -150,14 +158,15 @@
                             <TextBlock Text="Read-only rules shipped with the server. Overrides may narrow these decisions, never broaden them."
                                        FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                         </StackPanel>
-                        <Grid ColumnSpacing="14">
+                        <Grid x:Name="VendorGrid" ColumnSpacing="14" RowSpacing="14">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="320" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="10">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <Border x:Name="VendorListPanel" Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="10">
                                 <ListView ItemsSource="{Binding VendorModules}" SelectedItem="{Binding SelectedVendor, Mode=TwoWay}">
                                     <ListView.ItemTemplate><DataTemplate x:DataType="a:PolicyVendorModule"><TextBlock Text="{x:Bind Path}" FontFamily="Consolas" FontSize="12" Padding="8" /></DataTemplate></ListView.ItemTemplate>
                                 </ListView>
                             </Border>
-                            <Border Grid.Column="1" Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="14">
+                            <Border x:Name="VendorSourcePanel" Grid.Column="1" Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="14">
                                 <TextBox Text="{Binding SelectedVendor.Source, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True"
                                          FontFamily="Consolas" TextWrapping="NoWrap" MinHeight="460"
                                          ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto" />
@@ -169,26 +178,28 @@
                 <PivotItem Header="Decision Log">
                     <StackPanel Margin="0,14,0,0" Spacing="14">
                         <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="18">
-                            <Grid ColumnSpacing="10">
+                            <Grid x:Name="DecisionFilterGrid" ColumnSpacing="10" RowSpacing="10">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="220" /><ColumnDefinition Width="110" /><ColumnDefinition Width="140" />
                                     <ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBox Grid.Column="0" Header="Decision" PlaceholderText="All decisions" Text="{Binding DecisionFilter, Mode=TwoWay}" />
-                                <TextBox Grid.Column="1" Header="User ID" PlaceholderText="42" Text="{Binding DecisionUserId, Mode=TwoWay}" />
-                                <ComboBox Grid.Column="2" Header="Allowed" SelectedItem="{Binding DecisionAllowed, Mode=TwoWay}">
-                                    <x:String>Any result</x:String><x:String>Allowed</x:String><x:String>Denied</x:String>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                <ComboBox x:Name="DecisionFilterCombo" Grid.Column="0" Header="Decision" SelectionChanged="DecisionFilterCombo_SelectionChanged" />
+                                <TextBox x:Name="DecisionUserIdBox" Grid.Column="1" Header="User ID" PlaceholderText="42" Text="{Binding DecisionUserId, Mode=TwoWay}" />
+                                <ComboBox x:Name="DecisionAllowedCombo" Grid.Column="2" Header="Allowed" SelectedItem="{Binding DecisionAllowed, Mode=TwoWay}">
+                                    <x:String>All</x:String><x:String>Allowed</x:String><x:String>Denied</x:String>
                                 </ComboBox>
-                                <TextBox Grid.Column="3" Header="From" PlaceholderText="RFC3339 or blank" Text="{Binding DecisionFrom, Mode=TwoWay}" />
-                                <TextBox Grid.Column="4" Header="To" PlaceholderText="RFC3339 or blank" Text="{Binding DecisionTo, Mode=TwoWay}" />
-                                <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="7" VerticalAlignment="Bottom">
+                                <TextBox x:Name="DecisionFromBox" Grid.Column="3" Header="From" PlaceholderText="RFC3339 or blank" Text="{Binding DecisionFrom, Mode=TwoWay}" />
+                                <TextBox x:Name="DecisionToBox" Grid.Column="4" Header="To" PlaceholderText="RFC3339 or blank" Text="{Binding DecisionTo, Mode=TwoWay}" />
+                                <StackPanel x:Name="DecisionFilterActions" Grid.Column="5" Orientation="Horizontal" Spacing="7" VerticalAlignment="Bottom">
                                     <Button Content="Reset" Click="ResetFilters_Click" Style="{StaticResource SecondaryButtonStyle}" />
                                     <Button Content="Apply" Click="Filter_Click" Style="{StaticResource AccentButtonStyle}" />
                                 </StackPanel>
                             </Grid>
                         </Border>
 
-                        <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="0">
+                        <ScrollViewer HorizontalScrollMode="Enabled" HorizontalScrollBarVisibility="Auto" VerticalScrollMode="Disabled">
+                        <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="0" MinWidth="1000">
                             <StackPanel>
                                 <Grid Padding="16,11" ColumnSpacing="12" Background="#0DFFFFFF">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="170" /><ColumnDefinition Width="*" /><ColumnDefinition Width="90" /><ColumnDefinition Width="100" /><ColumnDefinition Width="90" /><ColumnDefinition Width="220" /></Grid.ColumnDefinitions>
@@ -216,6 +227,7 @@
                                 </ListView>
                             </StackPanel>
                         </Border>
+                        </ScrollViewer>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
                             <Button x:Name="DecisionPreviousButton" Content="Previous" Click="PreviousDecisions_Click" Style="{StaticResource SecondaryButtonStyle}" />
                             <Button x:Name="DecisionNextButton" Content="Next" Click="NextDecisions_Click" Style="{StaticResource SecondaryButtonStyle}" />

@@ -31,20 +31,23 @@
 
                 <!-- webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
                 <StackPanel
+                    x:Name="SettingsPageShell"
                     Padding="40,32,40,40"
                     Spacing="24"
                     MaxWidth="1400"
                     HorizontalAlignment="Center">
 
                     <!-- Header -->
-                    <Grid ColumnSpacing="24">
+                    <Grid x:Name="SettingsHeaderGrid" ColumnSpacing="24" RowSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="384" />
                         </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
 
                         <StackPanel Spacing="12">
                             <TextBlock
+                                x:Name="SettingsTitle"
                                 Text="Settings"
                                 FontSize="48"
                                 FontWeight="Bold"
@@ -55,7 +58,7 @@
                                 Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
 
-                        <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Top">
+                        <StackPanel x:Name="SettingsSearchPanel" Grid.Column="1" Spacing="6" VerticalAlignment="Top">
                             <Grid>
                                 <TextBox
                                     x:Name="SettingsSearchBox"
@@ -85,19 +88,22 @@
                         Padding="0"
                         MinHeight="500">
 
-                        <Grid>
+                        <Grid x:Name="SettingsSurfaceGrid">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="240" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
 
                             <!-- Left sub-nav sidebar -->
                             <Border
+                                x:Name="SettingsRailBorder"
                                 Grid.Column="0"
                                 BorderBrush="{StaticResource BorderBrush}"
                                 BorderThickness="0,0,1,0"
                                 Padding="12,16,12,16">
                                 <ScrollViewer
+                                    x:Name="SettingsRailScroll"
                                     VerticalScrollBarVisibility="Auto"
                                     HorizontalScrollBarVisibility="Disabled">
                                     <StackPanel
@@ -108,6 +114,7 @@
 
                             <!-- Right content area -->
                             <ScrollViewer
+                                x:Name="SettingsContentScroll"
                                 Grid.Column="1"
                                 VerticalScrollBarVisibility="Auto"
                                 Padding="24">

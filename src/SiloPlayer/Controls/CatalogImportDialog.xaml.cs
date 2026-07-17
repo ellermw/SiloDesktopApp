@@ -33,7 +33,16 @@ public sealed partial class CatalogImportDialog : ContentDialog
         SourceCombo.SelectedIndex = 0;
         LocalPathBox.Text = "/catalog-seeds/";
 
-        // Populate local file picker (detected seeds on disk)
+        PopulateLocalSources();
+        PopulateBucketSources();
+        PopulateExportJobs();
+
+        // Seed with one empty rewrite row so users see the input immediately
+        AddRewriteRow();
+    }
+
+    private void PopulateLocalSources()
+    {
         LocalSourcePicker.Items.Clear();
         foreach (var src in _vm.LocalImportSources)
         {
@@ -43,8 +52,12 @@ public sealed partial class CatalogImportDialog : ContentDialog
                 Tag = src.Key,
             });
         }
+        DetectedFilesHeader.Visibility = _vm.LocalImportSources.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        LocalSourcePicker.Visibility = _vm.LocalImportSources.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
 
-        // Populate bucket artifact picker
+    private void PopulateBucketSources()
+    {
         BucketArtifactCombo.Items.Clear();
         foreach (var src in _vm.BucketImportSources)
         {
@@ -54,8 +67,12 @@ public sealed partial class CatalogImportDialog : ContentDialog
                 Tag = src.Key,
             });
         }
+        if (_vm.BucketImportSources.Count == 0)
+            BucketArtifactCombo.Items.Add(new ComboBoxItem { Content = "No catalog seed objects found", IsEnabled = false });
+    }
 
-        // Populate completed export jobs picker
+    private void PopulateExportJobs()
+    {
         ExportJobCombo.Items.Clear();
         foreach (var job in _vm.ExportJobs)
         {
@@ -66,9 +83,20 @@ public sealed partial class CatalogImportDialog : ContentDialog
                 Tag = job.Id,
             });
         }
+        if (ExportJobCombo.Items.Count == 0)
+            ExportJobCombo.Items.Add(new ComboBoxItem { Content = "No completed exports yet", IsEnabled = false });
+    }
 
-        // Seed with one empty rewrite row so users see the input immediately
-        AddRewriteRow();
+    private async void RefreshLocalSources_Click(object sender, RoutedEventArgs e)
+    {
+        await _vm.RefreshLocalSourcesAsync();
+        PopulateLocalSources();
+    }
+
+    private async void RefreshBucketSources_Click(object sender, RoutedEventArgs e)
+    {
+        await _vm.RefreshBucketSourcesAsync();
+        PopulateBucketSources();
     }
 
     // ─── Source switcher ─────────────────────────────────────────────────
@@ -100,7 +128,7 @@ public sealed partial class CatalogImportDialog : ContentDialog
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var fromBox = new TextBox { PlaceholderText = "/mnt/sharedrives/zd-storage-ceph" };
+        var fromBox = new TextBox { PlaceholderText = "/srv/media" };
         var toBox = new TextBox { PlaceholderText = "/media" };
         var removeBtn = new Button
         {
@@ -130,7 +158,7 @@ public sealed partial class CatalogImportDialog : ContentDialog
 
     // ─── Submit ──────────────────────────────────────────────────────────
 
-    private void OnPrimaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
+    private async void OnPrimaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
     {
         if (SourceCombo.SelectedItem is not ComboBoxItem srcSel) { args.Cancel = true; return; }
         var source = (string)(srcSel.Tag ?? "local_path");
@@ -182,6 +210,24 @@ public sealed partial class CatalogImportDialog : ContentDialog
             ConflictMode = conflictMode,
             PathRewrites = rewrites,
         };
+
+        var deferral = args.GetDeferral();
+        IsPrimaryButtonEnabled = false;
+        PrimaryButtonText = "Importing...";
+        try
+        {
+            await _vm.SubmitImportAsync(BuiltRequest);
+        }
+        catch
+        {
+            args.Cancel = true;
+        }
+        finally
+        {
+            PrimaryButtonText = "Import Catalog";
+            IsPrimaryButtonEnabled = true;
+            deferral.Complete();
+        }
     }
 
     // ─── Label helpers ───────────────────────────────────────────────────

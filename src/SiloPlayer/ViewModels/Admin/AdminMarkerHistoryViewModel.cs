@@ -17,6 +17,7 @@ public partial class AdminMarkerHistoryViewModel(AdminApi adminApi) : Observable
     [ObservableProperty] private int _limit = 50;
     [ObservableProperty] private bool _hasRows;
     [ObservableProperty] private bool _showEmptyState;
+    [ObservableProperty] private bool _canRefresh = true;
 
     [RelayCommand]
     public async Task LoadAsync()
@@ -26,10 +27,15 @@ public partial class AdminMarkerHistoryViewModel(AdminApi adminApi) : Observable
         previous?.Cancel();
         previous?.Dispose();
 
-        IsLoading = true;
+        var hasCachedRows = HasRows && Rows.Count > 0;
+        IsLoading = !hasCachedRows;
+        CanRefresh = false;
         ErrorMessage = null;
-        HasRows = false;
-        ShowEmptyState = false;
+        if (!hasCachedRows)
+        {
+            HasRows = false;
+            ShowEmptyState = false;
+        }
         try
         {
             var response = await adminApi.GetMarkerHistoryAsync(Limit, ownerCts.Token);
@@ -51,13 +57,17 @@ public partial class AdminMarkerHistoryViewModel(AdminApi adminApi) : Observable
             if (ReferenceEquals(_loadCts, ownerCts))
             {
                 ErrorMessage = ex.Message;
+                HasRows = false;
                 ShowEmptyState = false;
             }
         }
         finally
         {
             if (ReferenceEquals(Interlocked.CompareExchange(ref _loadCts, null, ownerCts), ownerCts))
+            {
                 IsLoading = false;
+                CanRefresh = true;
+            }
             ownerCts.Dispose();
         }
     }
@@ -68,6 +78,7 @@ public partial class AdminMarkerHistoryViewModel(AdminApi adminApi) : Observable
         cts?.Cancel();
         cts?.Dispose();
         IsLoading = false;
+        CanRefresh = true;
     }
 }
 

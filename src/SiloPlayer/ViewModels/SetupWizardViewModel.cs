@@ -3,6 +3,8 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
+using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.ViewModels;
@@ -21,9 +23,8 @@ public partial class SetupWizardViewModel : ObservableObject
     }
 
     // ===== Step tracking =====
-    // B47: We still track step as 1-5 internally for the linear visibility logic,
-    // but DetermineStartingStepAsync() jumps the wizard forward when state shows
-    // earlier steps already done (matches WebUI accountComplete/profileComplete/...).
+    // Current GitHub WebUI order: account, profile, server, integrations,
+    // downloads, recommendations, library, nodes/finish.
 
     [ObservableProperty]
     private int _currentStep = 1;
@@ -37,6 +38,10 @@ public partial class SetupWizardViewModel : ObservableObject
     /// <summary>True after the user has saved the server step at least once.</summary>
     [ObservableProperty]
     private bool _serverStepDone;
+
+    [ObservableProperty] private bool _integrationsStepDone;
+    [ObservableProperty] private bool _downloadsStepDone;
+    [ObservableProperty] private bool _recommendationsStepDone;
 
     [ObservableProperty]
     private bool _isLoading;
@@ -57,6 +62,9 @@ public partial class SetupWizardViewModel : ObservableObject
 
     [ObservableProperty]
     private string _password = "";
+
+    [ObservableProperty]
+    private string _confirmPassword = "";
 
     // ===== Step 2: Profile =====
 
@@ -79,6 +87,25 @@ public partial class SetupWizardViewModel : ObservableObject
     [ObservableProperty]
     private bool _scanAfterCreate = true;
 
+    [ObservableProperty] private bool _libraryEnabled = true;
+    [ObservableProperty] private string _libraryMetadataLanguage = "en";
+    [ObservableProperty] private bool _libraryAutoTranslateMetadata;
+    [ObservableProperty] private bool _libraryChapterThumbnailsEnabled;
+    [ObservableProperty] private bool _libraryChapterThumbnailsSupported = true;
+    [ObservableProperty] private bool _libraryIntroDetectionEnabled;
+    [ObservableProperty] private bool _libraryTrailer = true;
+    [ObservableProperty] private bool _libraryTeaser = true;
+    [ObservableProperty] private bool _libraryFeaturette = true;
+    [ObservableProperty] private bool _libraryClip = true;
+    [ObservableProperty] private bool _libraryBehindTheScenes = true;
+    [ObservableProperty] private bool _libraryBloopers = true;
+    [ObservableProperty] private bool _libraryOtherExtras = true;
+    public ObservableCollection<Library> AddedLibraries { get; } = [];
+    public ObservableCollection<SetupLibraryProviderLevel> LibraryProviderLevels { get; } = [];
+    [ObservableProperty] private bool _libraryProvidersLoading;
+    [ObservableProperty] private bool _libraryProviderChainDirty;
+    private bool _librariesLoaded;
+
     // ===== Step 4: Server settings =====
 
     [ObservableProperty]
@@ -95,13 +122,18 @@ public partial class SetupWizardViewModel : ObservableObject
     private string _hardwareAccel = "auto";
 
     [ObservableProperty]
-    private bool _transcodingEnabled;
+    private bool _transcodingEnabled = true;
 
     [ObservableProperty]
     private string _jellyfinUrl = "";
 
     [ObservableProperty]
     private string _jellyfinName = "";
+
+    [ObservableProperty] private bool _jellyfinEnabled;
+    [ObservableProperty] private string _jellyfinWebVersion = "";
+    [ObservableProperty] private string _jellyfinWebInstallDir = "";
+    private bool _serverSettingsLoaded;
 
     // ===== Step 4: Storage (S3) =====
     // Mirrors upstream web/src/pages/setup-wizard/steps/ServerStorageStep.tsx.
@@ -140,11 +172,34 @@ public partial class SetupWizardViewModel : ObservableObject
     partial void OnS3PublicUrlAuthChanged(string value) =>
         OnPropertyChanged(nameof(IsPublicReadEndpointVisible));
 
-    // ===== Step 5: Metadata =====
+    // ===== Step 4: Integrations =====
 
-    // B49: Default to MetaDB — Continuum's primary metadata source.
-    [ObservableProperty]
-    private string _selectedProvider = "metadb";
+    public ObservableCollection<SetupSubtitleProviderItem> SubtitleProviders { get; } = [];
+    private bool _integrationsLoaded;
+
+    // ===== Step 5: Downloads =====
+
+    [ObservableProperty] private bool _downloadsEnabled;
+    [ObservableProperty] private string _downloadServerBandwidthMbps = "0";
+    [ObservableProperty] private string _downloadUserBandwidthMbps = "0";
+    [ObservableProperty] private string _downloadMaxConcurrentPerUser = "0";
+    private bool _downloadsLoaded;
+
+    // ===== Step 6: Recommendations =====
+
+    [ObservableProperty] private bool _recommendationsEnabled;
+    [ObservableProperty] private string _recommendationsBaseUrl = "";
+    [ObservableProperty] private string _recommendationsModel = "";
+    [ObservableProperty] private string _recommendationsAuthToken = "";
+    private bool _recommendationsLoaded;
+
+    // ===== Step 8: Nodes / finish =====
+
+    public ObservableCollection<StreamNode> AddedNodes { get; } = [];
+    [ObservableProperty] private string _nodeName = "";
+    [ObservableProperty] private string _nodeUrl = "";
+    [ObservableProperty] private string _nodeType = "proxy";
+    [ObservableProperty] private bool _showNodeForm;
 
     // ===== Navigation helpers =====
 
@@ -154,7 +209,7 @@ public partial class SetupWizardViewModel : ObservableObject
     /// <summary>
     /// Event raised when setup is complete. The caller should navigate to the home page.
     /// </summary>
-    public event Action? SetupCompleted;
+    public event Action<bool>? SetupCompleted;
 
     partial void OnCurrentStepChanged(int value)
     {
@@ -198,36 +253,24 @@ public partial class SetupWizardViewModel : ObservableObject
                 return;
             }
 
-            // 3. Library complete? (only check if user is admin — non-admins
-            //    can't see /libraries during setup anyway)
-            bool libraryComplete = false;
-            if (_authService.CurrentUser?.Role == "admin")
-            {
-                try
-                {
-                    var libs = await _adminApi.GetAdminLibrariesAsync();
-                    libraryComplete = libs.Count > 0;
-                }
-                catch
-                {
-                    // Fall through — treat as not complete
-                }
-            }
-            if (!libraryComplete && !LibraryStepSkipped)
+            // Remaining completion flags mirror the WebUI's wizard-session
+            // progress. Library discovery happens only after those steps.
+            if (!ServerStepDone)
             {
                 CurrentStep = 3;
                 return;
             }
+            if (!IntegrationsStepDone) { CurrentStep = 4; return; }
+            if (!DownloadsStepDone) { CurrentStep = 5; return; }
+            if (!RecommendationsStepDone) { CurrentStep = 6; return; }
 
-            // 4. Server step done?
-            if (!ServerStepDone)
+            var libraryComplete = false;
+            try
             {
-                CurrentStep = 4;
-                return;
+                libraryComplete = (await _adminApi.GetAdminLibrariesAsync()).Count > 0;
             }
-
-            // 5. Metadata
-            CurrentStep = 5;
+            catch { }
+            CurrentStep = libraryComplete || LibraryStepSkipped ? 8 : 7;
         }
         catch
         {
@@ -267,10 +310,23 @@ public partial class SetupWizardViewModel : ObservableObject
                 if (!await SubmitProfileStepAsync()) return;
                 break;
             case 3:
-                if (!await SubmitLibraryStepAsync()) return;
+                if (!await SubmitServerStepAsync()) return;
                 break;
             case 4:
-                if (!await SubmitServerStepAsync()) return;
+                IntegrationsStepDone = true;
+                break;
+            case 5:
+                if (!await SubmitDownloadsStepAsync()) return;
+                break;
+            case 6:
+                if (!await SubmitRecommendationsStepAsync()) return;
+                break;
+            case 7:
+                if (AddedLibraries.Count == 0)
+                {
+                    ErrorMessage = "Add at least one library or choose Skip.";
+                    return;
+                }
                 break;
         }
 
@@ -289,14 +345,60 @@ public partial class SetupWizardViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private async Task FinishAsync()
+    private async Task AddLibraryAsync()
     {
         ErrorMessage = null;
+        await SubmitLibraryStepAsync();
+    }
 
-        // Submit metadata step (step 5)
-        if (!await SubmitMetadataStepAsync()) return;
+    [RelayCommand]
+    private void SkipLibrary()
+    {
+        LibraryStepSkipped = true;
+        ErrorMessage = null;
+        if (CurrentStep == 7)
+            CurrentStep = 8;
+    }
 
-        SetupCompleted?.Invoke();
+    [RelayCommand]
+    private void Finish()
+    {
+        ErrorMessage = null;
+        SetupCompleted?.Invoke(false);
+    }
+
+    [RelayCommand]
+    private void GoToAdmin() => SetupCompleted?.Invoke(true);
+
+    [RelayCommand]
+    private void ToggleNodeForm() => ShowNodeForm = !ShowNodeForm;
+
+    [RelayCommand]
+    private async Task AddNodeAsync()
+    {
+        if (string.IsNullOrWhiteSpace(NodeName) || string.IsNullOrWhiteSpace(NodeUrl))
+        {
+            ErrorMessage = "Node name and URL are required.";
+            return;
+        }
+
+        IsLoading = true;
+        ErrorMessage = null;
+        try
+        {
+            var node = await _adminApi.CreateNodeAsync(new CreateNodeRequest
+            {
+                Name = NodeName.Trim(),
+                Url = NodeUrl.Trim(),
+                Type = NodeType,
+            });
+            AddedNodes.Add(node);
+            NodeName = "";
+            NodeUrl = "";
+            ShowNodeForm = false;
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to add node: {ex.Message}"; }
+        finally { IsLoading = false; }
     }
 
     // ===== Step submissions =====
@@ -316,6 +418,11 @@ public partial class SetupWizardViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(Password))
         {
             ErrorMessage = "Password is required.";
+            return false;
+        }
+        if (!string.Equals(Password, ConfirmPassword, StringComparison.Ordinal))
+        {
+            ErrorMessage = "Passwords do not match.";
             return false;
         }
 
@@ -396,38 +503,63 @@ public partial class SetupWizardViewModel : ObservableObject
 
     private async Task<bool> SubmitLibraryStepAsync()
     {
-        // Library creation is optional during setup
-        // B47: Track skip so DetermineStartingStepAsync won't bounce us back here.
         if (string.IsNullOrWhiteSpace(LibraryName))
         {
-            LibraryStepSkipped = true;
-            return true;
+            ErrorMessage = "Give this library a name.";
+            return false;
+        }
+        if (LibraryPaths.Count == 0 || !LibraryPaths.Any(path => !string.IsNullOrWhiteSpace(path)))
+        {
+            ErrorMessage = "Add at least one folder to scan.";
+            return false;
         }
 
         IsLoading = true;
         try
         {
-            var body = new
+            var trailerKinds = new List<string>();
+            if (LibraryTrailer) trailerKinds.Add("trailer");
+            if (LibraryTeaser) trailerKinds.Add("teaser");
+            if (LibraryFeaturette) trailerKinds.Add("featurette");
+            if (LibraryClip) trailerKinds.Add("clip");
+            if (LibraryBehindTheScenes) trailerKinds.Add("behind_the_scenes");
+            if (LibraryBloopers) trailerKinds.Add("bloopers");
+            if (LibraryOtherExtras) trailerKinds.Add("other");
+            var body = new CreateLibraryRequest
             {
-                name = LibraryName.Trim(),
-                type = LibraryType,
-                paths = LibraryPaths.ToList()
+                Name = LibraryName.Trim(),
+                Type = LibraryType,
+                Paths = LibraryPaths.Where(path => !string.IsNullOrWhiteSpace(path)).Select(path => path.Trim()).Distinct().ToList(),
+                Enabled = LibraryEnabled,
+                MetadataLanguage = LibraryMetadataLanguage,
+                AutoTranslateMetadata = LibraryAutoTranslateMetadata,
+                ChapterThumbnailsEnabled = LibraryChapterThumbnailsSupported && LibraryChapterThumbnailsEnabled,
+                IntroDetectionEnabled = LibraryIntroDetectionEnabled,
+                TrailerKinds = trailerKinds,
             };
 
             var library = await _adminApi.CreateLibraryAsync(body);
-
-            if (ScanAfterCreate)
+            if (LibraryProviderChainDirty && LibraryProviderLevels.Count > 0)
             {
-                try
+                await _adminApi.UpdateLibraryProvidersAsync(library.Id, new SetLibraryChainRequest
                 {
-                    await _adminApi.ScanLibraryAsync(library.Id);
-                }
-                catch
-                {
-                    // Scan failure is non-fatal during setup
-                }
+                    Levels = LibraryProviderLevels.ToDictionary(
+                        level => level.Level,
+                        level => level.Entries.Select((entry, priority) => new SetLibraryChainEntry
+                        {
+                            PluginInstallationId = entry.PluginInstallationId,
+                            CapabilityId = entry.CapabilityId,
+                            Priority = priority,
+                            Enabled = entry.Enabled,
+                        }).ToList()),
+                });
             }
-
+            AddedLibraries.Add(library);
+            LibraryName = "";
+            LibraryPaths.Clear();
+            NewLibraryPath = "";
+            LibraryStepSkipped = false;
+            LibraryProviderChainDirty = false;
             return true;
         }
         catch (ApiException ex)
@@ -466,10 +598,15 @@ public partial class SetupWizardViewModel : ObservableObject
             if (!string.IsNullOrWhiteSpace(HardwareAccel))
                 settings["playback.hw_accel"] = HardwareAccel.Trim();
             settings["playback.transcode_enabled"] = TranscodingEnabled.ToString().ToLowerInvariant();
+            settings["jellyfin_compat.enabled"] = JellyfinEnabled.ToString().ToLowerInvariant();
             if (!string.IsNullOrWhiteSpace(JellyfinUrl))
                 settings["jellyfin_compat.public_url"] = JellyfinUrl.Trim();
             if (!string.IsNullOrWhiteSpace(JellyfinName))
                 settings["jellyfin_compat.server_name"] = JellyfinName.Trim();
+            if (!string.IsNullOrWhiteSpace(JellyfinWebVersion))
+                settings["jellyfin_compat.web_version"] = JellyfinWebVersion.Trim();
+            if (!string.IsNullOrWhiteSpace(JellyfinWebInstallDir))
+                settings["jellyfin_compat.web_install_dir"] = JellyfinWebInstallDir.Trim();
 
             // Storage — only when the user expanded the optional section.
             if (ConfigureStorage)
@@ -493,14 +630,7 @@ public partial class SetupWizardViewModel : ObservableObject
 
             foreach (var (key, value) in settings)
             {
-                try
-                {
-                    await _adminApi.UpdateAdminSettingAsync(key, value);
-                }
-                catch
-                {
-                    // Individual setting failures are non-fatal during setup
-                }
+                await _adminApi.UpdateAdminSettingAsync(key, value);
             }
 
             // B47: Mark server step done so DetermineStartingStepAsync can skip past it.
@@ -518,28 +648,326 @@ public partial class SetupWizardViewModel : ObservableObject
         }
     }
 
-    private async Task<bool> SubmitMetadataStepAsync()
+    public async Task PrepareStepAsync(int step)
     {
-        IsLoading = true;
-        try
+        if (step == 3 && !_serverSettingsLoaded)
         {
-            // Metadata provider configuration is best-effort during setup
-            if (!string.IsNullOrWhiteSpace(SelectedProvider))
+            IsLoading = true;
+            try
             {
-                try
+                var settings = await _adminApi.GetAdminSettingsAsync();
+                RedisUrl = GetSetting(settings, "redis.url", "");
+                FfmpegPath = GetSetting(settings, "playback.ffmpeg_path", "");
+                TranscodeDir = GetSetting(settings, "playback.transcode_dir", "");
+                HardwareAccel = GetSetting(settings, "playback.hw_accel", "auto");
+                TranscodingEnabled = !settings.TryGetValue("playback.transcode_enabled", out var transcode) ||
+                    !bool.TryParse(transcode, out var transcodeEnabled) || transcodeEnabled;
+                JellyfinEnabled = GetBool(settings, "jellyfin_compat.enabled");
+                JellyfinUrl = GetSetting(settings, "jellyfin_compat.public_url", "");
+                JellyfinName = GetSetting(settings, "jellyfin_compat.server_name", "");
+                JellyfinWebVersion = GetSetting(settings, "jellyfin_compat.web_version", "");
+                JellyfinWebInstallDir = GetSetting(settings, "jellyfin_compat.web_install_dir", "");
+
+                S3PublicEndpoint = GetSetting(settings, "s3.public_endpoint", "");
+                S3PublicBucket = GetSetting(settings, "s3.public_bucket", "");
+                S3PublicKeyPrefix = GetSetting(settings, "s3.public_key_prefix", "");
+                S3PublicUrlAuth = GetSetting(settings, "s3.public_url_auth", "presigned");
+                S3PublicReadEndpoint = GetSetting(settings, "s3.public_read_endpoint", "");
+                S3PrivateEndpoint = GetSetting(settings, "s3.private_endpoint", "");
+                S3PrivateBucket = GetSetting(settings, "s3.private_bucket", "");
+                S3PrivateKeyPrefix = GetSetting(settings, "s3.private_key_prefix", "");
+                CacheImages = GetBool(settings, "metadata.cache_images");
+                ConfigureStorage = !string.IsNullOrWhiteSpace(S3PublicEndpoint) ||
+                    !string.IsNullOrWhiteSpace(S3PublicBucket) ||
+                    !string.IsNullOrWhiteSpace(S3PrivateEndpoint) ||
+                    !string.IsNullOrWhiteSpace(S3PrivateBucket);
+                _serverSettingsLoaded = true;
+            }
+            catch (Exception ex) { ErrorMessage = $"Failed to load server settings: {ex.Message}"; }
+            finally { IsLoading = false; }
+        }
+        else if (step == 4 && !_integrationsLoaded)
+        {
+            IsLoading = true;
+            try
+            {
+                var response = await _adminApi.GetSubtitleProvidersAsync();
+                SubtitleProviders.Clear();
+                foreach (var provider in response.Providers.OrderBy(p => ProviderOrder(p.ProviderName)))
                 {
-                    await _adminApi.UpdateAdminSettingAsync("metadata_provider", SelectedProvider);
+                    SubtitleProviders.Add(new SetupSubtitleProviderItem(provider));
                 }
-                catch
+                _integrationsLoaded = true;
+            }
+            catch (Exception ex) { ErrorMessage = $"Failed to load subtitle providers: {ex.Message}"; }
+            finally { IsLoading = false; }
+        }
+        else if ((step == 5 && !_downloadsLoaded) || (step == 6 && !_recommendationsLoaded))
+        {
+            IsLoading = true;
+            try
+            {
+                var settings = await _adminApi.GetAdminSettingsAsync();
+                if (step == 5)
                 {
-                    // Non-fatal
+                    DownloadsEnabled = GetBool(settings, "download.enabled");
+                    DownloadServerBandwidthMbps = GetSetting(settings, "download.server_bandwidth_mbps", "0");
+                    DownloadUserBandwidthMbps = GetSetting(settings, "download.user_bandwidth_mbps", "0");
+                    DownloadMaxConcurrentPerUser = GetSetting(settings, "download.max_concurrent_per_user", "0");
+                    _downloadsLoaded = true;
+                }
+                else
+                {
+                    RecommendationsEnabled = GetBool(settings, "recommendations.enabled");
+                    RecommendationsBaseUrl = GetSetting(settings, "recommendations.embedding_base_url", "");
+                    RecommendationsModel = GetSetting(settings, "recommendations.embedding_model", "");
+                    _recommendationsLoaded = true;
                 }
             }
-            return true;
+            catch (Exception ex) { ErrorMessage = $"Failed to load settings: {ex.Message}"; }
+            finally { IsLoading = false; }
         }
-        finally
+        else if (step == 7 && !_librariesLoaded)
         {
-            IsLoading = false;
+            IsLoading = true;
+            try
+            {
+                var libraries = await _adminApi.GetAdminLibrariesAsync();
+                AddedLibraries.Clear();
+                foreach (var library in libraries.OrderBy(library => library.SortOrder))
+                    AddedLibraries.Add(library);
+                LibraryChapterThumbnailsSupported = libraries.FirstOrDefault()?.ChapterThumbnailsSupported ?? true;
+                _librariesLoaded = true;
+                await LoadLibraryProviderDefaultsAsync();
+            }
+            catch (Exception ex) { ErrorMessage = $"Failed to load libraries: {ex.Message}"; }
+            finally { IsLoading = false; }
         }
     }
+
+    public async Task LoadLibraryProviderDefaultsAsync()
+    {
+        LibraryProvidersLoading = true;
+        try
+        {
+            var response = await _adminApi.GetLibraryProviderDefaultsAsync(LibraryType);
+            LibraryProviderLevels.Clear();
+            foreach (var pair in response.Levels.OrderBy(pair => ContentLevelOrder(pair.Key)))
+            {
+                var level = new SetupLibraryProviderLevel(pair.Key);
+                foreach (var entry in pair.Value.OrderBy(entry => entry.Priority))
+                {
+                    var item = new SetupLibraryProviderEntry(
+                        pair.Key,
+                        entry.PluginInstallationId,
+                        entry.CapabilityId,
+                        entry.ProviderSlug,
+                        entry.Enabled);
+                    item.PropertyChanged += (_, args) =>
+                    {
+                        if (args.PropertyName == nameof(SetupLibraryProviderEntry.Enabled))
+                            LibraryProviderChainDirty = true;
+                    };
+                    level.Entries.Add(item);
+                }
+                LibraryProviderLevels.Add(level);
+            }
+            LibraryProviderChainDirty = false;
+        }
+        catch (Exception ex)
+        {
+            LibraryProviderLevels.Clear();
+            ErrorMessage = $"Failed to load provider defaults: {ex.Message}";
+        }
+        finally { LibraryProvidersLoading = false; }
+    }
+
+    public void MoveLibraryProvider(SetupLibraryProviderEntry entry, int direction)
+    {
+        var level = LibraryProviderLevels.FirstOrDefault(candidate => candidate.Level == entry.Level);
+        if (level == null) return;
+        var index = level.Entries.IndexOf(entry);
+        var target = index + direction;
+        if (index < 0 || target < 0 || target >= level.Entries.Count) return;
+        level.Entries.Move(index, target);
+        LibraryProviderChainDirty = true;
+    }
+
+    private static int ContentLevelOrder(string level) => level switch
+    {
+        "movie" => 0,
+        "series" => 1,
+        "season" => 2,
+        "episode" => 3,
+        "audiobook" => 4,
+        "ebook" => 5,
+        "manga" => 6,
+        "podcast" => 7,
+        "podcast_episode" => 8,
+        _ => 20,
+    };
+
+    public async Task SaveSubtitleProviderAsync(SetupSubtitleProviderItem item)
+    {
+        item.IsBusy = true;
+        item.StatusMessage = null;
+        try
+        {
+            await _adminApi.UpdateSubtitleProviderAsync(item.ProviderName, new SubtitleProviderUpdateRequest
+            {
+                Enabled = item.Enabled,
+                ApiKey = string.IsNullOrWhiteSpace(item.ApiKey) ? null : item.ApiKey,
+                Username = string.IsNullOrWhiteSpace(item.Username) ? null : item.Username,
+                Password = string.IsNullOrWhiteSpace(item.Password) ? null : item.Password,
+            });
+            item.HasCredential = item.HasCredential || !string.IsNullOrWhiteSpace(item.ApiKey) ||
+                (!string.IsNullOrWhiteSpace(item.Username) && !string.IsNullOrWhiteSpace(item.Password));
+            item.ApiKey = item.Username = item.Password = "";
+            item.StatusMessage = "Saved";
+        }
+        catch (Exception ex) { item.StatusMessage = ex.Message; }
+        finally { item.IsBusy = false; }
+    }
+
+    public async Task TestSubtitleProviderAsync(SetupSubtitleProviderItem item)
+    {
+        item.IsBusy = true;
+        item.StatusMessage = null;
+        try
+        {
+            var result = await _adminApi.TestSubtitleProviderAsync(item.ProviderName);
+            item.StatusMessage = result.Success ? "Connected" : result.Error ?? "Failed";
+        }
+        catch (Exception ex) { item.StatusMessage = ex.Message; }
+        finally { item.IsBusy = false; }
+    }
+
+    private async Task<bool> SubmitDownloadsStepAsync()
+    {
+        return await SaveSettingsAsync(new Dictionary<string, string>
+        {
+            ["download.enabled"] = DownloadsEnabled.ToString().ToLowerInvariant(),
+            ["download.server_bandwidth_mbps"] = DownloadServerBandwidthMbps.Trim(),
+            ["download.user_bandwidth_mbps"] = DownloadUserBandwidthMbps.Trim(),
+            ["download.max_concurrent_per_user"] = DownloadMaxConcurrentPerUser.Trim(),
+        }, () => DownloadsStepDone = true);
+    }
+
+    private async Task<bool> SubmitRecommendationsStepAsync()
+    {
+        var settings = new Dictionary<string, string>
+        {
+            ["recommendations.enabled"] = RecommendationsEnabled.ToString().ToLowerInvariant(),
+            ["recommendations.embedding_base_url"] = RecommendationsBaseUrl.Trim(),
+            ["recommendations.embedding_model"] = RecommendationsModel.Trim(),
+        };
+        if (!string.IsNullOrWhiteSpace(RecommendationsAuthToken))
+            settings["recommendations.embedding_auth_token"] = RecommendationsAuthToken;
+        return await SaveSettingsAsync(settings, () => RecommendationsStepDone = true);
+    }
+
+    private async Task<bool> SaveSettingsAsync(Dictionary<string, string> settings, Action markDone)
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+        try
+        {
+            foreach (var setting in settings)
+                await _adminApi.UpdateAdminSettingAsync(setting.Key, setting.Value);
+            markDone();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to save settings: {ex.Message}";
+            return false;
+        }
+        finally { IsLoading = false; }
+    }
+
+    private static int ProviderOrder(string name) => name switch
+    {
+        "opensubtitles" => 0,
+        "subdl" => 1,
+        "subsource" => 2,
+        _ => 10,
+    };
+
+    private static string GetSetting(Dictionary<string, string> settings, string key, string fallback) =>
+        settings.TryGetValue(key, out var value) ? value : fallback;
+
+    private static bool GetBool(Dictionary<string, string> settings, string key) =>
+        settings.TryGetValue(key, out var value) && bool.TryParse(value, out var parsed) && parsed;
+}
+
+public partial class SetupSubtitleProviderItem : ObservableObject
+{
+    public SetupSubtitleProviderItem(SubtitleProviderConfig config)
+    {
+        ProviderName = config.ProviderName;
+        Enabled = config.Enabled;
+        HasCredential = config.HasCredentials || config.HasApiKey;
+    }
+
+    public string ProviderName { get; }
+    public string DisplayName => ProviderName switch
+    {
+        "opensubtitles" => "OpenSubtitles",
+        "subdl" => "SubDL",
+        "subsource" => "SubSource",
+        _ => ProviderName,
+    };
+    public string Description => ProviderName switch
+    {
+        "opensubtitles" => "Largest subtitle database. Requires a free account.",
+        "subdl" => "Fast, modern subtitle API with generous free tier.",
+        "subsource" => "Community-driven subtitle source.",
+        _ => "Subtitle provider",
+    };
+    public bool IsOpenSubtitles => ProviderName == "opensubtitles";
+    public bool UsesApiKey => !IsOpenSubtitles;
+
+    [ObservableProperty] private bool _enabled;
+    [ObservableProperty] private bool _hasCredential;
+    [ObservableProperty] private string _apiKey = "";
+    [ObservableProperty] private string _username = "";
+    [ObservableProperty] private string _password = "";
+    [ObservableProperty] private bool _isBusy;
+    [ObservableProperty] private string? _statusMessage;
+}
+
+public sealed class SetupLibraryProviderLevel
+{
+    public SetupLibraryProviderLevel(string level)
+    {
+        Level = level;
+        Label = string.Join(" ", level.Split('_').Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
+    }
+
+    public string Level { get; }
+    public string Label { get; }
+    public ObservableCollection<SetupLibraryProviderEntry> Entries { get; } = [];
+}
+
+public partial class SetupLibraryProviderEntry : ObservableObject
+{
+    public SetupLibraryProviderEntry(
+        string level,
+        int pluginInstallationId,
+        string capabilityId,
+        string providerSlug,
+        bool enabled)
+    {
+        Level = level;
+        PluginInstallationId = pluginInstallationId;
+        CapabilityId = capabilityId;
+        ProviderSlug = providerSlug;
+        _enabled = enabled;
+    }
+
+    public string Level { get; }
+    public int PluginInstallationId { get; }
+    public string CapabilityId { get; }
+    public string ProviderSlug { get; }
+    [ObservableProperty] private bool _enabled;
 }

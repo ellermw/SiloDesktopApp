@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Requests;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -14,6 +15,7 @@ public sealed partial class RequestBrowsePage : Page
 {
     private readonly RequestsApi _api = App.Services.GetRequiredService<RequestsApi>();
     private readonly CancellationTokenSource _lifetime = new();
+    private CancellationTokenSource? _loadCts;
     private RequestBrowseNavigation? _navigation;
     private bool _initialized;
     private int _page = 1;
@@ -38,37 +40,62 @@ public sealed partial class RequestBrowsePage : Page
         await LoadAsync();
     }
 
-    protected override void OnNavigatedFrom(NavigationEventArgs e) { _lifetime.Cancel(); base.OnNavigatedFrom(e); }
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        Interlocked.Exchange(ref _loadCts, null)?.Cancel();
+        _lifetime.Cancel();
+        base.OnNavigatedFrom(e);
+    }
 
     private async Task LoadAsync()
     {
         if (_navigation == null) return;
+        var owner = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        var previous = Interlocked.Exchange(ref _loadCts, owner);
+        previous?.Cancel();
+        var requestedPage = _page;
+        var requestedMediaType = _navigation.Kind switch { "studio" => "movie", "network" => "series", _ => SelectedTag(MediaTypeCombo, "movie") };
+        var requestedSort = SelectedTag(SortCombo, "popularity");
         LoadingLayer.Visibility = Visibility.Visible;
         BrowseSkeleton.Visibility = Visibility.Visible;
         LoadingText.Visibility = Visibility.Collapsed;
+        EmptyState.Visibility = Visibility.Collapsed;
         try
         {
-            var mediaType = _navigation.Kind switch { "studio" => "movie", "network" => "series", _ => SelectedTag(MediaTypeCombo, "movie") };
-            var response = await _api.BrowseDiscoverAsync(_navigation.Kind, _navigation.Slug, mediaType, SelectedTag(SortCombo, "popularity"), _page, _lifetime.Token);
+            var response = await _api.BrowseDiscoverAsync(
+                _navigation.Kind,
+                _navigation.Slug,
+                requestedMediaType,
+                requestedSort,
+                requestedPage,
+                owner.Token);
+            owner.Token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(Volatile.Read(ref _loadCts), owner)) return;
             TitleText.Text = response.DisplayName;
             HeaderTileText.Text = response.DisplayName;
             HeaderTileText.Visibility = string.IsNullOrWhiteSpace(response.LogoUrl) ? Visibility.Visible : Visibility.Collapsed;
             HeaderLogo.Source = string.IsNullOrWhiteSpace(response.LogoUrl) ? null : new BitmapImage(new Uri(response.LogoUrl));
             _totalPages = Math.Max(1, response.TotalPages);
-            PageText.Text = response.Results.Count == 0 ? "No results." : $"Page {_page} of {_totalPages}";
-            FooterPageText.Text = $"Page {_page} of {_totalPages}";
-            PreviousButton.IsEnabled = _page > 1; NextButton.IsEnabled = _page < _totalPages;
+            PageText.Text = response.Results.Count == 0 ? "No results." : $"Page {requestedPage} of {_totalPages}";
+            FooterPageText.Text = $"Page {requestedPage} of {_totalPages}";
+            PreviousButton.IsEnabled = requestedPage > 1; NextButton.IsEnabled = requestedPage < _totalPages;
             FooterPanel.Visibility = _totalPages > 1 ? Visibility.Visible : Visibility.Collapsed;
             ResultsGrid.ItemsSource = response.Results;
+            EmptyState.Visibility = response.Results.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             LoadingLayer.Visibility = Visibility.Collapsed;
             if (App.MainWindowInstance is MainWindow window) window.SetDynamicTitle(response.DisplayName);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
         catch (ApiException ex) when (ex.StatusCode == 404)
         {
             Fail($"{(_navigation.Kind == "studio" ? "Studio" : _navigation.Kind == "network" ? "Network" : "Genre")} not found.");
         }
         catch (Exception ex) { Fail(ex.Message); }
+        finally
+        {
+            Interlocked.CompareExchange(ref _loadCts, null, owner);
+            owner.Dispose();
+        }
     }
 
     private async void Filter_Changed(object sender, SelectionChangedEventArgs e) { if (!_initialized) return; _page = 1; await LoadAsync(); }
@@ -85,11 +112,16 @@ public sealed partial class RequestBrowsePage : Page
             await _api.CreateAsync(new CreateMediaRequestInput { MediaType = item.MediaType, TmdbId = item.TmdbId, Title = item.Title, Year = item.Year, Overview = item.Overview, PosterPath = item.PosterPath, BackdropPath = item.BackdropPath }, _lifetime.Token);
             button.Content = "Requested";
         }
-        catch (Exception ex) { button.Content = ex.Message; }
+        catch (Exception ex)
+        {
+            button.Content = item.RequestLabel;
+            button.IsEnabled = item.Request.Requestable;
+            App.Services.GetRequiredService<ToastService>().Error($"Request failed: {ex.Message}");
+        }
     }
 
     private void Back_Click(object sender, RoutedEventArgs e) => App.Services.GetRequiredService<NavigationService>().GoBack();
-    private void Fail(string text) { BrowseSkeleton.Visibility = Visibility.Collapsed; FooterPanel.Visibility = Visibility.Collapsed; LoadingText.Text = text; LoadingText.Visibility = Visibility.Visible; }
+    private void Fail(string text) { EmptyState.Visibility = Visibility.Collapsed; BrowseSkeleton.Visibility = Visibility.Collapsed; FooterPanel.Visibility = Visibility.Collapsed; LoadingText.Text = text; LoadingText.Visibility = Visibility.Visible; }
     private static string SelectedTag(ComboBox box, string fallback) => (box.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? fallback;
 
     private void ResultCard_PointerEntered(object sender, PointerRoutedEventArgs e)

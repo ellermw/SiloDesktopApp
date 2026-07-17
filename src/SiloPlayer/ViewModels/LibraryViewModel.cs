@@ -453,6 +453,29 @@ public partial class LibraryViewModel : ObservableObject
         return _windowItems[relativeIndex];
     }
 
+    /// <summary>
+    /// Mutates every cached representation of an item without resetting the
+    /// virtual list. A browse item can exist in both the active window and a
+    /// previously loaded sparse page, so references are de-duplicated first.
+    /// </summary>
+    public int UpdateCachedItems(string contentId, Func<MediaItem, bool> update)
+    {
+        if (string.IsNullOrWhiteSpace(contentId)) return 0;
+
+        var matches = _windowItems
+            .Concat(_pageResponses.Values.SelectMany(response => response.Items))
+            .Where(item => string.Equals(item.ContentId, contentId, StringComparison.OrdinalIgnoreCase))
+            .Distinct<MediaItem>(ReferenceEqualityComparer.Instance)
+            .ToList();
+
+        var changed = 0;
+        foreach (var item in matches)
+        {
+            if (update(item)) changed++;
+        }
+        return changed;
+    }
+
     public async Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
     {
         if (Library == null || itemCount <= 0)

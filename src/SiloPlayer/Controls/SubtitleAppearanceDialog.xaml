@@ -240,7 +240,7 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
-            <Button Grid.Column="0" Click="Reset_Click"
+            <Button x:Name="ResetButton" Grid.Column="0" Click="Reset_Click"
                     Background="Transparent" BorderThickness="0"
                     Padding="10,6">
                 <StackPanel Orientation="Horizontal" Spacing="6">

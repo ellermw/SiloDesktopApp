@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels.Admin;
 
 namespace SiloPlayer.Views.Admin;
@@ -296,7 +297,7 @@ public sealed partial class AdminNodesPage : Page
                 };
                 jobsBadge.Child = new TextBlock
                 {
-                    Text = $"{node.ActiveJobs} / {node.MaxJobs ?? 0}",
+                    Text = node.MaxJobs is int maxJobs ? $"{node.ActiveJobs} / {maxJobs}" : node.ActiveJobs.ToString(),
                     FontSize = 12,
                     FontWeight = FontWeights.SemiBold,
                     Foreground = (SolidColorBrush)Application.Current.Resources["AccentBrush"]
@@ -307,7 +308,7 @@ public sealed partial class AdminNodesPage : Page
             {
                 jobsEl = new TextBlock
                 {
-                    Text = $"0 / {node.MaxJobs ?? 0}",
+                    Text = node.MaxJobs is int maxJobs ? $"0 / {maxJobs}" : "0",
                     FontSize = 12,
                     Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
                     VerticalAlignment = VerticalAlignment.Center
@@ -322,9 +323,11 @@ public sealed partial class AdminNodesPage : Page
             var streams = new TextBlock { Text = node.ActiveJobs.ToString(), FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
             Grid.SetColumn(streams, col++);
             row.Children.Add(streams);
-            var maxMbps = (node.MaxBandwidthKbps ?? 0) / 1000d;
             var egressMbps = node.EgressKbps / 1000d;
-            var egress = new TextBlock { Text = $"{egressMbps:0.#} / {maxMbps:0.#} Mbps", FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            var egressText = node.MaxBandwidthKbps is int maxBandwidth
+                ? $"{egressMbps:0.#} / {maxBandwidth / 1000d:0.#} Mbps"
+                : $"{egressMbps:0.#} Mbps";
+            var egress = new TextBlock { Text = egressText, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
             Grid.SetColumn(egress, col++);
             row.Children.Add(egress);
         }
@@ -545,7 +548,7 @@ public sealed partial class AdminNodesPage : Page
 
         var groupBox = new TextBox
         {
-            PlaceholderText = nodeType == "proxy" ? "edge" : "default",
+            PlaceholderText = "e.g. rack-1",
             Text = existingNode?.Group ?? "",
             CornerRadius = new CornerRadius(6),
             FontSize = 14
@@ -563,7 +566,7 @@ public sealed partial class AdminNodesPage : Page
 
         var maxBandwidthBox = new NumberBox
         {
-            Value = existingNode?.MaxBandwidthKbps is int maxBandwidth ? maxBandwidth : double.NaN,
+            Value = existingNode?.MaxBandwidthKbps is int maxBandwidth ? maxBandwidth / 1000d : double.NaN,
             PlaceholderText = "Unlimited",
             Minimum = 0,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
@@ -621,9 +624,24 @@ public sealed partial class AdminNodesPage : Page
         AddField("Name", nameBox);
         AddField("Type", typeBadge);
         AddField("URL", urlBox, urlHintBlock);
-        AddField("Group", groupBox);
-        AddField("Max jobs", maxJobsBox);
-        AddField("Max bandwidth (Kbps)", maxBandwidthBox);
+        AddField("Group", groupBox, new TextBlock
+        {
+            Text = "Optional. Nodes in the same group are treated as co-located: transcoded streams are served by a proxy from the transcode node's group, keeping traffic on the same LAN. A group is only used while all of its nodes are healthy.",
+            FontSize = 12, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextWrapping = TextWrapping.Wrap,
+        });
+        AddField(nodeType == "proxy" ? "Max Streams" : "Max Transcodes", maxJobsBox, new TextBlock
+        {
+            Text = "Optional concurrency cap for this node. Leave empty (or 0) for unlimited.",
+            FontSize = 12, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextWrapping = TextWrapping.Wrap,
+        });
+        if (nodeType == "proxy")
+        {
+            AddField("Max Egress Bandwidth (Mbps)", maxBandwidthBox, new TextBlock
+            {
+                Text = "Optional. New streams are routed elsewhere once this node's measured egress (plus the expected bitrate of the new stream) would exceed the cap. Active streams are never interrupted. Leave empty (or 0) for unlimited.",
+                FontSize = 12, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextWrapping = TextWrapping.Wrap,
+            });
+        }
 
         static int? ReadLimit(NumberBox box)
         {
@@ -632,12 +650,18 @@ public sealed partial class AdminNodesPage : Page
             return (int)Math.Round(box.Value);
         }
 
+        static int? ReadBandwidthKbps(NumberBox box)
+        {
+            if (double.IsNaN(box.Value) || box.Value <= 0) return null;
+            return (int)Math.Round(box.Value * 1000d);
+        }
+
         return (form, () => new NodeFormResult(
             nameBox.Text.Trim(),
             urlBox.Text.Trim(),
             groupBox.Text.Trim(),
             ReadLimit(maxJobsBox),
-            ReadLimit(maxBandwidthBox)));
+            nodeType == "proxy" ? ReadBandwidthKbps(maxBandwidthBox) : null));
     }
 
     // ===== Helpers =====
@@ -669,15 +693,6 @@ public sealed partial class AdminNodesPage : Page
 
     private void ShowStatus(string message)
     {
-        StatusBannerText.Text = message;
-        StatusBanner.Visibility = Visibility.Visible;
-
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
-        timer.Tick += (_, _) =>
-        {
-            StatusBanner.Visibility = Visibility.Collapsed;
-            timer.Stop();
-        };
-        timer.Start();
+        App.Services.GetRequiredService<ToastService>().Success(message);
     }
 }

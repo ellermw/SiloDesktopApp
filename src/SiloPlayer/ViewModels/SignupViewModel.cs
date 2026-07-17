@@ -42,6 +42,9 @@ public partial class SignupViewModel : ObservableObject
     private bool _isSignupEnabled;
 
     [ObservableProperty]
+    private bool _isCheckingSignupStatus;
+
+    [ObservableProperty]
     private string _serverUrl = "";
 
     [ObservableProperty]
@@ -50,11 +53,27 @@ public partial class SignupViewModel : ObservableObject
     /// <summary>
     /// Event raised when signup succeeds. The caller should navigate to the profile select page.
     /// </summary>
-    public event Action? SignupSucceeded;
+    public bool ShowSignupForm => !IsCheckingSignupStatus && IsSignupEnabled;
+    public bool ShowSignupClosed => !IsCheckingSignupStatus && !IsSignupEnabled;
+
+    public event Action<bool>? SignupSucceeded;
+
+    partial void OnIsSignupEnabledChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowSignupForm));
+        OnPropertyChanged(nameof(ShowSignupClosed));
+    }
+
+    partial void OnIsCheckingSignupStatusChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowSignupForm));
+        OnPropertyChanged(nameof(ShowSignupClosed));
+    }
 
     [RelayCommand]
     private async Task CheckSignupStatusAsync()
     {
+        IsCheckingSignupStatus = true;
         try
         {
             var status = await _authApi.GetSignupStatusAsync();
@@ -62,7 +81,14 @@ public partial class SignupViewModel : ObservableObject
         }
         catch
         {
-            IsSignupEnabled = false;
+            // The WebUI only renders the closed state after an authoritative
+            // disabled response. A transient status-check failure must not lock
+            // a valid invite out of the signup form.
+            IsSignupEnabled = true;
+        }
+        finally
+        {
+            IsCheckingSignupStatus = false;
         }
     }
 
@@ -84,9 +110,19 @@ public partial class SignupViewModel : ObservableObject
             ErrorMessage = "Password is required.";
             return;
         }
+        if (Password.Length < 8)
+        {
+            ErrorMessage = "Password must be at least 8 characters.";
+            return;
+        }
         if (Password != ConfirmPassword)
         {
             ErrorMessage = "Passwords do not match.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(InviteCode))
+        {
+            ErrorMessage = "Invite code is required.";
             return;
         }
 
@@ -117,7 +153,23 @@ public partial class SignupViewModel : ObservableObject
             if (!_authService.SetCurrentUser(response.User, authGeneration))
                 throw new InvalidOperationException("The authentication session changed before signup completed.");
 
-            SignupSucceeded?.Invoke();
+            var selectedBootstrapProfile = false;
+            try
+            {
+                var profiles = (await _authApi.GetProfilesAsync()).Profiles;
+                if (profiles.Count == 1 && !profiles[0].HasPin)
+                {
+                    _authService.SelectProfile(profiles[0].Id, profile: profiles[0]);
+                    selectedBootstrapProfile = true;
+                }
+            }
+            catch
+            {
+                // Account creation succeeded. Profile discovery is optional and
+                // the profile chooser remains the safe fallback, matching WebUI.
+            }
+
+            SignupSucceeded?.Invoke(selectedBootstrapProfile);
         }
         catch (ApiException ex)
         {

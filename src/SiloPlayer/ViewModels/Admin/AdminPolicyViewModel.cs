@@ -19,7 +19,7 @@ public partial class AdminPolicyViewModel(AdminApi api) : ObservableObject
     [ObservableProperty] private string _comment = "";
     [ObservableProperty] private string _decisionFilter = "";
     [ObservableProperty] private string _decisionUserId = "";
-    [ObservableProperty] private string _decisionAllowed = "Any result";
+    [ObservableProperty] private string _decisionAllowed = "All";
     [ObservableProperty] private string _decisionFrom = "";
     [ObservableProperty] private string _decisionTo = "";
     [ObservableProperty] private string? _decisionNextCursor;
@@ -66,7 +66,7 @@ public partial class AdminPolicyViewModel(AdminApi api) : ObservableObject
     });
     public async Task ResetDecisionFiltersAsync() => await Busy(async () =>
     {
-        DecisionFilter = ""; DecisionUserId = ""; DecisionAllowed = "Any result"; DecisionFrom = ""; DecisionTo = "";
+        DecisionFilter = ""; DecisionUserId = ""; DecisionAllowed = "All"; DecisionFrom = ""; DecisionTo = "";
         _decisionCursor = null; _decisionCursorStack.Clear();
         await LoadDecisionsAsync();
     });

@@ -20,7 +20,7 @@
 
         <!-- Main content. Webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
         <ScrollViewer IsScrollInertiaEnabled="True">
-            <StackPanel
+            <StackPanel x:Name="RecommendationsPageShell"
                 Padding="40,32,40,40"
                 Spacing="24"
                 MaxWidth="1400"
@@ -28,7 +28,7 @@
 
                 <!-- ===== Header ===== -->
                 <StackPanel Spacing="12">
-                    <TextBlock
+                    <TextBlock x:Name="RecommendationsTitle"
                         Text="Recommendations"
                         FontSize="48"
                         FontWeight="Bold"
@@ -43,7 +43,6 @@
                 <!-- ===== Restart-required banner ===== -->
                 <Border
                     x:Name="RestartBanner"
-                    Width="768"
                     MaxWidth="768"
                     HorizontalAlignment="Left"
                     Background="#1AF59E0B"
@@ -80,13 +79,19 @@
                         Foreground="{StaticResource PrimaryTextBrush}" />
 
                     <!-- 4-column job card grid (webui: grid gap-3 lg:grid-cols-4) -->
-                    <Grid ColumnSpacing="12">
+                    <Grid x:Name="JobCardsGrid" ColumnSpacing="12" RowSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
 
                         <!-- Card 1: Embeddings -->
                         <Border
@@ -304,9 +309,8 @@
                      Webui: each card is max-w-3xl (768) and flush-left within page-shell. -->
                 <StackPanel
                     x:Name="SettingsSectionsPanel"
-                    Width="768"
                     MaxWidth="768"
-                    HorizontalAlignment="Left"
+                    HorizontalAlignment="Stretch"
                     Spacing="12" />
 
             </StackPanel>

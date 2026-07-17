@@ -26,7 +26,7 @@
     <ScrollViewer IsScrollInertiaEnabled="True">
         <StackPanel x:Name="AccessGroupsPageShell" Padding="32,24,32,48" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
             <StackPanel
-                Spacing="12"
+                Spacing="24"
                 Visibility="{x:Bind ViewModel.IsListVisible, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                 <Grid x:Name="AccessGroupsHeaderGrid" ColumnSpacing="24" RowSpacing="14">
                     <Grid.ColumnDefinitions>
@@ -70,16 +70,16 @@
                             PlaceholderText="Group name (e.g. Kids, Guests)"
                             Text="{x:Bind ViewModel.NewGroupName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                             KeyDown="NewGroupNameBox_KeyDown" />
-                        <Button Content="Create" Style="{StaticResource AccentButtonStyle}" Command="{x:Bind ViewModel.CreateCommand}" />
+                        <Button Content="Create" Style="{StaticResource AccentButtonStyle}" Command="{x:Bind ViewModel.CreateCommand}"
+                                IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InverseBool}}" />
                         <Button Content="Cancel" Style="{StaticResource SecondaryButtonStyle}" Click="CancelCreate_Click" />
                     </StackPanel>
                 </Border>
 
-                <ProgressRing
-                    Width="32" Height="32"
-                    HorizontalAlignment="Center"
-                    Margin="0,24"
-                    IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                <TextBlock
+                    Text="Loading access groups..."
+                    FontSize="14"
+                    Foreground="{StaticResource SecondaryTextBrush}"
                     Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
 
                 <Border
@@ -168,7 +168,7 @@
             </StackPanel>
 
             <StackPanel
-                Spacing="18"
+                Spacing="20"
                 Visibility="{x:Bind ViewModel.IsEditorVisible, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                 <Button Background="Transparent" BorderThickness="0" HorizontalAlignment="Left" Click="AllGroups_Click" Padding="8,6">
                     <StackPanel Orientation="Horizontal" Spacing="6">
@@ -309,22 +309,20 @@
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <StackPanel Spacing="4">
-                        <Button Content="Delete group" Style="{StaticResource DestructiveButtonStyle}" HorizontalAlignment="Left" IsEnabled="{x:Bind ViewModel.CanDelete, Mode=OneWay}" Click="DeleteGroup_Click" />
+                        <Button Background="Transparent" BorderThickness="0" Foreground="{StaticResource ErrorBrush}"
+                                HorizontalAlignment="Left" IsEnabled="{x:Bind ViewModel.CanDelete, Mode=OneWay}" Click="DeleteGroup_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE74D;" FontSize="14" />
+                                <TextBlock Text="Delete group" />
+                            </StackPanel>
+                        </Button>
                         <TextBlock Text="The default group can't be deleted. Make another group the default first." FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" Visibility="{x:Bind ViewModel.IsDefaultLocked, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
                     </StackPanel>
-                    <Button x:Name="SaveGroupButton" Grid.Column="1" Content="{x:Bind ViewModel.SaveButtonText, Mode=OneWay}" Style="{StaticResource AccentButtonStyle}" Command="{x:Bind ViewModel.SaveCommand}" />
+                    <Button x:Name="SaveGroupButton" Grid.Column="1" Content="{x:Bind ViewModel.SaveButtonText, Mode=OneWay}"
+                            Style="{StaticResource AccentButtonStyle}" Command="{x:Bind ViewModel.SaveCommand}"
+                            IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InverseBool}}" />
                 </Grid>
             </StackPanel>
-
-            <TextBlock
-                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Foreground="{StaticResource ErrorBrush}"
-                TextWrapping="Wrap"
-                Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}" />
-            <TextBlock
-                Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
-                Foreground="{StaticResource SuccessBrush}"
-                Visibility="{x:Bind ViewModel.StatusMessage, Mode=OneWay, Converter={StaticResource NullToVis}}" />
         </StackPanel>
     </ScrollViewer>
 </Page>

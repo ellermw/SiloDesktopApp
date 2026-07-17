@@ -67,6 +67,18 @@ public class AdminRequestsParitySourceTests
         Assert.Contains("x:Name=\"QueueTableScroll\"", PageMarkup, StringComparison.Ordinal);
         Assert.Contains("MinWidth=\"1120\"", PageMarkup, StringComparison.Ordinal);
         Assert.Contains("AdminRequestsPage_SizeChanged", PageSource, StringComparison.Ordinal);
+        Assert.Contains("ApplyResponsiveLayout(ActualWidth)", PageSource, StringComparison.Ordinal);
+        Assert.Contains("ApplyTwoColumnFormLayout(SettingsFieldsGrid, compact)", PageSource, StringComparison.Ordinal);
+        Assert.Contains("ApplyTwoColumnFormLayout(OverrideFieldsGrid, compact)", PageSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TabsUseWebUiNaturalWidthAndMutationsSurfaceFeedback()
+    {
+        Assert.Contains("<ColumnDefinition Width=\"Auto\" /><ColumnDefinition Width=\"Auto\" />", PageMarkup, StringComparison.Ordinal);
+        Assert.Contains("SurfaceViewModelMutationResult", PageSource, StringComparison.Ordinal);
+        Assert.Contains("PrimaryButtonStyle = (Style)Application.Current.Resources[\"DestructiveButtonStyle\"]", PageSource, StringComparison.Ordinal);
+        Assert.Contains("FixIntegrationHeaderButton", PageSource, StringComparison.Ordinal);
     }
 
     [Fact]

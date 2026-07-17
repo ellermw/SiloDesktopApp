@@ -11,6 +11,7 @@ public partial class AdminCollectionsViewModel : ObservableObject
 {
     private readonly AdminApi _adminApi;
     private int _loadVersion;
+    private CancellationTokenSource? _loadCts;
 
     public AdminCollectionsViewModel(AdminApi adminApi)
     {
@@ -18,6 +19,7 @@ public partial class AdminCollectionsViewModel : ObservableObject
     }
 
     public ObservableCollection<LibraryCollection> Collections { get; } = [];
+    public ObservableCollection<LibraryCollection> AllCollections { get; } = [];
     public ObservableCollection<LibraryCollectionGroup> CollectionGroups { get; } = [];
     public ObservableCollection<Library> Libraries { get; } = [];
 
@@ -33,27 +35,40 @@ public partial class AdminCollectionsViewModel : ObservableObject
     private async Task LoadAsync()
     {
         var loadVersion = Interlocked.Increment(ref _loadVersion);
+        var ownerCts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _loadCts, ownerCts);
+        previous?.Cancel();
+        previous?.Dispose();
         IsLoading = true;
         ErrorMessage = null;
         StatusMessage = null;
         try
         {
-            var libraryTask = Libraries.Count == 0 ? _adminApi.GetAdminLibrariesAsync() : null;
-            var collectionsTask = _adminApi.GetCollectionsAsync(SelectedLibraryId);
+            var libraryTask = Libraries.Count == 0 ? _adminApi.GetAdminLibrariesAsync(ownerCts.Token) : null;
+            var allCollectionsTask = _adminApi.GetCollectionsAsync(null, ownerCts.Token);
+            var collectionsTask = SelectedLibraryId.HasValue
+                ? _adminApi.GetCollectionsAsync(SelectedLibraryId, ownerCts.Token)
+                : allCollectionsTask;
             var groupsTask = SelectedLibraryId.HasValue
-                ? _adminApi.GetCollectionGroupsAsync(SelectedLibraryId.Value)
+                ? _adminApi.GetCollectionGroupsAsync(SelectedLibraryId.Value, ownerCts.Token)
                 : null;
-            var requests = new List<Task> { collectionsTask };
+            var requests = new List<Task> { allCollectionsTask };
+            if (!ReferenceEquals(collectionsTask, allCollectionsTask)) requests.Add(collectionsTask);
             if (libraryTask != null) requests.Add(libraryTask);
             if (groupsTask != null) requests.Add(groupsTask);
             await Task.WhenAll(requests);
-            if (loadVersion != _loadVersion) return;
+            ownerCts.Token.ThrowIfCancellationRequested();
+            if (loadVersion != _loadVersion || !ReferenceEquals(_loadCts, ownerCts)) return;
 
             if (libraryTask != null)
             {
                 Libraries.Clear();
                 foreach (var library in await libraryTask) Libraries.Add(library);
             }
+
+            var allResponse = await allCollectionsTask;
+            AllCollections.Clear();
+            foreach (var collection in allResponse.Collections) AllCollections.Add(collection);
 
             var response = await collectionsTask;
             Collections.Clear();
@@ -74,11 +89,27 @@ public partial class AdminCollectionsViewModel : ObservableObject
                     CollectionGroups.Add(group);
             }
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
+        catch (OperationCanceledException) when (ownerCts.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (loadVersion == _loadVersion && ReferenceEquals(_loadCts, ownerCts))
+                ErrorMessage = ex.Message;
+        }
         finally
         {
-            if (loadVersion == _loadVersion) IsLoading = false;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _loadCts, null, ownerCts), ownerCts))
+                IsLoading = false;
+            ownerCts.Dispose();
         }
+    }
+
+    public void CancelLoad()
+    {
+        Interlocked.Increment(ref _loadVersion);
+        var cts = Interlocked.Exchange(ref _loadCts, null);
+        cts?.Cancel();
+        cts?.Dispose();
+        IsLoading = false;
     }
 
     public async Task CreateGroupAsync(string name, string defaultSortMode = "manual")

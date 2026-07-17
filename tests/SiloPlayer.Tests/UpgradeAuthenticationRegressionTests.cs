@@ -98,7 +98,8 @@ public sealed class UpgradeAuthenticationRegressionTests
         Assert.Contains("navigation_errors.txt", mainWindow);
         Assert.Contains("Resources.TryGetValue(\"AccentBrush\"", mainWindow);
         Assert.Contains("TryEnterAuthenticatedPage(typeof(HomePage)", profilePage);
-        Assert.Contains("taste_seed_fallback_to_home", profilePage);
+        Assert.Contains("taste_seed_navigation_failed", profilePage);
+        Assert.Contains("navigation.Frame?.Content is not HomePage", profilePage);
         Assert.Contains("navigation_errors.txt", profilePage);
         Assert.DoesNotContain("ex.StackTrace", profilePage);
     }

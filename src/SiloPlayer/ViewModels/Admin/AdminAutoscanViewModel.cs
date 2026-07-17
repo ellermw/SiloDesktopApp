@@ -10,8 +10,12 @@ namespace SiloPlayer.ViewModels.Admin;
 public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi requestsApi) : ObservableObject
 {
     private CancellationTokenSource? _cts;
+    private bool _activityLoaded;
+    private bool _requestIntegrationsLoaded;
+    private bool _librariesLoaded;
     public ObservableCollection<AutoscanSource> Sources { get; } = [];
     public ObservableCollection<AutoscanConnection> Connections { get; } = [];
+    public ObservableCollection<AutoscanConnectionOption> SourceConnectionOptions { get; } = [];
     public ObservableCollection<AutoscanAvailableSource> AvailableSources { get; } = [];
     public ObservableCollection<AutoscanEvent> Events { get; } = [];
     public ObservableCollection<AutoscanScan> Scans { get; } = [];
@@ -22,6 +26,7 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
 
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private bool _isBusy;
+    [ObservableProperty] private bool _isActivityLoading;
     [ObservableProperty] private bool _enabled;
     [ObservableProperty] private double _defaultPollIntervalSeconds = 300;
     [ObservableProperty] private double _debounceSeconds = 10;
@@ -42,24 +47,43 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
     public string ActivityPageSummary => ActivityTotal == 0
         ? $"No {ActivityView.ToLowerInvariant()} found"
         : $"Showing {ActivityPage * ActivityPageSize + 1:N0}–{Math.Min((ActivityPage + 1) * ActivityPageSize, ActivityTotal):N0} of {ActivityTotal:N0} {ActivityView.ToLowerInvariant()}";
-    public bool HasSources => Sources.Count > 0;
+    public bool HasSources => !IsLoading && Sources.Count > 0;
+    public bool ShowSourcesEmpty => !IsLoading && Sources.Count == 0;
+    public bool HasConnections => !IsLoading && Connections.Count > 0;
+    public bool ShowConnectionsEmpty => !IsLoading && Connections.Count == 0;
     public bool ShowScans => ActivityView == "Scans";
     public bool ShowPolls => !ShowScans;
+    public bool HasActivityRows => ShowScans ? Scans.Count > 0 : Events.Count > 0;
+    public bool ShowActivityEmpty => !IsActivityLoading && !HasActivityRows;
+    public string ActivityEmptyMessage => IsActivityFiltered
+        ? "No autoscan activity matches those filters."
+        : ShowScans ? "No autoscan scans have been created yet." : "No autoscan polls have been recorded yet.";
     public string ActivityHistoryTitle => ShowScans ? "Scan history" : "Poll log";
     public string ActivityHistoryDescription => ShowScans
         ? "Real scan rows created by autoscan, searchable by path, library, source, status, or scan id."
         : "Diagnostic poll records from scan-source plugins.";
     public bool HasActiveScans => ActiveScans.Count > 0;
+    public string EmptyQueueMessage => Status?.ActiveScans > 0
+        ? "Queue counts are active, but live scan details have not arrived yet."
+        : "No autoscan scans are queued or running.";
     public bool HasRunningPolls => RunningPolls.Count > 0;
     public string LatestPollDisplay => Status?.LatestEventAt?.ToLocalTime().ToString("hh:mm tt") ?? "—";
     public bool IsActivityFiltered => !string.IsNullOrWhiteSpace(ActivityQuery) || ActivityStatus != "All statuses";
     public bool HasFeedback => IsLoading || !string.IsNullOrWhiteSpace(ErrorMessage) || !string.IsNullOrWhiteSpace(StatusMessage);
-    partial void OnIsLoadingChanged(bool value) => OnPropertyChanged(nameof(HasFeedback));
+    partial void OnIsLoadingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(HasFeedback));
+        OnPropertyChanged(nameof(HasSources));
+        OnPropertyChanged(nameof(ShowSourcesEmpty));
+        OnPropertyChanged(nameof(HasConnections));
+        OnPropertyChanged(nameof(ShowConnectionsEmpty));
+    }
     partial void OnErrorMessageChanged(string? value) => OnPropertyChanged(nameof(HasFeedback));
     partial void OnStatusMessageChanged(string? value) => OnPropertyChanged(nameof(HasFeedback));
-    partial void OnActivityViewChanged(string value) { ActivityStatus = "All statuses"; ActivityPage = 0; OnPropertyChanged(nameof(ShowScans)); OnPropertyChanged(nameof(ShowPolls)); OnPropertyChanged(nameof(ActivityHistoryTitle)); OnPropertyChanged(nameof(ActivityHistoryDescription)); NotifyActivityPaging(); }
-    partial void OnActivityQueryChanged(string value) => OnPropertyChanged(nameof(IsActivityFiltered));
-    partial void OnActivityStatusChanged(string value) => OnPropertyChanged(nameof(IsActivityFiltered));
+    partial void OnIsActivityLoadingChanged(bool value) => OnPropertyChanged(nameof(ShowActivityEmpty));
+    partial void OnActivityViewChanged(string value) { ActivityStatus = "All statuses"; ActivityPage = 0; OnPropertyChanged(nameof(ShowScans)); OnPropertyChanged(nameof(ShowPolls)); OnPropertyChanged(nameof(HasActivityRows)); OnPropertyChanged(nameof(ShowActivityEmpty)); OnPropertyChanged(nameof(ActivityEmptyMessage)); OnPropertyChanged(nameof(ActivityHistoryTitle)); OnPropertyChanged(nameof(ActivityHistoryDescription)); NotifyActivityPaging(); }
+    partial void OnActivityQueryChanged(string value) { OnPropertyChanged(nameof(IsActivityFiltered)); OnPropertyChanged(nameof(ActivityEmptyMessage)); }
+    partial void OnActivityStatusChanged(string value) { OnPropertyChanged(nameof(IsActivityFiltered)); OnPropertyChanged(nameof(ActivityEmptyMessage)); }
 
     public async Task LoadAsync()
     {
@@ -73,32 +97,21 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
             var sourcesTask = adminApi.GetAutoscanSourcesAsync(owner.Token);
             var connectionsTask = adminApi.GetAutoscanConnectionsAsync(owner.Token);
             var pluginsTask = adminApi.GetAvailableAutoscanSourcesAsync(owner.Token);
-            var statusTask = adminApi.GetAutoscanStatusAsync(owner.Token);
-            var eventsTask = adminApi.GetAutoscanEventsAsync("?limit=50&offset=0", owner.Token);
-            var scansTask = adminApi.GetAutoscanScansAsync("?limit=50&offset=0", owner.Token);
-            var integrationsTask = requestsApi.GetRequestIntegrationsAsync(owner.Token);
-            var librariesTask = adminApi.GetAdminLibrariesAsync(owner.Token);
-            await Task.WhenAll(settingsTask, sourcesTask, connectionsTask, pluginsTask, statusTask, eventsTask, scansTask, integrationsTask, librariesTask);
+            await Task.WhenAll(settingsTask, sourcesTask, connectionsTask, pluginsTask);
             if (!ReferenceEquals(_cts, owner)) return;
             var settings = settingsTask.Result;
             Enabled = settings.Enabled;
             DefaultPollIntervalSeconds = settings.DefaultPollIntervalSeconds;
             DebounceSeconds = settings.DebounceSeconds;
             Replace(Connections, connectionsTask.Result);
+            RebuildSourceConnectionOptions();
+            OnPropertyChanged(nameof(HasConnections));
+            OnPropertyChanged(nameof(ShowConnectionsEmpty));
             Replace(AvailableSources, pluginsTask.Result);
-            Replace(Libraries, librariesTask.Result.Where(library => library.Enabled));
             DecorateSources(sourcesTask.Result);
             Replace(Sources, sourcesTask.Result);
             OnPropertyChanged(nameof(HasSources));
-            Status = statusTask.Result;
-            OnPropertyChanged(nameof(LatestPollDisplay));
-            Replace(RunningPolls, Status.RunningPolls); OnPropertyChanged(nameof(HasRunningPolls));
-            DecorateEvents(eventsTask.Result.Events);
-            Replace(Events, eventsTask.Result.Events); EventTotal = eventsTask.Result.Total;
-            DecorateScans(scansTask.Result.Scans);
-            Replace(Scans, scansTask.Result.Scans); ScanTotal = scansTask.Result.Total; UpdateActiveScans();
-            Replace(RequestIntegrations, integrationsTask.Result.Integrations.Where(IsArrIntegration));
-            NotifyActivityPaging();
+            OnPropertyChanged(nameof(ShowSourcesEmpty));
         }
         catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
         catch (Exception ex) { if (ReferenceEquals(_cts, owner)) ErrorMessage = ex.Message; }
@@ -107,6 +120,56 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
             if (ReferenceEquals(Interlocked.CompareExchange(ref _cts, null, owner), owner)) IsLoading = false;
             owner.Dispose();
         }
+    }
+
+    public async Task EnsureActivityLoadedAsync()
+    {
+        if (_activityLoaded) return;
+        IsActivityLoading = true;
+        try
+        {
+            await RunBusyAsync(async () =>
+            {
+                var statusTask = adminApi.GetAutoscanStatusAsync();
+                var eventsTask = adminApi.GetAutoscanEventsAsync("?limit=25&offset=0");
+                var scansTask = adminApi.GetAutoscanScansAsync("?limit=25&offset=0");
+                var librariesTask = EnsureLibrariesLoadedAsync();
+                await Task.WhenAll(statusTask, eventsTask, scansTask, librariesTask);
+                Status = statusTask.Result;
+                OnPropertyChanged(nameof(LatestPollDisplay));
+                OnPropertyChanged(nameof(EmptyQueueMessage));
+                Replace(RunningPolls, Status.RunningPolls);
+                OnPropertyChanged(nameof(HasRunningPolls));
+                DecorateEvents(eventsTask.Result.Events);
+                Replace(Events, eventsTask.Result.Events);
+                EventTotal = eventsTask.Result.Total;
+                DecorateScans(scansTask.Result.Scans);
+                Replace(Scans, scansTask.Result.Scans);
+                ScanTotal = scansTask.Result.Total;
+                OnPropertyChanged(nameof(HasActivityRows));
+                OnPropertyChanged(nameof(ShowActivityEmpty));
+                OnPropertyChanged(nameof(ActivityEmptyMessage));
+                NotifyActivityPaging();
+                _activityLoaded = true;
+            }, clearStatus: false);
+        }
+        finally { IsActivityLoading = false; }
+    }
+
+    public async Task EnsureRequestIntegrationsLoadedAsync()
+    {
+        if (_requestIntegrationsLoaded) return;
+        var response = await requestsApi.GetRequestIntegrationsAsync();
+        Replace(RequestIntegrations, response.Integrations.Where(IsArrIntegration));
+        _requestIntegrationsLoaded = true;
+    }
+
+    public async Task EnsureLibrariesLoadedAsync()
+    {
+        if (_librariesLoaded) return;
+        var libraries = await adminApi.GetAdminLibrariesAsync();
+        Replace(Libraries, libraries.Where(library => library.Enabled));
+        _librariesLoaded = true;
     }
 
     public async Task SaveSettingsAsync(bool? enabled = null)
@@ -135,6 +198,9 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
             if (existing is null) await adminApi.CreateAutoscanConnectionAsync(input);
             else await adminApi.UpdateAutoscanConnectionAsync(existing.Id, input);
             Replace(Connections, await adminApi.GetAutoscanConnectionsAsync());
+            RebuildSourceConnectionOptions();
+            OnPropertyChanged(nameof(HasConnections));
+            OnPropertyChanged(nameof(ShowConnectionsEmpty));
             DecorateSources(Sources);
             StatusMessage = existing is null ? "Connection created." : "Connection saved.";
         });
@@ -147,15 +213,24 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
     }
 
     public async Task DeleteConnectionAsync(AutoscanConnection connection)
-        => await RunBusyAsync(async () => { await adminApi.DeleteAutoscanConnectionAsync(connection.Id); Connections.Remove(connection); StatusMessage = "Connection deleted."; });
+        => await RunBusyAsync(async () =>
+        {
+            await adminApi.DeleteAutoscanConnectionAsync(connection.Id);
+            Connections.Remove(connection);
+            RebuildSourceConnectionOptions();
+            OnPropertyChanged(nameof(HasConnections));
+            OnPropertyChanged(nameof(ShowConnectionsEmpty));
+            StatusMessage = "Connection deleted.";
+        });
 
     public async Task AddSourceAsync(AutoscanAvailableSource plugin, AutoscanConnection? connection, int? interval)
         => await RunBusyAsync(async () =>
         {
+            var isWebhook = plugin.PluginId.Equals("silo.autoscan.arr-webhook", StringComparison.OrdinalIgnoreCase);
             var config = plugin.PluginId == "silo.autoscan.cephfs" || plugin.CapabilityId == "cephfs"
                 ? new Dictionary<string, string> { ["exclusions"] = "*.partial\n*.tmp\n@eaDir\n#recycle\n.downloads\n.recyclebin\nvolumes" }
-                : [];
-            await adminApi.CreateAutoscanSourceAsync(new AutoscanSourceCreateInput { PluginId = plugin.PluginId, CapabilityId = plugin.CapabilityId, ConnectionId = connection?.Id, Enabled = true, PollIntervalSeconds = interval, PathRewrites = [], SourceConfig = config });
+                : isWebhook ? new Dictionary<string, string> { ["webhook_provider"] = "auto" } : [];
+            await adminApi.CreateAutoscanSourceAsync(new AutoscanSourceCreateInput { PluginId = plugin.PluginId, CapabilityId = plugin.CapabilityId, ConnectionId = isWebhook ? null : connection?.Id, Enabled = true, DeliveryMode = isWebhook ? "webhook" : "poll", PollIntervalSeconds = isWebhook ? null : interval, PathRewrites = [], SourceConfig = config });
             var sources = await adminApi.GetAutoscanSourcesAsync(); DecorateSources(sources); Replace(Sources, sources); StatusMessage = "Scan source added.";
             OnPropertyChanged(nameof(HasSources));
         });
@@ -163,9 +238,26 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
     public async Task SaveSourceAsync(AutoscanSource source)
         => await RunBusyAsync(async () =>
         {
-            await adminApi.UpdateAutoscanSourceAsync(source.Id, new AutoscanSourceInput { ConnectionId = source.ConnectionId, Enabled = source.Enabled, DeliveryMode = source.DeliveryMode, PollIntervalSeconds = source.PollIntervalSeconds, PathRewrites = source.PathRewrites, SourceConfig = source.SourceConfig, Label = source.Label });
-            var sources = await adminApi.GetAutoscanSourcesAsync(); DecorateSources(sources); Replace(Sources, sources); StatusMessage = "Scan source saved.";
-            OnPropertyChanged(nameof(HasSources));
+            var saved = await adminApi.UpdateAutoscanSourceAsync(source.Id, new AutoscanSourceInput { ConnectionId = source.ConnectionId, Enabled = source.Enabled, DeliveryMode = source.DeliveryMode, PollIntervalSeconds = source.PollIntervalSeconds, PathRewrites = source.PathRewrites, SourceConfig = source.SourceConfig, Label = source.Label });
+            source.ConnectionId = saved.ConnectionId;
+            source.Enabled = saved.Enabled;
+            source.DeliveryMode = saved.DeliveryMode;
+            source.PollIntervalSeconds = saved.PollIntervalSeconds;
+            source.PathRewrites = saved.PathRewrites;
+            source.SourceConfig = saved.SourceConfig;
+            source.Label = saved.Label;
+            source.LastRunAt = saved.LastRunAt;
+            source.LastError = saved.LastError;
+            source.WebhookConfigured = saved.WebhookConfigured;
+            source.WebhookUrl = saved.WebhookUrl;
+            source.WebhookSecretSuffix = saved.WebhookSecretSuffix;
+            source.WebhookLastReceivedAt = saved.WebhookLastReceivedAt;
+            source.WebhookLastErrorAt = saved.WebhookLastErrorAt;
+            source.WebhookLastErrorMessage = saved.WebhookLastErrorMessage;
+            DecorateSources([source]);
+            var sourceIndex = Sources.IndexOf(source);
+            if (sourceIndex >= 0) Sources[sourceIndex] = source;
+            StatusMessage = "Scan source saved.";
         });
 
     public async Task DeleteSourceAsync(AutoscanSource source)
@@ -186,10 +278,36 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
         {
             Status = await adminApi.GetAutoscanStatusAsync(); OnPropertyChanged(nameof(LatestPollDisplay)); Replace(RunningPolls, Status.RunningPolls); OnPropertyChanged(nameof(HasRunningPolls));
             var query = BuildActivityQuery();
-            if (ActivityView == "Scans") { var scans = await adminApi.GetAutoscanScansAsync(query); DecorateScans(scans.Scans); Replace(Scans, scans.Scans); ScanTotal = scans.Total; UpdateActiveScans(); }
+            if (ActivityView == "Scans") { var scans = await adminApi.GetAutoscanScansAsync(query); DecorateScans(scans.Scans); Replace(Scans, scans.Scans); ScanTotal = scans.Total; }
             else { var events = await adminApi.GetAutoscanEventsAsync(query); DecorateEvents(events.Events); Replace(Events, events.Events); EventTotal = events.Total; }
+            OnPropertyChanged(nameof(EmptyQueueMessage));
+            OnPropertyChanged(nameof(HasActivityRows));
+            OnPropertyChanged(nameof(ShowActivityEmpty));
+            OnPropertyChanged(nameof(ActivityEmptyMessage));
             NotifyActivityPaging();
         }, clearStatus: false);
+
+    public void ApplyActiveScanSnapshot(IEnumerable<AdminScanRun> scans)
+    {
+        var mapped = scans
+            .Where(scan => scan.Trigger.Equals("autoscan", StringComparison.OrdinalIgnoreCase)
+                && scan.Status is "accepted" or "queued" or "running")
+            .Select(MapActiveScan)
+            .OrderBy(scan => scan.Status == "running" ? 0 : 1)
+            .ThenBy(scan => scan.StartedAt ?? DateTimeOffset.MaxValue)
+            .ToList();
+        DecorateScans(mapped);
+        Replace(ActiveScans, mapped);
+        OnPropertyChanged(nameof(HasActiveScans));
+        OnPropertyChanged(nameof(EmptyQueueMessage));
+    }
+
+    public async Task CancelActiveScansAsync(int libraryId)
+        => await RunBusyAsync(async () =>
+        {
+            await adminApi.CancelLibraryScansAsync(libraryId);
+            StatusMessage = "Scan cancellation requested.";
+        });
 
     public async Task ChangeActivityPageAsync(int delta)
     {
@@ -249,6 +367,11 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> values)
     { target.Clear(); foreach (var value in values) target.Add(value); }
+    private void RebuildSourceConnectionOptions()
+    {
+        Replace(SourceConnectionOptions, new[] { new AutoscanConnectionOption { Id = null, Name = "— No connection —" } }
+            .Concat(Connections.Select(connection => new AutoscanConnectionOption { Id = connection.Id, Name = connection.Name })));
+    }
     private void DecorateSources(IEnumerable<AutoscanSource> sources)
     {
         var pluginNames = AvailableSources.ToDictionary(p => $"{p.PluginId}:{p.CapabilityId}", p => p.DisplayName, StringComparer.OrdinalIgnoreCase);
@@ -292,10 +415,26 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
         OnPropertyChanged(nameof(ActivityTotal));
         OnPropertyChanged(nameof(ActivityPageSummary));
     }
-    private void UpdateActiveScans()
+    private static AutoscanScan MapActiveScan(AdminScanRun scan)
     {
-        Replace(ActiveScans, Scans.Where(scan => scan.Status is "accepted" or "running"));
-        OnPropertyChanged(nameof(HasActiveScans));
+        static DateTimeOffset? Parse(string? value) => DateTimeOffset.TryParse(value, out var parsed) ? parsed : null;
+        var progress = scan.Result?.Message;
+        if (string.IsNullOrWhiteSpace(progress) && scan.Result is { TotalFiles: > 0 } result)
+            progress = $"{result.FilesProcessed:N0} of {result.TotalFiles:N0} files";
+        if (string.IsNullOrWhiteSpace(progress)) progress = string.IsNullOrWhiteSpace(scan.Trigger) ? "Autoscan" : scan.Trigger;
+        return new AutoscanScan
+        {
+            Id = scan.Id,
+            LibraryId = scan.LibraryId,
+            Mode = scan.Mode,
+            Path = scan.Path,
+            Trigger = scan.Trigger,
+            Status = scan.Status == "queued" ? "accepted" : scan.Status,
+            ErrorMessage = scan.ErrorMessage,
+            StartedAt = Parse(scan.StartedAt),
+            CompletedAt = Parse(scan.CompletedAt),
+            ProgressDisplay = progress,
+        };
     }
     public void Cancel() => Interlocked.Exchange(ref _cts, null)?.Cancel();
 }

@@ -151,7 +151,7 @@
                                 FontWeight="Bold"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
 
-                            <Border Background="{StaticResource SurfaceRaisedBrush}"
+                            <Border x:Name="AgeBadge" Background="{StaticResource SurfaceRaisedBrush}"
                                     CornerRadius="12" Padding="10,4,10,4" VerticalAlignment="Center">
                                 <TextBlock x:Name="AgeText" FontSize="13" FontWeight="Medium"
                                            Foreground="{StaticResource PrimaryTextBrush}" />

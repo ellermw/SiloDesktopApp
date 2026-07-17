@@ -10,12 +10,14 @@ using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Api;
 using SiloPlayer.ViewModels.Admin;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views.Admin;
 
 public sealed partial class AdminSectionsPage : Page
 {
     public AdminSectionsViewModel ViewModel { get; }
+    private readonly ToastService _toastService;
 
     private bool _suppressPickerChange;
     private string _currentScope = "home";
@@ -52,12 +54,15 @@ public sealed partial class AdminSectionsPage : Page
     public AdminSectionsPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminSectionsViewModel>();
+        _toastService = App.Services.GetRequiredService<ToastService>();
         this.InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Enabled;
+        SizeChanged += (_, args) => ApplyResponsiveLayout(args.NewSize.Width);
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout(ActualWidth);
         if (_loaded) return;
         _loaded = true;
         try
@@ -84,6 +89,25 @@ public sealed partial class AdminSectionsPage : Page
         {
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
+    }
+
+    private void ApplyResponsiveLayout(double width)
+    {
+        if (width <= 0) return;
+        var compact = width < 860;
+        var narrow = width < 600;
+        var gutter = narrow ? 16 : compact ? 24 : 40;
+        SectionsPageShell.Padding = new Thickness(gutter, compact ? 24 : 32, gutter, 40);
+        SectionsTitle.FontSize = narrow ? 34 : compact ? 40 : 48;
+
+        Grid.SetRow(SectionsHeaderActions, compact ? 1 : 0);
+        Grid.SetColumn(SectionsHeaderActions, compact ? 0 : 1);
+        Grid.SetColumnSpan(SectionsHeaderActions, compact ? 2 : 1);
+        SectionsHeaderActions.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        LibraryPickerPanel.Orientation = narrow ? Orientation.Vertical : Orientation.Horizontal;
+        LibraryPickerPanel.HorizontalAlignment = HorizontalAlignment.Left;
+        if (SectionEditorOverlay.ColumnDefinitions.Count > 1)
+            SectionEditorOverlay.ColumnDefinitions[1].Width = new GridLength(Math.Min(512, Math.Max(320, width - 32)));
     }
 
     private void Page_Unloaded(object sender, RoutedEventArgs e)
@@ -1474,11 +1498,14 @@ public sealed partial class AdminSectionsPage : Page
                     title, selected.Definition.Type, limit, isFeatured, isEnabled, config);
                 await ViewModel.CreateSectionCommand.ExecuteAsync(body);
             }
-            ShowStatus(ViewModel.ErrorMessage ?? ViewModel.StatusMessage ?? "Section added.");
+            if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+                ShowStatus(ViewModel.ErrorMessage, isError: true);
+            else
+                ShowStatus(ViewModel.StatusMessage ?? "Section added.");
         }
         catch (Exception ex)
         {
-            ShowStatus(ex.Message);
+            ShowStatus(ex.Message, isError: true);
         }
     }
 
@@ -1702,7 +1729,10 @@ public sealed partial class AdminSectionsPage : Page
             try
             {
                 await ViewModel.RestoreDefaultsCommand.ExecuteAsync(resetProfiles);
-                ShowStatus(ViewModel.StatusMessage ?? "Sections restored to defaults.");
+                if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+                    ShowStatus(ViewModel.ErrorMessage, isError: true);
+                else
+                    ShowStatus(ViewModel.StatusMessage ?? "Sections restored to defaults.");
             }
             catch { }
         }
@@ -1829,7 +1859,10 @@ public sealed partial class AdminSectionsPage : Page
             try
             {
                 await ViewModel.DeleteSectionCommand.ExecuteAsync(section.Id);
-                ShowStatus(ViewModel.StatusMessage ?? "Section deleted.");
+                if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+                    ShowStatus(ViewModel.ErrorMessage, isError: true);
+                else
+                    ShowStatus(ViewModel.StatusMessage ?? "Section deleted.");
             }
             catch { }
         }
@@ -3325,17 +3358,9 @@ public sealed partial class AdminSectionsPage : Page
         return btn;
     }
 
-    private void ShowStatus(string message)
+    private void ShowStatus(string message, bool isError = false)
     {
-        StatusBannerText.Text = message;
-        StatusBanner.Visibility = Visibility.Visible;
-
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
-        timer.Tick += (_, _) =>
-        {
-            StatusBanner.Visibility = Visibility.Collapsed;
-            timer.Stop();
-        };
-        timer.Start();
+        if (isError) _toastService.Error(message);
+        else _toastService.Success(message);
     }
 }

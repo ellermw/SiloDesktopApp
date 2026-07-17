@@ -10,6 +10,7 @@ public partial class AdminActivityViewModel : ObservableObject
 {
     private readonly AdminApi _adminApi;
     private List<AdminSession> _allSessions = [];
+    public bool HasLoaded { get; private set; }
 
     public AdminActivityViewModel(AdminApi adminApi) { _adminApi = adminApi; }
 
@@ -116,6 +117,7 @@ public partial class AdminActivityViewModel : ObservableObject
             RemuxCount = _allSessions.Count(s => s.PlayMethod == "remux");
             TranscodeCount = _allSessions.Count(s => s.PlayMethod == "transcode");
             ApplyFilters();
+            HasLoaded = true;
         }
         catch (Exception ex) { if (!silent) ErrorMessage = ex.Message; }
         finally { if (!silent) IsLoading = false; }

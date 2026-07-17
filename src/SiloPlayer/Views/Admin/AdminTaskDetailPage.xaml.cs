@@ -87,18 +87,21 @@ public sealed partial class AdminTaskDetailPage : Page
     {
         if (channel != "tasks" || (DateTime.UtcNow - _lastEventRefresh).TotalMilliseconds < 500) return;
         _lastEventRefresh = DateTime.UtcNow;
-        DispatcherQueue.TryEnqueue(async () => await LoadAsync());
+        DispatcherQueue.TryEnqueue(async () => await LoadAsync(silent: true));
     }
 
     // ===== Load =====
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(bool silent = false)
     {
         if (string.IsNullOrWhiteSpace(_taskKey)) return;
 
         try
         {
-            await ViewModel.LoadCommand.ExecuteAsync(_taskKey);
+            if (silent)
+                await ViewModel.RefreshSilentAsync(_taskKey);
+            else
+                await ViewModel.LoadCommand.ExecuteAsync(_taskKey);
             RebuildPage();
         }
         catch { }
@@ -115,7 +118,7 @@ public sealed partial class AdminTaskDetailPage : Page
                 _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
                 _refreshTimer.Tick += async (_, _) =>
                 {
-                    await ViewModel.LoadCommand.ExecuteAsync(_taskKey);
+                    await ViewModel.RefreshSilentAsync(_taskKey);
                     RebuildPage();
                     if (!ViewModel.IsRunning) StopRefreshTimer();
                 };
@@ -162,7 +165,8 @@ public sealed partial class AdminTaskDetailPage : Page
         {
             Text       = task.Name,
             FontSize   = ActualWidth < 640 ? 32 : 48,
-            FontWeight = FontWeights.Bold,
+            FontWeight = FontWeights.ExtraBold,
+            CharacterSpacing = -50,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center
         });
@@ -266,11 +270,11 @@ public sealed partial class AdminTaskDetailPage : Page
         for (int i = 0; i < (int)Math.Ceiling(5d / metricColumns); i++)
             topGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        topGrid.Children.Add(BuildMetricCard("QUEUE", metrics.Total.ToString("N0"), 0, metricColumns));
-        topGrid.Children.Add(BuildMetricCard("DUE NOW", metrics.Due.ToString("N0"), 1, metricColumns));
-        topGrid.Children.Add(BuildMetricCard("LEASED", metrics.Leased.ToString("N0"), 2, metricColumns));
-        topGrid.Children.Add(BuildMetricCard("OLDEST DUE", FormatOptionalDateTime(metrics.OldestDueAt), 3, metricColumns, small: true));
-        topGrid.Children.Add(BuildMetricCard("OLDEST LEASE", FormatOptionalDateTime(metrics.OldestLeaseExpiresAt), 4, metricColumns, small: true));
+        topGrid.Children.Add(BuildMetricCard("REFRESH BACKLOG", metrics.Total.ToString("N0"), 0, metricColumns));
+        topGrid.Children.Add(BuildMetricCard("DUE FOR REFRESH", metrics.Due.ToString("N0"), 1, metricColumns));
+        topGrid.Children.Add(BuildMetricCard("PROCESSING", metrics.Leased.ToString("N0"), 2, metricColumns));
+        topGrid.Children.Add(BuildMetricCard("WAITING SINCE", FormatOptionalDateTime(metrics.OldestDueAt), 3, metricColumns, small: true));
+        topGrid.Children.Add(BuildMetricCard("NEXT CLAIM TIMEOUT", FormatOptionalDateTime(metrics.OldestLeaseExpiresAt), 4, metricColumns, small: true));
         MetricsCardsPanel.Children.Add(topGrid);
 
         // Reason breakdown badges
@@ -342,57 +346,140 @@ public sealed partial class AdminTaskDetailPage : Page
             Padding = new Thickness(16),
         };
         reasonCard.Child = reasonPanel;
-        MetricsCardsPanel.Children.Add(reasonCard);
-
-        // Recent errors
-        if (metrics.RecentErrors.Count > 0)
+        var errPanel = new StackPanel { Spacing = 12 };
+        errPanel.Children.Add(new TextBlock { Text = "Recent errors", FontSize = 13, FontWeight = FontWeights.Medium,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+        if (metrics.RecentErrors.Count == 0)
         {
-            var errPanel = new StackPanel { Spacing = 8 };
-            errPanel.Children.Add(new TextBlock { Text = "Recent errors", FontSize = 13, FontWeight = FontWeights.Medium,
-                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
-            foreach (var err in metrics.RecentErrors)
+            errPanel.Children.Add(new TextBlock
             {
-                var errCard = new Border
-                {
-                    Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
-                    CornerRadius = new CornerRadius(12),
-                    Padding = new Thickness(12),
-                    Margin = new Thickness(0, 0, 0, 4),
-                };
-                var errInner = new StackPanel { Spacing = 4 };
-                errInner.Children.Add(new TextBlock
-                {
-                    Text = string.IsNullOrEmpty(err.Title) ? err.ContentId : err.Title,
-                    FontSize = 13, FontWeight = FontWeights.Medium,
-                    Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                });
-                errInner.Children.Add(new TextBlock
-                {
-                    Text = $"{(string.IsNullOrEmpty(err.Type) ? "item" : err.Type)} \u00b7 attempts {err.AttemptCount}",
-                    FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
-                });
-                if (!string.IsNullOrEmpty(err.LastError))
-                {
-                    errInner.Children.Add(new TextBlock
-                    {
-                        Text = err.LastError, FontSize = 11, MaxLines = 2,
-                        Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                    });
-                }
-                errCard.Child = errInner;
-                errPanel.Children.Add(errCard);
-            }
-            var errOuter = new Border
-            {
-                Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
-                CornerRadius = new CornerRadius(16),
-                Padding = new Thickness(16),
-            };
-            errOuter.Child = errPanel;
-            MetricsCardsPanel.Children.Add(errOuter);
+                Text = "No recent queue errors.",
+                FontSize = 13,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            });
         }
+        foreach (var err in metrics.RecentErrors)
+        {
+            var errCard = new Border
+            {
+                Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"],
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(12),
+            };
+            var errInner = new StackPanel { Spacing = 4 };
+            errInner.Children.Add(new TextBlock
+            {
+                Text = string.IsNullOrEmpty(err.Title) ? err.ContentId : err.Title,
+                FontSize = 13, FontWeight = FontWeights.Medium,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+            errInner.Children.Add(new TextBlock
+            {
+                Text = $"{(string.IsNullOrEmpty(err.Type) ? "item" : err.Type)} \u00b7 attempts {err.AttemptCount}",
+                FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            });
+            errInner.Children.Add(new TextBlock
+            {
+                Text = FormatOptionalDateTime(err.LastAttemptAt), FontSize = 11,
+                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+            });
+            if (!string.IsNullOrEmpty(err.LastError))
+                errInner.Children.Add(new TextBlock { Text = err.LastError, FontSize = 11, MaxLines = 2,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextTrimming = TextTrimming.CharacterEllipsis });
+            errCard.Child = errInner;
+            errPanel.Children.Add(errCard);
+        }
+        var errOuter = new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
+            CornerRadius = new CornerRadius(16), Padding = new Thickness(16), Child = errPanel,
+        };
+
+        var middle = new Grid { ColumnSpacing = 16, RowSpacing = 16 };
+        if (ActualWidth >= 1280)
+        {
+            middle.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
+            middle.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.8, GridUnitType.Star) });
+            Grid.SetColumn(errOuter, 1);
+        }
+        else
+        {
+            middle.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            middle.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetRow(errOuter, 1);
+        }
+        middle.Children.Add(reasonCard);
+        middle.Children.Add(errOuter);
+        MetricsCardsPanel.Children.Add(middle);
+        MetricsCardsPanel.Children.Add(BuildDueSamplesCard(metrics.DueSamples));
+    }
+
+    private static FrameworkElement BuildDueSamplesCard(IReadOnlyList<MetadataRefreshDebtSample> samples)
+    {
+        var panel = new StackPanel();
+        panel.Children.Add(new Border
+        {
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Padding = new Thickness(16, 12, 16, 12),
+            Child = new TextBlock { Text = "Due samples", FontSize = 13, FontWeight = FontWeights.Medium,
+                Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] },
+        });
+
+        var header = new Grid { Padding = new Thickness(16, 8, 16, 8), ColumnSpacing = 12,
+            Background = (SolidColorBrush)Application.Current.Resources["SurfaceBrush"] };
+        AddDueSampleColumns(header);
+        var headings = new[] { "Item", "Next refresh", "Attempts", "Last attempt" };
+        for (var i = 0; i < headings.Length; i++)
+        {
+            var text = new TextBlock { Text = headings[i], FontSize = 12, FontWeight = FontWeights.Medium,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] };
+            Grid.SetColumn(text, i); header.Children.Add(text);
+        }
+        panel.Children.Add(header);
+
+        if (samples.Count == 0)
+        {
+            panel.Children.Add(new TextBlock { Text = "No due items right now.", FontSize = 13,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                HorizontalAlignment = HorizontalAlignment.Center, Padding = new Thickness(16) });
+        }
+        foreach (var sample in samples)
+        {
+            var row = new Grid { Padding = new Thickness(16, 8, 16, 8), ColumnSpacing = 12,
+                BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(0, 0, 0, 1) };
+            AddDueSampleColumns(row);
+            var item = new StackPanel();
+            item.Children.Add(new TextBlock { Text = string.IsNullOrEmpty(sample.Title) ? sample.ContentId : sample.Title,
+                FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+            item.Children.Add(new TextBlock { Text = string.IsNullOrEmpty(sample.Type) ? "item" : sample.Type,
+                FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"] });
+            Grid.SetColumn(item, 0); row.Children.Add(item);
+            var values = new[] { FormatOptionalDateTime(sample.NextRefreshAt), sample.AttemptCount.ToString(), FormatOptionalDateTime(sample.LastAttemptAt) };
+            for (var i = 0; i < values.Length; i++)
+            {
+                var text = new TextBlock { Text = values[i], FontSize = 13,
+                    Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"], VerticalAlignment = VerticalAlignment.Center };
+                Grid.SetColumn(text, i + 1); row.Children.Add(text);
+            }
+            panel.Children.Add(row);
+        }
+
+        return new Border
+        {
+            Background = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
+            CornerRadius = new CornerRadius(16), Child = panel,
+        };
+    }
+
+    private static void AddDueSampleColumns(Grid grid)
+    {
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.6, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
     }
 
     private static FrameworkElement BuildMetricCard(string label, string value, int index, int columnCount, bool small = false)

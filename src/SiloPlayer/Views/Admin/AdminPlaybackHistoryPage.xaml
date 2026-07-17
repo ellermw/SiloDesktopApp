@@ -37,14 +37,15 @@
             IsScrollInertiaEnabled="True">
 
             <!-- webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
-            <StackPanel Padding="40,32,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
+            <StackPanel x:Name="HistoryPageShell" Padding="40,32,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
 
                 <!-- ===== Header ===== -->
-                <Grid>
+                <Grid x:Name="HistoryHeaderGrid" RowSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
 
                     <StackPanel Grid.Column="0" Spacing="12" VerticalAlignment="Center">
                         <TextBlock
@@ -60,7 +61,7 @@
                     </StackPanel>
 
                     <!-- Filter controls in header row -->
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <StackPanel x:Name="HistoryHeaderActions" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                                 Background="{StaticResource SurfaceBrush}" CornerRadius="6"
@@ -128,7 +129,7 @@
                 </Grid>
 
                 <!-- ===== Stat Cards ===== -->
-                <Grid ColumnSpacing="12">
+                <Grid x:Name="HistoryStatsGrid" ColumnSpacing="12" RowSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
@@ -136,7 +137,7 @@
                     </Grid.ColumnDefinitions>
 
                     <!-- Visible Rows -->
-                    <Border Grid.Column="0" Style="{StaticResource InfoCardStyle}">
+                    <Border x:Name="VisibleRowsCard" Grid.Column="0" Style="{StaticResource InfoCardStyle}">
                         <StackPanel Spacing="4">
                             <TextBlock
                                 Text="Visible Rows"
@@ -154,7 +155,7 @@
                     </Border>
 
                     <!-- Completed -->
-                    <Border Grid.Column="1" Style="{StaticResource InfoCardStyle}">
+                    <Border x:Name="CompletedCard" Grid.Column="1" Style="{StaticResource InfoCardStyle}">
                         <StackPanel Spacing="4">
                             <TextBlock
                                 Text="Completed"
@@ -172,7 +173,7 @@
                     </Border>
 
                     <!-- Partial -->
-                    <Border Grid.Column="2" Style="{StaticResource InfoCardStyle}">
+                    <Border x:Name="PartialCard" Grid.Column="2" Style="{StaticResource InfoCardStyle}">
                         <StackPanel Spacing="4">
                             <TextBlock
                                 Text="Partial"

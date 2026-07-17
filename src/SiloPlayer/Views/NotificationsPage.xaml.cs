@@ -29,6 +29,7 @@ public sealed partial class NotificationsPage : Page
         UpdateVisuals();
         await load;
         SyncPreferenceControls();
+        UpdatePreferenceError();
         UpdateVisuals();
     }
 
@@ -80,8 +81,14 @@ public sealed partial class NotificationsPage : Page
         preferences.NotifyNextUp = NextUpToggle.IsOn;
         UpdatePreferenceEnabledState();
         await ViewModel.SavePreferencesCommand.ExecuteAsync(null);
-        PreferenceErrorText.Text = ViewModel.ErrorMessage ?? "";
-        PreferenceErrorText.Visibility = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
+        SyncPreferenceControls();
+        UpdatePreferenceError();
+    }
+
+    private void UpdatePreferenceError()
+    {
+        PreferenceErrorText.Text = ViewModel.PreferencesErrorMessage ?? "";
+        PreferenceErrorText.Visibility = string.IsNullOrWhiteSpace(ViewModel.PreferencesErrorMessage)
             ? Visibility.Collapsed
             : Visibility.Visible;
     }

@@ -24,9 +24,9 @@ public sealed partial class AdminUserDetailPage : Page
         = Core.Helpers.PlaybackQuality.Options;
 
     // Tab names
-    private static readonly string[] TabNames = ["Overview", "Profiles", "Watch History", "IP History"];
-    private readonly Button[] _tabButtons = new Button[4];
-    private readonly Border[] _tabIndicators = new Border[4];
+    private static readonly string[] TabNames = ["Overview", "Settings", "Devices", "Profiles", "Watch History", "IP History"];
+    private readonly Button[] _tabButtons = new Button[6];
+    private readonly Border[] _tabIndicators = new Border[6];
     private readonly UIElement[] _tabPanels;
     private int _activeTabIndex;
 
@@ -34,11 +34,14 @@ public sealed partial class AdminUserDetailPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminUserDetailViewModel>();
         this.InitializeComponent();
+        SizeChanged += (_, _) => ApplyResponsiveLayout();
 
-        _tabPanels = [OverviewPanel, ProfilesPanel, HistoryPanel, IPPanel];
+        _tabPanels = [OverviewPanel, SettingsPanel, DevicesPanel, ProfilesPanel, HistoryPanel, IPPanel];
 
         RetryButton.Click += async (_, _) => await LoadAsync();
         BackButton.Click  += (_, _) => GoBack();
+        BreadcrumbAdmin.Click += (_, _) => Frame.Navigate(typeof(AdminDashboardPage));
+        BreadcrumbUsers.Click += (_, _) => Frame.Navigate(typeof(AdminUsersPage));
         ImpersonateButton.Click += async (_, _) => await OpenImpersonateDialogAsync();
         EditButton.Click  += async (_, _) => await OpenEditDialogAsync();
         DeleteButton.Click += async (_, _) => await OpenDeleteDialogAsync();
@@ -56,6 +59,7 @@ public sealed partial class AdminUserDetailPage : Page
         };
 
         BuildTabBar();
+        ApplyResponsiveLayout();
         await LoadAsync();
     }
 
@@ -74,9 +78,6 @@ public sealed partial class AdminUserDetailPage : Page
                 BuildHeader(ViewModel.User);
                 UpdateImpersonateButton(ViewModel.User);
                 BuildOverviewTab(ViewModel.User);
-                BuildProfilesTab();
-                BuildHistoryTab();
-                BuildIPTab();
                 SwitchTab(0);
             }
         }
@@ -93,7 +94,7 @@ public sealed partial class AdminUserDetailPage : Page
         TitleBadgeRow.Children.Add(new TextBlock
         {
             Text = user.Username,
-            FontSize = 28,
+            FontSize = 48,
             FontWeight = FontWeights.Bold,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center
@@ -162,6 +163,40 @@ public sealed partial class AdminUserDetailPage : Page
         TitleBadgeRow.Children.Add(statusBadge);
 
         EmailSubtitle.Text = user.Email;
+        BreadcrumbUsername.Text = user.Username;
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        var width = ActualWidth;
+        var compact = width < 760;
+        var side = width < 640 ? 16 : width < 1024 ? 24 : 40;
+        UserDetailPageShell.Padding = new Thickness(side, width < 640 ? 16 : 28, side, 40);
+
+        Grid.SetColumn(UserDetailActions, compact ? 1 : 2);
+        Grid.SetRow(UserDetailActions, compact ? 1 : 0);
+        UserDetailActions.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+
+        OverviewPanel.ColumnDefinitions.Clear();
+        OverviewPanel.RowDefinitions.Clear();
+        if (compact)
+        {
+            OverviewPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            OverviewPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            OverviewPanel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(20) });
+            OverviewPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetColumn(AccountCard, 0); Grid.SetRow(AccountCard, 0);
+            Grid.SetColumn(PermissionsCard, 0); Grid.SetRow(PermissionsCard, 2);
+        }
+        else
+        {
+            OverviewPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            OverviewPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
+            OverviewPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            OverviewPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetColumn(AccountCard, 0); Grid.SetRow(AccountCard, 0);
+            Grid.SetColumn(PermissionsCard, 2); Grid.SetRow(PermissionsCard, 0);
+        }
     }
 
     private void UpdateImpersonateButton(AdminUser user)
@@ -207,7 +242,7 @@ public sealed partial class AdminUserDetailPage : Page
         }
     }
 
-    private void SwitchTab(int index)
+    private async void SwitchTab(int index)
     {
         _activeTabIndex = index;
 
@@ -231,6 +266,93 @@ public sealed partial class AdminUserDetailPage : Page
             if (_tabPanels[i] != null)
                 _tabPanels[i].Visibility = i == index ? Visibility.Visible : Visibility.Collapsed;
         }
+
+        await EnsureTabLoadedAsync(index);
+    }
+
+    private async Task EnsureTabLoadedAsync(int index)
+    {
+        if (_userId == 0 || index == 0) return;
+        ShowTabLoading(index);
+        try
+        {
+            switch (index)
+            {
+                case 1:
+                    await ViewModel.LoadUserSettingsAsync(_userId);
+                    BuildUserSettingsTab();
+                    break;
+                case 2:
+                    await ViewModel.LoadDeviceSettingsAsync(_userId);
+                    BuildDeviceOverridesTab();
+                    break;
+                case 3:
+                    await ViewModel.LoadProfilesAsync(_userId);
+                    BuildProfilesTab();
+                    break;
+                case 4:
+                    await ViewModel.LoadHistoryAsync(_userId);
+                    BuildHistoryTab();
+                    break;
+                case 5:
+                    await ViewModel.LoadIPsAsync(_userId);
+                    BuildIPTab();
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowTabError(index, ex.Message);
+            App.Services.GetRequiredService<ToastService>().Error(ex.Message);
+        }
+    }
+
+    private void ShowTabLoading(int index)
+    {
+        var loading = new TextBlock
+        {
+            Text = index switch
+            {
+                1 => "Loading settings...",
+                2 => "Loading device overrides...",
+                3 => "Loading profiles...",
+                4 => "Loading watch history...",
+                _ => "Loading IP history..."
+            },
+            FontSize = 14,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 32, 0, 32)
+        };
+        switch (index)
+        {
+            case 1: UserSettingsRows.Children.Clear(); UserSettingsRows.Children.Add(loading); break;
+            case 2: DeviceOverridesHost.Children.Clear(); DeviceOverridesHost.Children.Add(loading); DeviceOverridesSummary.Text = ""; break;
+            case 3: ProfilesContent.Children.Clear(); ProfilesContent.Children.Add(loading); break;
+            case 4: HistoryRows.Children.Clear(); HistoryRows.Children.Add(loading); HistoryEmpty.Visibility = Visibility.Collapsed; break;
+            case 5: IPRows.Children.Clear(); IPRows.Children.Add(loading); IPEmpty.Visibility = Visibility.Collapsed; break;
+        }
+    }
+
+    private void ShowTabError(int index, string message)
+    {
+        var error = new TextBlock
+        {
+            Text = message,
+            FontSize = 13,
+            Foreground = (SolidColorBrush)Application.Current.Resources["ErrorBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 32, 0, 32)
+        };
+        switch (index)
+        {
+            case 1: UserSettingsRows.Children.Clear(); UserSettingsRows.Children.Add(error); break;
+            case 2: DeviceOverridesHost.Children.Clear(); DeviceOverridesHost.Children.Add(error); break;
+            case 3: ProfilesContent.Children.Clear(); ProfilesContent.Children.Add(error); break;
+            case 4: HistoryRows.Children.Clear(); HistoryRows.Children.Add(error); break;
+            case 5: IPRows.Children.Clear(); IPRows.Children.Add(error); break;
+        }
     }
 
     // ===== Overview tab =====
@@ -247,7 +369,6 @@ public sealed partial class AdminUserDetailPage : Page
         AddDetailRow(AccountRows, "Status",   user.Enabled ? "Active" : "Disabled");
         AddDetailRow(AccountRows, "Created",  AdminUserDetailViewModel.FormatDate(user.CreatedAt));
         AddDetailRow(AccountRows, "Updated",  AdminUserDetailViewModel.FormatDate(user.UpdatedAt));
-        AddDetailRow(AccountRows, "Last Active", FormatLastActive(user.LastActiveAt));
 
         // Library access — resolve names from ViewModel.Libraries
         string libraryAccess;
@@ -272,9 +393,10 @@ public sealed partial class AdminUserDetailPage : Page
         var accessGroupName = user.AccessGroupId is long accessGroupId
             ? ViewModel.AccessGroups.FirstOrDefault(group => group.Id == accessGroupId)?.Name ?? $"#{accessGroupId}"
             : "No group";
-        AddDetailRow(PermissionsRows, "Access Group",         accessGroupName);
+        AddDetailRow(PermissionsRows, "Group",                accessGroupName == "No group" ? "None" : accessGroupName);
         AddDetailRow(PermissionsRows, "Library Access",       libraryAccess);
-        AddDetailRow(PermissionsRows, "Permissions",          user.Permissions.Count > 0 ? string.Join(", ", user.Permissions) : "None");
+        AddDetailRow(PermissionsRows, "Marker Editing",       user.Permissions.Contains("marker_edit") ? "Allowed" : "Not allowed");
+        AddDetailRow(PermissionsRows, "Metadata Curation",    user.Permissions.Contains("metadata_curation") ? "Allowed" : "Not allowed");
         AddDetailRow(PermissionsRows, "Max Playback Quality", FormatPlaybackQualityPreset(user.MaxPlaybackQuality));
         AddDetailRow(PermissionsRows, "Max Streams",          user.MaxStreams == 0 ? "Unlimited" : user.MaxStreams.ToString());
         AddDetailRow(PermissionsRows, "Max Transcodes",       !user.TranscodeAllowed ? "Disabled" : user.MaxTranscodes == 0 ? "Unlimited" : user.MaxTranscodes.ToString());
@@ -331,6 +453,247 @@ public sealed partial class AdminUserDetailPage : Page
 
         parent.Children.Add(row);
     }
+
+    // ===== Account settings tab =====
+
+    private void BuildUserSettingsTab()
+    {
+        UserSettingsRows.Children.Clear();
+        if (ViewModel.UserSettings.Count == 0)
+        {
+            UserSettingsRows.Children.Add(EmptyTabMessage("No account-wide settings are stored for this user."));
+            return;
+        }
+
+        var first = true;
+        foreach (var setting in ViewModel.UserSettings)
+        {
+            if (!first)
+                UserSettingsRows.Children.Add(new Border { BorderBrush = ResourceBrush("BorderBrush"), BorderThickness = new Thickness(0, 1, 0, 0) });
+            first = false;
+            UserSettingsRows.Children.Add(BuildUserSettingRow(setting));
+        }
+    }
+
+    private FrameworkElement BuildUserSettingRow(AdminUserSetting setting)
+    {
+        var definition = AdminDeviceSettingDefinition.All.FirstOrDefault(item => item.Key == setting.Key);
+        var row = new Grid { Padding = new Thickness(0, 16, 0, 16), ColumnSpacing = 18 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var copy = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
+        var title = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        title.Children.Add(new TextBlock { Text = definition?.Label ?? setting.Key, FontSize = 14, FontWeight = FontWeights.SemiBold });
+        title.Children.Add(new Border
+        {
+            BorderBrush = ResourceBrush("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(7, 2, 7, 2), Child = new TextBlock { Text = "Explicit", FontSize = 10, Foreground = ResourceBrush("SecondaryTextBrush") }
+        });
+        copy.Children.Add(title);
+        copy.Children.Add(new TextBlock
+        {
+            Text = definition?.Description ?? "Stored account preference.", FontSize = 12,
+            Foreground = ResourceBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap
+        });
+        copy.Children.Add(new TextBlock { Text = $"Current: {FormatSettingValue(definition, setting.Value)}", FontSize = 11, Foreground = ResourceBrush("SecondaryTextBrush") });
+        row.Children.Add(copy);
+
+        var actions = new StackPanel { Spacing = 6, HorizontalAlignment = HorizontalAlignment.Right };
+        actions.Children.Add(BuildSettingEditor(definition, setting.Value, async value =>
+        {
+            try
+            {
+                await ViewModel.SaveUserSettingAsync(_userId, setting, value);
+                App.Services.GetRequiredService<ToastService>().Success($"{definition?.Label ?? setting.Key} updated.");
+                BuildUserSettingsTab();
+            }
+            catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        }));
+        var reset = new Button { Content = "↻  Reset", Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0), Padding = new Thickness(8, 4, 8, 4), FontSize = 12, HorizontalAlignment = HorizontalAlignment.Right };
+        reset.Click += async (_, _) =>
+        {
+            try
+            {
+                await ViewModel.ResetUserSettingAsync(_userId, setting);
+                App.Services.GetRequiredService<ToastService>().Success($"{definition?.Label ?? setting.Key} reset.");
+                BuildUserSettingsTab();
+            }
+            catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        };
+        actions.Children.Add(reset);
+        Grid.SetColumn(actions, 1);
+        row.Children.Add(actions);
+        return row;
+    }
+
+    // ===== Device overrides tab =====
+
+    private void BuildDeviceOverridesTab()
+    {
+        DeviceOverridesHost.Children.Clear();
+        var settings = ViewModel.DeviceSettings.ToList();
+        var deviceGroups = settings.GroupBy(item => item.DeviceId, StringComparer.Ordinal).ToList();
+        var profileCount = settings.Select(item => string.IsNullOrWhiteSpace(item.ProfileId) ? "unknown" : item.ProfileId).Distinct(StringComparer.Ordinal).Count();
+        DeviceOverridesSummary.Text = deviceGroups.Count == 0
+            ? ""
+            : $"{deviceGroups.Count} {(deviceGroups.Count == 1 ? "device" : "devices")}  ·  {settings.Count} {(settings.Count == 1 ? "override" : "overrides")}  ·  {profileCount} {(profileCount == 1 ? "profile" : "profiles")}";
+
+        if (deviceGroups.Count == 0)
+        {
+            var empty = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, Spacing = 4 };
+            empty.Children.Add(new TextBlock { Text = "No device overrides", FontSize = 14, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center });
+            empty.Children.Add(new TextBlock { Text = "Overrides appear here as soon as this user tunes a per-device playback setting.", FontSize = 12, Foreground = ResourceBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, MaxWidth = 420 });
+            DeviceOverridesHost.Children.Add(new Border { Background = ResourceBrush("CardBackgroundBrush"), CornerRadius = new CornerRadius(12), Padding = new Thickness(24, 40, 24, 40), Child = empty });
+            return;
+        }
+
+        foreach (var deviceGroup in deviceGroups)
+            DeviceOverridesHost.Children.Add(BuildDeviceOverrideCard(deviceGroup.Key, deviceGroup.ToList()));
+    }
+
+    private FrameworkElement BuildDeviceOverrideCard(string deviceId, List<AdminDeviceSetting> settings)
+    {
+        var first = settings[0];
+        var root = new StackPanel();
+        var header = new Grid { Padding = new Thickness(18, 14, 18, 14), ColumnSpacing = 14 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var copy = new StackPanel { Spacing = 3 };
+        copy.Children.Add(new TextBlock { Text = string.IsNullOrWhiteSpace(first.DeviceName) ? "Unnamed device" : first.DeviceName, FontSize = 14, FontWeight = FontWeights.SemiBold });
+        var updated = settings.Where(item => item.UpdatedAt.HasValue).Select(item => item.UpdatedAt!.Value).DefaultIfEmpty().Max();
+        var meta = $"{ShortId(deviceId)}  ·  {PlatformLabel(first.DevicePlatform)}";
+        if (updated != default) meta += $"  ·  updated {Core.Helpers.TimeAgo.FormatShort(updated.ToString("O"))}";
+        copy.Children.Add(new TextBlock { Text = meta, FontSize = 11, FontFamily = new FontFamily("Consolas"), Foreground = ResourceBrush("SecondaryTextBrush") });
+        var profiles = settings.GroupBy(item => string.IsNullOrWhiteSpace(item.ProfileId) ? "unknown" : item.ProfileId, StringComparer.Ordinal).ToList();
+        copy.Children.Add(new TextBlock { Text = $"{profiles.Count} {(profiles.Count == 1 ? "profile" : "profiles")}  ·  {settings.Count} {(settings.Count == 1 ? "override" : "overrides")}", FontSize = 11, Foreground = ResourceBrush("SecondaryTextBrush") });
+        header.Children.Add(copy);
+        var open = new Button { Content = "Open device ↗", Padding = new Thickness(10, 6, 10, 6), VerticalAlignment = VerticalAlignment.Top };
+        open.Click += (_, _) => Frame.Navigate(typeof(AdminDevicesPage), new AdminDeviceNavigationTarget(_userId, deviceId));
+        Grid.SetColumn(open, 1);
+        header.Children.Add(open);
+        root.Children.Add(header);
+        root.Children.Add(new Border { BorderBrush = ResourceBrush("BorderBrush"), BorderThickness = new Thickness(0, 1, 0, 0) });
+
+        foreach (var profile in profiles)
+            root.Children.Add(BuildDeviceProfileSection(deviceId, profile.Key, profile.ToList()));
+
+        return new Border { Background = ResourceBrush("CardBackgroundBrush"), CornerRadius = new CornerRadius(12), Child = root };
+    }
+
+    private FrameworkElement BuildDeviceProfileSection(string deviceId, string profileId, List<AdminDeviceSetting> settings)
+    {
+        var root = new StackPanel { Spacing = 10, Padding = new Thickness(18, 14, 18, 18) };
+        var header = new Grid();
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var profileName = settings[0].ProfileName;
+        header.Children.Add(new TextBlock { Text = string.IsNullOrWhiteSpace(profileName) ? profileId : profileName, FontSize = 13, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+        var resetAll = new Button { Content = "Reset all", Foreground = ResourceBrush("ErrorBrush"), Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0), Padding = new Thickness(8, 4, 8, 4), FontSize = 12 };
+        resetAll.Click += async (_, _) =>
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = string.IsNullOrWhiteSpace(profileName) ? "Reset profile overrides" : $"Reset overrides for {profileName}?",
+                Content = "Every override for this profile on this device will be cleared. Playback falls back to account or default values.",
+                PrimaryButtonText = "Reset all", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close,
+                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"]
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            try
+            {
+                await ViewModel.ResetDeviceProfileAsync(_userId, profileId, deviceId);
+                BuildDeviceOverridesTab();
+            }
+            catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        };
+        Grid.SetColumn(resetAll, 1); header.Children.Add(resetAll); root.Children.Add(header);
+
+        foreach (var setting in settings)
+            root.Children.Add(BuildDeviceSettingRow(setting));
+        return root;
+    }
+
+    private FrameworkElement BuildDeviceSettingRow(AdminDeviceSetting setting)
+    {
+        var definition = AdminDeviceSettingDefinition.All.FirstOrDefault(item => item.Key == setting.Key);
+        var row = new Grid { ColumnSpacing = 18, Padding = new Thickness(0, 5, 0, 5) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var copy = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        copy.Children.Add(new TextBlock { Text = definition?.Label ?? setting.Key, FontSize = 13, FontWeight = FontWeights.SemiBold });
+        copy.Children.Add(new TextBlock { Text = definition?.Description ?? setting.Key, FontSize = 11, Foreground = ResourceBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+        row.Children.Add(copy);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        actions.Children.Add(BuildSettingEditor(definition, setting.Value, async value =>
+        {
+            try
+            {
+                await ViewModel.SaveDeviceSettingAsync(_userId, setting, value);
+                App.Services.GetRequiredService<ToastService>().Success($"{definition?.Label ?? setting.Key} updated.");
+                BuildDeviceOverridesTab();
+            }
+            catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        }));
+        var reset = new Button { Content = "↻", Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0), Padding = new Thickness(6), FontSize = 13 };
+        ToolTipService.SetToolTip(reset, "Reset this override");
+        reset.Click += async (_, _) =>
+        {
+            var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Reset this override?", Content = "The override will be removed and the device will fall back to the profile default.", PrimaryButtonText = "Reset override", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"] };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            try { await ViewModel.ResetDeviceSettingAsync(_userId, setting); BuildDeviceOverridesTab(); }
+            catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        };
+        actions.Children.Add(reset); Grid.SetColumn(actions, 1); row.Children.Add(actions);
+        return row;
+    }
+
+    private FrameworkElement BuildSettingEditor(AdminDeviceSettingDefinition? definition, string value, Func<string, Task> save)
+    {
+        if (definition?.Control == "switch")
+        {
+            var toggle = new ToggleSwitch { IsOn = string.Equals(value, "true", StringComparison.OrdinalIgnoreCase), OnContent = "", OffContent = "", MinWidth = 44 };
+            toggle.Toggled += async (_, _) => await save(toggle.IsOn ? "true" : "false");
+            return toggle;
+        }
+        if (definition?.Control == "select")
+        {
+            var combo = new ComboBox { Width = 190, SelectedValuePath = "Tag" };
+            foreach (var option in definition.Options) combo.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Value });
+            combo.SelectedValue = value;
+            combo.SelectionChanged += async (_, _) => { if (combo.SelectedValue is string selected && selected != value) await save(selected); };
+            return combo;
+        }
+        if (definition?.Control == "json")
+        {
+            var edit = new Button { Content = "Edit JSON", Padding = new Thickness(10, 6, 10, 6) };
+            edit.Click += async (_, _) =>
+            {
+                var box = new TextBox { Text = value, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = new FontFamily("Consolas"), MinHeight = 260, Width = 560 };
+                var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = definition.Label, Content = box, PrimaryButtonText = "Save override", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary };
+                if (await dialog.ShowAsync() == ContentDialogResult.Primary) await save(box.Text);
+            };
+            return edit;
+        }
+        var text = new TextBox { Text = value, Width = 190, TextAlignment = TextAlignment.Left };
+        text.LostFocus += async (_, _) => { if (text.Text != value) await save(text.Text); };
+        return text;
+    }
+
+    private static string FormatSettingValue(AdminDeviceSettingDefinition? definition, string value)
+        => definition?.Options.FirstOrDefault(option => option.Value == value)?.Label
+           ?? (definition?.Control == "switch" ? (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ? "On" : "Off") : value);
+
+    private static TextBlock EmptyTabMessage(string text) => new()
+    {
+        Text = text, FontSize = 14, Foreground = ResourceBrush("SecondaryTextBrush"),
+        HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 28, 0, 28), TextWrapping = TextWrapping.Wrap
+    };
+
+    private static SolidColorBrush ResourceBrush(string key) => (SolidColorBrush)Application.Current.Resources[key];
+    private static string ShortId(string value) => value.Length <= 8 ? value : value[..8] + "…";
+    private static string PlatformLabel(string value) => string.IsNullOrWhiteSpace(value) ? "Unknown platform" : value;
 
     // ===== Profiles tab =====
 
@@ -832,6 +1195,20 @@ public sealed partial class AdminUserDetailPage : Page
             Content          = formContent,
             DefaultButton    = ContentDialogButton.Primary
         };
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            var request = getRequest();
+            if (request == null || string.IsNullOrWhiteSpace(request.Username))
+            {
+                args.Cancel = true;
+                App.Services.GetRequiredService<ToastService>().Error("Username is required.");
+            }
+            else if (string.IsNullOrWhiteSpace(request.Email) || !System.Net.Mail.MailAddress.TryCreate(request.Email, out var _parsedEmail))
+            {
+                args.Cancel = true;
+                App.Services.GetRequiredService<ToastService>().Error("Enter a valid email address.");
+            }
+        };
 
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
@@ -842,8 +1219,9 @@ public sealed partial class AdminUserDetailPage : Page
             {
                 await ViewModel.UpdateUserAsync(user.Id, req);
                 await LoadAsync();
+                App.Services.GetRequiredService<ToastService>().Success("User updated.");
             }
-            catch { }
+            catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
         }
     }
 
@@ -992,6 +1370,9 @@ public sealed partial class AdminUserDetailPage : Page
             OnContent  = "Allowed",
             OffContent = "Not allowed"
         };
+        var assignedPermissions = new HashSet<string>(user.Permissions, StringComparer.OrdinalIgnoreCase);
+        var markerEditSwitch = new ToggleSwitch { IsOn = assignedPermissions.Contains("marker_edit"), OnContent = "", OffContent = "" };
+        var metadataCurationSwitch = new ToggleSwitch { IsOn = assignedPermissions.Contains("metadata_curation"), OnContent = "", OffContent = "" };
 
         var accessTab = new StackPanel { Spacing = 14 };
 
@@ -1068,6 +1449,11 @@ public sealed partial class AdminUserDetailPage : Page
 
         libraryGroup.Children.Add(libraryCheckboxPanel);
         accessTab.Children.Add(libraryGroup);
+
+        accessTab.Children.Add(MakeSwitchRow("Marker Editing",
+            "Edit intro, recap, credits, and preview markers within assigned libraries.", markerEditSwitch));
+        accessTab.Children.Add(MakeSwitchRow("Metadata Curation",
+            "Edit, refresh, and rematch metadata within assigned libraries.", metadataCurationSwitch));
 
         // Downloads toggles in bordered cards
         accessTab.Children.Add(MakeSwitchRow("Downloads Allowed", downloadSwitch));
@@ -1243,6 +1629,10 @@ public sealed partial class AdminUserDetailPage : Page
             if (qualityCombo.SelectedIndex >= 0 && qualityCombo.SelectedIndex < PlaybackQualityOptions.Length)
                 qualityValue = PlaybackQualityValueFromPreset(PlaybackQualityOptions[qualityCombo.SelectedIndex].Value);
 
+            var permissions = new HashSet<string>(assignedPermissions, StringComparer.OrdinalIgnoreCase);
+            if (markerEditSwitch.IsOn) permissions.Add("marker_edit"); else permissions.Remove("marker_edit");
+            if (metadataCurationSwitch.IsOn) permissions.Add("metadata_curation"); else permissions.Remove("metadata_curation");
+
             var req = new UpdateUserRequest
             {
                 Username                 = usernameBox.Text.Trim(),
@@ -1250,6 +1640,7 @@ public sealed partial class AdminUserDetailPage : Page
                 Password                 = string.IsNullOrEmpty(passwordBox.Password) ? null : passwordBox.Password,
                 Role                     = roleCombo.SelectedItem as string ?? "user",
                 Enabled                  = enabledSwitch.IsOn,
+                Permissions              = permissions.OrderBy(value => value, StringComparer.Ordinal).ToList(),
                 MaxStreams                = double.IsNaN(maxStreamsBox.Value) ? 0 : (int)maxStreamsBox.Value,
                 MaxTranscodes            = double.IsNaN(maxTranscodesBox.Value) ? 0 : (int)maxTranscodesBox.Value,
                 TranscodeAllowed          = transcodeAllowedSwitch.IsOn,
@@ -1280,6 +1671,7 @@ public sealed partial class AdminUserDetailPage : Page
             Title             = "Delete user",
             Content           = $"Delete user \"{ViewModel.User.Username}\"? This cannot be undone.",
             PrimaryButtonText  = "Delete",
+            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText   = "Cancel",
             XamlRoot          = this.XamlRoot,
             DefaultButton     = ContentDialogButton.Close
@@ -1293,7 +1685,7 @@ public sealed partial class AdminUserDetailPage : Page
                 await ViewModel.DeleteCommand.ExecuteAsync(null);
                 GoBack();
             }
-            catch { }
+            catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
         }
     }
 
@@ -1355,6 +1747,24 @@ public sealed partial class AdminUserDetailPage : Page
         grid.Children.Add(toggle);
 
         border.Child = grid;
+        return border;
+    }
+
+    private static Border MakeSwitchRow(string label, string description, ToggleSwitch toggle)
+    {
+        var border = new Border
+        {
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 8, 12, 8)
+        };
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var copy = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        copy.Children.Add(new TextBlock { Text = label, FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
+        copy.Children.Add(new TextBlock { Text = description, FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"], TextWrapping = TextWrapping.Wrap });
+        Grid.SetColumn(toggle, 1); grid.Children.Add(copy); grid.Children.Add(toggle); border.Child = grid;
         return border;
     }
 }

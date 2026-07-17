@@ -7,7 +7,7 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
     Title="Import Catalog Seed"
-    PrimaryButtonText="Import"
+    PrimaryButtonText="Import Catalog"
     CloseButtonText="Cancel"
     DefaultButton="Primary">
 
@@ -33,9 +33,21 @@
                 <TextBlock Text="File Path" FontSize="13" FontWeight="SemiBold"
                            Foreground="{StaticResource PrimaryTextBrush}" />
                 <TextBox x:Name="LocalPathBox" PlaceholderText="/catalog-seeds/my-catalog.json.gz" />
+                <Grid x:Name="DetectedFilesHeader">
+                    <TextBlock Text="Detected Files" FontSize="12"
+                               Foreground="{StaticResource SecondaryTextBrush}"
+                               VerticalAlignment="Center" />
+                    <Button HorizontalAlignment="Right" Style="{StaticResource GhostButtonStyle}"
+                            Click="RefreshLocalSources_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                            <TextBlock Text="Refresh" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
                 <ComboBox x:Name="LocalSourcePicker"
                           HorizontalAlignment="Stretch"
-                          PlaceholderText="Or select a detected file"
+                          PlaceholderText="Select a detected file"
                           SelectionChanged="LocalSourcePicker_SelectionChanged" />
                 <TextBlock
                     Text="Enter the absolute path to a .json.gz catalog seed file on the server, or select a detected file from /catalog-seeds/."
@@ -60,8 +72,17 @@
 
             <!-- Bucket artifact (visible when source = bucket_artifact) -->
             <StackPanel x:Name="BucketArtifactSection" Spacing="6" Visibility="Collapsed">
-                <TextBlock Text="Detected Bucket Artifacts" FontSize="13" FontWeight="SemiBold"
-                           Foreground="{StaticResource PrimaryTextBrush}" />
+                <Grid>
+                    <TextBlock Text="Detected Bucket Artifacts" FontSize="13" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
+                    <Button HorizontalAlignment="Right" Style="{StaticResource GhostButtonStyle}"
+                            Click="RefreshBucketSources_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                            <TextBlock Text="Refresh" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
                 <ComboBox x:Name="BucketArtifactCombo"
                           HorizontalAlignment="Stretch"
                           PlaceholderText="Choose a catalog seed from the bucket" />

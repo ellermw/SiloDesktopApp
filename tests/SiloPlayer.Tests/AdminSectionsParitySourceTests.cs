@@ -50,7 +50,7 @@ public class AdminSectionsParitySourceTests
         var xaml = File.ReadAllText(Path.Combine(
             RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminSectionsPage.xaml"));
         Assert.Contains("x:Name=\"GalleryOverlay\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("Width=\"800\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("MaxWidth=\"800\"", xaml, StringComparison.Ordinal);
         Assert.Contains("HorizontalAlignment=\"Center\"", xaml, StringComparison.Ordinal);
         Assert.Contains("GalleryOverlayContent.Content = content", PageSource, StringComparison.Ordinal);
         Assert.Contains("Grid.SetColumn(card, index % 3)", PageSource, StringComparison.Ordinal);
@@ -138,5 +138,19 @@ public class AdminSectionsParitySourceTests
         Assert.Contains("AttachSectionPreviewTriggers", PageSource, StringComparison.Ordinal);
         Assert.Contains("ExtractPreviewLibraryIds", PageSource, StringComparison.Ordinal);
         Assert.Contains("preview.Items.Take(10)", PageSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SectionsUsesResponsiveWebUiCanvasAndSingleGlobalFeedbackSurface()
+    {
+        var xaml = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminSectionsPage.xaml"));
+
+        Assert.Contains("x:Name=\"SectionsPageShell\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("MaxWidth=\"1400\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("HorizontalScrollBarVisibility=\"Auto\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("ApplyResponsiveLayout(ActualWidth)", PageSource, StringComparison.Ordinal);
+        Assert.Contains("_toastService.Success(message)", PageSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("x:Name=\"StatusBanner\"", xaml, StringComparison.Ordinal);
     }
 }

@@ -7,33 +7,58 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using System.Collections.Specialized;
+using System.ComponentModel;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels.Admin;
 using Windows.System;
 using Windows.UI.Core;
 
 namespace SiloPlayer.Views.Admin;
 
+public sealed record AdminDeviceNavigationTarget(int UserId, string DeviceId);
+
 public sealed partial class AdminDevicesPage : Page
 {
     public AdminDevicesViewModel ViewModel { get; } = App.Services.GetRequiredService<AdminDevicesViewModel>();
     private bool _settingsSubscribed;
+    private bool _active;
+    private readonly DispatcherTimer _searchTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
+    private AdminDeviceNavigationTarget? _pendingTarget;
 
     public AdminDevicesPage()
     {
         InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Enabled;
         SizeChanged += (_, _) => ApplyResponsiveLayout();
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        _searchTimer.Tick += (_, _) =>
+        {
+            _searchTimer.Stop();
+            if (_active) ViewModel.ApplySearchFilter();
+        };
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         ApplyResponsiveLayout();
+        _active = true;
         if (!_settingsSubscribed)
         {
             ViewModel.Settings.CollectionChanged += Settings_CollectionChanged;
             _settingsSubscribed = true;
         }
         await ViewModel.LoadAsync();
+        if (_pendingTarget is { } target)
+        {
+            _pendingTarget = null;
+            await ViewModel.OpenDeviceAsync(target.UserId, target.DeviceId);
+        }
+    }
+
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        _pendingTarget = e.Parameter as AdminDeviceNavigationTarget;
     }
 
     private void ApplyResponsiveLayout()
@@ -98,6 +123,14 @@ public sealed partial class AdminDevicesPage : Page
         SelectedDeviceActions.HorizontalAlignment = compactDetail ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
         DeviceProfileComboBox.Width = compactDetail ? double.NaN : 250;
         DeviceProfileComboBox.HorizontalAlignment = compactDetail ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+
+        var readoutColumns = width < 780 ? 2 : 4;
+        DeviceReadoutGrid.ColumnDefinitions.Clear();
+        DeviceReadoutGrid.RowDefinitions.Clear();
+        for (var i = 0; i < readoutColumns; i++) DeviceReadoutGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        for (var i = 0; i < (readoutColumns == 2 ? 2 : 1); i++) DeviceReadoutGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var readouts = new[] { DeviceOverridesReadout, DeviceProfilesReadout, DeviceStatusReadout, DeviceUpdatedReadout };
+        for (var i = 0; i < readouts.Length; i++) { Grid.SetColumn(readouts[i], i % readoutColumns); Grid.SetRow(readouts[i], i / readoutColumns); }
     }
 
     private static void PlaceWorkspace(FrameworkElement element, int column, int row)
@@ -113,7 +146,16 @@ public sealed partial class AdminDevicesPage : Page
             _settingsSubscribed = false;
         }
         ViewModel.Cancel();
+        _searchTimer.Stop();
+        _active = false;
         base.OnNavigatedFrom(e);
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!_active) return;
+        if (e.PropertyName == nameof(ViewModel.StatusMessage) && !string.IsNullOrWhiteSpace(ViewModel.StatusMessage))
+            App.Services.GetRequiredService<ToastService>().Success(ViewModel.StatusMessage);
     }
 
     private void Settings_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -135,11 +177,19 @@ public sealed partial class AdminDevicesPage : Page
         var hasSearch = !string.IsNullOrEmpty(DeviceSearchBox.Text);
         ClearSearchButton.Visibility = hasSearch ? Visibility.Visible : Visibility.Collapsed;
         SearchShortcutHint.Visibility = hasSearch ? Visibility.Collapsed : Visibility.Visible;
+        if (_active)
+        {
+            _searchTimer.Stop();
+            _searchTimer.Start();
+        }
     }
 
     private void ClearSearchButton_Click(object sender, RoutedEventArgs e)
     {
+        _searchTimer.Stop();
         DeviceSearchBox.Text = "";
+        ViewModel.SearchText = "";
+        ViewModel.ApplySearchFilter();
         DeviceSearchBox.Focus(FocusState.Programmatic);
     }
 
@@ -223,6 +273,30 @@ public sealed partial class AdminDevicesPage : Page
         SettingsHost.Children.Clear();
         foreach (var row in ViewModel.Settings)
             SettingsHost.Children.Add(BuildSettingRow(row));
+        UpdateSettingsScopeVisuals();
+    }
+
+    private void SettingsScope_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.Tag is not string scope) return;
+        if (scope == "overrides" && ViewModel.IsSettingsScopeLocked) return;
+        ViewModel.ShowAllSettings = scope == "all";
+        UpdateSettingsScopeVisuals();
+    }
+
+    private void UpdateSettingsScopeVisuals()
+    {
+        if (AllSettingsScopeButton is null || OverridesScopeButton is null) return;
+        var transparent = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        AllSettingsScopeButton.Background = ViewModel.ShowAllSettings ? Brush("SurfaceBrush") : transparent;
+        OverridesScopeButton.Background = ViewModel.ShowAllSettings ? transparent : Brush("SurfaceBrush");
+        OverridesScopeButton.IsEnabled = !ViewModel.IsSettingsScopeLocked;
+    }
+
+    private void OpenUser_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.SelectedDevice is { } device)
+            Frame.Navigate(typeof(AdminUserDetailPage), device.Source.UserId);
     }
 
     private FrameworkElement BuildSettingRow(AdminDeviceSettingRow row)
@@ -262,6 +336,25 @@ public sealed partial class AdminDevicesPage : Page
             };
             control = combo;
         }
+        else if (row.Key == "subtitle_appearance")
+        {
+            var customize = new Button { Content = "Customize appearance", Style = (Style)Application.Current.Resources["SecondaryButtonStyle"] };
+            customize.Click += async (_, _) =>
+            {
+                var dialog = new SiloPlayer.Controls.SubtitleAppearanceDialog
+                {
+                    XamlRoot = XamlRoot,
+                    InitialValue = row.Value,
+                    ApplyToLocalPlayer = false,
+                    CanReset = row.IsOverride,
+                    SaveOverrideAsync = value => ViewModel.SaveSettingValueOnlyAsync(row, value),
+                    ResetOverrideAsync = () => ViewModel.ResetSettingValueOnlyAsync(row),
+                };
+                await dialog.ShowAsync();
+                await ViewModel.RefreshSelectedDeviceAsync();
+            };
+            control = customize;
+        }
         else
         {
             var box = new TextBox { Width = 190, Text = row.Value, Tag = row, AcceptsReturn = row.Control == "json", TextWrapping = TextWrapping.Wrap };
@@ -281,7 +374,20 @@ public sealed partial class AdminDevicesPage : Page
         if (row.IsOverride)
         {
             var reset = new Button { Content = "Reset", Style = (Style)Application.Current.Resources["SecondaryButtonStyle"] };
-            reset.Click += async (_, _) => await ViewModel.ResetSettingAsync(row);
+            reset.Click += async (_, _) =>
+            {
+                var dialog = new ContentDialog
+                {
+                    XamlRoot = XamlRoot,
+                    Title = "Reset this override?",
+                    Content = "The override will be removed and the device will fall back to the profile default.",
+                    PrimaryButtonText = "Reset override",
+                    CloseButtonText = "Cancel",
+                    DefaultButton = ContentDialogButton.Close,
+                };
+                if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                    await ViewModel.ResetSettingAsync(row);
+            };
             editor.Children.Add(reset);
         }
         Grid.SetColumn(editor, 1);

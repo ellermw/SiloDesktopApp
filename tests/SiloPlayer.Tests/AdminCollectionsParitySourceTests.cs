@@ -8,6 +8,9 @@ public class AdminCollectionsParitySourceTests
     private static string PageSource => File.ReadAllText(Path.Combine(
         RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminCollectionsPage.xaml.cs"));
 
+    private static string Markup => File.ReadAllText(Path.Combine(
+        RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminCollectionsPage.xaml"));
+
     private static string ViewModelSource => File.ReadAllText(Path.Combine(
         RepoRoot, "src", "SiloPlayer", "ViewModels", "Admin", "AdminCollectionsViewModel.cs"));
 
@@ -31,7 +34,28 @@ public class AdminCollectionsParitySourceTests
     public void StaleScopedLoadsCannotOverwriteTheLatestLibrarySelection()
     {
         Assert.Contains("Interlocked.Increment(ref _loadVersion)", ViewModelSource, StringComparison.Ordinal);
-        Assert.Contains("if (loadVersion != _loadVersion) return;", ViewModelSource, StringComparison.Ordinal);
+        Assert.Contains("if (loadVersion != _loadVersion", ViewModelSource, StringComparison.Ordinal);
+        Assert.Contains("CancellationTokenSource? _loadCts", ViewModelSource, StringComparison.Ordinal);
+        Assert.Contains("public void CancelLoad()", ViewModelSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ScopedBoardKeepsGlobalCollectionCountsAndTemplateJobFeedback()
+    {
+        Assert.Contains("AllCollections", ViewModelSource, StringComparison.Ordinal);
+        Assert.Contains("ViewModel.AllCollections.Count", PageSource, StringComparison.Ordinal);
+        Assert.Contains("template_bundle_apply", PageSource, StringComparison.Ordinal);
+        Assert.Contains("TemplateApplyJobBanner", Markup, StringComparison.Ordinal);
+        Assert.Contains("Collection defaults applied", PageSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CollectionsUsesResponsiveCurrentCanvasAndGlobalMutationFeedback()
+    {
+        Assert.Contains("MaxWidth=\"1400\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("ApplyResponsiveLayout", PageSource, StringComparison.Ordinal);
+        Assert.Contains("ToastService", PageSource, StringComparison.Ordinal);
+        Assert.Contains("SurfaceMutationResult", PageSource, StringComparison.Ordinal);
     }
 
     [Fact]

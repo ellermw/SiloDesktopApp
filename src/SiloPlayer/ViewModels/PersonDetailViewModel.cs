@@ -11,12 +11,17 @@ namespace SiloPlayer.ViewModels;
 public partial class PersonDetailViewModel : ObservableObject
 {
     private readonly PeopleApi _peopleApi;
+    private readonly AdminApi _adminApi;
     private readonly CatalogApi _catalogApi;
     private readonly AuthService _authService;
 
-    public PersonDetailViewModel(PeopleApi peopleApi, CatalogApi catalogApi, AuthService authService)
+    private CancellationTokenSource? _pageCts;
+    private CancellationTokenSource? _filmographyCts;
+
+    public PersonDetailViewModel(PeopleApi peopleApi, AdminApi adminApi, CatalogApi catalogApi, AuthService authService)
     {
         _peopleApi = peopleApi;
+        _adminApi = adminApi;
         _catalogApi = catalogApi;
         _authService = authService;
     }
@@ -29,6 +34,9 @@ public partial class PersonDetailViewModel : ObservableObject
 
     [ObservableProperty]
     private string? _errorMessage;
+
+    [ObservableProperty]
+    private string? _statusMessage;
 
     [ObservableProperty]
     private string _selectedTypeFilter = "all";
@@ -67,7 +75,8 @@ public partial class PersonDetailViewModel : ObservableObject
             int age = endDate.Year - birth.Year;
             if (endDate.DayOfYear < birth.DayOfYear) age--;
 
-            return age > 0 ? $"({age})" : "";
+            if (!string.IsNullOrEmpty(Person.DeathDate)) return "";
+            return age > 0 ? $"{age} years old" : "";
         }
     }
 
@@ -89,8 +98,9 @@ public partial class PersonDetailViewModel : ObservableObject
 
             if (!string.IsNullOrEmpty(Person.DeathDate))
             {
+                var age = ComputeAge(Person.BirthDate, Person.DeathDate);
                 if (DateTime.TryParse(Person.DeathDate, out var death))
-                    parts.Add($"Died {death:MMMM d, yyyy}");
+                    parts.Add($"Died {death:MMMM d, yyyy}{(age > 0 ? $" (age {age})" : "")}");
                 else
                     parts.Add($"Died {Person.DeathDate}");
             }
@@ -99,33 +109,55 @@ public partial class PersonDetailViewModel : ObservableObject
         }
     }
 
+    private static int ComputeAge(string? birthDate, string? endDate)
+    {
+        if (!DateTime.TryParse(birthDate, out var birth) || !DateTime.TryParse(endDate, out var end)) return 0;
+        var age = end.Year - birth.Year;
+        if (end.DayOfYear < birth.DayOfYear) age--;
+        return age;
+    }
+
     // B33: personId is a string end-to-end.
     [RelayCommand]
     private async Task LoadAsync(string personId)
     {
-        if (IsLoading || string.IsNullOrEmpty(personId)) return;
+        if (string.IsNullOrEmpty(personId)) return;
+
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _pageCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
+        CancelFilmographyLoad();
 
         IsLoading = true;
         ErrorMessage = null;
-        Filmography.Clear();
+        StatusMessage = null;
         SelectedTypeFilter = "all";
 
         try
         {
-            Person = await _peopleApi.GetPersonAsync(personId);
+            var personTask = _peopleApi.GetPersonAsync(personId, cts.Token);
+            var filmographyTask = _catalogApi.GetPersonFilmographyAsync(
+                personId, null, limit: FilmographyPageSize, offset: 0, cts.Token);
+            await Task.WhenAll(personTask, filmographyTask);
+            if (!ReferenceEquals(_pageCts, cts)) return;
+
+            Person = personTask.Result;
+            ApplyFilmography(filmographyTask.Result);
             OnPropertyChanged(nameof(AgeDisplay));
             OnPropertyChanged(nameof(DatesDisplay));
             OnPropertyChanged(nameof(IsAdmin));
-
-            await LoadFilmographyAsync(personId);
         }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load person: {ex.Message}";
+            if (ReferenceEquals(_pageCts, cts)) ErrorMessage = $"Failed to load person: {ex.Message}";
         }
         finally
         {
-            IsLoading = false;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _pageCts, null, cts), cts))
+                IsLoading = false;
+            cts.Dispose();
         }
     }
 
@@ -134,8 +166,7 @@ public partial class PersonDetailViewModel : ObservableObject
     {
         if (Person == null) return;
         SelectedTypeFilter = type;
-        Filmography.Clear();
-        await LoadFilmographyAsync(Person.Id);
+        await LoadFilmographyAsync(Person.Id, type);
     }
 
     [RelayCommand]
@@ -144,41 +175,51 @@ public partial class PersonDetailViewModel : ObservableObject
         if (Person == null || IsRefreshing) return;
 
         IsRefreshing = true;
+        ErrorMessage = null;
+        StatusMessage = null;
         try
         {
-            await _peopleApi.RefreshPersonAsync(Person.Id);
-
-            // Reload person data after refresh
-            Person = await _peopleApi.GetPersonAsync(Person.Id);
+            if (IsAdmin)
+            {
+                Person = await _adminApi.RefreshPersonAsync(Person.Id);
+                StatusMessage = "Person metadata refreshed.";
+            }
+            else
+            {
+                await _peopleApi.RefreshPersonAsync(Person.Id);
+                StatusMessage = "Person refresh queued.";
+            }
             OnPropertyChanged(nameof(AgeDisplay));
             OnPropertyChanged(nameof(DatesDisplay));
         }
-        catch
-        {
-            // Refresh failure is non-fatal
-        }
+        catch (Exception ex) { ErrorMessage = $"Refresh failed: {ex.Message}"; }
         finally
         {
             IsRefreshing = false;
         }
     }
 
-    private async Task LoadFilmographyAsync(string personId)
+    private async Task LoadFilmographyAsync(string personId, string typeFilter)
     {
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _filmographyCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
+        IsLoadingMoreFilmography = true;
         try
         {
-            var type = SelectedTypeFilter == "all" ? null : SelectedTypeFilter;
+            var type = typeFilter == "all" ? null : typeFilter;
             var response = await _catalogApi.GetPersonFilmographyAsync(
-                personId, type, limit: FilmographyPageSize, offset: 0);
-            Filmography.Clear();
-            FilmographyTotal = response.Total;
-            foreach (var item in response.Items)
-                Filmography.Add(item);
-            OnPropertyChanged(nameof(FilmographyHasMore));
+                personId, type, limit: FilmographyPageSize, offset: 0, cts.Token);
+            if (ReferenceEquals(_filmographyCts, cts)) ApplyFilmography(response);
         }
-        catch
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
+        catch (Exception ex) { if (ReferenceEquals(_filmographyCts, cts)) ErrorMessage = ex.Message; }
+        finally
         {
-            // Filmography load failure is non-fatal
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _filmographyCts, null, cts), cts))
+                IsLoadingMoreFilmography = false;
+            cts.Dispose();
         }
     }
 
@@ -192,20 +233,57 @@ public partial class PersonDetailViewModel : ObservableObject
     {
         if (IsLoadingMoreFilmography || !FilmographyHasMore || Person == null) return;
 
+        var personId = Person.Id;
+        var typeFilter = SelectedTypeFilter;
+        var offset = Filmography.Count;
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _filmographyCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
         IsLoadingMoreFilmography = true;
         try
         {
-            var type = SelectedTypeFilter == "all" ? null : SelectedTypeFilter;
+            var type = typeFilter == "all" ? null : typeFilter;
             var response = await _catalogApi.GetPersonFilmographyAsync(
-                Person.Id, type, limit: FilmographyPageSize, offset: Filmography.Count);
+                personId, type, limit: FilmographyPageSize, offset: offset, cts.Token);
+            if (!ReferenceEquals(_filmographyCts, cts)) return;
             foreach (var item in response.Items)
                 Filmography.Add(item);
+            FilmographyTotal = response.Total;
             OnPropertyChanged(nameof(FilmographyHasMore));
         }
-        catch { /* non-fatal */ }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
+        catch (Exception ex) { if (ReferenceEquals(_filmographyCts, cts)) ErrorMessage = ex.Message; }
         finally
         {
-            IsLoadingMoreFilmography = false;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _filmographyCts, null, cts), cts))
+                IsLoadingMoreFilmography = false;
+            cts.Dispose();
         }
+    }
+
+    public void Cancel()
+    {
+        var page = Interlocked.Exchange(ref _pageCts, null);
+        page?.Cancel();
+        page?.Dispose();
+        CancelFilmographyLoad();
+        IsLoading = false;
+    }
+
+    private void CancelFilmographyLoad()
+    {
+        var filmography = Interlocked.Exchange(ref _filmographyCts, null);
+        filmography?.Cancel();
+        filmography?.Dispose();
+        IsLoadingMoreFilmography = false;
+    }
+
+    private void ApplyFilmography(CatalogResponse response)
+    {
+        Filmography.Clear();
+        FilmographyTotal = response.Total;
+        foreach (var item in response.Items) Filmography.Add(item);
+        OnPropertyChanged(nameof(FilmographyHasMore));
     }
 }

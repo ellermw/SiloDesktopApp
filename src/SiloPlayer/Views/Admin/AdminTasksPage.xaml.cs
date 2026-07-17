@@ -22,6 +22,7 @@ public sealed partial class AdminTasksPage : Page
     private DateTime _lastEventRefresh = DateTime.MinValue;
     private bool _compactLayout;
     private bool _loaded;
+    private int _taskActionFeedbackCount;
 
     public AdminTasksPage()
     {
@@ -92,7 +93,7 @@ public sealed partial class AdminTasksPage : Page
 
     private void OnEventReceived(string channel, string eventName, System.Text.Json.JsonElement data)
     {
-        if (channel != "tasks" || (DateTime.UtcNow - _lastEventRefresh).TotalMilliseconds < 750) return;
+        if (channel != "tasks" || Volatile.Read(ref _taskActionFeedbackCount) > 0 || (DateTime.UtcNow - _lastEventRefresh).TotalMilliseconds < 750) return;
         _lastEventRefresh = DateTime.UtcNow;
         DispatcherQueue.TryEnqueue(async () => await ViewModel.LoadCommand.ExecuteAsync(null));
     }
@@ -119,6 +120,7 @@ public sealed partial class AdminTasksPage : Page
                 _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
                 _refreshTimer.Tick += async (_, _) =>
                 {
+                    if (Volatile.Read(ref _taskActionFeedbackCount) > 0) return;
                     await ViewModel.LoadCommand.ExecuteAsync(null);
                     if (!ViewModel.AnyTaskRunning) StopRefreshTimer();
                 };
@@ -204,23 +206,8 @@ public sealed partial class AdminTasksPage : Page
             BorderThickness = new Thickness(0, 0, 0, isLast ? 0 : 1),
         };
 
-        // Clickable button fills the row
-        var rowButton = new Button
-        {
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            Background = new SolidColorBrush(Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(16, 16, 16, 16),
-            CornerRadius = new CornerRadius(0)
-        };
-
-        var capturedTask = task;
-        rowButton.Click += (_, _) =>
-            Frame.Navigate(typeof(AdminTaskDetailPage), capturedTask.Key);
-
         // Web rows stack their trailing state/actions below the task copy on compact canvases.
-        var rootGrid = new Grid { ColumnSpacing = 12, RowSpacing = 10 };
+        var rootGrid = new Grid { ColumnSpacing = 12, RowSpacing = 10, Padding = new Thickness(16) };
         rootGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         rootGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         if (!_compactLayout)
@@ -235,14 +222,16 @@ public sealed partial class AdminTasksPage : Page
         var leftPanel = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
 
         // Task name — text-sm font-medium, hover:text-primary (simulated via HyperlinkButton style)
-        var nameBlock = new TextBlock
+        var capturedTask = task;
+        var nameBlock = new HyperlinkButton
         {
-            Text = task.Name,
+            Content = task.Name,
+            Padding = new Thickness(0),
             FontSize = 14,
-            FontWeight = FontWeights.SemiBold,
+            FontWeight = FontWeights.Medium,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis
         };
+        nameBlock.Click += (_, _) => Frame.Navigate(typeof(AdminTaskDetailPage), capturedTask.Key);
         leftPanel.Children.Add(nameBlock);
 
         // Metadata / progress (idle shows meta line; running shows progress bar)
@@ -271,7 +260,8 @@ public sealed partial class AdminTasksPage : Page
             else if (string.IsNullOrEmpty(scheduleDesc))
                 parts.Add("Never run");
 
-            if (!string.IsNullOrEmpty(task.NextRunAt))
+            var overdue = !string.IsNullOrEmpty(task.NextRunAt) && IsOverdue(task.NextRunAt);
+            if (!string.IsNullOrEmpty(task.NextRunAt) && !overdue)
                 parts.Add($"Next: {FormatNextRun(task.NextRunAt)}");
 
             string metaText = string.Join(" \u00B7 ", parts);
@@ -283,6 +273,13 @@ public sealed partial class AdminTasksPage : Page
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
                 Margin = new Thickness(0, 2, 0, 0)
             });
+            if (overdue)
+            {
+                var overduePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, Margin = new Thickness(0, 3, 0, 0) };
+                overduePanel.Children.Add(new FontIcon { Glyph = "\uE7BA", FontSize = 12, Foreground = (SolidColorBrush)Application.Current.Resources["WarningBrush"] });
+                overduePanel.Children.Add(new TextBlock { Text = "Overdue", FontSize = 12, FontWeight = FontWeights.Medium, Foreground = (SolidColorBrush)Application.Current.Resources["WarningBrush"] });
+                leftPanel.Children.Add(overduePanel);
+            }
         }
         else
         {
@@ -347,8 +344,7 @@ public sealed partial class AdminTasksPage : Page
         Grid.SetRow(actionBtn, _compactLayout ? 1 : 0);
         rootGrid.Children.Add(actionBtn);
 
-        rowButton.Content = rootGrid;
-        rowBorder.Child = rowButton;
+        rowBorder.Child = rootGrid;
         return rowBorder;
     }
 
@@ -406,14 +402,19 @@ public sealed partial class AdminTasksPage : Page
         var icon = new FontIcon
         {
             FontSize = 12,
-            Glyph = isRunning ? "\uE71A" : "\uE768"  // Stop : Play
+            Glyph = isRunning || isCancelling ? "\uE71A" : "\uE768"  // Stop : Play
         };
 
-        string label = isCancelling ? "Stopping..." : isRunning ? "Stop" : "Run Now";
+        var labelBlock = new TextBlock
+        {
+            Text = isCancelling ? "Stopping..." : isRunning ? "Stop" : "Run Now",
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
 
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         content.Children.Add(icon);
-        content.Children.Add(new TextBlock { Text = label, FontSize = 13, VerticalAlignment = VerticalAlignment.Center });
+        content.Children.Add(labelBlock);
 
         var btn = new Button
         {
@@ -421,6 +422,7 @@ public sealed partial class AdminTasksPage : Page
             IsEnabled = !isCancelling,
             Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
             Padding = new Thickness(12, 6, 12, 6),
+            MinWidth = 132,
             VerticalAlignment = VerticalAlignment.Center
         };
 
@@ -428,8 +430,15 @@ public sealed partial class AdminTasksPage : Page
         {
             btn.Click += async (_, _) =>
             {
+                var started = DateTime.UtcNow;
+                Interlocked.Increment(ref _taskActionFeedbackCount);
                 btn.IsEnabled = false;
+                labelBlock.Text = "Stopping...";
                 await ViewModel.CancelTaskCommand.ExecuteAsync(capturedTask.Key);
+                var remaining = TimeSpan.FromSeconds(1) - (DateTime.UtcNow - started);
+                if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
+                Interlocked.Decrement(ref _taskActionFeedbackCount);
+                await ViewModel.LoadCommand.ExecuteAsync(null);
                 RebuildTaskGroups();
             };
         }
@@ -437,8 +446,15 @@ public sealed partial class AdminTasksPage : Page
         {
             btn.Click += async (_, _) =>
             {
+                var started = DateTime.UtcNow;
+                Interlocked.Increment(ref _taskActionFeedbackCount);
                 btn.IsEnabled = false;
+                labelBlock.Text = "Starting...";
                 await ViewModel.RunTaskCommand.ExecuteAsync(capturedTask.Key);
+                var remaining = TimeSpan.FromSeconds(1) - (DateTime.UtcNow - started);
+                if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
+                Interlocked.Decrement(ref _taskActionFeedbackCount);
+                await ViewModel.LoadCommand.ExecuteAsync(null);
                 RebuildTaskGroups();
             };
         }
@@ -463,6 +479,9 @@ public sealed partial class AdminTasksPage : Page
         int days = (int)diff.TotalDays;
         return $"in {days}d";
     }
+
+    private static bool IsOverdue(string dateStr)
+        => DateTime.TryParse(dateStr, out var dt) && dt.ToUniversalTime() < DateTime.UtcNow;
 
     private static string FormatDuration(long milliseconds)
     {
@@ -533,11 +552,11 @@ public sealed partial class AdminTasksPage : Page
         string FormatDt(string? s) => string.IsNullOrEmpty(s) ? "\u2014" :
             (DateTime.TryParse(s, out var d) ? d.ToLocalTime().ToString("g") : s);
 
-        AddCell(0, "Queue", metrics.Total.ToString("N0"));
-        AddCell(1, "Due now", metrics.Due.ToString("N0"));
-        AddCell(2, "Leased", metrics.Leased.ToString("N0"));
-        AddCell(3, "Oldest due", FormatDt(metrics.OldestDueAt));
-        AddCell(4, "Oldest lease", FormatDt(metrics.OldestLeaseExpiresAt));
+        AddCell(0, "Refresh Backlog", metrics.Total.ToString("N0"));
+        AddCell(1, "Due for Refresh", metrics.Due.ToString("N0"));
+        AddCell(2, "Processing", metrics.Leased.ToString("N0"));
+        AddCell(3, "Waiting Since", FormatDt(metrics.OldestDueAt));
+        AddCell(4, "Next Claim Timeout", FormatDt(metrics.OldestLeaseExpiresAt));
         content.Children.Add(grid);
 
         // Reason badges

@@ -47,6 +47,11 @@
                 </DataTemplate>
             </GridView.ItemTemplate>
         </GridView>
+        <StackPanel x:Name="EmptyState" Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="Collapsed" MaxWidth="420">
+            <FontIcon Glyph="&#xE8A5;" FontSize="40" Opacity="0.5" HorizontalAlignment="Center" />
+            <TextBlock Text="Nothing matched" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center" />
+            <TextBlock Text="Try a different sort or media type." FontSize="13" Opacity="0.65" HorizontalAlignment="Center" />
+        </StackPanel>
         <Grid x:Name="FooterPanel" Grid.Row="2" Padding="40,8,40,18">
             <Button x:Name="PreviousButton" Content="Prev" Click="Previous_Click" HorizontalAlignment="Left" />
             <TextBlock x:Name="FooterPageText" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.7" />

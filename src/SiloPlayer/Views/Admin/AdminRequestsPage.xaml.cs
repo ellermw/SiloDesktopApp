@@ -41,18 +41,71 @@ public sealed partial class AdminRequestsPage : Page
         InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Enabled;
         SizeChanged += AdminRequestsPage_SizeChanged;
+        FixIntegrationHeaderButton();
     }
 
     private void AdminRequestsPage_SizeChanged(object sender, SizeChangedEventArgs e)
+        => ApplyResponsiveLayout(e.NewSize.Width);
+
+    private void ApplyResponsiveLayout(double width)
     {
-        var compact = e.NewSize.Width < 760;
-        var gutter = e.NewSize.Width < 600 ? 16 : compact ? 24 : 40;
+        if (width <= 0) return;
+        var compact = width < 760;
+        var gutter = width < 600 ? 16 : compact ? 24 : 40;
         RequestsPageShell.Padding = new Thickness(gutter, compact ? 24 : 32, gutter, 40);
-        QueueFilterBar.Orientation = e.NewSize.Width < 560 ? Orientation.Vertical : Orientation.Horizontal;
+        QueueFilterBar.Orientation = width < 560 ? Orientation.Vertical : Orientation.Horizontal;
+        ApplyTwoColumnFormLayout(SettingsFieldsGrid, compact);
+        ApplyTwoColumnFormLayout(OverrideFieldsGrid, compact);
+
+        if (IntegrationsPanel.Children.FirstOrDefault() is Grid integrationHeader &&
+            integrationHeader.Children.Count > 1 &&
+            integrationHeader.Children[1] is Button addButton)
+        {
+            if (integrationHeader.RowDefinitions.Count < 2)
+            {
+                integrationHeader.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                integrationHeader.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                integrationHeader.RowSpacing = 10;
+            }
+            Grid.SetRow(addButton, compact ? 1 : 0);
+            addButton.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        }
+    }
+
+    private static void ApplyTwoColumnFormLayout(Grid grid, bool compact)
+    {
+        grid.ColumnDefinitions[1].Width = compact ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        for (var index = 0; index < grid.Children.Count; index++)
+        {
+            if (grid.Children[index] is not FrameworkElement child) continue;
+            if (compact)
+            {
+                Grid.SetColumn(child, 0);
+                Grid.SetRow(child, index);
+            }
+            else
+            {
+                Grid.SetColumn(child, index % 2);
+                Grid.SetRow(child, index / 2);
+            }
+        }
+    }
+
+    private void FixIntegrationHeaderButton()
+    {
+        if (IntegrationsPanel.Children.FirstOrDefault() is not Grid header ||
+            header.Children.Count < 2 || header.Children[1] is not Button button)
+            return;
+
+        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        content.Children.Add(new FontIcon { Glyph = "\uE710", FontSize = 13 });
+        content.Children.Add(new TextBlock { Text = "Add connection" });
+        button.Content = content;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout(ActualWidth);
         if (_loaded) return;
         _loaded = true;
         _ready = true;
@@ -241,9 +294,21 @@ public sealed partial class AdminRequestsPage : Page
         var approve = ActionButton("", "Approve", request.Status == "pending" && request.Outcome == "active");
         var decline = ActionButton("", "Decline", request.Status != "completed" && request.Outcome == "active");
         var retry = ActionButton("", "Retry", request.Outcome == "failed");
-        approve.Click += async (_, _) => { await ViewModel.ApproveCommand.ExecuteAsync(request); RenderQueue(); };
+        approve.Click += async (_, _) =>
+        {
+            approve.IsEnabled = false;
+            await ViewModel.ApproveCommand.ExecuteAsync(request);
+            SurfaceViewModelMutationResult();
+            RenderQueue();
+        };
         decline.Click += async (_, _) => await DeclineAsync(request);
-        retry.Click += async (_, _) => { await ViewModel.RetryCommand.ExecuteAsync(request); RenderQueue(); };
+        retry.Click += async (_, _) =>
+        {
+            retry.IsEnabled = false;
+            await ViewModel.RetryCommand.ExecuteAsync(request);
+            SurfaceViewModelMutationResult();
+            RenderQueue();
+        };
         Grid.SetColumn(decline, 1);
         Grid.SetRow(retry, 1);
         actions.Children.Add(approve); actions.Children.Add(decline); actions.Children.Add(retry);
@@ -256,7 +321,19 @@ public sealed partial class AdminRequestsPage : Page
         var dialog = new ContentDialog { Title = "Decline request", Content = new StackPanel { Spacing = 10, Children = { new TextBlock { Text = $"\"{request.Title}\" will be marked declined. Add an optional note for the requester.", TextWrapping = TextWrapping.Wrap }, reason } }, PrimaryButtonText = "Decline", CloseButtonText = "Cancel", XamlRoot = XamlRoot };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         try { await _requestsApi.DeclineAsync(request.Id, string.IsNullOrWhiteSpace(reason.Text) ? null : reason.Text.Trim()); await LoadQueueAsync(); _toasts.Success("Request declined"); }
-        catch (Exception ex) { ShowError(ex.Message); }
+        catch (Exception ex) { _toasts.Error(ex.Message); }
+    }
+
+    private void SurfaceViewModelMutationResult()
+    {
+        if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+        {
+            _toasts.Error(ViewModel.ErrorMessage);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(ViewModel.StatusMessage))
+            _toasts.Success(ViewModel.StatusMessage);
     }
 
     private async Task LoadSettingsAsync()
@@ -278,7 +355,7 @@ public sealed partial class AdminRequestsPage : Page
         _settings.GlobalWindowDays = Math.Max(1, (int)(double.IsNaN(WindowDaysBox.Value) ? 1 : WindowDaysBox.Value));
         _settings.ForceDualQuality = ForceDualQualitySwitch.IsOn;
         try { _settings = await _requestsApi.UpdateAdminRequestSettingsAsync(_settings); _toasts.Success("Request settings saved"); }
-        catch (Exception ex) { ShowError(ex.Message); }
+        catch (Exception ex) { _toasts.Error(ex.Message); }
     }
 
     private async Task LoadIntegrationsAsync()
@@ -298,10 +375,19 @@ public sealed partial class AdminRequestsPage : Page
 
     private async Task DeleteIntegrationAsync(RequestIntegration integration)
     {
-        var dialog = new ContentDialog { Title = "Delete connection", Content = $"\"{integration.Name}\" will be permanently removed. New requests will no longer route to this connection.", PrimaryButtonText = "Delete", CloseButtonText = "Cancel", XamlRoot = XamlRoot };
+        var dialog = new ContentDialog
+        {
+            Title = "Delete connection",
+            Content = $"\"{integration.Name}\" will be permanently removed. New requests will no longer route to this connection.",
+            PrimaryButtonText = "Delete",
+            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot,
+        };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         try { await _requestsApi.DeleteRequestIntegrationAsync(integration.Id); await LoadIntegrationsAsync(); _toasts.Success("Integration deleted"); }
-        catch (Exception ex) { ShowError(ex.Message); }
+        catch (Exception ex) { _toasts.Error(ex.Message); }
     }
 
     // WebUI-parity inline connection editor. Request integrations are plugin-
@@ -775,7 +861,7 @@ public sealed partial class AdminRequestsPage : Page
             await LoadIntegrationsAsync();
             _toasts.Success(isNew ? "Connection created" : "Connection saved");
         }
-        catch (Exception ex) { ShowError(ex.Message); }
+        catch (Exception ex) { _toasts.Error(ex.Message); }
         finally { saveButton.IsEnabled = true; }
     }
 
@@ -898,7 +984,7 @@ public sealed partial class AdminRequestsPage : Page
         _selectedLimit.UserId = userId; _selectedLimit.LimitMode = SelectedTag(LimitModePicker, "inherit"); _selectedLimit.ApprovalMode = SelectedTag(ApprovalModePicker, "inherit");
         if (_selectedLimit.LimitMode == "custom") { _selectedLimit.MaxRequests = Math.Max(0, (int)OverrideMaxRequestsBox.Value); _selectedLimit.WindowDays = Math.Max(1, (int)OverrideWindowDaysBox.Value); } else { _selectedLimit.MaxRequests = null; _selectedLimit.WindowDays = null; }
         try { _selectedLimit = await _requestsApi.UpdateRequestUserLimitAsync(userId, _selectedLimit); _toasts.Success("User override saved"); }
-        catch (Exception ex) { ShowError(ex.Message); }
+        catch (Exception ex) { _toasts.Error(ex.Message); }
     }
 
     private Button ActionButton(string glyph, string text, bool enabled)

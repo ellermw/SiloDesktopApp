@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -11,11 +12,14 @@ using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Controls;
 using SiloPlayer.Helpers;
+using SiloPlayer.Messaging;
 using SiloPlayer.ViewModels;
 
 namespace SiloPlayer.Views;
 
-public sealed partial class LibraryPage : Page
+public sealed partial class LibraryPage : Page,
+    IRecipient<MediaSurfaceChanged>,
+    IRecipient<PlaybackProgressUpdated>
 {
     public sealed record NavigationArgs(Library Library, string? InitialTab = null);
 
@@ -142,6 +146,7 @@ public sealed partial class LibraryPage : Page
     private DispatcherTimer? _cardBindTimer;
     private bool _isNavigated;
     private bool _viewModelEventsAttached;
+    private bool _messengerRegistered;
     private int? _activeLibraryId;
     private const int CardBindsPerTick = 12;
     private const int MaxRealizedLibraryCards = 40;
@@ -259,6 +264,7 @@ public sealed partial class LibraryPage : Page
         base.OnNavigatedTo(e);
         _isNavigated = true;
         AttachViewModelEvents();
+        RegisterMediaMessages();
 
         var library = e.Parameter as Library;
         string? requestedTab = null;
@@ -400,6 +406,7 @@ public sealed partial class LibraryPage : Page
     {
         base.OnNavigatedFrom(e);
         _isNavigated = false;
+        UnregisterMediaMessages();
         _visibleRangeDebounceTimer?.Stop();
         _cardBindTimer?.Stop();
         _audiobookGroupSearchTimer?.Stop();
@@ -424,6 +431,66 @@ public sealed partial class LibraryPage : Page
         if (!_viewModelEventsAttached) return;
         ViewModel.WindowLoaded -= OnLibraryWindowLoaded;
         _viewModelEventsAttached = false;
+    }
+
+    private void RegisterMediaMessages()
+    {
+        if (_messengerRegistered) return;
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
+        _messengerRegistered = true;
+    }
+
+    private void UnregisterMediaMessages()
+    {
+        if (!_messengerRegistered) return;
+        WeakReferenceMessenger.Default.Unregister<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Unregister<PlaybackProgressUpdated>(this);
+        _messengerRegistered = false;
+    }
+
+    public void Receive(MediaSurfaceChanged message)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_isNavigated) return;
+            var changed = ViewModel.UpdateCachedItems(message.ContentId, item => message.Kind switch
+            {
+                MediaSurfaceChangeKind.FavoriteAdded => MediaItemStateUpdater.SetFavorite(item, true),
+                MediaSurfaceChangeKind.FavoriteRemoved => MediaItemStateUpdater.SetFavorite(item, false),
+                MediaSurfaceChangeKind.WatchlistAdded => MediaItemStateUpdater.SetWatchlist(item, true),
+                MediaSurfaceChangeKind.WatchlistRemoved => MediaItemStateUpdater.SetWatchlist(item, false),
+                MediaSurfaceChangeKind.WatchedMarked => MediaItemStateUpdater.SetWatched(item, true),
+                MediaSurfaceChangeKind.WatchedCleared => MediaItemStateUpdater.SetWatched(item, false),
+                _ => false,
+            });
+            if (changed > 0) RefreshVisibleItemState(message.ContentId);
+        });
+    }
+
+    public void Receive(PlaybackProgressUpdated message)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_isNavigated) return;
+            var changed = ViewModel.UpdateCachedItems(message.ContentId, item =>
+                MediaItemStateUpdater.SetPlaybackProgress(
+                    item,
+                    message.PositionSeconds,
+                    message.DurationSeconds,
+                    message.Completed,
+                    message.UpdatedAt));
+            if (changed > 0) RefreshVisibleItemState(message.ContentId);
+        });
+    }
+
+    private void RefreshVisibleItemState(string contentId)
+    {
+        foreach (var card in _visibleLibraryCards.Values)
+        {
+            if (string.Equals(card.MediaItem?.ContentId, contentId, StringComparison.OrdinalIgnoreCase))
+                card.RefreshState();
+        }
     }
 
     private void UpdateSortOptions(string libraryType, string? selectedSort, string? browseType = null)

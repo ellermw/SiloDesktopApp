@@ -29,6 +29,8 @@ public class CreateUserRequest
     public string Email { get; set; } = "";
     public string Password { get; set; } = "";
     public string Role { get; set; } = "user";
+    public List<string> Permissions { get; set; } = ["marker_edit"];
+    public bool CreateDefaultProfile { get; set; } = true;
     public List<int>? LibraryIds { get; set; }
     public string? MaxPlaybackQuality { get; set; }
     public int? MaxStreams { get; set; }

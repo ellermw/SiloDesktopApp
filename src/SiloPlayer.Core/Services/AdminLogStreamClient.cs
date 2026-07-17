@@ -93,7 +93,7 @@ public sealed class AdminLogStreamClient : IDisposable
         }
     }
 
-    public async Task StopAsync()
+    public Task StopAsync()
     {
         var ws = _ws;
         var cts = _readCts;
@@ -108,13 +108,15 @@ public sealed class AdminLogStreamClient : IDisposable
         {
             try
             {
-                if (ws.State == WebSocketState.Open || ws.State == WebSocketState.CloseReceived)
-                    await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "stopping", CancellationToken.None).ConfigureAwait(false);
+                // Navigation and filter changes must never wait for a remote close
+                // handshake. Cancel the read loop and abort the private socket.
+                ws.Abort();
             }
             catch { }
             ws.Dispose();
         }
         SetState(ConnectionState.Disconnected);
+        return Task.CompletedTask;
     }
 
     private async Task ReadLoopAsync(Stream stream, ClientWebSocket ws, CancellationToken ct)

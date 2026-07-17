@@ -38,13 +38,16 @@
 
                     <StackPanel Grid.Column="0" Spacing="12">
                         <TextBlock
-                            Text="API Keys"
-                            FontSize="48"
-                            FontWeight="Bold"
+                        Text="API Keys"
+                        FontSize="48"
+                        FontWeight="ExtraBold"
+                        CharacterSpacing="-50"
+                        LineHeight="46"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
                             Text="Create and manage machine credentials for integrations, automation, and internal tools."
-                            FontSize="14"
+                        FontSize="16"
+                        LineHeight="27"
                             Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
 
@@ -62,18 +65,6 @@
                 </Grid>
 
                 <!-- ===== Status banner ===== -->
-                <Border
-                    x:Name="StatusBanner"
-                    Background="{StaticResource AccentBackgroundBrush}"
-                    CornerRadius="8"
-                    Padding="14,10"
-                    Visibility="Collapsed">
-                    <TextBlock
-                        x:Name="StatusBannerText"
-                        FontSize="13"
-                        Foreground="{StaticResource AccentBrush}" />
-                </Border>
-
                 <!-- ===== API Keys Table ===== -->
                 <!-- surface-panel overflow-x-auto rounded-[1.6rem] border-0 -->
                 <ScrollViewer x:Name="ApiKeysTableScroll"

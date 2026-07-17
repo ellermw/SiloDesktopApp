@@ -23,8 +23,33 @@
             MaxWidth="400"
             Spacing="16">
 
+            <ProgressRing
+                IsActive="{x:Bind ViewModel.IsCheckingSignupStatus, Mode=OneWay}"
+                Visibility="{x:Bind ViewModel.IsCheckingSignupStatus, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                HorizontalAlignment="Center"
+                Width="32" Height="32" />
+
+            <Border
+                Style="{StaticResource GlassCardStyle}"
+                Visibility="{x:Bind ViewModel.ShowSignupClosed, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                <StackPanel Spacing="8">
+                    <TextBlock
+                        Text="{x:Bind ViewModel.ServerName, Mode=OneWay, FallbackValue='Silo'}"
+                        FontSize="30"
+                        FontWeight="ExtraBold"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        CharacterSpacing="-40" />
+                    <TextBlock
+                        Text="Public signups are currently closed."
+                        Style="{StaticResource SecondaryTextStyle}"
+                        FontSize="14" />
+                </StackPanel>
+            </Border>
+
             <!-- Glass card -->
-            <Border Style="{StaticResource GlassCardStyle}">
+            <Border
+                Style="{StaticResource GlassCardStyle}"
+                Visibility="{x:Bind ViewModel.ShowSignupForm, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                 <StackPanel Spacing="24">
                     <!-- Header: Branding + subtitle -->
                     <StackPanel Spacing="8">
@@ -119,6 +144,12 @@
                                 PlaceholderText="Re-enter your password"
                                 PasswordChanged="ConfirmPasswordBox_PasswordChanged"
                                 KeyDown="InputBox_KeyDown" />
+                            <TextBlock
+                                x:Name="PasswordMismatchText"
+                                Text="Passwords do not match"
+                                Foreground="{StaticResource ErrorBrush}"
+                                FontSize="12"
+                                Visibility="Collapsed" />
                         </StackPanel>
 
                         <!-- Invite Code -->
@@ -132,13 +163,13 @@
                                 x:Name="InviteCodeBox"
                                 Text="{x:Bind ViewModel.InviteCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 Style="{StaticResource DarkTextBoxStyle}"
-                                PlaceholderText="Enter invite code (if required)"
+                                PlaceholderText="Enter your invite code"
                                 KeyDown="InputBox_KeyDown" />
                         </StackPanel>
 
                         <!-- Sign up button -->
                         <Button
-                            Content="Create Account"
+                            Content="Create account"
                             Style="{StaticResource AccentButtonStyle}"
                             HorizontalAlignment="Stretch"
                             Padding="16,12"
@@ -160,6 +191,7 @@
                 Content="Already have an account? Sign in"
                 Style="{StaticResource GhostButtonStyle}"
                 HorizontalAlignment="Center"
+                Visibility="{x:Bind ViewModel.ShowSignupForm, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                 Click="BackToLoginButton_Click" />
         </StackPanel>
     </Grid>

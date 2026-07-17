@@ -27,6 +27,12 @@ public partial class AdminUserDetailViewModel : ObservableObject
     public ObservableCollection<AdminDeviceSetting> DeviceSettings { get; } = [];
     public ObservableCollection<Library> Libraries { get; } = [];
     public ObservableCollection<AccessGroup> AccessGroups { get; } = [];
+    private int _loadedUserId;
+    private bool _profilesLoaded;
+    private bool _historyLoaded;
+    private bool _ipsLoaded;
+    private bool _userSettingsLoaded;
+    private bool _deviceSettingsLoaded;
 
     [RelayCommand]
     private async Task LoadAsync(int userId)
@@ -35,34 +41,24 @@ public partial class AdminUserDetailViewModel : ObservableObject
         ErrorMessage = null;
         try
         {
+            if (_loadedUserId != userId)
+            {
+                _loadedUserId = userId;
+                _profilesLoaded = _historyLoaded = _ipsLoaded = false;
+                _userSettingsLoaded = _deviceSettingsLoaded = false;
+                Profiles.Clear();
+                History.Clear();
+                IPs.Clear();
+                UserSettings.Clear();
+                DeviceSettings.Clear();
+            }
             var userTask     = _adminApi.GetUserAsync(userId);
-            var profilesTask = _adminApi.GetUserProfilesAsync(userId);
-            var historyTask  = _adminApi.GetPlaybackHistoryAsync(userId: userId, limit: 50);
-            var ipsTask      = _adminApi.GetUserIPsAsync(userId, days: 30);
             var librariesTask = _adminApi.GetAdminLibrariesAsync();
             var accessGroupsTask = _adminApi.GetAccessGroupsAsync();
-            var settingsTask = _adminApi.GetUserSettingsAsync(userId);
-            var deviceSettingsTask = _adminApi.GetUserDeviceSettingsAsync(userId);
 
-            await Task.WhenAll(userTask, profilesTask, historyTask, ipsTask, librariesTask, accessGroupsTask,
-                settingsTask, deviceSettingsTask);
+            await Task.WhenAll(userTask, librariesTask, accessGroupsTask);
 
             User = userTask.Result;
-
-            Profiles.Clear();
-            foreach (var p in profilesTask.Result) Profiles.Add(p);
-
-            History.Clear();
-            foreach (var h in historyTask.Result) History.Add(h);
-
-            IPs.Clear();
-            foreach (var ip in ipsTask.Result) IPs.Add(ip);
-
-            UserSettings.Clear();
-            foreach (var setting in settingsTask.Result) UserSettings.Add(setting);
-
-            DeviceSettings.Clear();
-            foreach (var setting in deviceSettingsTask.Result) DeviceSettings.Add(setting);
 
             Libraries.Clear();
             foreach (var l in librariesTask.Result) Libraries.Add(l);
@@ -80,6 +76,51 @@ public partial class AdminUserDetailViewModel : ObservableObject
         {
             IsLoading = false;
         }
+    }
+
+    public async Task LoadProfilesAsync(int userId, bool force = false)
+    {
+        if (_profilesLoaded && !force) return;
+        var items = await _adminApi.GetUserProfilesAsync(userId);
+        Profiles.Clear();
+        foreach (var item in items) Profiles.Add(item);
+        _profilesLoaded = true;
+    }
+
+    public async Task LoadHistoryAsync(int userId, bool force = false)
+    {
+        if (_historyLoaded && !force) return;
+        var items = await _adminApi.GetPlaybackHistoryAsync(userId: userId, limit: 50);
+        History.Clear();
+        foreach (var item in items) History.Add(item);
+        _historyLoaded = true;
+    }
+
+    public async Task LoadIPsAsync(int userId, bool force = false)
+    {
+        if (_ipsLoaded && !force) return;
+        var items = await _adminApi.GetUserIPsAsync(userId, days: 30);
+        IPs.Clear();
+        foreach (var item in items) IPs.Add(item);
+        _ipsLoaded = true;
+    }
+
+    public async Task LoadUserSettingsAsync(int userId, bool force = false)
+    {
+        if (_userSettingsLoaded && !force) return;
+        var items = await _adminApi.GetUserSettingsAsync(userId);
+        UserSettings.Clear();
+        foreach (var item in items) UserSettings.Add(item);
+        _userSettingsLoaded = true;
+    }
+
+    public async Task LoadDeviceSettingsAsync(int userId, bool force = false)
+    {
+        if (_deviceSettingsLoaded && !force) return;
+        var items = await _adminApi.GetUserDeviceSettingsAsync(userId);
+        DeviceSettings.Clear();
+        foreach (var item in items) DeviceSettings.Add(item);
+        _deviceSettingsLoaded = true;
     }
 
     [RelayCommand]

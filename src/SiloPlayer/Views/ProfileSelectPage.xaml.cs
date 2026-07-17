@@ -19,6 +19,7 @@ public sealed partial class ProfileSelectPage : Page
         this.InitializeComponent();
 
         ViewModel.ProfileSelected += OnProfileSelected;
+        ViewModel.TasteSeedRequired += OnTasteSeedRequired;
         ViewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(ViewModel.IsLoading))
@@ -34,6 +35,12 @@ public sealed partial class ProfileSelectPage : Page
         UpdatePageState();
     }
 
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        ViewModel.CancelProfileLoad();
+        base.OnNavigatedFrom(e);
+    }
+
     private async void OnProfileSelected()
     {
         var mainWindow = App.MainWindowInstance;
@@ -44,24 +51,21 @@ public sealed partial class ProfileSelectPage : Page
             return;
         }
 
-        Exception? failure;
-        bool entered;
-        if (ViewModel.ShouldShowTasteSeed)
-        {
-            entered = mainWindow.TryEnterAuthenticatedPage(typeof(TasteSeedPage), false, out failure);
-            if (!entered)
-            {
-                LocalLog.AppendLine("navigation_errors.txt", "taste_seed_fallback_to_home");
-                entered = mainWindow.TryEnterAuthenticatedPage(typeof(HomePage), null, out failure);
-            }
-        }
-        else
-        {
-            entered = mainWindow.TryEnterAuthenticatedPage(typeof(HomePage), null, out failure);
-        }
+        var entered = mainWindow.TryEnterAuthenticatedPage(typeof(HomePage), null, out var failure);
 
         if (!entered)
             await ShowNavigationFailureAsync(failure ?? new InvalidOperationException("The requested page could not be opened."));
+    }
+
+    private void OnTasteSeedRequired()
+    {
+        var navigation = App.Services.GetRequiredService<NavigationService>();
+        if (navigation.Frame?.Content is not HomePage) return;
+
+        var mainWindow = App.MainWindowInstance;
+        Exception? failure = null;
+        if (mainWindow == null || !mainWindow.TryEnterAuthenticatedPage(typeof(TasteSeedPage), false, out failure))
+            LocalLog.AppendLine("navigation_errors.txt", $"taste_seed_navigation_failed | {failure?.Message}");
     }
 
     private async Task ShowNavigationFailureAsync(Exception exception)

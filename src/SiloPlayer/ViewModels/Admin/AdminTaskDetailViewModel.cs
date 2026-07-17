@@ -25,12 +25,18 @@ public partial class AdminTaskDetailViewModel : ObservableObject
     // ===== Load =====
 
     [RelayCommand]
-    public async System.Threading.Tasks.Task LoadAsync(string taskKey)
+    public System.Threading.Tasks.Task LoadAsync(string taskKey)
+        => LoadInternalAsync(taskKey, showLoading: true);
+
+    public System.Threading.Tasks.Task RefreshSilentAsync(string taskKey)
+        => LoadInternalAsync(taskKey, showLoading: false);
+
+    private async System.Threading.Tasks.Task LoadInternalAsync(string taskKey, bool showLoading)
     {
         if (string.IsNullOrWhiteSpace(taskKey)) return;
 
-        IsLoading = true;
-        ErrorMessage = null;
+        if (showLoading) IsLoading = true;
+        if (showLoading) ErrorMessage = null;
 
         try
         {
@@ -54,8 +60,8 @@ public partial class AdminTaskDetailViewModel : ObservableObject
                 Metrics = null;
             }
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
-        finally { IsLoading = false; }
+        catch (Exception ex) { if (showLoading) ErrorMessage = ex.Message; }
+        finally { if (showLoading) IsLoading = false; }
     }
 
     // ===== Run =====
@@ -68,8 +74,7 @@ public partial class AdminTaskDetailViewModel : ObservableObject
         try
         {
             await _adminApi.RunTaskAsync(key);
-            await System.Threading.Tasks.Task.Delay(300);
-            await LoadAsync(key);
+            await RefreshSilentAsync(key);
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
     }
@@ -84,8 +89,7 @@ public partial class AdminTaskDetailViewModel : ObservableObject
         try
         {
             await _adminApi.CancelTaskAsync(key);
-            await System.Threading.Tasks.Task.Delay(300);
-            await LoadAsync(key);
+            await RefreshSilentAsync(key);
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
     }
@@ -97,7 +101,7 @@ public partial class AdminTaskDetailViewModel : ObservableObject
         try
         {
             await _adminApi.UpdateTaskTriggersAsync(taskKey, triggers);
-            await LoadAsync(taskKey);
+            await RefreshSilentAsync(taskKey);
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
     }

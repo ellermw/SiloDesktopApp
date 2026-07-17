@@ -50,6 +50,12 @@ public sealed partial class ActivateDevicePage : Page
         UpdateSignedInText();
     }
 
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        ViewModel.CancelLoad();
+        base.OnNavigatedFrom(e);
+    }
+
     private void UpdateSignedInText()
     {
         var username = ViewModel.SignedInUsername;

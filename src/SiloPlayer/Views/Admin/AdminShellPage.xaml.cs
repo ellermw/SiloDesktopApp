@@ -169,6 +169,7 @@ public sealed partial class AdminShellPage : Page
         _navItems.Add((NavNodes,               NavNodesBar,               NavNodesIcon,               NavNodesText));
         _navItems.Add((NavApiKeys,             NavApiKeysBar,             NavApiKeysIcon,             NavApiKeysText));
         _navItems.Add((NavMaintenance,         NavMaintenanceBar,         NavMaintenanceIcon,         NavMaintenanceText));
+        ApplyWebUiNavigationGeometry();
 
         // Navigate to the requested starting page, or Dashboard by default.
         // Selects the matching sidebar nav item so the active indicator lines up.
@@ -244,6 +245,11 @@ public sealed partial class AdminShellPage : Page
     /// </summary>
     private void ReorderNavigationToMatchWebUi()
     {
+        // Buttons are grouped to reproduce the WebUI's 20px section gaps.
+        // Detach them from the old group before rebuilding the authoritative
+        // navigation order after capability/plugin changes.
+        foreach (var group in AdminNavStack.Children.OfType<StackPanel>().ToList())
+            group.Children.Clear();
         AdminNavStack.Children.Clear();
 
         AddNavGroup("OVERVIEW", NavDashboard, NavActivity, NavLogs);
@@ -357,6 +363,7 @@ public sealed partial class AdminShellPage : Page
             CornerRadius = new CornerRadius(12),
             Content = content,
         };
+        ApplyWebUiNavigationGeometry(button, bar, icon, text);
         AutomationProperties.SetName(button, label);
         button.Click += (_, _) =>
         {
@@ -371,15 +378,75 @@ public sealed partial class AdminShellPage : Page
 
     private void AddNavGroup(string label, params Button[] buttons)
     {
-        AdminNavStack.Children.Add(new TextBlock
+        var group = new StackPanel
+        {
+            Spacing = 2,
+            Margin = new Thickness(12, 0, 12, 20),
+        };
+        group.Children.Add(new TextBlock
         {
             Text = label,
             Style = (Style)Application.Current.Resources["SectionHeaderTextStyle"],
-            Margin = new Thickness(20, 12, 16, 4),
+            Margin = new Thickness(8, 0, 4, 6),
         });
 
         foreach (var button in buttons)
-            AdminNavStack.Children.Add(button);
+            group.Children.Add(button);
+        AdminNavStack.Children.Add(group);
+    }
+
+    private void ApplyWebUiNavigationGeometry()
+    {
+        foreach (var (button, bar, icon, text) in _navItems)
+            ApplyWebUiNavigationGeometry(button, bar, icon, text);
+    }
+
+    private static void ApplyWebUiNavigationGeometry(
+        Button button,
+        Border bar,
+        FontIcon icon,
+        TextBlock text)
+    {
+        // SideNav.tsx: parent px-3, item px-3/py-2.5, 18px icon,
+        // and an active 3x18 bar positioned 12px left of the item.
+        button.Margin = new Thickness(0);
+        button.Padding = new Thickness(12, 10, 12, 10);
+        button.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+        icon.FontSize = 18;
+        text.TextTrimming = TextTrimming.CharacterEllipsis;
+
+        if (button.Content is not Grid content || content.ColumnDefinitions.Count < 2)
+            return;
+
+        content.ColumnDefinitions[0].Width = new GridLength(0);
+        content.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
+        bar.Width = 3;
+        bar.Height = 18;
+        bar.CornerRadius = new CornerRadius(0, 2, 2, 0);
+        bar.Margin = new Thickness(-24, 0, 0, 0);
+        bar.VerticalAlignment = VerticalAlignment.Center;
+
+        var oldRow = content.Children.OfType<StackPanel>().FirstOrDefault();
+        if (oldRow is null)
+            return;
+
+        var children = oldRow.Children.ToList();
+        oldRow.Children.Clear();
+        content.Children.Remove(oldRow);
+
+        var row = new Grid { ColumnSpacing = 10 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        for (var index = 0; index < children.Count; index++)
+        {
+            var child = children[index];
+            if (child is FrameworkElement element)
+                Grid.SetColumn(element, index == 0 ? 0 : index == 1 ? 1 : 2);
+            row.Children.Add(child);
+        }
+        Grid.SetColumn(row, 1);
+        content.Children.Add(row);
     }
 
     // ===== SetActiveNavItem =====

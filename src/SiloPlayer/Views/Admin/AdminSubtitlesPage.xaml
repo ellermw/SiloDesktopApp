@@ -9,9 +9,9 @@
     Background="{StaticResource AppBackgroundBrush}">
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel x:Name="SubtitlesPageShell" Padding="40,32,40,40" Spacing="24" MaxWidth="1640" HorizontalAlignment="Center">
+        <StackPanel x:Name="SubtitlesPageShell" Padding="40,32,40,40" Spacing="24" MaxWidth="1400" HorizontalAlignment="Center">
             <StackPanel Spacing="8">
-                <TextBlock
+                <TextBlock x:Name="SubtitlesTitle"
                     Text="Subtitles"
                     Style="{StaticResource TitleTextStyle}"
                     FontSize="48"
@@ -68,13 +68,13 @@
                         FontFamily="Consolas"
                         TextChanged="SearchBox_TextChanged" />
 
-                    <StackPanel x:Name="ProviderFiltersPanel" Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                        <Button x:Name="ProviderAllButton" Content="All" Tag="" Click="ProviderFilter_Click" />
-                        <Button x:Name="ProviderUploadButton" Content="Upload" Tag="upload" Click="ProviderFilter_Click" />
-                        <Button x:Name="ProviderOpenSubtitlesButton" Content="OpenSubtitles" Tag="opensubtitles" Click="ProviderFilter_Click" />
-                        <Button x:Name="ProviderSubDlButton" Content="SubDL" Tag="subdl" Click="ProviderFilter_Click" />
-                        <Button x:Name="ProviderSubSourceButton" Content="SubSource" Tag="subsource" Click="ProviderFilter_Click" />
-                    </StackPanel>
+                    <VariableSizedWrapGrid x:Name="ProviderFiltersPanel" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="ProviderAllButton" Content="All" Tag="" CornerRadius="999" Padding="12,5" Margin="3" Click="ProviderFilter_Click" />
+                        <Button x:Name="ProviderUploadButton" Content="Upload" Tag="upload" CornerRadius="999" Padding="12,5" Margin="3" Click="ProviderFilter_Click" />
+                        <Button x:Name="ProviderOpenSubtitlesButton" Content="OpenSubtitles" Tag="opensubtitles" CornerRadius="999" Padding="12,5" Margin="3" Click="ProviderFilter_Click" />
+                        <Button x:Name="ProviderSubDlButton" Content="SubDL" Tag="subdl" CornerRadius="999" Padding="12,5" Margin="3" Click="ProviderFilter_Click" />
+                        <Button x:Name="ProviderSubSourceButton" Content="SubSource" Tag="subsource" CornerRadius="999" Padding="12,5" Margin="3" Click="ProviderFilter_Click" />
+                    </VariableSizedWrapGrid>
 
                     <ComboBox x:Name="LanguageFilterComboBox" Grid.Column="2" SelectionChanged="Filter_Changed" />
 
@@ -129,6 +129,20 @@
                 </Grid>
             </Border>
             </ScrollViewer>
+
+            <Border x:Name="SubtitlesEmptyState" Style="{StaticResource CardStyle}"
+                    Padding="24,56" Visibility="Collapsed">
+                <StackPanel Spacing="8" HorizontalAlignment="Center" MaxWidth="560">
+                    <TextBlock x:Name="SubtitlesEmptyTitle" FontSize="18" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" TextAlignment="Center" />
+                    <TextBlock x:Name="SubtitlesEmptyDetail" FontSize="14"
+                               Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap"
+                               HorizontalAlignment="Center" TextAlignment="Center" />
+                    <Button x:Name="SubtitlesEmptyResetButton" Content="Reset filters"
+                            Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Center"
+                            Margin="0,12,0,0" Click="ResetFilters_Click" />
+                </StackPanel>
+            </Border>
 
             <TextBlock x:Name="StatusText" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
 

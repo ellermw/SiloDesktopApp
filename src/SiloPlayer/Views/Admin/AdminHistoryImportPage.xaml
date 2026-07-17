@@ -18,7 +18,7 @@
     <Grid>
         <ScrollViewer VerticalScrollBarVisibility="Auto" IsScrollInertiaEnabled="True">
             <!-- webui parity: .page-shell { max-width: 1400px; margin-inline: auto; } -->
-            <StackPanel
+            <StackPanel x:Name="HistoryImportPageShell"
                 Padding="40,32,40,40"
                 Spacing="32"
                 MaxWidth="1400"
@@ -26,7 +26,7 @@
 
                 <!-- Header -->
                 <StackPanel Spacing="12">
-                    <TextBlock Text="History Import"
+                    <TextBlock x:Name="HistoryImportTitle" Text="History Import"
                                FontSize="48" FontWeight="Bold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock Text="Import watch history from external servers into Silo user profiles."
@@ -87,15 +87,16 @@
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
 
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                        <StackPanel x:Name="SourceIdentityPanel" Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                             <ComboBox x:Name="SourceComboBox"
                                       Width="220" FontSize="13"
                                       PlaceholderText="Select a source..."
                                       SelectionChanged="SourceComboBox_SelectionChanged" />
-                            <TextBlock x:Name="SourceUrlText" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock x:Name="SourceUrlText" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                                       TextTrimming="CharacterEllipsis" MaxWidth="520" VerticalAlignment="Center" />
                         </StackPanel>
 
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <StackPanel x:Name="SourceActionsPanel" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <Button x:Name="BtnSetToken"
                                     Style="{StaticResource OutlineButtonStyle}"
                                     Width="36" Height="32" Padding="0"
@@ -161,14 +162,18 @@
 
                 <!-- ===== Mappings Section ===== -->
                 <StackPanel x:Name="MappingsSection" Spacing="12" Visibility="Collapsed">
-                    <Grid>
+                    <Grid x:Name="MappingsHeaderGrid" RowSpacing="10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
                         <TextBlock Text="User mappings" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <StackPanel x:Name="MappingsHeaderActions" Grid.Column="1" Orientation="Horizontal" Spacing="8">
                             <Button x:Name="BtnBulkRun"
                                     Style="{StaticResource OutlineButtonStyle}" FontSize="13"
                                     Visibility="Collapsed"
@@ -195,7 +200,9 @@
                     <Border x:Name="MappingsTableCard"
                             Background="{StaticResource CardBackgroundBrush}"
                             CornerRadius="{StaticResource RadiusLG}">
-                        <StackPanel>
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled"
+                                      VerticalScrollBarVisibility="Disabled" VerticalScrollMode="Disabled">
+                        <StackPanel MinWidth="720">
                             <!-- Table header -->
                             <Grid Padding="16,10" ColumnSpacing="12">
                                 <Grid.ColumnDefinitions>
@@ -215,6 +222,7 @@
                             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
                             <StackPanel x:Name="MappingsRowsPanel" Spacing="0" />
                         </StackPanel>
+                        </ScrollViewer>
                     </Border>
                     <Border x:Name="NoMappingsText"
                             Background="{StaticResource SurfaceRaisedBrush}"
@@ -237,15 +245,19 @@
 
                 <!-- ===== Runs Section ===== -->
                 <StackPanel x:Name="RunsSection" Spacing="12" Visibility="Collapsed">
-                    <Grid>
+                    <Grid x:Name="RunsHeaderGrid" RowSpacing="10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
                         <TextBlock Text="Recent imports" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}"
                                    VerticalAlignment="Center" />
-                        <Border Grid.Column="1" BorderBrush="{StaticResource BorderBrush}"
+                        <Border x:Name="RunsFilterBorder" Grid.Column="1" BorderBrush="{StaticResource BorderBrush}"
                                 BorderThickness="1" CornerRadius="8" Padding="2">
                             <StackPanel Orientation="Horizontal" Spacing="1">
                                 <ToggleButton x:Name="RunFilterAll" Content="All" Tag="all"

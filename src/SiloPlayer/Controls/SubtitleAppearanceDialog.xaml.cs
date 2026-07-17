@@ -29,8 +29,16 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     private SubtitleAppearance _state = new();
     private bool _loading;
 
+    /// <summary>Optional initial JSON for an administrator editing another device.</summary>
+    public string? InitialValue { get; set; }
+    public Func<string, Task>? SaveOverrideAsync { get; set; }
+    public Func<Task>? ResetOverrideAsync { get; set; }
+    public bool ApplyToLocalPlayer { get; set; } = true;
+    public bool CanReset { get; set; } = true;
+
     // Debounce server writes so dragging the opacity slider doesn't hammer the API.
     private DispatcherTimer? _saveDebounce;
+    private bool _savePending;
 
     // Option metadata — mirrors web's FONT_SIZE_OPTIONS / FONT_FAMILY_OPTIONS etc.
     private static readonly (string Value, string Label)[] FontSizeOptions =
@@ -103,6 +111,14 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         {
             await LoadAsync();
             SyncAllFromState();
+            ResetButton.Visibility = CanReset ? Visibility.Visible : Visibility.Collapsed;
+        };
+        this.Closing += async (_, args) =>
+        {
+            var deferral = args.GetDeferral();
+            _saveDebounce?.Stop();
+            try { await SaveNowAsync(); }
+            finally { deferral.Complete(); }
         };
     }
 
@@ -113,8 +129,13 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         _loading = true;
         try
         {
-            var response = await _settingsApi.GetEffectiveSettingsAsync(["subtitle_appearance"]);
-            _state = SubtitleAppearance.Parse(response.Settings.FirstOrDefault()?.EffectiveValue);
+            if (InitialValue is not null)
+                _state = SubtitleAppearance.Parse(InitialValue);
+            else
+            {
+                var response = await _settingsApi.GetEffectiveSettingsAsync(["subtitle_appearance"]);
+                _state = SubtitleAppearance.Parse(response.Settings.FirstOrDefault()?.EffectiveValue);
+            }
         }
         catch
         {
@@ -133,7 +154,8 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
 
         // Apply live immediately — preview + mpv update without waiting.
         UpdatePreview();
-        try { _playerService.ApplySubtitleAppearance(_state); } catch { /* mpv not ready */ }
+        if (ApplyToLocalPlayer)
+            try { _playerService.ApplySubtitleAppearance(_state); } catch { /* mpv not ready */ }
 
         // Server save: debounce 400ms so slider drags don't produce a storm.
         if (_saveDebounce == null)
@@ -142,15 +164,24 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
             _saveDebounce.Tick += async (_, _) =>
             {
                 _saveDebounce!.Stop();
-                try
-                {
-                    await _settingsApi.PutDeviceSettingAsync("subtitle_appearance", _state.ToJson());
-                }
-                catch { /* surface later if needed; silent write-retry pattern */ }
+                await SaveNowAsync();
             };
         }
+        _savePending = true;
         _saveDebounce.Stop();
         _saveDebounce.Start();
+    }
+
+    private async Task SaveNowAsync()
+    {
+        if (!_savePending) return;
+        _savePending = false;
+        try
+        {
+            if (SaveOverrideAsync is not null) await SaveOverrideAsync(_state.ToJson());
+            else await _settingsApi.PutDeviceSettingAsync("subtitle_appearance", _state.ToJson());
+        }
+        catch { /* surface later if needed; silent write-retry pattern */ }
     }
 
     // ── Pills / swatches ─────────────────────────────────────────────────
@@ -351,12 +382,21 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     private async void Reset_Click(object sender, RoutedEventArgs e)
     {
         _saveDebounce?.Stop();
+        _savePending = false;
         try
         {
-            await _settingsApi.DeleteDeviceSettingAsync("subtitle_appearance");
-            await LoadAsync();
+            if (ResetOverrideAsync is not null)
+            {
+                await ResetOverrideAsync();
+                _state = new SubtitleAppearance();
+            }
+            else
+            {
+                await _settingsApi.DeleteDeviceSettingAsync("subtitle_appearance");
+                await LoadAsync();
+            }
             SyncAllFromState();
-            _playerService.ApplySubtitleAppearance(_state);
+            if (ApplyToLocalPlayer) _playerService.ApplySubtitleAppearance(_state);
         }
         catch { }
     }

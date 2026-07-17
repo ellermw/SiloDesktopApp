@@ -55,6 +55,10 @@ public sealed class AdminDevicesParitySourceTests
         Assert.Contains("MaxWidth=\"1920\"", page);
         Assert.Contains("DeviceGroups", page);
         Assert.Contains("Reset profile", page);
+        Assert.Contains("All Settings", page);
+        Assert.Contains("Open user", page);
+        Assert.Contains("No profiles registered", page);
+        Assert.Contains("PROFILES TOUCHED", page);
         Assert.Contains("SearchShortcutHint", page);
         Assert.Contains("ClearSearchButton", page);
         Assert.Contains("HorizontalContentAlignment=\"Stretch\"", page);
@@ -64,6 +68,11 @@ public sealed class AdminDevicesParitySourceTests
         Assert.Contains("private IEnumerable<AdminDeviceSummary> ScopedDevices", viewModel);
         Assert.Contains("SaveSettingAsync", code);
         Assert.Contains("ResetSettingAsync", code);
+        Assert.Contains("Reset this override?", code);
+        Assert.Contains("SubtitleAppearanceDialog", code);
+        Assert.Contains("ApplyToLocalPlayer = false", code);
+        Assert.Contains("SettingsScope_Click", code);
+        Assert.Contains("if (!ShowAllSettings && setting is null) continue", viewModel);
         Assert.Contains("Settings_CollectionChanged", code);
         Assert.Contains("x:Name=\"DeviceWorkspaceGrid\"", page);
         Assert.Contains("x:Name=\"FleetPulseGrid\"", page);

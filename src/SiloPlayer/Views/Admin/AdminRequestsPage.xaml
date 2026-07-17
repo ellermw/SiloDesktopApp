@@ -25,7 +25,8 @@
     </Page.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <StackPanel x:Name="RequestsPageShell" Padding="40,32,40,40" Spacing="20" MaxWidth="1640" HorizontalAlignment="Stretch">
+            <StackPanel x:Name="RequestsPageShell" Padding="40,32,40,40" Spacing="24"
+                        MaxWidth="1400" HorizontalAlignment="Center">
             <StackPanel Spacing="8">
                 <TextBlock Text="Requests" FontSize="36" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
                 <TextBlock Text="Review media requests, set limits, and manage Radarr or Sonarr routing."
@@ -34,13 +35,14 @@
 
             <Grid ColumnSpacing="0">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" /><ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" /><ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Button x:Name="QueueTabButton" Grid.Column="0" Content="Queue" Style="{StaticResource RequestTabStyle}" Click="QueueTab_Click" />
-                <Button x:Name="SettingsTabButton" Grid.Column="1" Content="Settings" Style="{StaticResource RequestTabStyle}" Click="SettingsTab_Click" />
-                <Button x:Name="IntegrationsTabButton" Grid.Column="2" Content="Integrations" Style="{StaticResource RequestTabStyle}" Click="IntegrationsTab_Click" />
-                <Button x:Name="OverridesTabButton" Grid.Column="3" Content="User Overrides" Style="{StaticResource RequestTabStyle}" Click="OverridesTab_Click" />
+                <Button x:Name="QueueTabButton" Grid.Column="0" Content="Queue" Padding="16,0" Style="{StaticResource RequestTabStyle}" Click="QueueTab_Click" />
+                <Button x:Name="SettingsTabButton" Grid.Column="1" Content="Settings" Padding="16,0" Style="{StaticResource RequestTabStyle}" Click="SettingsTab_Click" />
+                <Button x:Name="IntegrationsTabButton" Grid.Column="2" Content="Integrations" Padding="16,0" Style="{StaticResource RequestTabStyle}" Click="IntegrationsTab_Click" />
+                <Button x:Name="OverridesTabButton" Grid.Column="3" Content="User Overrides" Padding="16,0" Style="{StaticResource RequestTabStyle}" Click="OverridesTab_Click" />
             </Grid>
 
             <TextBlock x:Name="ErrorText" FontSize="13" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
@@ -87,9 +89,9 @@
                 <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="20">
                     <StackPanel Spacing="18">
                         <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE713;" Foreground="{StaticResource AccentBrush}" /><TextBlock Text="Global Settings" FontSize="18" FontWeight="SemiBold" /></StackPanel>
-                        <Grid ColumnSpacing="18" RowSpacing="14">
+                        <Grid x:Name="SettingsFieldsGrid" ColumnSpacing="18" RowSpacing="14">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <Border Grid.Row="0" Grid.Column="0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12">
                                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                     <TextBlock Text="Requests enabled" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
@@ -129,9 +131,9 @@
                     <StackPanel Spacing="16">
                         <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE713;" Foreground="{StaticResource AccentBrush}"/><TextBlock Text="User Overrides" FontSize="18" FontWeight="SemiBold" /></StackPanel>
                         <ComboBox x:Name="OverrideUserPicker" Header="User" HorizontalAlignment="Stretch" SelectionChanged="OverrideUserPicker_SelectionChanged" />
-                        <Grid ColumnSpacing="16" RowSpacing="14">
+                        <Grid x:Name="OverrideFieldsGrid" ColumnSpacing="16" RowSpacing="14">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <ComboBox x:Name="LimitModePicker" Grid.Row="0" Grid.Column="0" Header="Limit mode" HorizontalAlignment="Stretch" SelectionChanged="LimitModePicker_SelectionChanged">
                                 <ComboBoxItem Content="Inherit" Tag="inherit" /><ComboBoxItem Content="Custom" Tag="custom" /><ComboBoxItem Content="Unlimited" Tag="unlimited" /><ComboBoxItem Content="Blocked" Tag="blocked" />
                             </ComboBox>

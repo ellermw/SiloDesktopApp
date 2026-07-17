@@ -2,33 +2,93 @@ using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.ViewModels.Admin;
 using Microsoft.UI.Xaml.Navigation;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views.Admin;
 
 public sealed partial class AdminRecommendationsPage : Page
 {
     public AdminRecommendationsViewModel ViewModel { get; }
+    private readonly ToastService _toastService;
 
     private DispatcherTimer? _pollTimer;
     private readonly Dictionary<string, string> _localValues = [];
     private readonly HashSet<string> _dirtyKeys = [];
     private bool _pageActive;
+    private bool _hasLoaded;
 
     public AdminRecommendationsPage()
     {
         ViewModel = App.Services.GetRequiredService<AdminRecommendationsViewModel>();
+        _toastService = App.Services.GetRequiredService<ToastService>();
         this.InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Enabled;
+        SizeChanged += (_, args) => ApplyResponsiveLayout(args.NewSize.Width);
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout(ActualWidth);
         _pageActive = true;
+        if (!_hasLoaded && ViewModel.Status is null)
+            ShowLoadingSkeletons();
         await ViewModel.LoadAsync();
         if (!_pageActive) return;
+        _hasLoaded = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
+        if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+            _toastService.Error(ViewModel.ErrorMessage);
         ApplyStatus(ViewModel.Status);
         UpdatePollTimer();
         RebuildSettingsSections();
+    }
+
+    private void ApplyResponsiveLayout(double width)
+    {
+        if (width <= 0) return;
+        var compact = width < 860;
+        var narrow = width < 600;
+        var gutter = narrow ? 16 : compact ? 24 : 40;
+        RecommendationsPageShell.Padding = new Thickness(gutter, compact ? 24 : 32, gutter, 40);
+        RecommendationsTitle.FontSize = narrow ? 34 : compact ? 40 : 48;
+
+        var cards = new FrameworkElement[] { EmbeddingsCard, TasteProfilesCard, CowatchCard, RecommendationsCard };
+        var columns = width >= 1024 ? 4 : width >= 620 ? 2 : 1;
+        for (var index = 0; index < JobCardsGrid.ColumnDefinitions.Count; index++)
+            JobCardsGrid.ColumnDefinitions[index].Width = index < columns
+                ? new GridLength(1, GridUnitType.Star)
+                : new GridLength(0);
+        for (var index = 0; index < cards.Length; index++)
+        {
+            Grid.SetColumn(cards[index], index % columns);
+            Grid.SetRow(cards[index], index / columns);
+        }
+    }
+
+    private void ShowLoadingSkeletons()
+    {
+        JobStatusSection.Visibility = Visibility.Visible;
+        foreach (var (count, button) in new[]
+        {
+            (EmbeddingsCountText, RunEmbeddingsButton),
+            (TasteProfilesCountText, RunTasteProfilesButton),
+            (CowatchCountText, RunCowatchButton),
+            (RecommendationsCountText, RunRecommendationsButton),
+        })
+        {
+            count.Text = "Loading…";
+            button.IsEnabled = false;
+        }
+
+        SettingsSectionsPanel.Children.Clear();
+        for (var index = 0; index < 3; index++)
+        {
+            SettingsSectionsPanel.Children.Add(new Border
+            {
+                Height = 64,
+                CornerRadius = new CornerRadius(16),
+                Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceHoverBrush"],
+            });
+        }
     }
 
     private void Page_Unloaded(object sender, RoutedEventArgs e)
@@ -202,11 +262,12 @@ public sealed partial class AdminRecommendationsPage : Page
         try
         {
             await command.ExecuteAsync(null);
+            if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+                _toastService.Error(ViewModel.ErrorMessage);
         }
         catch (Exception ex)
         {
-            // Non-fatal — just show the error in status
-            _ = ex;
+            _toastService.Error(ex.Message);
         }
         finally
         {
@@ -544,11 +605,13 @@ public sealed partial class AdminRecommendationsPage : Page
             button.IsEnabled = false;
             if (!await ViewModel.UpdateSettingAsync("recommendations.embedding_base_url", baseUrl))
             {
+                if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)) _toastService.Error(ViewModel.ErrorMessage);
                 button.IsEnabled = true;
                 return;
             }
             if (!await ViewModel.UpdateSettingAsync("recommendations.embedding_model", model))
             {
+                if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)) _toastService.Error(ViewModel.ErrorMessage);
                 button.IsEnabled = true;
                 return;
             }
@@ -775,7 +838,11 @@ public sealed partial class AdminRecommendationsPage : Page
 
     private async void CommitSetting(string key, string value)
     {
-        if (!await ViewModel.UpdateSettingAsync(key, value)) return;
+        if (!await ViewModel.UpdateSettingAsync(key, value))
+        {
+            if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)) _toastService.Error(ViewModel.ErrorMessage);
+            return;
+        }
         _localValues[key] = value;
         _dirtyKeys.Remove(key);
         RestartBanner.Visibility = Visibility.Visible;

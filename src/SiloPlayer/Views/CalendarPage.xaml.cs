@@ -75,6 +75,7 @@ public sealed partial class CalendarPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        ViewModel.CancelLoad();
         if (_eventsAttached)
         {
             ViewModel.Days.CollectionChanged -= OnDaysChanged;

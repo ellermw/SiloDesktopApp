@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -5,11 +6,13 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
 using Windows.System;
 using SiloPlayer.ViewModels.Admin;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views.Admin;
 
 public sealed partial class AdminAccessGroupsPage : Page
 {
+    private bool _active;
     public AdminAccessGroupsViewModel ViewModel { get; } =
         App.Services.GetRequiredService<AdminAccessGroupsViewModel>();
 
@@ -18,10 +21,12 @@ public sealed partial class AdminAccessGroupsPage : Page
         InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Enabled;
         SizeChanged += (_, _) => ApplyResponsiveLayout();
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        _active = true;
         ApplyResponsiveLayout();
         await ViewModel.LoadAsync();
         ApplyResponsiveLayout();
@@ -68,8 +73,18 @@ public sealed partial class AdminAccessGroupsPage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _active = false;
         ViewModel.Cancel();
         base.OnNavigatedFrom(e);
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!_active) return;
+        if (e.PropertyName == nameof(ViewModel.StatusMessage) && !string.IsNullOrWhiteSpace(ViewModel.StatusMessage))
+            App.Services.GetRequiredService<ToastService>().Success(ViewModel.StatusMessage);
+        else if (e.PropertyName == nameof(ViewModel.ErrorMessage) && !string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+            App.Services.GetRequiredService<ToastService>().Error(ViewModel.ErrorMessage);
     }
 
     private void NewGroup_Click(object sender, RoutedEventArgs e)
@@ -110,6 +125,7 @@ public sealed partial class AdminAccessGroupsPage : Page
             Title = $"Delete “{selected.Name}”?",
             Content = memberMessage,
             PrimaryButtonText = "Delete",
+            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         };

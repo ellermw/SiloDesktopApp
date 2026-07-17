@@ -14,6 +14,8 @@ public partial class ProfileSelectViewModel : ObservableObject
     private readonly CatalogApi _catalogApi;
     private readonly AuthService _authService;
     private readonly SettingsService _settingsService;
+    private CancellationTokenSource? _profilesCts;
+    private CancellationTokenSource? _activationCts;
 
     public ProfileSelectViewModel(AuthApi authApi, SettingsApi settingsApi, CatalogApi catalogApi, AuthService authService, SettingsService settingsService)
     {
@@ -50,29 +52,38 @@ public partial class ProfileSelectViewModel : ObservableObject
     /// Event raised when a profile is successfully selected (including PIN verification if needed).
     /// </summary>
     public event Action? ProfileSelected;
+    public event Action? TasteSeedRequired;
 
     [RelayCommand]
     private async Task LoadProfilesAsync()
     {
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _profilesCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
         IsLoading = true;
         ErrorMessage = null;
 
         try
         {
-            var response = await _authApi.GetProfilesAsync();
+            var response = await _authApi.GetProfilesAsync(cts.Token);
+            if (!ReferenceEquals(_profilesCts, cts)) return;
             Profiles.Clear();
             foreach (var profile in response.Profiles)
             {
                 Profiles.Add(profile);
             }
         }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load profiles: {ex.Message}";
+            if (ReferenceEquals(_profilesCts, cts)) ErrorMessage = $"Failed to load profiles: {ex.Message}";
         }
         finally
         {
-            IsLoading = false;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _profilesCts, null, cts), cts))
+                IsLoading = false;
+            cts.Dispose();
         }
     }
 
@@ -249,6 +260,11 @@ public partial class ProfileSelectViewModel : ObservableObject
 
     private async Task ActivateProfileAsync(Profile profile, string? profileToken)
     {
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _activationCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
+
         _authService.SelectProfile(profile.Id, profileToken, profile);
         _catalogApi.InvalidateLibraryCache();
 
@@ -262,21 +278,38 @@ public partial class ProfileSelectViewModel : ObservableObject
         }
         _settingsService.Save(settings);
 
+        // Enter Home immediately while the optional favorites gate resolves.
+        // This mirrors the WebUI, which renders Home while that query is pending.
         ShouldShowTasteSeed = false;
+        ProfileSelected?.Invoke();
+
         if (!settings.TasteSeedDismissedProfileIds.Contains(profile.Id, StringComparer.Ordinal))
         {
             try
             {
-                var favorites = await _catalogApi.GetFavoritesAsync();
-                ShouldShowTasteSeed = favorites.Items.Count == 0;
+                var favorites = await _catalogApi.GetFavoritesAsync(cts.Token);
+                if (ReferenceEquals(_activationCts, cts) && favorites.Items.Count == 0)
+                {
+                    ShouldShowTasteSeed = true;
+                    TasteSeedRequired?.Invoke();
+                }
             }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
             catch
             {
                 // Onboarding is optional. A temporary favorites failure must not
                 // prevent the profile from entering the application.
             }
         }
+        Interlocked.CompareExchange(ref _activationCts, null, cts);
+        cts.Dispose();
+    }
 
-        ProfileSelected?.Invoke();
+    public void CancelProfileLoad()
+    {
+        var cts = Interlocked.Exchange(ref _profilesCts, null);
+        cts?.Cancel();
+        cts?.Dispose();
+        IsLoading = false;
     }
 }

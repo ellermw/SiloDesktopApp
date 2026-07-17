@@ -267,6 +267,17 @@ public sealed partial class PosterCard : UserControl
         UpdateBadges(item);
     }
 
+    /// <summary>Refreshes mutable profile state without reloading the poster.</summary>
+    public void RefreshState()
+    {
+        if (MediaItem is not { } item) return;
+        SubtitleText.Text = item.UpcomingEvent is { } upcoming
+            ? MediaItemDisplayText.FormatUpcomingSchedule(upcoming)
+            : MediaItemDisplayText.BuildSubtitle(item, CurrentSortKey);
+        if (!DeferOverlayLoading)
+            UpdateBadges(item);
+    }
+
     public void DeferCurrentPosterLoad()
     {
         if (SuppressImageLoading || MediaItem == null || PosterImage.Source != null)

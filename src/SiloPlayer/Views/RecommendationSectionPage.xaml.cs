@@ -30,6 +30,12 @@ public sealed partial class RecommendationSectionPage : Page
         _args = e.Parameter as RecommendationSectionNavigationArgs;
     }
 
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        ViewModel.CancelLoad();
+        base.OnNavigatedFrom(e);
+    }
+
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         if (_loaded) return;
@@ -68,5 +74,16 @@ public sealed partial class RecommendationSectionPage : Page
         ItemsGrid.Visibility = !ViewModel.IsLoading && hasItems ? Visibility.Visible : Visibility.Collapsed;
         ItemCountLabel.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
         ItemCountLabel.Text = ViewModel.Items.Count == 1 ? "1 title" : $"{ViewModel.Items.Count:N0} titles";
+    }
+
+    private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var width = e.NewSize.Width;
+        if (width <= 0) return;
+
+        var gutter = width < 640 ? 16d : width < 1024 ? 24d : width < 1280 ? 40d : 48d;
+        PageContent.Padding = new Thickness(gutter, width < 640 ? 24 : 32, gutter, 48);
+        var columns = width < 640 ? 3 : width < 768 ? 4 : width < 1024 ? 5 : width < 1280 ? 6 : 7;
+        ItemsLayout.MinItemWidth = Math.Max(96, Math.Floor((width - gutter * 2 - (columns - 1) * 16) / columns));
     }
 }

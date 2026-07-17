@@ -7,6 +7,8 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels.Admin;
 
 namespace SiloPlayer.Views.Admin;
@@ -14,20 +16,27 @@ namespace SiloPlayer.Views.Admin;
 public sealed partial class AdminPolicyPage : Page
 {
     public AdminPolicyViewModel ViewModel { get; } = App.Services.GetRequiredService<AdminPolicyViewModel>();
+    private readonly ToastService _toastService;
+    private readonly AdminApi _adminApi;
     private bool _loaded;
     private bool _syncing;
 
     public AdminPolicyPage()
     {
+        _toastService = App.Services.GetRequiredService<ToastService>();
+        _adminApi = App.Services.GetRequiredService<AdminApi>();
         InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Enabled;
         DataContext = ViewModel;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        SizeChanged += (_, args) => ApplyResponsiveLayout(args.NewSize.Width);
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout(ActualWidth);
         await ViewModel.LoadAsync();
+        PopulateDecisionFilter();
         _loaded = true;
         UnavailablePanel.Visibility = ViewModel.IsAvailable ? Visibility.Collapsed : Visibility.Visible;
         PipelineStrip.Visibility = ViewModel.IsAvailable ? Visibility.Visible : Visibility.Collapsed;
@@ -40,9 +49,100 @@ public sealed partial class AdminPolicyPage : Page
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(ViewModel.ErrorMessage) or nameof(ViewModel.StatusMessage))
+        {
             DispatcherQueue.TryEnqueue(RefreshMessages);
+            if (_loaded)
+            {
+                if (e.PropertyName == nameof(ViewModel.ErrorMessage) && !string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+                    _toastService.Error(ViewModel.ErrorMessage);
+                else if (e.PropertyName == nameof(ViewModel.StatusMessage) && !string.IsNullOrWhiteSpace(ViewModel.StatusMessage))
+                    _toastService.Success(ViewModel.StatusMessage);
+            }
+        }
         if (e.PropertyName is nameof(ViewModel.DecisionNextCursor))
             DispatcherQueue.TryEnqueue(UpdateDecisionPager);
+    }
+
+    private void ApplyResponsiveLayout(double width)
+    {
+        if (width <= 0) return;
+        var compact = width < 900;
+        var narrow = width < 600;
+        var gutter = narrow ? 16 : compact ? 24 : 40;
+        PolicyPageShell.Padding = new Thickness(gutter, compact ? 24 : 32, gutter, 40);
+        PolicyTitle.FontSize = narrow ? 34 : compact ? 40 : 48;
+
+        foreach (var (step, row, column) in new (FrameworkElement Step, int Row, int Column)[]
+        {
+            (PipelineStepOne, 0, 0), (PipelineStepTwo, 1, 2), (PipelineStepThree, 2, 4),
+        })
+        {
+            Grid.SetRow(step, compact ? row : 0);
+            Grid.SetColumn(step, compact ? 0 : column);
+            Grid.SetColumnSpan(step, compact ? 5 : 1);
+        }
+        PipelineArrowOne.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        PipelineArrowTwo.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+
+        VendorGrid.ColumnDefinitions[0].Width = compact ? new GridLength(1, GridUnitType.Star) : new GridLength(320);
+        VendorGrid.ColumnDefinitions[1].Width = compact ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        Grid.SetColumn(VendorListPanel, 0);
+        Grid.SetColumnSpan(VendorListPanel, compact ? 2 : 1);
+        Grid.SetRow(VendorListPanel, 0);
+        Grid.SetColumn(VendorSourcePanel, compact ? 0 : 1);
+        Grid.SetColumnSpan(VendorSourcePanel, compact ? 2 : 1);
+        Grid.SetRow(VendorSourcePanel, compact ? 1 : 0);
+
+        var stackedFilters = width < 1050;
+        var filterElements = new FrameworkElement[]
+        {
+            DecisionFilterCombo, DecisionUserIdBox, DecisionAllowedCombo,
+            DecisionFromBox, DecisionToBox, DecisionFilterActions,
+        };
+        if (stackedFilters)
+        {
+            for (var index = 0; index < DecisionFilterGrid.ColumnDefinitions.Count; index++)
+                DecisionFilterGrid.ColumnDefinitions[index].Width = index == 0
+                    ? new GridLength(1, GridUnitType.Star)
+                    : new GridLength(0);
+            for (var index = 0; index < filterElements.Length; index++)
+            {
+                Grid.SetColumn(filterElements[index], 0);
+                Grid.SetColumnSpan(filterElements[index], 6);
+                Grid.SetRow(filterElements[index], index);
+            }
+            DecisionFilterActions.HorizontalAlignment = HorizontalAlignment.Left;
+        }
+        else
+        {
+            var widths = new[] { new GridLength(220), new GridLength(110), new GridLength(140), new GridLength(1, GridUnitType.Star), new GridLength(1, GridUnitType.Star), GridLength.Auto };
+            for (var index = 0; index < widths.Length; index++)
+            {
+                DecisionFilterGrid.ColumnDefinitions[index].Width = widths[index];
+                Grid.SetColumn(filterElements[index], index);
+                Grid.SetColumnSpan(filterElements[index], 1);
+                Grid.SetRow(filterElements[index], 0);
+            }
+            DecisionFilterActions.HorizontalAlignment = HorizontalAlignment.Right;
+        }
+    }
+
+    private void PopulateDecisionFilter()
+    {
+        DecisionFilterCombo.Items.Clear();
+        DecisionFilterCombo.Items.Add(new ComboBoxItem { Content = "All decisions", Tag = "" });
+        foreach (var domain in ViewModel.Capability?.DecisionTypes ?? [])
+        {
+            var value = domain.Contains('.') ? domain : $"silo.{domain}.decision";
+            DecisionFilterCombo.Items.Add(new ComboBoxItem { Content = DomainPresentation(domain).Title, Tag = value });
+        }
+        DecisionFilterCombo.SelectedIndex = 0;
+    }
+
+    private void DecisionFilterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DecisionFilterCombo.SelectedItem is ComboBoxItem item)
+            ViewModel.DecisionFilter = item.Tag as string ?? "";
     }
 
     private void RefreshMessages()
@@ -145,6 +245,12 @@ public sealed partial class AdminPolicyPage : Page
             if (_syncing) return;
             toggle.IsEnabled = false;
             await ViewModel.ToggleDocumentEnabledAsync(document, toggle.IsOn);
+            if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+            {
+                _syncing = true;
+                toggle.IsOn = document.Enabled;
+                _syncing = false;
+            }
             toggle.IsEnabled = true;
             RebuildDomainCards();
         };
@@ -155,7 +261,8 @@ public sealed partial class AdminPolicyPage : Page
 
     private async Task OpenDocumentAsync(PolicyDocument document)
     {
-        await ViewModel.SelectDocumentAsync(document);
+        try { await ViewModel.SelectDocumentAsync(document); }
+        catch (Exception ex) { _toastService.Error(ex.Message); return; }
         _syncing = true;
         DocumentEnabledToggle.IsOn = document.Enabled;
         _syncing = false;
@@ -167,6 +274,7 @@ public sealed partial class AdminPolicyPage : Page
         var live = ViewModel.Versions.FirstOrDefault(v => v.Id == document.ActiveVersionId);
         LiveVersionText.Text = live is null ? "Live" : $"Live · v{live.VersionNumber}";
         RebuildVersionRows();
+        SelectedVersionSourcePanel.Visibility = Visibility.Collapsed;
         OverridesOverview.Visibility = Visibility.Collapsed;
         EditorPanel.Visibility = Visibility.Visible;
     }
@@ -192,8 +300,14 @@ public sealed partial class AdminPolicyPage : Page
             var author = new TextBlock { Text = version.CreatedByUserId is int id ? $"User {id}" : "—", FontSize = 12 }; Grid.SetColumn(author, 1); row.Children.Add(author);
             var date = new TextBlock { Text = version.CreatedAt.ToLocalTime().ToString("g"), FontSize = 12 }; Grid.SetColumn(date, 2); row.Children.Add(date);
             var comment = new TextBlock { Text = string.IsNullOrWhiteSpace(version.Comment) ? "—" : version.Comment, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis }; Grid.SetColumn(comment, 3); row.Children.Add(comment);
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            var view = new Button { Content = "View source", Tag = version, Style = (Style)Application.Current.Resources["OutlineButtonStyle"] };
+            view.Click += ViewVersion_Click;
+            actions.Children.Add(view);
             var activate = new Button { Content = version.CompiledOk ? "Make live" : "Compile failed", IsEnabled = version.CompiledOk && !active, Tag = version, Style = (Style)Application.Current.Resources["OutlineButtonStyle"] };
-            activate.Click += ActivateVersion_Click; Grid.SetColumn(activate, 4); row.Children.Add(activate);
+            activate.Click += ActivateVersion_Click;
+            actions.Children.Add(activate);
+            Grid.SetColumn(actions, 4); row.Children.Add(actions);
             VersionRows.Children.Add(row);
             VersionRows.Children.Add(new Border { Height = 1, Background = (SolidColorBrush)Application.Current.Resources["BorderBrush"] });
         }
@@ -204,8 +318,11 @@ public sealed partial class AdminPolicyPage : Page
         var name = new TextBox { Header = "Name", PlaceholderText = example, Width = 420 };
         var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = $"New {title} override", Content = name, PrimaryButtonText = "Create", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(name.Text)) return;
+        var previousId = ViewModel.SelectedDocument?.Id;
         await ViewModel.CreateDocumentAsync(domain, name.Text.Trim());
-        if (ViewModel.SelectedDocument is { } document) await OpenDocumentAsync(document);
+        if (string.IsNullOrWhiteSpace(ViewModel.ErrorMessage) &&
+            ViewModel.SelectedDocument is { } document && document.Id != previousId)
+            await OpenDocumentAsync(document);
     }
 
     private async void New_Click(object sender, RoutedEventArgs e)
@@ -219,6 +336,7 @@ public sealed partial class AdminPolicyPage : Page
     private void BackToOverrides_Click(object sender, RoutedEventArgs e)
     {
         EditorPanel.Visibility = Visibility.Collapsed;
+        SelectedVersionSourcePanel.Visibility = Visibility.Collapsed;
         OverridesOverview.Visibility = Visibility.Visible;
         RebuildDomainCards();
     }
@@ -226,6 +344,7 @@ public sealed partial class AdminPolicyPage : Page
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
         await ViewModel.SaveVersionAsync();
+        if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)) return;
         RebuildVersionRows();
         var latest = ViewModel.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
         if (latest != null) LiveVersionText.Text = $"Live · v{latest.VersionNumber}";
@@ -233,7 +352,12 @@ public sealed partial class AdminPolicyPage : Page
 
     private async void Simulate_Click(object sender, RoutedEventArgs e) => await ViewModel.SimulateAsync();
     private async void Filter_Click(object sender, RoutedEventArgs e) { await ViewModel.FilterDecisionsAsync(); UpdateDecisionPager(); }
-    private async void ResetFilters_Click(object sender, RoutedEventArgs e) { await ViewModel.ResetDecisionFiltersAsync(); UpdateDecisionPager(); }
+    private async void ResetFilters_Click(object sender, RoutedEventArgs e)
+    {
+        DecisionFilterCombo.SelectedIndex = 0;
+        await ViewModel.ResetDecisionFiltersAsync();
+        UpdateDecisionPager();
+    }
     private async void NextDecisions_Click(object sender, RoutedEventArgs e) { await ViewModel.NextDecisionPageAsync(); UpdateDecisionPager(); }
     private async void PreviousDecisions_Click(object sender, RoutedEventArgs e) { await ViewModel.PreviousDecisionPageAsync(); UpdateDecisionPager(); }
     private void UpdateDecisionPager()
@@ -245,7 +369,29 @@ public sealed partial class AdminPolicyPage : Page
     private async void Enabled_Toggled(object sender, RoutedEventArgs e)
     {
         if (_loaded && !_syncing && ViewModel.SelectedDocument is not null)
+        {
             await ViewModel.ToggleEnabledAsync(DocumentEnabledToggle.IsOn);
+            if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+            {
+                _syncing = true;
+                DocumentEnabledToggle.IsOn = ViewModel.SelectedDocument.Enabled;
+                _syncing = false;
+            }
+        }
+    }
+
+    private async void ViewVersion_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.Tag is not PolicyVersionSummary version || ViewModel.SelectedDocument is null)
+            return;
+        try
+        {
+            var detail = await _adminApi.GetPolicyVersionAsync(ViewModel.SelectedDocument.Id, version.VersionNumber);
+            SelectedVersionSourceTitle.Text = $"Selected Source · v{version.VersionNumber}";
+            SelectedVersionSource.Text = detail.Source ?? "";
+            SelectedVersionSourcePanel.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex) { _toastService.Error(ex.Message); }
     }
 
     private async void ActivateVersion_Click(object sender, RoutedEventArgs e)
@@ -259,6 +405,7 @@ public sealed partial class AdminPolicyPage : Page
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         await ViewModel.ActivateAsync(version);
+        if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)) return;
         LiveVersionText.Text = $"Live · v{version.VersionNumber}";
         RebuildVersionRows();
     }
@@ -269,13 +416,16 @@ public sealed partial class AdminPolicyPage : Page
         var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Delete override?", Content = "This removes the document and its version history. The Silo baseline will apply unchanged.", PrimaryButtonText = "Delete", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         await ViewModel.DeleteAsync();
+        if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)) return;
         BackToOverrides_Click(sender, e);
     }
 
     private async void Decision_Click(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is not PolicyDecisionEntry row) return;
-        var detail = await ViewModel.GetDecisionAsync(row.Id);
+        PolicyDecisionEntry detail;
+        try { detail = await ViewModel.GetDecisionAsync(row.Id); }
+        catch (Exception ex) { _toastService.Error(ex.Message); return; }
         var content = new Grid { ColumnSpacing = 12, Width = 760 };
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });

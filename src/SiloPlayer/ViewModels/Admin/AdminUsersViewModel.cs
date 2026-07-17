@@ -22,10 +22,14 @@ public partial class AdminUsersViewModel : ObservableObject
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private string? _statusMessage;
+    public bool HasLoaded { get; private set; }
 
     [RelayCommand]
-    private async Task LoadAsync()
+    private Task LoadAsync() => ReloadAsync(force: false);
+
+    private async Task ReloadAsync(bool force)
     {
+        if (HasLoaded && !force) return;
         IsLoading = true;
         ErrorMessage = null;
         StatusMessage = null;
@@ -40,6 +44,7 @@ public partial class AdminUsersViewModel : ObservableObject
 
             Libraries.Clear();
             foreach (var l in librariesTask.Result) Libraries.Add(l);
+            HasLoaded = true;
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsLoading = false; }
@@ -54,7 +59,7 @@ public partial class AdminUsersViewModel : ObservableObject
         try
         {
             await _adminApi.CreateUserAsync(request);
-            await LoadAsync();
+            await ReloadAsync(force: true);
             StatusMessage = "User created successfully.";
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
@@ -70,7 +75,7 @@ public partial class AdminUsersViewModel : ObservableObject
         try
         {
             await _adminApi.UpdateUserAsync(args.Id, args.Request);
-            await LoadAsync();
+            await ReloadAsync(force: true);
             StatusMessage = "User updated successfully.";
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
@@ -86,7 +91,7 @@ public partial class AdminUsersViewModel : ObservableObject
         try
         {
             await _adminApi.DeleteUserAsync(userId);
-            await LoadAsync();
+            await ReloadAsync(force: true);
             StatusMessage = "User deleted.";
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }

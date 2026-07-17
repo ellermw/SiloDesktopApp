@@ -15,11 +15,27 @@ public sealed partial class AdminMarkerHistoryPage : Page
     {
         InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Enabled;
+        SizeChanged += (_, args) => ApplyResponsiveLayout(args.NewSize.Width);
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyResponsiveLayout(ActualWidth);
         await ViewModel.LoadAsync();
+    }
+
+    private void ApplyResponsiveLayout(double width)
+    {
+        if (width <= 0) return;
+        var compact = width < 760;
+        var narrow = width < 600;
+        var gutter = narrow ? 16 : compact ? 24 : 40;
+        MarkerHistoryPageShell.Padding = new Thickness(gutter, compact ? 24 : 32, gutter, 40);
+        MarkerHistoryTitle.FontSize = narrow ? 34 : compact ? 40 : 48;
+        Grid.SetRow(MarkerHistoryHeaderActions, compact ? 1 : 0);
+        Grid.SetColumn(MarkerHistoryHeaderActions, compact ? 0 : 1);
+        Grid.SetColumnSpan(MarkerHistoryHeaderActions, compact ? 2 : 1);
+        MarkerHistoryHeaderActions.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)

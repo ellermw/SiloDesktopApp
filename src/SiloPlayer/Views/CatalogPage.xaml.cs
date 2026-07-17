@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -8,6 +9,8 @@ using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Controls;
+using SiloPlayer.Core.Services;
+using SiloPlayer.Messaging;
 
 namespace SiloPlayer.Views;
 
@@ -19,7 +22,9 @@ public sealed record CatalogNavigation(
     string? SectionId = null,
     int? LibraryId = null);
 
-public sealed partial class CatalogPage : Page
+public sealed partial class CatalogPage : Page,
+    IRecipient<MediaSurfaceChanged>,
+    IRecipient<PlaybackProgressUpdated>
 {
     private readonly CatalogApi _api = App.Services.GetRequiredService<CatalogApi>();
     private readonly ObservableCollection<MediaItem> _items = [];
@@ -41,6 +46,7 @@ public sealed partial class CatalogPage : Page
     private readonly List<QueryRule> _advancedRules = [];
     private bool _advancedMode;
     private const int PageSize = 60;
+    private bool _messengerRegistered;
 
     private static readonly (string Label, string Value)[] AdvancedFields =
     [
@@ -66,6 +72,7 @@ public sealed partial class CatalogPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        RegisterMediaMessages();
         if (e.Parameter is CatalogNavigation navigation)
         {
             _source = navigation.Source;
@@ -107,7 +114,85 @@ public sealed partial class CatalogPage : Page
         Interlocked.Increment(ref _loadGeneration);
         _loadCts?.Cancel();
         _debounce?.Stop();
+        UnregisterMediaMessages();
         base.OnNavigatedFrom(e);
+    }
+
+    private void RegisterMediaMessages()
+    {
+        if (_messengerRegistered) return;
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
+        _messengerRegistered = true;
+    }
+
+    private void UnregisterMediaMessages()
+    {
+        if (!_messengerRegistered) return;
+        WeakReferenceMessenger.Default.Unregister<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Unregister<PlaybackProgressUpdated>(this);
+        _messengerRegistered = false;
+    }
+
+    public void Receive(MediaSurfaceChanged message)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var item = _items.FirstOrDefault(candidate =>
+                string.Equals(candidate.ContentId, message.ContentId, StringComparison.OrdinalIgnoreCase));
+            if (item == null) return;
+
+            var remove = (_source == "favorites" && message.Kind == MediaSurfaceChangeKind.FavoriteRemoved)
+                || (_source == "watchlist" && message.Kind == MediaSurfaceChangeKind.WatchlistRemoved)
+                || (_source == "history" && message.Kind == MediaSurfaceChangeKind.WatchedCleared);
+            if (remove)
+            {
+                _items.Remove(item);
+                CountText.Text = Math.Max(0, _items.Count).ToString("N0");
+                EmptyText.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+                return;
+            }
+
+            var changed = message.Kind switch
+            {
+                MediaSurfaceChangeKind.FavoriteAdded => MediaItemStateUpdater.SetFavorite(item, true),
+                MediaSurfaceChangeKind.FavoriteRemoved => MediaItemStateUpdater.SetFavorite(item, false),
+                MediaSurfaceChangeKind.WatchlistAdded => MediaItemStateUpdater.SetWatchlist(item, true),
+                MediaSurfaceChangeKind.WatchlistRemoved => MediaItemStateUpdater.SetWatchlist(item, false),
+                MediaSurfaceChangeKind.WatchedMarked => MediaItemStateUpdater.SetWatched(item, true),
+                MediaSurfaceChangeKind.WatchedCleared => MediaItemStateUpdater.SetWatched(item, false),
+                _ => false,
+            };
+            if (changed) RefreshRealizedItemState(message.ContentId);
+        });
+    }
+
+    public void Receive(PlaybackProgressUpdated message)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var item = _items.FirstOrDefault(candidate =>
+                string.Equals(candidate.ContentId, message.ContentId, StringComparison.OrdinalIgnoreCase));
+            if (item == null) return;
+            if (MediaItemStateUpdater.SetPlaybackProgress(
+                item,
+                message.PositionSeconds,
+                message.DurationSeconds,
+                message.Completed,
+                message.UpdatedAt))
+            {
+                RefreshRealizedItemState(message.ContentId);
+            }
+        });
+    }
+
+    private void RefreshRealizedItemState(string contentId)
+    {
+        for (var i = 0; i < _items.Count; i++)
+        {
+            if (!string.Equals(_items[i].ContentId, contentId, StringComparison.OrdinalIgnoreCase)) continue;
+            if (ItemsRepeater.TryGetElement(i) is PosterCard card) card.RefreshState();
+        }
     }
 
     private async Task InitializeFiltersAsync()

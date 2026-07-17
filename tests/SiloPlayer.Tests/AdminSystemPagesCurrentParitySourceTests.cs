@@ -52,7 +52,7 @@ public class AdminSystemPagesCurrentParitySourceTests
     public void PolicyUsesCurrentShellPipelineAndThreeWorkspaces()
     {
         var markup = View("AdminPolicyPage");
-        Assert.Contains("Padding=\"40,24,40,24\"", markup, StringComparison.Ordinal);
+        Assert.Contains("Padding=\"40,32,40,40\"", markup, StringComparison.Ordinal);
         Assert.Contains("MaxWidth=\"1400\"", markup, StringComparison.Ordinal);
         Assert.Contains("FontSize=\"48\"", markup, StringComparison.Ordinal);
         Assert.Contains("x:Name=\"PipelineStrip\"", markup, StringComparison.Ordinal);

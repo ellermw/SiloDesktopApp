@@ -21,24 +21,29 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
-            <!-- AdminCollections inherits the shared 1560px admin shell in the WebUI. -->
+            <!-- Current WebUI content canvas. -->
             <StackPanel x:Name="AdminPageContent"
                         Padding="40,32,40,40"
                         Spacing="24"
-                        MaxWidth="1640"
+                        MaxWidth="1400"
                         HorizontalAlignment="Center">
 
                 <StackPanel x:Name="BrowsePanel" Spacing="24">
 
                 <!-- ===== Header ===== -->
-                <Grid>
+                <Grid x:Name="CollectionsHeaderGrid" RowSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
                     <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
                         <TextBlock
+                            x:Name="CollectionsTitle"
                             Text="Collections"
                             FontSize="48"
                             FontWeight="Bold"
@@ -51,6 +56,7 @@
 
                     <!-- Library picker + Add Collection button (top-right) -->
                     <StackPanel
+                        x:Name="CollectionsHeaderActions"
                         Grid.Column="1"
                         Orientation="Horizontal"
                         Spacing="8"
@@ -94,6 +100,33 @@
                         </Button>
                     </StackPanel>
                 </Grid>
+
+                <!-- Mirrors the WebUI template-bundle job banner. -->
+                <Border x:Name="TemplateApplyJobBanner"
+                        Visibility="Collapsed"
+                        BorderBrush="{StaticResource BorderBrush}"
+                        BorderThickness="1"
+                        Background="{StaticResource SurfaceBrush}"
+                        CornerRadius="8"
+                        Padding="16,12">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon x:Name="TemplateApplyJobIcon" Glyph="&#xE895;" FontSize="15"
+                                  Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Top" Margin="0,2,0,0" />
+                        <StackPanel Grid.Column="1" Spacing="5">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <TextBlock x:Name="TemplateApplyJobTitle" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock x:Name="TemplateApplyJobMessage" Grid.Column="1" FontSize="11"
+                                           Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            </Grid>
+                            <ProgressBar x:Name="TemplateApplyJobProgress" IsIndeterminate="True" Height="3" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
 
                 <!-- ===== Collection boards ===== -->
                 <StackPanel>
@@ -146,13 +179,14 @@
                         </StackPanel>
                     </Button>
 
-                    <Grid>
+                    <Grid x:Name="EditorHeaderGrid" RowSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                         <StackPanel Spacing="5">
-                            <TextBlock x:Name="EditorTitle" Text="Add Collection" FontSize="48" FontWeight="Bold" Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock x:Name="EditorTitle" Text="Add Collection" FontSize="48" FontWeight="Bold" Foreground="{StaticResource PrimaryTextBrush}" TextWrapping="Wrap" />
                             <TextBlock x:Name="EditorSubtitle" Text="Build the collection in a full-page editor instead of a cramped dialog."
                                        FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>

@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Navigation;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels.Admin;
 
 namespace SiloPlayer.Views.Admin;
@@ -107,7 +108,7 @@ public sealed partial class AdminApiKeysPage : Page
         }
 
         // Pagination bar
-        PaginationBar.Visibility = allKeys.Count > _pageSize ? Visibility.Visible : Visibility.Collapsed;
+        PaginationBar.Visibility = Visibility.Visible;
         PaginationBar.Children.Clear();
 
         PaginationBar.ColumnDefinitions.Clear();
@@ -299,7 +300,7 @@ public sealed partial class AdminApiKeysPage : Page
         // ---- Created ----
         string createdText = "—";
         if (!string.IsNullOrEmpty(key.CreatedAt) && DateTime.TryParse(key.CreatedAt, out var createdDt))
-            createdText = createdDt.ToLocalTime().ToString("d");
+            createdText = createdDt.ToLocalTime().ToString("g");
 
         var createdBlock = new TextBlock
         {
@@ -314,7 +315,7 @@ public sealed partial class AdminApiKeysPage : Page
         // ---- Last Used ----
         string lastUsedText = "Never";
         if (!string.IsNullOrEmpty(key.LastUsedAt) && DateTime.TryParse(key.LastUsedAt, out var lastUsedDt))
-            lastUsedText = lastUsedDt.ToLocalTime().ToString("d");
+            lastUsedText = lastUsedDt.ToLocalTime().ToString("g");
 
         var lastUsedBlock = new TextBlock
         {
@@ -335,7 +336,7 @@ public sealed partial class AdminApiKeysPage : Page
         };
 
         // Delete button: web h-7 w-7 = 28px
-        var deleteBtn = MakeIconButton("\uE74D", "Delete key", size: 28);
+        var deleteBtn = MakeIconButton("\uE74D", $"Revoke API key {key.Label}", size: 28);
         deleteBtn.Click += async (_, _) => await OpenDeleteDialogAsync(capturedKey);
 
         actionsPanel.Children.Add(deleteBtn);
@@ -589,15 +590,6 @@ public sealed partial class AdminApiKeysPage : Page
 
     private void ShowStatus(string message)
     {
-        StatusBannerText.Text = message;
-        StatusBanner.Visibility = Visibility.Visible;
-
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
-        timer.Tick += (_, _) =>
-        {
-            StatusBanner.Visibility = Visibility.Collapsed;
-            timer.Stop();
-        };
-        timer.Start();
+        App.Services.GetRequiredService<ToastService>().Success(message);
     }
 }

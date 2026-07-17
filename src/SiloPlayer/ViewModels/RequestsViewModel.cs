@@ -11,6 +11,7 @@ public partial class RequestsViewModel : ObservableObject
     private readonly RequestsApi _requestsApi;
     private DateTime _lastLoadedAt = DateTime.MinValue;
     private bool _loadInProgress;
+    private CancellationTokenSource? _searchCts;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     public RequestsViewModel(RequestsApi requestsApi)
@@ -150,16 +151,22 @@ public partial class RequestsViewModel : ObservableObject
             return;
         }
 
+        var owner = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _searchCts, owner);
+        previous?.Cancel();
+        var requestedMediaType = SelectedMediaType;
+        var requestedPage = SearchPage;
+
         IsSearching = true;
         ErrorMessage = null;
         StatusMessage = "Searching...";
-        SearchResults.Clear();
-        SearchTotalPages = 0;
-        SearchTotalResults = 0;
 
         try
         {
-            var response = await _requestsApi.SearchAsync(SelectedMediaType, query, SearchPage);
+            var response = await _requestsApi.SearchAsync(requestedMediaType, query, requestedPage, owner.Token);
+            owner.Token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(Volatile.Read(ref _searchCts), owner)) return;
+
             SearchResults.Clear();
             foreach (var item in response.Results)
                 SearchResults.Add(item);
@@ -168,6 +175,10 @@ public partial class RequestsViewModel : ObservableObject
             SearchTotalResults = response.TotalResults;
             StatusMessage = "";
         }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested)
+        {
+            // A newer query or navigation owns the search surface.
+        }
         catch (Exception ex)
         {
             ErrorMessage = $"Search failed: {ex.Message}";
@@ -175,7 +186,9 @@ public partial class RequestsViewModel : ObservableObject
         }
         finally
         {
-            IsSearching = false;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _searchCts, null, owner), owner))
+                IsSearching = false;
+            owner.Dispose();
         }
     }
 
@@ -187,6 +200,7 @@ public partial class RequestsViewModel : ObservableObject
 
     public void ClearSearch()
     {
+        CancelSearch();
         SearchQuery = "";
         SearchPage = 1;
         SearchTotalPages = 0;
@@ -194,6 +208,12 @@ public partial class RequestsViewModel : ObservableObject
         SearchResults.Clear();
         ErrorMessage = null;
         StatusMessage = "";
+    }
+
+    public void CancelSearch()
+    {
+        Interlocked.Exchange(ref _searchCts, null)?.Cancel();
+        IsSearching = false;
     }
 
     [RelayCommand]

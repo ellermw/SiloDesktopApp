@@ -3,6 +3,15 @@ namespace SiloPlayer.Tests;
 public sealed class CurrentHomeParitySourceTests
 {
     [Fact]
+    public void CustomizeHomeOpensTheActualHomeScreenSettingsSurface()
+    {
+        var source = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml.cs");
+
+        Assert.Contains("Frame.Navigate(typeof(SettingsPage), \"HomeScreen\")", source);
+        Assert.DoesNotContain("Frame.Navigate(typeof(SettingsPage), \"Home\")", source);
+    }
+
+    [Fact]
     public void EveryHomeStaticResourceIsDefinedByThePageOrApplicationTheme()
     {
         var home = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml");

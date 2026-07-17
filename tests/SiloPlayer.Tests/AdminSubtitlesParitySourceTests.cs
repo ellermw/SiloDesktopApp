@@ -14,7 +14,7 @@ public class AdminSubtitlesParitySourceTests
     [Fact]
     public void PageMatchesCurrentHeadingStatsAndFilterHierarchy()
     {
-        Assert.Contains("MaxWidth=\"1640\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("MaxWidth=\"1400\"", Markup, StringComparison.Ordinal);
         Assert.Contains("FontSize=\"48\"", Markup, StringComparison.Ordinal);
         Assert.Contains("Search release name…", Markup, StringComparison.Ordinal);
         Assert.Contains("Content=\"Reset filters\"", Markup, StringComparison.Ordinal);
@@ -46,5 +46,17 @@ public class AdminSubtitlesParitySourceTests
         Assert.Contains("ProviderFilter_Click", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("ApplyResponsiveLayout", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("width >= 1280", CodeBehind, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EmptyStateMutationsAndLatestFilterRequestMatchCurrentWebUiBehavior()
+    {
+        Assert.Contains("x:Name=\"SubtitlesEmptyState\"", Markup, StringComparison.Ordinal);
+        Assert.Contains("No stored subtitles yet", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("Try widening the provider, language, or uploader filters", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("_loadCts?.Cancel()", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("Task.WhenAll(LoadUsersAsync(), LoadSubtitlesAsync())", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("PrimaryButtonStyle = (Style)Application.Current.Resources[\"DestructiveButtonStyle\"]", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("_toastService.Success(\"Subtitle downloaded\")", CodeBehind, StringComparison.Ordinal);
     }
 }

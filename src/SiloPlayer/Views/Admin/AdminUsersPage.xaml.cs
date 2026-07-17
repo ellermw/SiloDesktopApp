@@ -8,6 +8,7 @@ using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.ViewModels.Admin;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views.Admin;
 
@@ -25,6 +26,7 @@ public sealed partial class AdminUsersPage : Page
         = Core.Helpers.PlaybackQuality.Options;
 
     private bool _rebuildPending;
+    private readonly DispatcherTimer _searchTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
 
     public AdminUsersPage()
     {
@@ -33,6 +35,11 @@ public sealed partial class AdminUsersPage : Page
         this.InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Enabled;
         SizeChanged += AdminUsersPage_SizeChanged;
+        _searchTimer.Tick += (_, _) =>
+        {
+            _searchTimer.Stop();
+            BuildUserRows();
+        };
     }
 
     private void AdminUsersPage_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -73,6 +80,7 @@ public sealed partial class AdminUsersPage : Page
             InviteCodesViewModel.InviteCodes.CollectionChanged -= InviteCodes_CollectionChanged;
             _inviteCodesSubscribed = false;
         }
+        _searchTimer.Stop();
 
         _rebuildPending = false;
         _inviteCodesRebuildPending = false;
@@ -142,7 +150,7 @@ public sealed partial class AdminUsersPage : Page
             InviteCodesLoading.IsActive = true;
             InviteCodesLoading.Visibility = Visibility.Visible;
             try { await InviteCodesViewModel.LoadCommand.ExecuteAsync(null); }
-            catch (Exception ex) { ShowStatus($"Error loading invite codes: {ex.Message}"); }
+            catch (Exception ex) { ShowError($"Error loading invite codes: {ex.Message}"); }
             finally
             {
                 InviteCodesLoading.IsActive = false;
@@ -172,7 +180,7 @@ public sealed partial class AdminUsersPage : Page
         if (saved)
             ShowStatus(requested ? "Public signups enabled." : "Public signups disabled.");
         else if (!string.IsNullOrWhiteSpace(InviteCodesViewModel.ErrorMessage))
-            ShowStatus(InviteCodesViewModel.ErrorMessage);
+            ShowError(InviteCodesViewModel.ErrorMessage);
     }
 
     // ===== Table Builder =====
@@ -184,7 +192,9 @@ public sealed partial class AdminUsersPage : Page
         _searchQuery = SearchBox.Text ?? "";
         SearchClearButton.Visibility = string.IsNullOrEmpty(_searchQuery)
             ? Visibility.Collapsed : Visibility.Visible;
-        BuildUserRows();
+        _userPage = 0;
+        _searchTimer.Stop();
+        _searchTimer.Start();
     }
 
     private void SearchClearButton_Click(object sender, RoutedEventArgs e)
@@ -218,10 +228,10 @@ public sealed partial class AdminUsersPage : Page
             ("role", false) => filtered.OrderByDescending(u => u.Role, StringComparer.OrdinalIgnoreCase),
             ("status", true) => filtered.OrderByDescending(u => u.Enabled),
             ("status", false) => filtered.OrderBy(u => u.Enabled),
-            ("created", true) => filtered.OrderBy(u => ParseDate(u.CreatedAt)),
-            ("created", false) => filtered.OrderByDescending(u => ParseDate(u.CreatedAt)),
-            ("last_active", true) => filtered.OrderBy(u => ParseDate(u.LastActiveAt)),
-            ("last_active", false) => filtered.OrderByDescending(u => ParseDate(u.LastActiveAt)),
+            ("created", true) => filtered.OrderBy(u => ParseDate(u.CreatedAt) is null).ThenBy(u => ParseDate(u.CreatedAt)),
+            ("created", false) => filtered.OrderBy(u => ParseDate(u.CreatedAt) is null).ThenByDescending(u => ParseDate(u.CreatedAt)),
+            ("last_active", true) => filtered.OrderBy(u => ParseDate(u.LastActiveAt) is null).ThenBy(u => ParseDate(u.LastActiveAt)),
+            ("last_active", false) => filtered.OrderBy(u => ParseDate(u.LastActiveAt) is null).ThenByDescending(u => ParseDate(u.LastActiveAt)),
             (_, true) => filtered.OrderBy(u => u.Username, StringComparer.OrdinalIgnoreCase),
             _ => filtered.OrderByDescending(u => u.Username, StringComparer.OrdinalIgnoreCase),
         };
@@ -275,7 +285,7 @@ public sealed partial class AdminUsersPage : Page
             var pageSizeCombo = new ComboBox { Width = 70, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
             foreach (var ps in new[] { 25, 50, 100 })
             {
-                var item = new ComboBoxItem { Content = ps.ToString(), Tag = ps };
+                var item = new ComboBoxItem { Content = $"{ps} rows", Tag = ps };
                 if (ps == _userPageSize) item.IsSelected = true;
                 pageSizeCombo.Items.Add(item);
             }
@@ -286,9 +296,9 @@ public sealed partial class AdminUsersPage : Page
             };
             UserPaginationBar.Children.Add(pageSizeCombo);
 
-            var prevBtn = new Button { Content = new FontIcon { Glyph = "\uE76B", FontSize = 12 }, Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0), Padding = new Thickness(6), IsEnabled = _userPage > 0 };
+            var prevBtn = new Button { Content = "Previous", Padding = new Thickness(12, 6, 12, 6), IsEnabled = _userPage > 0 };
             prevBtn.Click += (_, _) => { _userPage--; BuildUserRows(); };
-            var nextBtn = new Button { Content = new FontIcon { Glyph = "\uE76C", FontSize = 12 }, Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0), Padding = new Thickness(6), IsEnabled = _userPage < totalPages - 1 };
+            var nextBtn = new Button { Content = "Next", Padding = new Thickness(12, 6, 12, 6), IsEnabled = _userPage < totalPages - 1 };
             nextBtn.Click += (_, _) => { _userPage++; BuildUserRows(); };
             UserPaginationBar.Children.Add(prevBtn);
             UserPaginationBar.Children.Add(nextBtn);
@@ -329,8 +339,8 @@ public sealed partial class AdminUsersPage : Page
         }
     }
 
-    private static DateTimeOffset ParseDate(string? value)
-        => DateTimeOffset.TryParse(value, out var date) ? date : DateTimeOffset.MinValue;
+    private static DateTimeOffset? ParseDate(string? value)
+        => DateTimeOffset.TryParse(value, out var date) ? date : null;
 
     private FrameworkElement BuildUserRow(AdminUser user)
     {
@@ -463,6 +473,9 @@ public sealed partial class AdminUsersPage : Page
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis
         };
+        ToolTipService.SetToolTip(createdBlock, FormatFullDate(user.CreatedAt));
+        if (!string.IsNullOrWhiteSpace(user.LastActiveAt))
+            ToolTipService.SetToolTip(lastActiveBlock, FormatFullDate(user.LastActiveAt));
 
         // ---- Actions: 28x28 ghost-style icon buttons ----
         var actionsPanel = new StackPanel
@@ -570,6 +583,14 @@ public sealed partial class AdminUsersPage : Page
             Content = formContent,
             DefaultButton = ContentDialogButton.Primary
         };
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            var (request, _) = getRequest();
+            var error = ValidateCreateUser(request);
+            if (error == null) return;
+            args.Cancel = true;
+            ShowError(error);
+        };
 
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
@@ -580,7 +601,7 @@ public sealed partial class AdminUsersPage : Page
             try
             {
                 await ViewModel.CreateUserCommand.ExecuteAsync(createRequest);
-                ShowStatus(ViewModel.StatusMessage ?? "User created.");
+                ShowUserMutationResult("User created.");
             }
             catch { }
         }
@@ -601,6 +622,14 @@ public sealed partial class AdminUsersPage : Page
             Content = formContent,
             DefaultButton = ContentDialogButton.Primary
         };
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            var (_, request) = getRequest();
+            var error = ValidateUpdateUser(request);
+            if (error == null) return;
+            args.Cancel = true;
+            ShowError(error);
+        };
 
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
@@ -611,7 +640,7 @@ public sealed partial class AdminUsersPage : Page
             try
             {
                 await ViewModel.UpdateUserCommand.ExecuteAsync((user.Id, updateRequest));
-                ShowStatus(ViewModel.StatusMessage ?? "User updated.");
+                ShowUserMutationResult("User updated.");
             }
             catch { }
         }
@@ -638,7 +667,7 @@ public sealed partial class AdminUsersPage : Page
             try
             {
                 await ViewModel.DeleteUserCommand.ExecuteAsync(user.Id);
-                ShowStatus(ViewModel.StatusMessage ?? "User deleted.");
+                ShowUserMutationResult("User deleted.");
             }
             catch { }
         }
@@ -791,6 +820,22 @@ public sealed partial class AdminUsersPage : Page
             OffContent = "Not allowed"
         };
 
+        var assignedPermissions = new HashSet<string>(
+            editingUser?.Permissions ?? ["marker_edit"],
+            StringComparer.OrdinalIgnoreCase);
+        var markerEditSwitch = new ToggleSwitch
+        {
+            IsOn = assignedPermissions.Contains("marker_edit"),
+            OnContent = "",
+            OffContent = ""
+        };
+        var metadataCurationSwitch = new ToggleSwitch
+        {
+            IsOn = assignedPermissions.Contains("metadata_curation"),
+            OnContent = "",
+            OffContent = ""
+        };
+
         var accessTab = new StackPanel { Spacing = 14 };
 
         // Library access selector with "All libraries" toggle + per-library checkboxes
@@ -836,6 +881,15 @@ public sealed partial class AdminUsersPage : Page
 
         libraryGroup.Children.Add(libraryCheckboxPanel);
         accessTab.Children.Add(libraryGroup);
+
+        accessTab.Children.Add(MakeSwitchRow(
+            "Marker Editing",
+            "Edit intro, recap, credits, and preview markers within assigned libraries.",
+            markerEditSwitch));
+        accessTab.Children.Add(MakeSwitchRow(
+            "Metadata Curation",
+            "Edit, refresh, and rematch metadata within assigned libraries.",
+            metadataCurationSwitch));
 
         // Downloads Allowed and Download Transcode Allowed in bordered cards
         var downloadRow = MakeSwitchRow("Downloads Allowed", downloadSwitch);
@@ -1010,6 +1064,10 @@ public sealed partial class AdminUsersPage : Page
             int maxProfiles = double.IsNaN(maxProfilesBox.Value) ? 5 : Math.Max(1, (int)maxProfilesBox.Value);
             bool downloadAllowed = downloadSwitch.IsOn;
             bool downloadTranscodeAllowed = downloadTranscodeSwitch.IsOn;
+            var permissions = new HashSet<string>(assignedPermissions, StringComparer.OrdinalIgnoreCase);
+            if (markerEditSwitch.IsOn) permissions.Add("marker_edit"); else permissions.Remove("marker_edit");
+            if (metadataCurationSwitch.IsOn) permissions.Add("metadata_curation"); else permissions.Remove("metadata_curation");
+            var permissionList = permissions.OrderBy(value => value, StringComparer.Ordinal).ToList();
 
             // Get playback quality value from selected preset
             string qualityValue = "";
@@ -1033,6 +1091,7 @@ public sealed partial class AdminUsersPage : Page
                     Email = email,
                     Role = role,
                     Enabled = enabledSwitch.IsOn,
+                    Permissions = permissionList,
                     LibraryIds = libraryIds,
                     LibraryIdsSpecified = true,
                     MaxStreams = maxStreams,
@@ -1055,6 +1114,8 @@ public sealed partial class AdminUsersPage : Page
                     Email = email,
                     Password = password,
                     Role = role,
+                    Permissions = permissionList,
+                    CreateDefaultProfile = true,
                     LibraryIds = libraryIds,
                     MaxStreams = maxStreams,
                     MaxTranscodes = maxTranscodes,
@@ -1248,6 +1309,40 @@ public sealed partial class AdminUsersPage : Page
         return border;
     }
 
+    private static Border MakeSwitchRow(string label, string description, ToggleSwitch toggle)
+    {
+        var border = new Border
+        {
+            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 8, 12, 8)
+        };
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var copy = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        copy.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
+        });
+        copy.Children.Add(new TextBlock
+        {
+            Text = description,
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap
+        });
+        Grid.SetColumn(toggle, 1);
+        grid.Children.Add(copy);
+        grid.Children.Add(toggle);
+        border.Child = grid;
+        return border;
+    }
+
     // ===== Invite Codes =====
 
     private bool _inviteCodesRebuildPending;
@@ -1409,7 +1504,15 @@ public sealed partial class AdminUsersPage : Page
         {
             statusToggle.IsEnabled = false;
             await InviteCodesViewModel.ToggleInviteCodeCommand.ExecuteAsync(capturedCode);
-            ShowStatus(InviteCodesViewModel.StatusMessage ?? (capturedCode.Enabled ? "Code disabled." : "Code enabled."));
+            if (!string.IsNullOrWhiteSpace(InviteCodesViewModel.ErrorMessage))
+            {
+                ShowError(InviteCodesViewModel.ErrorMessage);
+                BuildInviteCodeRows();
+            }
+            else
+            {
+                ShowStatus(InviteCodesViewModel.StatusMessage ?? (capturedCode.Enabled ? "Code disabled." : "Code enabled."));
+            }
         };
         var statusCell = new StackPanel
         {
@@ -1463,7 +1566,10 @@ public sealed partial class AdminUsersPage : Page
             if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             {
                 await InviteCodesViewModel.DeleteInviteCodeCommand.ExecuteAsync(capturedCode.Id);
-                ShowStatus("Invite code deleted.");
+                if (!string.IsNullOrWhiteSpace(InviteCodesViewModel.ErrorMessage))
+                    ShowError(InviteCodesViewModel.ErrorMessage);
+                else
+                    ShowStatus(InviteCodesViewModel.StatusMessage ?? "Invite code deleted.");
             }
         };
         actions.Children.Add(deleteBtn);
@@ -1514,13 +1620,16 @@ public sealed partial class AdminUsersPage : Page
 
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
-        await InviteCodesViewModel.CreateInviteCodeAsync(new CreateInviteCodeRequest
+        var created = await InviteCodesViewModel.CreateInviteCodeAsync(new CreateInviteCodeRequest
         {
-            Code = string.IsNullOrWhiteSpace(codeBox.Text) ? null : codeBox.Text.Trim(),
+            Code = string.IsNullOrWhiteSpace(codeBox.Text) ? null : codeBox.Text.Trim().ToUpperInvariant(),
             Label = labelBox.Text.Trim(),
             MaxUses = double.IsNaN(maxUsesBox.Value) ? 10 : (int)maxUsesBox.Value
         });
-        ShowStatus("Invite code created.");
+        if (created != null)
+            ShowStatus(InviteCodesViewModel.StatusMessage ?? "Invite code created.");
+        else if (!string.IsNullOrWhiteSpace(InviteCodesViewModel.ErrorMessage))
+            ShowError(InviteCodesViewModel.ErrorMessage);
     }
 
     private async Task OpenTopUpInviteCodeDialogAsync(InviteCode code)
@@ -1535,12 +1644,19 @@ public sealed partial class AdminUsersPage : Page
         };
 
         var form = new StackPanel { Width = 420, Spacing = 16 };
-        AddInviteCodeFormField(form, "Additional Uses", additionalUsesBox);
+        form.Children.Add(new TextBlock
+        {
+            Text = $"Add extra uses to {code.Code}. Current usage is {code.UseCount:N0} / {code.MaxUses:N0}.",
+            FontSize = 13,
+            Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap
+        });
+        AddInviteCodeFormField(form, "Additional uses", additionalUsesBox);
 
         var dialog = new ContentDialog
         {
-            Title = "Add Invite Uses",
-            PrimaryButtonText = "Add",
+            Title = "Top Up Invite Code",
+            PrimaryButtonText = "Add Uses",
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
             Content = form,
@@ -1554,6 +1670,10 @@ public sealed partial class AdminUsersPage : Page
         if (updated != null)
         {
             ShowStatus(InviteCodesViewModel.StatusMessage ?? "Invite code updated.");
+        }
+        else if (!string.IsNullOrWhiteSpace(InviteCodesViewModel.ErrorMessage))
+        {
+            ShowError(InviteCodesViewModel.ErrorMessage);
         }
     }
 
@@ -1575,18 +1695,47 @@ public sealed partial class AdminUsersPage : Page
 
     private void ShowStatus(string message)
     {
-        StatusBannerText.Text = message;
-        StatusBanner.Visibility = Visibility.Visible;
-
-        // Auto-hide after 4 seconds
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
-        timer.Tick += (_, _) =>
-        {
-            StatusBanner.Visibility = Visibility.Collapsed;
-            timer.Stop();
-        };
-        timer.Start();
+        App.Services.GetRequiredService<ToastService>().Success(message);
     }
+
+    private void ShowError(string message)
+    {
+        App.Services.GetRequiredService<ToastService>().Error(message);
+    }
+
+    private void ShowUserMutationResult(string fallback)
+    {
+        if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+            ShowError(ViewModel.ErrorMessage);
+        else
+            ShowStatus(ViewModel.StatusMessage ?? fallback);
+    }
+
+    private static string? ValidateCreateUser(CreateUserRequest? request)
+    {
+        if (request == null) return "Unable to read the user form.";
+        if (string.IsNullOrWhiteSpace(request.Username)) return "Username is required.";
+        if (!IsValidEmail(request.Email)) return "Enter a valid email address.";
+        if (string.IsNullOrWhiteSpace(request.Password)) return "Password is required.";
+        return null;
+    }
+
+    private static string? ValidateUpdateUser(UpdateUserRequest? request)
+    {
+        if (request == null) return "Unable to read the user form.";
+        if (string.IsNullOrWhiteSpace(request.Username)) return "Username is required.";
+        if (!IsValidEmail(request.Email)) return "Enter a valid email address.";
+        return null;
+    }
+
+    private static bool IsValidEmail(string? value)
+        => !string.IsNullOrWhiteSpace(value)
+           && System.Net.Mail.MailAddress.TryCreate(value, out _);
+
+    private static string FormatFullDate(string? value)
+        => DateTimeOffset.TryParse(value, out var date)
+            ? date.ToLocalTime().ToString("F")
+            : "";
 
     private static string FormatLastActive(string? value)
         => string.IsNullOrWhiteSpace(value)

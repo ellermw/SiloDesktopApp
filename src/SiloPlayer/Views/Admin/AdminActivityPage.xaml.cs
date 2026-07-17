@@ -25,6 +25,7 @@ public sealed partial class AdminActivityPage : Page
     private IDisposable? _eventSubscription;
     private EventChannelClient? _eventChannel;
     private DateTime _lastEventRefresh = DateTime.MinValue;
+    private bool _suspendSessionCollectionRebuild;
 
     // Web UI colors
     private static readonly Color Green400 = Color.FromArgb(255, 74, 222, 128);
@@ -48,6 +49,7 @@ public sealed partial class AdminActivityPage : Page
         var horizontalPadding = width >= 1280 ? 40 : width >= 1024 ? 32 : width >= 640 ? 24 : 16;
         var verticalPadding = width >= 1024 ? 32 : 16;
         AdminPageContent.Padding = new Thickness(horizontalPadding, verticalPadding, horizontalPadding, 40);
+        AdminPageContent.Spacing = width >= 1024 ? 24 : 20;
         var contentWidth = Math.Max(0, width - (horizontalPadding * 2));
 
         var wrapHeader = contentWidth < 760;
@@ -69,15 +71,23 @@ public sealed partial class AdminActivityPage : Page
         ViewModel.FilteredSessions.CollectionChanged += FilteredSessions_CollectionChanged;
         ViewModel.IPLookupResults.CollectionChanged += IpLookupResults_CollectionChanged;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
-        if (ViewModel.FilteredSessions.Count > 0) RebuildAll();
+        if (ViewModel.HasLoaded) RebuildAll();
         try
         {
-            await ViewModel.LoadCommand.ExecuteAsync(null);
+            _suspendSessionCollectionRebuild = true;
+            if (ViewModel.HasLoaded)
+                await ViewModel.RefreshSilentAsync();
+            else
+                await ViewModel.LoadCommand.ExecuteAsync(null);
             RebuildAll();
         }
         catch (Exception ex)
         {
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _suspendSessionCollectionRebuild = false;
         }
 
         // Subscribe to realtime session events for live refresh
@@ -114,7 +124,10 @@ public sealed partial class AdminActivityPage : Page
     }
 
     private void FilteredSessions_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
-        => ScheduleRebuildStream();
+    {
+        if (!_suspendSessionCollectionRebuild)
+            ScheduleRebuildStream();
+    }
 
     private void IpLookupResults_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
         => ScheduleRebuildIp();
@@ -133,8 +146,16 @@ public sealed partial class AdminActivityPage : Page
         var started = DateTime.UtcNow;
         ActivityRefreshButton.IsEnabled = false;
         ActivityRefreshLabel.Text = "Refreshing…";
-        await ViewModel.LoadCommand.ExecuteAsync(null);
-        RebuildAll();
+        _suspendSessionCollectionRebuild = true;
+        try
+        {
+            await ViewModel.RefreshSilentAsync();
+            RebuildAll();
+        }
+        finally
+        {
+            _suspendSessionCollectionRebuild = false;
+        }
         var remaining = TimeSpan.FromSeconds(1) - (DateTime.UtcNow - started);
         if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
         ActivityRefreshLabel.Text = "Refresh";
@@ -148,8 +169,14 @@ public sealed partial class AdminActivityPage : Page
         _lastEventRefresh = DateTime.UtcNow;
         DispatcherQueue.TryEnqueue(async () =>
         {
-            try { await ViewModel.RefreshSilentAsync(); RebuildAll(); }
+            try
+            {
+                _suspendSessionCollectionRebuild = true;
+                await ViewModel.RefreshSilentAsync();
+                RebuildAll();
+            }
             catch { }
+            finally { _suspendSessionCollectionRebuild = false; }
         });
     }
 
@@ -778,6 +805,7 @@ public sealed partial class AdminActivityPage : Page
         var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
         var toastService = App.Services.GetRequiredService<ToastService>();
         bool isPaused = session.IsPaused;
+        bool supportsPlaybackControl = session.HasPlaybackControl != false;
 
         // Build MenuFlyout with Pause/Resume, Stop, Message, Terminate
         var flyout = new MenuFlyout();
@@ -823,23 +851,45 @@ public sealed partial class AdminActivityPage : Page
         // Message
         var msgItem = new MenuFlyoutItem
         {
-            Text = "Message",
+            Text = "Message…",
             Icon = new FontIcon { Glyph = "\uE8BD" }
         };
         msgItem.Click += async (_, _) =>
         {
-            var msgBox = new TextBox { PlaceholderText = "Message to display", CornerRadius = new CornerRadius(8), FontSize = 13 };
+            var msgBox = new TextBox
+            {
+                PlaceholderText = "Server restart in 5 minutes. Please finish this episode soon.",
+                CornerRadius = new CornerRadius(8),
+                FontSize = 13,
+                AcceptsReturn = true,
+                TextWrapping = TextWrapping.Wrap,
+                MinHeight = 96,
+            };
+            var dialogContent = new StackPanel { Spacing = 16 };
+            dialogContent.Children.Add(new TextBlock
+            {
+                Text = $"Send a custom message to {username} during playback.",
+                FontSize = 13,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+            dialogContent.Children.Add(msgBox);
             var dlg = new ContentDialog
             {
                 Title = "Send Message",
-                PrimaryButtonText = "Send",
+                PrimaryButtonText = "Send Message",
                 CloseButtonText = "Cancel",
                 XamlRoot = this.XamlRoot,
-                Content = msgBox,
+                Content = dialogContent,
                 DefaultButton = ContentDialogButton.Primary
             };
-            if (await dlg.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(msgBox.Text))
+            if (await dlg.ShowAsync() == ContentDialogResult.Primary)
             {
+                if (string.IsNullOrWhiteSpace(msgBox.Text))
+                {
+                    toastService.Error("Message is required");
+                    return;
+                }
                 try
                 {
                     await adminApi.MessageSessionAsync(capturedSession.SessionId, msgBox.Text.Trim());
@@ -854,7 +904,18 @@ public sealed partial class AdminActivityPage : Page
         var ffmpegLogsItem = new MenuFlyoutItem { Text = "FFmpeg Logs", Icon = new FontIcon { Glyph = "\uE756" } };
         ffmpegLogsItem.Click += (_, _) => Frame.Navigate(typeof(AdminLogsPage), $"{capturedSession.SessionId}|ffmpeg");
         flyout.Items.Add(ffmpegLogsItem);
-        flyout.Items.Add(msgItem);
+        if (supportsPlaybackControl)
+        {
+            flyout.Items.Add(msgItem);
+        }
+        else
+        {
+            flyout.Items.Add(new MenuFlyoutItem
+            {
+                Text = "This session does not support live pause, resume, or messages.",
+                IsEnabled = false,
+            });
+        }
 
         // Terminate (destructive — red text + confirmation dialog)
         var terminateItem = new MenuFlyoutItem
@@ -1119,8 +1180,8 @@ public sealed partial class AdminActivityPage : Page
         {
             try
             {
-                await adminApi.TerminateSessionAsync(capturedSession.SessionId);
-                toastService.Success("Session terminated");
+                var response = await adminApi.TerminateSessionAsync(capturedSession.SessionId);
+                toastService.Success(GetSessionCommandToast("Terminate", response));
                 await ViewModel.LoadCommand.ExecuteAsync(null);
             }
             catch (Exception ex) { toastService.Error($"Terminate failed: {ex.Message}"); }
@@ -1138,6 +1199,11 @@ public sealed partial class AdminActivityPage : Page
 
         return wrapper;
     }
+
+    private static string GetSessionCommandToast(string action, SiloPlayer.Core.Api.AdminSessionCommandResponse response)
+        => response.Status == "fallback_scheduled"
+            ? $"{action} could not reach the player directly. Silo will end the session shortly instead."
+            : $"{action} command sent";
 
     private static FrameworkElement BuildPlaybackSummaryLine(string label, string? decision, string value)
     {

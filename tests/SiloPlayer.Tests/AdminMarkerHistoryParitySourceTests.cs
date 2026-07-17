@@ -63,7 +63,8 @@ public sealed class AdminMarkerHistoryParitySourceTests
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "Admin", "AdminMarkerHistoryPage.xaml");
 
         Assert.Contains("MaxWidth=\"1400\"", page);
-        Assert.Contains("HorizontalScrollMode=\"Disabled\"", page);
+        Assert.Contains("HorizontalScrollMode=\"Enabled\"", page);
+        Assert.Contains("HorizontalScrollBarVisibility=\"Auto\"", page);
         Assert.Contains("Text=\"Marker History\"", page);
         Assert.Contains("FontSize=\"48\"", page);
         Assert.Contains("<SymbolIcon Symbol=\"Refresh\"", page);
@@ -71,6 +72,20 @@ public sealed class AdminMarkerHistoryParitySourceTests
         Assert.Contains("Height=\"40\" Background=\"{StaticResource SurfaceHoverBrush}\"", page);
         Assert.Contains("Text=\"When\"", page);
         Assert.DoesNotContain("Text=\"WHEN\"", page);
+    }
+
+    [Fact]
+    public void MarkerHistoryRefreshAndHeaderRemainStableAndResponsive()
+    {
+        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "Admin", "AdminMarkerHistoryViewModel.cs");
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "Admin", "AdminMarkerHistoryPage.xaml");
+        var code = ReadRepoFile("src", "SiloPlayer", "Views", "Admin", "AdminMarkerHistoryPage.xaml.cs");
+
+        Assert.Contains("x:Name=\"MarkerHistoryPageShell\"", page);
+        Assert.Contains("ViewModel.CanRefresh", page);
+        Assert.Contains("var hasCachedRows = HasRows && Rows.Count > 0", viewModel);
+        Assert.Contains("CanRefresh = false", viewModel);
+        Assert.Contains("ApplyResponsiveLayout(ActualWidth)", code);
     }
 
     private static string ReadRepoFile(params string[] parts)
