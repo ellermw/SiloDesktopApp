@@ -214,6 +214,48 @@ public sealed class DirectStreamRelayTests
     }
 
     [Fact]
+    public async Task RelayAsync_ResumesTheSameRange_WhenUpstreamStopsSendingData()
+    {
+        var bytes = Enumerable.Range(0, 512).Select(i => (byte)(i % 251)).ToArray();
+        var calls = 0;
+        var handler = new SequenceHandler(request =>
+        {
+            calls++;
+            if (calls == 1)
+            {
+                return CreateResponse(
+                    HttpStatusCode.OK,
+                    new StallAfterStream(bytes, stallAfterBytes: 128),
+                    bytes.Length,
+                    contentRange: null);
+            }
+
+            Assert.Equal(128, request.Headers.Range?.Ranges.Single().From);
+            return CreateResponse(
+                HttpStatusCode.PartialContent,
+                new MemoryStream(bytes[128..]),
+                bytes.Length - 128,
+                new ContentRangeHeaderValue(128, bytes.Length - 1, bytes.Length));
+        });
+        var relay = new DirectStreamRelay(
+            new HttpClient(handler),
+            new Uri("https://example.test/api/v1/stream/session"),
+            () => null,
+            maxRetries: 2,
+            upstreamIdleTimeout: TimeSpan.FromMilliseconds(50));
+        using var output = new MemoryStream();
+
+        var result = await relay.RelayAsync(
+            output,
+            rangeHeader: null,
+            writeHeadersAsync: null,
+            CancellationToken.None);
+
+        Assert.Equal(bytes, output.ToArray());
+        Assert.Equal(2, result.UpstreamAttempts);
+    }
+
+    [Fact]
     public async Task RelayAsync_RejectsMismatchedPartialContentRange()
     {
         var handler = new SequenceHandler(_ => CreateResponse(
@@ -394,6 +436,49 @@ public sealed class DirectStreamRelayTests
         {
             throw new NotSupportedException();
         }
+    }
+
+    private sealed class StallAfterStream : Stream
+    {
+        private readonly byte[] _bytes;
+        private readonly int _stallAfterBytes;
+        private int _position;
+
+        public StallAfterStream(byte[] bytes, int stallAfterBytes)
+        {
+            _bytes = bytes;
+            _stallAfterBytes = stallAfterBytes;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => _bytes.Length;
+        public override long Position { get => _position; set => throw new NotSupportedException(); }
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            if (_position >= _stallAfterBytes)
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return 0;
+            }
+
+            var available = Math.Min(buffer.Length, _stallAfterBytes - _position);
+            _bytes.AsMemory(_position, available).CopyTo(buffer);
+            _position += available;
+            return available;
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class ThrowOnWriteStream : Stream

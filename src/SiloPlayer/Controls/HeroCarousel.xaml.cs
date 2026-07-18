@@ -587,6 +587,17 @@ public sealed partial class HeroCarousel : UserControl
         SetCarouselPaused(true);
         StopAutoAdvance();
         _progressStoryboard?.Pause();
+
+        // The user has stopped the carousel on this title. Warm its watch data
+        // now so the primary Play action does not begin with an avoidable
+        // serial network request.
+        if (_items != null && _currentIndex >= 0 && _currentIndex < _items.Count)
+        {
+            var item = _items[_currentIndex];
+            if (item.Type is "movie" or "episode" or "audiobook")
+                App.Services.GetRequiredService<PlayerService>()
+                    .PrefetchWatchDetail(item.ContentId);
+        }
     }
 
     private void RootGrid_PointerExited(object sender, PointerRoutedEventArgs e)

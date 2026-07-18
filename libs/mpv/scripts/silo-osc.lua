@@ -10,9 +10,8 @@ local msg = require 'mp.msg'
 -- Configuration
 --------------------------------------------------------------------------------
 local config = {
-    bar_height          = 80,        -- retained for floating action compatibility
-    hud_height          = 172,
-    gradient_height     = 72,
+    hud_height          = 144,       -- 16 top + 44 seek + 8 gap + 56 row + 20 bottom
+    gradient_height     = 0,
     bar_padding_x       = 24,
     bar_padding_bottom  = 20,
 
@@ -26,9 +25,7 @@ local config = {
     volume_bg_color     = "555555",
 
     -- Alpha (hex): 00=opaque, FF=transparent
-    bar_bg_alpha        = "20",       -- strong only at the bottom edge of the gradient
-    gradient_alpha_top  = "FF",       -- fully transparent at gradient top
-    gradient_alpha_bot  = "C8",       -- matches bar alpha at gradient bottom
+    bar_bg_alpha        = "2E",       -- WebUI bottom stop: rgb(0 0 0 / 0.82)
     button_alpha        = "00",
     text_alpha          = "00",
     dim_text_alpha      = "44",
@@ -37,7 +34,6 @@ local config = {
     seek_height         = 3,
     seek_hover_height   = 5,
     seek_thumb_radius   = 7,
-    seek_y_offset       = 106,        -- visual center above the transport row
 
     -- Volume
     volume_bar_width    = 96,
@@ -55,14 +51,8 @@ local config = {
     stats_bg_alpha      = "B0",
 
     -- Top title bar
-    top_gradient_height = 80,
-    font_size_title     = 18,
-    font_size_subtitle  = 14,
-
     -- Font sizes
     font_size_time      = 11,
-    font_size_button    = 28,
-    font_size_small_btn = 20,
 
     -- Button dimensions
     button_size         = 56,
@@ -93,6 +83,9 @@ local state = {
 
     -- Stats overlay
     stats_visible   = false,
+    stats_scroll_offset = 0,
+    stats_scroll_max = 0,
+    stats_panel_rect = nil,
     marker_edit_available = false,
     marker_editor_active = false,
     marker_editor_visible = false,
@@ -235,6 +228,7 @@ local state = {
     skip_target     = 0,
     skip_overlay    = nil,
     skip_rect       = nil,
+    skip_hovered    = false,
 
     -- Episode navigation. The host resolves the previous/next episode and
     -- tells us when the current item belongs to a series.
@@ -274,6 +268,15 @@ local state = {
     notice_tone     = "info",
     notice_timer    = nil,
     notice_overlay  = nil,
+
+    -- First-frame / rebuffer feedback. These render in the mpv popup itself;
+    -- XAML overlays live behind the native video window and cannot be seen.
+    playback_loading = false,
+    playback_buffering = false,
+    playback_buffering_requested = false,
+    playback_buffering_timer = nil,
+    playback_wait_overlay = nil,
+    playback_spinner_frame = -1,
 }
 
 local function update_media_timeline()
@@ -730,6 +733,25 @@ local function draw_skip_fwd_icon(ass, cx, cy, size, color, alpha, master_alpha)
     draw_text(ass, cx, cy + size * 0.55, "30", math.floor(size * 0.45), color, alpha, master_alpha, 8)
 end
 
+local function draw_circle_outline(ass, cx, cy, r, thickness, color, alpha, master_alpha)
+    local a = blend_alpha(alpha, master_alpha)
+    local k = math.floor(r * 0.5522847498)
+    ass:new_event()
+    ass:pos(0, 0)
+    ass:append(string.format(
+        "{\\an7\\bord%.2f\\shad0\\1a&HFF&\\3c&H%s&\\3a&H%s&\\p1}" ..
+        "m %d %d b %d %d %d %d %d %d " ..
+        "b %d %d %d %d %d %d b %d %d %d %d %d %d " ..
+        "b %d %d %d %d %d %d{\\p0}",
+        thickness, color, a,
+        math.floor(cx), math.floor(cy - r),
+        math.floor(cx + k), math.floor(cy - r), math.floor(cx + r), math.floor(cy - k), math.floor(cx + r), math.floor(cy),
+        math.floor(cx + r), math.floor(cy + k), math.floor(cx + k), math.floor(cy + r), math.floor(cx), math.floor(cy + r),
+        math.floor(cx - k), math.floor(cy + r), math.floor(cx - r), math.floor(cy + k), math.floor(cx - r), math.floor(cy),
+        math.floor(cx - r), math.floor(cy - k), math.floor(cx - k), math.floor(cy - r), math.floor(cx), math.floor(cy - r)
+    ))
+end
+
 local function ass_escape_text(value)
     local text = tostring(value or "")
     text = text:gsub("\\", "\\\\")
@@ -737,6 +759,62 @@ local function ass_escape_text(value)
     text = text:gsub("}", "\\}")
     text = text:gsub("[\r\n]+", " ")
     return text
+end
+
+-- Approximate CSS text-overflow: ellipsis without splitting UTF-8 codepoints.
+-- ASS does not expose text measurement, so the average glyph width is derived
+-- from the same Segoe UI sizes used by the WebUI HUD.
+local function truncate_display_text(value, max_width, font_size)
+    local text = tostring(value or "")
+    if text == "" or not max_width or max_width <= 0 then return "" end
+
+    local max_chars = math.max(1, math.floor(max_width / math.max(1, font_size * 0.56)))
+    local starts = {}
+    local byte_index = 1
+    while byte_index <= #text do
+        table.insert(starts, byte_index)
+        local first = text:byte(byte_index)
+        local length = 1
+        if first and first >= 0xF0 then
+            length = 4
+        elseif first and first >= 0xE0 then
+            length = 3
+        elseif first and first >= 0xC0 then
+            length = 2
+        end
+        byte_index = byte_index + length
+    end
+
+    if #starts <= max_chars then return text end
+    if max_chars <= 3 then return "..." end
+    local end_byte = (starts[max_chars - 1] or (#text + 1)) - 1
+    return text:sub(1, end_byte) .. "..."
+end
+
+local function wrap_display_text(value, max_chars, max_lines)
+    local text = tostring(value or ""):gsub("[\r\n]+", " ")
+    local lines = {}
+    local current = ""
+    max_chars = math.max(8, max_chars or 60)
+    max_lines = math.max(1, max_lines or 3)
+
+    for word in text:gmatch("%S+") do
+        local candidate = current == "" and word or (current .. " " .. word)
+        if #candidate <= max_chars or current == "" then
+            current = candidate
+        else
+            table.insert(lines, current)
+            current = word
+            if #lines >= max_lines then break end
+        end
+    end
+    if current ~= "" and #lines < max_lines then table.insert(lines, current) end
+    if #lines == 0 then table.insert(lines, "") end
+    if #lines == max_lines and #table.concat(lines, " ") < #text then
+        local last = lines[#lines]
+        lines[#lines] = last:sub(1, math.max(1, max_chars - 3)) .. "..."
+    end
+    return lines
 end
 
 local function chapter_at_time(seconds)
@@ -1234,22 +1312,64 @@ local function draw_exit_icon(ass, cx, cy, size, color, alpha, master_alpha)
     ))
 end
 
--- Minimize icon (horizontal bar)
-local function draw_minimize_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    local hw = size * 0.32   -- half-width
-    local ht = math.max(size * 0.06, 2)  -- half-thickness, minimum 2px
-    draw_rect(ass, cx - hw, cy - ht, cx + hw, cy + ht, color, alpha, master_alpha)
+-- Filled diagonal stroke used by Lucide-style chevrons and disabled icons.
+local function draw_diagonal_stroke(ass, x1, y1, x2, y2, thickness, color, alpha, master_alpha)
+    local dx = x2 - x1
+    local dy = y2 - y1
+    local length = math.max(0.001, math.sqrt(dx * dx + dy * dy))
+    local px = -dy / length * thickness / 2
+    local py = dx / length * thickness / 2
+    local a = blend_alpha(alpha, master_alpha)
+    ass:new_event()
+    ass:pos(0, 0)
+    ass:append(string.format(
+        "{\\an7\\bord0\\shad0%s%s\\p1}m %d %d l %d %d %d %d %d %d{\\p0}",
+        ass_color(color), ass_alpha(a),
+        math.floor(x1 + px), math.floor(y1 + py),
+        math.floor(x2 + px), math.floor(y2 + py),
+        math.floor(x2 - px), math.floor(y2 - py),
+        math.floor(x1 - px), math.floor(y1 - py)
+    ))
 end
 
--- Quality/settings icon (three horizontal lines)
-local function draw_quality_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    local hw = size * 0.28   -- half-width of lines
-    local ht = math.max(size * 0.05, 2)  -- half-thickness
-    local gap = size * 0.18  -- vertical gap between lines
-    for i = -1, 1 do
-        local ly = cy + i * gap
-        draw_rect(ass, cx - hw, ly - ht, cx + hw, ly + ht, color, alpha, master_alpha)
+-- The WebUI minimize affordance is a downward Lucide chevron, not a
+-- Windows minimize bar. Keep the native player visually identical.
+local function draw_minimize_chevron_icon(ass, cx, cy, size, color, alpha, master_alpha)
+    local half = size * 0.28
+    local rise = size * 0.18
+    local thickness = math.max(1.5, size * 0.075)
+    draw_diagonal_stroke(ass, cx - half, cy - rise, cx, cy + rise,
+        thickness, color, alpha, master_alpha)
+    draw_diagonal_stroke(ass, cx, cy + rise, cx + half, cy - rise,
+        thickness, color, alpha, master_alpha)
+end
+
+-- Lucide Settings and Info utility glyphs. Drawing these geometrically avoids
+-- platform-dependent Segoe symbol substitutions in the active native popup.
+local function draw_settings_icon(ass, cx, cy, size, color, alpha, master_alpha)
+    local thickness = math.max(1.3, size * 0.075)
+    draw_circle_outline(ass, cx, cy, size * 0.23, thickness,
+        color, alpha, master_alpha)
+    for index = 0, 7 do
+        local angle = index * math.pi / 4
+        local inner = size * 0.32
+        local outer = size * 0.46
+        draw_diagonal_stroke(ass,
+            cx + math.cos(angle) * inner, cy + math.sin(angle) * inner,
+            cx + math.cos(angle) * outer, cy + math.sin(angle) * outer,
+            thickness * 1.25, color, alpha, master_alpha)
     end
+end
+
+local function draw_info_icon(ass, cx, cy, size, color, alpha, master_alpha)
+    local thickness = math.max(1.3, size * 0.075)
+    draw_circle_outline(ass, cx, cy, size * 0.40, thickness,
+        color, alpha, master_alpha)
+    draw_circle(ass, cx, cy - size * 0.20, thickness * 0.72,
+        color, alpha, master_alpha)
+    draw_rounded_rect(ass, cx - thickness / 2, cy - size * 0.03,
+        cx + thickness / 2, cy + size * 0.25, thickness / 2,
+        color, alpha, master_alpha)
 end
 
 --------------------------------------------------------------------------------
@@ -1284,15 +1404,19 @@ local function compute_layout()
     _layout_chapter_count = #state.chapters
     local L = state.layout
     local sc = ui_scale()
-    local pad = math.floor(config.bar_padding_x * sc)
-    local main_size = math.floor(config.button_size * sc)
-    local small_size = math.floor(config.small_button_size * sc)
-    local gap = math.floor(12 * sc)
-    local controls_y = H - math.floor(config.bar_padding_bottom * sc) - main_size / 2
-    local seek_y = H - math.floor(config.seek_y_offset * sc)
+    local compact = W < math.floor(640 * sc)
+    local pad = math.floor((compact and 12 or config.bar_padding_x) * sc)
+    local main_size = math.floor((compact and 48 or config.button_size) * sc)
+    local small_size = math.floor((compact and 40 or config.small_button_size) * sc)
+    local gap = math.floor((compact and 8 or 12) * sc)
+    local bottom_padding = math.floor((compact and 12 or config.bar_padding_bottom) * sc)
+    local controls_y = H - bottom_padding - main_size / 2
+    -- SeekBar's 44px pointer target sits 8px above the transport row.
+    local seek_y = H - bottom_padding - main_size - math.floor(30 * sc)
+    local hud_height = math.floor((compact and 128 or config.hud_height) * sc)
 
     -- The current WebUI uses a transparent cinema HUD, not an opaque bar.
-    L.bar = { x = 0, y = H - math.floor(config.hud_height * sc), w = W, h = math.floor(config.hud_height * sc) }
+    L.bar = { x = 0, y = H - hud_height, w = W, h = hud_height }
     L.gradient = { x = 0, y = L.bar.y - math.floor(config.gradient_height * sc), w = W, h = L.bar.h + math.floor(config.gradient_height * sc) }
 
     -- Main transport is locked to the exact frame center.
@@ -1331,10 +1455,12 @@ local function compute_layout()
 
     -- Top-left chrome matches VideoPlayer.tsx: circular minimize + Exit pill.
     local top = math.floor(16 * sc)
-    L.btn_minimize = { x = top, y = top, w = small_size, h = small_size, cx = top + small_size / 2, cy = top + small_size / 2 }
+    local top_button_size = math.floor(44 * sc)
+    L.btn_minimize = { x = top, y = top, w = top_button_size, h = top_button_size,
+        cx = top + top_button_size / 2, cy = top + top_button_size / 2 }
     local exit_w = math.floor(82 * sc)
-    L.btn_exit = { x = top + small_size + math.floor(12 * sc), y = top, w = exit_w, h = small_size,
-        cx = top + small_size + math.floor(12 * sc) + exit_w / 2, cy = top + small_size / 2 }
+    L.btn_exit = { x = top + top_button_size + math.floor(12 * sc), y = top, w = exit_w, h = top_button_size,
+        cx = top + top_button_size + math.floor(12 * sc) + exit_w / 2, cy = top + top_button_size / 2 }
 
     -- Right utility rail, in the same order as the WebUI controls that the
     -- native client currently exposes.
@@ -1360,14 +1486,24 @@ local function compute_layout()
     L.btn_chapters = #state.chapters > 0 and place_utility() or nil
     L.btn_audio = #state.audio_tracks > 0 and place_utility() or nil
 
-    rx_cursor = rx_cursor - math.floor(6 * sc) - math.floor(config.volume_bar_width * sc)
-    L.volume_bar = {
-        x = rx_cursor, y = controls_y - math.floor(config.volume_bar_height * sc) / 2,
-        w = math.floor(config.volume_bar_width * sc), h = math.floor(config.volume_bar_height * sc), cy = controls_y
-    }
-    L.utility_divider_x = L.volume_bar.x + L.volume_bar.w + math.floor(3 * sc)
-    rx_cursor = rx_cursor - math.floor(4 * sc)
-    L.btn_volume = place_utility()
+    -- Tailwind's `hidden sm:block` removes the entire volume group below
+    -- 640 CSS pixels. Doing the same prevents windowed playback from
+    -- crowding the transport cluster or clipping the left metadata column.
+    local show_volume_group = not compact
+    if show_volume_group then
+        rx_cursor = rx_cursor - math.floor(6 * sc) - math.floor(config.volume_bar_width * sc)
+        L.volume_bar = {
+            x = rx_cursor, y = controls_y - math.floor(config.volume_bar_height * sc) / 2,
+            w = math.floor(config.volume_bar_width * sc), h = math.floor(config.volume_bar_height * sc), cy = controls_y
+        }
+        L.utility_divider_x = L.volume_bar.x + L.volume_bar.w + math.floor(3 * sc)
+        rx_cursor = rx_cursor - math.floor(4 * sc)
+        L.btn_volume = place_utility()
+    else
+        L.volume_bar = nil
+        L.utility_divider_x = nil
+        L.btn_volume = nil
+    end
 
     -- Seek rail spans the frame above all three HUD columns.
     local seek_x1 = pad + math.floor(8 * sc)
@@ -1382,6 +1518,66 @@ local function compute_layout()
     local left_transport_x = L.btn_prev_ep and L.btn_prev_ep.x or L.btn_skip_back.x
     L.metadata = { x = pad, y = controls_y, max_w = math.max(0, left_transport_x - pad - math.floor(20 * sc)) }
     L.bar_hit = { x = 0, y = L.gradient.y, w = W, h = H - L.gradient.y }
+end
+
+-- Lucide Captions / CaptionsOff. The WebUI swaps to the slashed icon while
+-- captions are disabled instead of leaving a static "CC" text glyph.
+local function draw_captions_icon(ass, cx, cy, size, color, alpha, master_alpha, enabled)
+    local hw = size * 0.40
+    local hh = size * 0.30
+    local t = math.max(1.4, size * 0.065)
+    draw_rect(ass, cx - hw, cy - hh, cx + hw, cy - hh + t, color, alpha, master_alpha)
+    draw_rect(ass, cx - hw, cy + hh - t, cx + hw, cy + hh, color, alpha, master_alpha)
+    draw_rect(ass, cx - hw, cy - hh, cx - hw + t, cy + hh, color, alpha, master_alpha)
+    draw_rect(ass, cx + hw - t, cy - hh, cx + hw, cy + hh, color, alpha, master_alpha)
+
+    local line_y1 = cy - size * 0.08
+    local line_y2 = cy + size * 0.12
+    draw_rect(ass, cx - size * 0.24, line_y1 - t / 2,
+        cx - size * 0.05, line_y1 + t / 2, color, alpha, master_alpha)
+    draw_rect(ass, cx + size * 0.05, line_y1 - t / 2,
+        cx + size * 0.24, line_y1 + t / 2, color, alpha, master_alpha)
+    draw_rect(ass, cx - size * 0.24, line_y2 - t / 2,
+        cx - size * 0.05, line_y2 + t / 2, color, alpha, master_alpha)
+    draw_rect(ass, cx + size * 0.05, line_y2 - t / 2,
+        cx + size * 0.24, line_y2 + t / 2, color, alpha, master_alpha)
+
+    if not enabled then
+        draw_diagonal_stroke(ass, cx - size * 0.46, cy - size * 0.44,
+            cx + size * 0.46, cy + size * 0.44, t * 2.4,
+            "000000", "30", master_alpha)
+        draw_diagonal_stroke(ass, cx - size * 0.46, cy - size * 0.44,
+            cx + size * 0.46, cy + size * 0.44, t,
+            color, alpha, master_alpha)
+    end
+end
+
+-- Lucide AudioLines: six vertical waveform strokes with rounded ends.
+local function draw_audio_lines_icon(ass, cx, cy, size, color, alpha, master_alpha)
+    local heights = { 0.20, 0.55, 0.82, 0.38, 0.65, 0.20 }
+    local gap = size * 0.15
+    local bar_w = math.max(1.4, size * 0.065)
+    for index, height in ipairs(heights) do
+        local x = cx + (index - 3.5) * gap
+        local half_h = size * height / 2
+        draw_rounded_rect(ass, x - bar_w / 2, cy - half_h,
+            x + bar_w / 2, cy + half_h, bar_w / 2,
+            color, alpha, master_alpha)
+    end
+end
+
+-- Lucide ListVideo: three list strokes followed by the play wedge.
+local function draw_chapters_icon(ass, cx, cy, size, color, alpha, master_alpha)
+    local t = math.max(1.4, size * 0.065)
+    local left = cx - size * 0.42
+    local right = cx + size * 0.05
+    for _, offset in ipairs({ -0.28, 0, 0.28 }) do
+        local y = cy + size * offset
+        draw_rounded_rect(ass, left, y - t / 2, right, y + t / 2,
+            t / 2, color, alpha, master_alpha)
+    end
+    draw_play_icon(ass, cx + size * 0.27, cy + size * 0.14,
+        size * 0.30, color, alpha, master_alpha)
 end
 
 -- Picture-in-picture icon — outlined display with a floating inset frame.
@@ -1520,14 +1716,18 @@ local function render_osc()
 
     local sc = ui_scale()
 
-    -- 1a. Soft top scrim and the WebUI's separate minimize / Exit controls.
-    local top_gh = math.floor(config.top_gradient_height * sc)
-    draw_gradient(ass, 0, 0, W, top_gh, "000000", "66", "FF", ma, 20)
+    -- 1a. Full WebUI top scrim: 55% black at the frame edge, 18% at
+    -- 14% of the viewport, and transparent at 28%. The old fixed 80px
+    -- strip was visibly too shallow on 1440p/4K displays.
+    local top_mid = math.floor(H * 0.14)
+    local top_gh = math.floor(H * 0.28)
+    draw_gradient(ass, 0, 0, W, top_mid, "000000", "73", "D1", ma, 16)
+    draw_gradient(ass, 0, top_mid, W, top_gh, "000000", "D1", "FF", ma, 16)
 
     local bm = L.btn_minimize
     draw_circle(ass, bm.cx, bm.cy, bm.w / 2, "000000", "66", ma)
-    draw_text(ass, bm.cx, bm.cy - math.floor(2 * sc), "⌄",
-        math.floor(28 * sc), config.text_color, "00", ma, 5, "Segoe UI", false)
+    draw_minimize_chevron_icon(ass, bm.cx, bm.cy,
+        math.floor(20 * sc), config.text_color, "00", ma)
 
     local be = L.btn_exit
     draw_rounded_rect(ass, be.x, be.y, be.x + be.w, be.y + be.h,
@@ -1537,12 +1737,17 @@ local function render_osc()
     draw_text(ass, be.x + math.floor(36 * sc), be.cy, "Exit",
         math.floor(14 * sc), config.text_color, "00", ma, 4, nil, false)
 
-    -- 1b. Transparent cinema HUD gradient. There is intentionally no solid
-    -- bottom bar: the picture remains visible behind every control.
+    -- 1b. Exact player-hud CSS stops: transparent at the top, 56% black at
+    -- 55%, and 82% at the bottom. There is intentionally no solid bar.
+    local hud_mid_y = L.gradient.y + L.gradient.h * 0.55
     draw_gradient(ass,
         L.gradient.x, L.gradient.y,
+        L.gradient.x + L.gradient.w, hud_mid_y,
+        "000000", "FF", "70", ma, 18)
+    draw_gradient(ass,
+        L.gradient.x, hud_mid_y,
         L.gradient.x + L.gradient.w, L.gradient.y + L.gradient.h,
-        "000000", "FF", config.bar_bg_alpha, ma, 32)
+        "000000", "70", config.bar_bg_alpha, ma, 14)
 
     -- 3. Seek bar
     local seek_ratio = 0
@@ -1789,41 +1994,70 @@ local function render_osc()
 
     -- 4. Bottom-left title, episode label, and mono timecode.
     local md = L.metadata
-    if state.content_title ~= "" then
-        draw_text(ass, md.x, md.y - math.floor(9 * sc), state.content_title,
-            math.floor(16 * sc), config.text_color, "00", ma, 4, nil, true)
+    local title_font_size = math.floor(16 * sc)
+    if state.content_title ~= "" and md.max_w > math.floor(24 * sc) then
+        local title = truncate_display_text(state.content_title, md.max_w, title_font_size)
+        draw_text(ass, md.x, md.y - math.floor(9 * sc), ass_escape_text(title),
+            title_font_size, config.text_color, "00", ma, 4, nil, true)
     end
     local meta_y = md.y + math.floor(14 * sc)
-    if state.content_subtitle ~= "" then
-        draw_text(ass, md.x, meta_y, state.content_subtitle,
-            math.floor(10 * sc), config.dim_text_color, "30", ma, 4, nil, false)
-    end
     local time_x = md.x
     if state.content_subtitle ~= "" then
         time_x = md.x + math.min(md.max_w * 0.55, math.floor(220 * sc))
+        local subtitle_font_size = math.floor(10 * sc)
+        local subtitle_width = math.max(0, time_x - md.x - math.floor(12 * sc))
+        local subtitle = truncate_display_text(
+            state.content_subtitle, subtitle_width, subtitle_font_size)
+        if subtitle ~= "" then
+            draw_text(ass, md.x, meta_y, ass_escape_text(subtitle),
+                subtitle_font_size, config.dim_text_color, "30", ma, 4, nil, false)
+        end
     end
     local time_str = format_time(state.time_pos) .. "  /  " .. format_time(state.duration)
-    draw_text(ass, time_x, meta_y, time_str,
-        math.floor(config.font_size_time * sc), config.text_color, "40", ma, 4, "Consolas", false)
+    if md.max_w > math.floor(72 * sc) then
+        draw_text(ass, time_x, meta_y, time_str,
+            math.floor(config.font_size_time * sc), config.text_color, "40", ma, 4, "Consolas", false)
+    end
 
     -- 5. Center transport cluster: glass secondaries around a glossy white disc.
     local function draw_secondary_disc(rect)
-        draw_circle(ass, rect.cx, rect.cy, rect.w / 2, config.text_color, "E6", ma)
-        draw_circle(ass, rect.cx, rect.cy, rect.w / 2 - math.max(1, sc), config.text_color, "EF", ma)
+        local hovered = state.mouse_x >= rect.x and state.mouse_x <= rect.x + rect.w
+            and state.mouse_y >= rect.y and state.mouse_y <= rect.y + rect.h
+        local radius = rect.w / 2 * (hovered and 1.06 or 1.0)
+        draw_circle(ass, rect.cx, rect.cy, radius, config.text_color,
+            hovered and "C7" or "E6", ma)
+        draw_circle(ass, rect.cx, rect.cy, radius - math.max(1, sc), config.text_color,
+            hovered and "DB" or "EF", ma)
+        return hovered
     end
 
     local bsb = L.btn_skip_back
-    draw_secondary_disc(bsb)
-    draw_skip_back_icon(ass, bsb.cx, bsb.cy, bsb.w * 0.7, config.text_color, "10", ma)
+    local skip_back_hovered = draw_secondary_disc(bsb)
+    draw_skip_back_icon(ass, bsb.cx, bsb.cy,
+        bsb.w * 0.7 * (skip_back_hovered and 1.06 or 1.0), config.text_color, "10", ma)
 
     if L.btn_prev_ep then
-        draw_secondary_disc(L.btn_prev_ep)
+        local prev_hovered = draw_secondary_disc(L.btn_prev_ep)
         draw_prev_episode_icon(ass, L.btn_prev_ep.cx, L.btn_prev_ep.cy,
-            L.btn_prev_ep.w * 0.58, config.text_color, "10", ma)
+            L.btn_prev_ep.w * 0.58 * (prev_hovered and 1.06 or 1.0), config.text_color, "10", ma)
     end
 
     local bp = L.btn_play
-    draw_circle(ass, bp.cx, bp.cy, bp.w / 2, config.text_color, "00", ma)
+    local play_hovered = state.mouse_x >= bp.x and state.mouse_x <= bp.x + bp.w
+        and state.mouse_y >= bp.y and state.mouse_y <= bp.y + bp.h
+    local play_radius = bp.w / 2 * (play_hovered and 1.04 or 1.0)
+    if state.pause then
+        -- player-breathe: a 2.6s halo expands 18px while fading from 22%.
+        local breathe_phase = (mp.get_time() % 2.6) / 2.6
+        if breathe_phase <= 0.60 then
+            local breathe_progress = breathe_phase / 0.60
+            local halo_radius = play_radius + math.floor(18 * sc * breathe_progress)
+            local halo_alpha = string.format("%02X",
+                math.floor(0xC7 + (0xFF - 0xC7) * breathe_progress))
+            draw_circle(ass, bp.cx, bp.cy, halo_radius, config.text_color, halo_alpha, ma)
+        end
+    end
+    draw_circle(ass, bp.cx, bp.cy, play_radius, config.text_color, "00", ma)
     if state.pause then
         draw_play_icon(ass, bp.cx, bp.cy, bp.w * 0.48, "0B0B0A", "00", ma)
     else
@@ -1831,13 +2065,14 @@ local function render_osc()
     end
 
     local bsf = L.btn_skip_fwd
-    draw_secondary_disc(bsf)
-    draw_skip_fwd_icon(ass, bsf.cx, bsf.cy, bsf.w * 0.7, config.text_color, "10", ma)
+    local skip_forward_hovered = draw_secondary_disc(bsf)
+    draw_skip_fwd_icon(ass, bsf.cx, bsf.cy,
+        bsf.w * 0.7 * (skip_forward_hovered and 1.06 or 1.0), config.text_color, "10", ma)
 
     if L.btn_next_ep then
-        draw_secondary_disc(L.btn_next_ep)
+        local next_hovered = draw_secondary_disc(L.btn_next_ep)
         draw_next_episode_icon(ass, L.btn_next_ep.cx, L.btn_next_ep.cy,
-            L.btn_next_ep.w * 0.58, config.text_color, "10", ma)
+            L.btn_next_ep.w * 0.58 * (next_hovered and 1.06 or 1.0), config.text_color, "10", ma)
     end
 
     -- 6. Utility rail. Hover produces the same faint circular wash as the
@@ -1857,29 +2092,31 @@ local function render_osc()
     end
 
     local bv = L.btn_volume
-    draw_utility_state(bv, state.mute)
-    draw_volume_icon(ass, bv.cx, bv.cy, bv.w * 0.72,
-        config.text_color, "38", ma, state.mute and 0 or state.volume, state.mute)
-
     local vb = L.volume_bar
-    local vol_ratio = state.dragging_volume
-        and clamp(state.volume_drag_val / 100, 0, 1)
-        or clamp(state.volume / 100, 0, 1)
-    local volume_hover = state.dragging_volume
-        or (state.mouse_x >= vb.x and state.mouse_x <= vb.x + vb.w
-            and state.mouse_y >= vb.cy - math.floor(12 * sc)
-            and state.mouse_y <= vb.cy + math.floor(12 * sc))
-    local volume_h = math.max(3, math.floor((volume_hover and 5 or config.volume_bar_height) * sc))
-    draw_rounded_rect(ass, vb.x, vb.cy - volume_h / 2, vb.x + vb.w, vb.cy + volume_h / 2,
-        volume_h / 2, config.text_color, "D9", ma)
-    local vol_fill_x = vb.x + vb.w * vol_ratio
-    if vol_fill_x > vb.x + 1 then
-        draw_rounded_rect(ass, vb.x, vb.cy - volume_h / 2, vol_fill_x, vb.cy + volume_h / 2,
-            volume_h / 2, config.text_color, "00", ma)
-    end
-    if volume_hover then
-        draw_circle(ass, vol_fill_x, vb.cy, math.floor(config.volume_thumb_radius * sc),
-            config.text_color, "00", ma)
+    if bv and vb then
+        draw_utility_state(bv, state.mute)
+        draw_volume_icon(ass, bv.cx, bv.cy, bv.w * 0.72,
+            config.text_color, "38", ma, state.mute and 0 or state.volume, state.mute)
+
+        local vol_ratio = state.dragging_volume
+            and clamp(state.volume_drag_val / 100, 0, 1)
+            or clamp(state.volume / 100, 0, 1)
+        local volume_hover = state.dragging_volume
+            or (state.mouse_x >= vb.x and state.mouse_x <= vb.x + vb.w
+                and state.mouse_y >= vb.cy - math.floor(12 * sc)
+                and state.mouse_y <= vb.cy + math.floor(12 * sc))
+        local volume_h = math.max(3, math.floor((volume_hover and 5 or config.volume_bar_height) * sc))
+        draw_rounded_rect(ass, vb.x, vb.cy - volume_h / 2, vb.x + vb.w, vb.cy + volume_h / 2,
+            volume_h / 2, config.text_color, "D9", ma)
+        local vol_fill_x = vb.x + vb.w * vol_ratio
+        if vol_fill_x > vb.x + 1 then
+            draw_rounded_rect(ass, vb.x, vb.cy - volume_h / 2, vol_fill_x, vb.cy + volume_h / 2,
+                volume_h / 2, config.text_color, "00", ma)
+        end
+        if volume_hover then
+            draw_circle(ass, vol_fill_x, vb.cy, math.floor(config.volume_thumb_radius * sc),
+                config.text_color, "00", ma)
+        end
     end
 
     -- The WebUI separates the always-visible volume group from the rest of
@@ -1887,32 +2124,33 @@ local function render_osc()
     if L.utility_divider_x then
         local divider_x = L.utility_divider_x
         local divider_half_h = math.floor(16 * sc)
-        draw_gradient(ass, divider_x, controls_y - divider_half_h,
-            divider_x + math.max(1, math.floor(sc)), controls_y,
+        local divider_center_y = L.btn_play.cy
+        draw_gradient(ass, divider_x, divider_center_y - divider_half_h,
+            divider_x + math.max(1, math.floor(sc)), divider_center_y,
             config.text_color, "FF", "DB", ma, 4)
-        draw_gradient(ass, divider_x, controls_y,
-            divider_x + math.max(1, math.floor(sc)), controls_y + divider_half_h,
+        draw_gradient(ass, divider_x, divider_center_y,
+            divider_x + math.max(1, math.floor(sc)), divider_center_y + divider_half_h,
             config.text_color, "DB", "FF", ma, 4)
     end
 
     local bcc = L.btn_cc
-    local cc_active = state.sub_track > 0 or state.subtitle_menu_visible
+    local cc_active = state.active_subtitle >= 0
     draw_utility_state(bcc, cc_active)
-    draw_text(ass, bcc.cx, bcc.cy, "CC", math.floor(14 * sc),
-        config.text_color, cc_active and "00" or "38", ma, 5, nil, true)
+    draw_captions_icon(ass, bcc.cx, bcc.cy, math.floor(20 * sc),
+        config.text_color, cc_active and "00" or "38", ma, cc_active)
 
     local bchap = L.btn_chapters
     if bchap then
         draw_utility_state(bchap, state.chapter_menu_visible)
-        draw_text(ass, bchap.cx, bchap.cy, "☷", math.floor(20 * sc),
-            config.text_color, "38", ma, 5, "Segoe UI Symbol", false)
+        draw_chapters_icon(ass, bchap.cx, bchap.cy, math.floor(20 * sc),
+            config.text_color, "38", ma)
     end
 
     local baudio = L.btn_audio
     if baudio then
         draw_utility_state(baudio, state.audio_menu_visible)
-        draw_text(ass, baudio.cx, baudio.cy, "≋", math.floor(22 * sc),
-            config.text_color, #state.audio_tracks > 1 and "38" or "A0", ma, 5, "Segoe UI Symbol", true)
+        draw_audio_lines_icon(ass, baudio.cx, baudio.cy, math.floor(20 * sc),
+            config.text_color, #state.audio_tracks > 1 and "38" or "A0", ma)
     end
 
     local bq = L.btn_quality
@@ -1925,13 +2163,13 @@ local function render_osc()
             math.max(2, math.floor(2.2 * sc)), config.accent_color, "00", ma)
     end
     if bq.show_label then
-        draw_text(ass, bq.x + math.floor(21 * sc), bq.cy, "⚙", math.floor(18 * sc),
-            config.text_color, state.quality_menu_visible and "00" or "38", ma, 5, "Segoe UI Symbol", false)
+        draw_settings_icon(ass, bq.x + math.floor(21 * sc), bq.cy, math.floor(18 * sc),
+            config.text_color, state.quality_menu_visible and "00" or "38", ma)
         draw_text(ass, bq.x + math.floor(41 * sc), bq.cy, active_quality_label(), math.floor(11 * sc),
             config.text_color, state.quality_menu_visible and "00" or "38", ma, 4, nil, true)
     else
-        draw_text(ass, bq.cx, bq.cy, "⚙", math.floor(18 * sc),
-            config.text_color, state.quality_menu_visible and "00" or "38", ma, 5, "Segoe UI Symbol", false)
+        draw_settings_icon(ass, bq.cx, bq.cy, math.floor(18 * sc),
+            config.text_color, state.quality_menu_visible and "00" or "38", ma)
     end
 
     if L.btn_marker_edit then
@@ -1942,8 +2180,8 @@ local function render_osc()
 
     local bst = L.btn_stats
     draw_utility_state(bst, state.stats_visible)
-    draw_text(ass, bst.cx, bst.cy, "ⓘ", math.floor(20 * sc),
-        config.text_color, state.stats_visible and "00" or "38", ma, 5, "Segoe UI Symbol", false)
+    draw_info_icon(ass, bst.cx, bst.cy, math.floor(20 * sc),
+        config.text_color, state.stats_visible and "00" or "38", ma)
 
     local bpip = L.btn_pip
     draw_utility_state(bpip, state.picture_in_picture)
@@ -2118,6 +2356,8 @@ end
 
 local function render_stats()
     if not state.stats_visible then
+        state.stats_panel_rect = nil
+        state.stats_scroll_max = 0
         if state.stats_overlay then
             state.stats_overlay.data = ""
             state.stats_overlay:update()
@@ -2227,10 +2467,19 @@ local function render_stats()
     end
     total_h = total_h + padding  -- bottom padding
 
+    -- Match the WebUI's max-h-[calc(100%-6rem)] behavior. ASS overlays do not
+    -- provide a native scroll view, so render a bounded viewport and let the
+    -- mouse wheel move its content instead of drawing beyond a short window.
+    local max_box_h = math.max(math.floor(180 * sc), H - math.floor(96 * sc))
+    local box_h = math.min(total_h, max_box_h)
+    state.stats_scroll_max = math.max(0, total_h - box_h)
+    state.stats_scroll_offset = clamp(state.stats_scroll_offset or 0, 0, state.stats_scroll_max)
+    state.stats_panel_rect = { x = box_x, y = box_y, w = box_w, h = box_h }
+
     -- Background
     draw_rounded_rect(ass,
         box_x, box_y,
-        box_x + box_w, box_y + total_h,
+        box_x + box_w, box_y + box_h,
         8,
         "000000", "26", 1.0)
 
@@ -2248,28 +2497,51 @@ local function render_stats()
         y = cy,
         w = 40, h = line_h
     }
-    cy = cy + line_h + 8
+    cy = cy + line_h + 8 - state.stats_scroll_offset
+
+    local content_top = box_y + padding + line_h + 8
+    local content_bottom = box_y + box_h - padding
+    local function row_is_visible(center_y, height)
+        local half = height / 2
+        return center_y + half >= content_top and center_y - half <= content_bottom
+    end
 
     -- Draw sections
     for _, sec in ipairs(sections) do
         cy = cy + section_gap
         -- Section header (uppercase, small, dim)
-        draw_text(ass, box_x + padding, cy + header_h / 2, sec.header,
-            fs_small, config.dim_text_color, "40", 1.0, 4, nil, true)
+        if row_is_visible(cy + header_h / 2, header_h) then
+            draw_text(ass, box_x + padding, cy + header_h / 2, sec.header,
+                fs_small, config.dim_text_color, "40", 1.0, 4, nil, true)
+        end
         cy = cy + header_h
 
         -- Rows
         for _, row in ipairs(sec.rows) do
-            -- Label (left, dim)
-            draw_text(ass, box_x + padding, cy + line_h / 2, row.label,
-                fs, config.dim_text_color, "00", 1.0, 4)
-            -- Value (right-aligned, bright)
-            local val = row.value
-            if #val > 38 then val = string.sub(val, 1, 35) .. "..." end
-            draw_text(ass, box_x + box_w - padding, cy + line_h / 2, val,
-                fs, config.text_color, "00", 1.0, 6)
+            if row_is_visible(cy + line_h / 2, line_h) then
+                -- Label (left, dim)
+                draw_text(ass, box_x + padding, cy + line_h / 2, row.label,
+                    fs, config.dim_text_color, "00", 1.0, 4)
+                -- Value (right-aligned, bright)
+                local val = row.value
+                if #val > 38 then val = string.sub(val, 1, 35) .. "..." end
+                draw_text(ass, box_x + box_w - padding, cy + line_h / 2, val,
+                    fs, config.text_color, "00", 1.0, 6)
+            end
             cy = cy + line_h
         end
+    end
+
+    if state.stats_scroll_max > 0 then
+        local track_x = box_x + box_w - math.max(3, math.floor(4 * sc))
+        local track_y = content_top
+        local track_h = math.max(1, content_bottom - content_top)
+        local visible_ratio = clamp(box_h / total_h, 0.08, 1)
+        local thumb_h = math.max(math.floor(24 * sc), track_h * visible_ratio)
+        local thumb_y = track_y + (track_h - thumb_h) *
+            (state.stats_scroll_offset / state.stats_scroll_max)
+        draw_rounded_rect(ass, track_x, thumb_y, track_x + math.max(2, math.floor(2 * sc)),
+            thumb_y + thumb_h, math.max(1, math.floor(sc)), config.text_color, "90", 1.0)
     end
 
     -- Update overlay
@@ -2350,6 +2622,7 @@ local check_next_episode_countdown
 local render_next_episode_countdown
 local render_translation_buffering
 local render_pause_indicator
+local render_playback_wait
 
 local function tick()
     if state.osc_disabled then return end
@@ -2396,6 +2669,15 @@ local function tick()
         end
     end
 
+
+    if state.playback_loading or state.playback_buffering then
+        local frame = math.floor(now * 10) % 8
+        if frame ~= state.playback_spinner_frame then
+            state.playback_spinner_frame = frame
+            render_playback_wait()
+        end
+    end
+
     -- Cursor visibility
     if state.current_alpha > 0.1 then
         request_cursor_visibility(true)
@@ -2436,6 +2718,15 @@ local function handle_mouse_move()
     local L = state.layout
     if L.bar_hit then
         state.mouse_in_bar = point_in_rect(mx, my, L.bar_hit)
+    end
+
+    if state.skip_visible then
+        local skip_rect = state.skip_rect
+        local skip_hovered = skip_rect ~= nil and point_in_rect(mx, my, skip_rect)
+        if skip_hovered ~= state.skip_hovered then
+            state.skip_hovered = skip_hovered
+            render_skip_button()
+        end
     end
 
     update_marker_panel_drag(mx, my)
@@ -2888,37 +3179,41 @@ local function render_notice()
     local H = state.osd_height
 
     local sc = ui_scale()
-    local fs = math.floor((config.stats_font_size + 1) * sc)
-    local fs_small = math.floor(config.stats_font_size * sc)
-    local padding = 20
-    local box_w = math.min(500, W - 40)
+    local fs = math.floor(14 * sc)
+    local padding_x = math.floor(20 * sc)
+    local padding_y = math.floor(16 * sc)
+    local box_w = math.min(math.floor(576 * sc), W - math.floor(32 * sc))
     local box_x = (W - box_w) / 2
-    local box_y = 60
+    local box_y = math.floor(80 * sc)
+    local line_h = math.floor(24 * sc)
+    local title_h = state.notice_title ~= "" and math.floor(20 * sc) or 0
+    local title_gap = title_h > 0 and math.floor(4 * sc) or 0
+    local max_chars = math.max(20, math.floor((box_w - padding_x * 2) / math.max(1, fs * 0.56)))
+    local message_lines = wrap_display_text(state.notice_message, max_chars, 3)
+    local box_h = padding_y * 2 + title_h + title_gap + #message_lines * line_h
 
-    -- Calculate height based on content
-    local title_h = 24
-    local msg_h = 20
-    local box_h = padding * 2 + title_h + msg_h + 8
-
-    -- Background color based on tone
-    local bg_color = state.notice_tone == "warning" and "0040B0" or "B05A00"  -- amber / sky (BGR for ASS)
-
-    -- Background
+    -- PlaybackNoticeOverlay.tsx uses amber-500/15 + amber-400/50 for warning
+    -- and sky-500/15 + sky-400/50 for info. Error notices use warning chrome.
+    local warning = state.notice_tone == "warning" or state.notice_tone == "error"
+    local bg_color = warning and "0B9EF5" or "E9A50E"
+    local border_color = warning and "24BFFB" or "F8BD38"
+    local radius = math.max(2, math.floor(16 * sc))
     draw_rounded_rect(ass, box_x, box_y, box_x + box_w, box_y + box_h,
-        10, bg_color, "30", 1.0)
+        radius, border_color, "80", 1.0)
+    draw_rounded_rect(ass, box_x + 1, box_y + 1, box_x + box_w - 1, box_y + box_h - 1,
+        math.max(1, radius - 1), bg_color, "D9", 1.0)
 
-    -- Border
-    local border_color = state.notice_tone == "warning" and "0055CC" or "CC7733"
-    draw_rounded_rect(ass, box_x, box_y, box_x + box_w, box_y + 2,
-        0, border_color, "50", 1.0)
-
-    -- Title
-    draw_text(ass, box_x + padding, box_y + padding + title_h / 2, state.notice_title,
-        fs, config.text_color, "00", 1.0, 4, nil, true)
-
-    -- Message
-    draw_text(ass, box_x + padding, box_y + padding + title_h + 8 + msg_h / 2, state.notice_message,
-        fs_small, config.text_color, "20", 1.0, 4)
+    local text_y = box_y + padding_y
+    if title_h > 0 then
+        draw_text(ass, box_x + padding_x, text_y + title_h / 2, ass_escape_text(state.notice_title),
+            fs, config.text_color, "00", 1.0, 4, nil, true)
+        text_y = text_y + title_h + title_gap
+    end
+    for _, line in ipairs(message_lines) do
+        draw_text(ass, box_x + padding_x, text_y + line_h / 2,
+            ass_escape_text(line), fs, config.text_color, "26", 1.0, 4)
+        text_y = text_y + line_h
+    end
 
     -- Update overlay
     if not state.notice_overlay then
@@ -2963,9 +3258,11 @@ local function update_skip_button_rect()
     local W = state.osd_width
     local H = state.osd_height
     local sc = ui_scale()
-    local btn_w = math.floor(180 * sc)
-    local btn_h = math.floor(44 * sc)
-    local btn_x = W - btn_w - 40
+    -- IntroSkipButton.tsx: px-6, py-2, text-sm, right-6, bottom-24.
+    local label_width = #tostring(state.skip_label or "") * 7.5
+    local btn_w = math.floor(math.max(118, label_width + 48) * sc)
+    local btn_h = math.floor(36 * sc)
+    local btn_x = W - btn_w - math.floor(24 * sc)
     local btn_y = H - math.floor(96 * sc) - btn_h
 
     state.skip_rect = { x = btn_x, y = btn_y, w = btn_w, h = btn_h }
@@ -3263,6 +3560,7 @@ end
 
 render_skip_button = function()
     if not state.skip_visible then
+        state.skip_hovered = false
         if state.skip_overlay then
             state.skip_overlay.data = ""
             state.skip_overlay:update()
@@ -3279,15 +3577,16 @@ render_skip_button = function()
     local H = state.osd_height
 
     local sc = ui_scale()
-    local fs = math.floor((config.stats_font_size + 2) * sc)
+    local fs = math.floor(14 * sc)
+    local radius = math.max(1, math.floor(4 * sc))
 
-    -- Background
+    -- WebUI: border-white/40 over bg-black/70; hover switches to white/20.
+    -- ASS alpha is inverse opacity (00 opaque, FF transparent).
     draw_rounded_rect(ass, r.x, r.y, r.x + r.w, r.y + r.h,
-        8, "FFFFFF", "30", 1.0)
-
-    -- Border
-    draw_rounded_rect(ass, r.x, r.y, r.x + r.w, r.y + 1,
-        0, "FFFFFF", "60", 1.0)
+        radius, "FFFFFF", "99", 1.0)
+    draw_rounded_rect(ass, r.x + 1, r.y + 1, r.x + r.w - 1, r.y + r.h - 1,
+        math.max(1, radius - 1), state.skip_hovered and "FFFFFF" or "000000",
+        state.skip_hovered and "CC" or "4D", 1.0)
 
     -- Text
     draw_text(ass, r.x + r.w / 2, r.y + r.h / 2, state.skip_label,
@@ -3305,9 +3604,11 @@ end
 
 check_skip_markers = function()
     local pos = state.time_pos
-    if pos <= 0 then return end
+    if pos < 0 then return end
 
     local was_visible = state.skip_visible
+    local previous_label = state.skip_label
+    local previous_target = state.skip_target
     state.skip_visible = false
 
     -- Check intro range. Webui parity (VideoPlayer.tsx): rely on
@@ -3322,9 +3623,20 @@ check_skip_markers = function()
         end
     end
 
+    -- The current WebUI exposes recap markers independently from intros.
+    -- Reuse the native marker pill, giving an intro priority only in the
+    -- unlikely event that malformed marker ranges overlap.
+    if not state.skip_visible and state.recap_end > state.recap_start then
+        if pos >= state.recap_start and pos < state.recap_end then
+            state.skip_visible = true
+            state.skip_label = "Skip Recap"
+            state.skip_target = state.recap_end
+        end
+    end
+
     -- Check credits range. If a next episode exists, that affordance wins;
     -- otherwise Skip Credits is available only for plausible tail markers.
-    if not state.next_ep_available and credits_marker_is_plausible() then
+    if not state.skip_visible and not state.next_ep_available and credits_marker_is_plausible() then
         if pos >= state.credits_start and pos < state.credits_end then
             state.skip_visible = true
             state.skip_label = "Skip Credits"
@@ -3332,8 +3644,11 @@ check_skip_markers = function()
         end
     end
 
-    -- Only re-render if state changed
-    if state.skip_visible ~= was_visible then
+    -- Adjacent marker ranges can keep the pill visible while changing its
+    -- label and target, so visibility alone is not a sufficient render key.
+    if state.skip_visible ~= was_visible
+        or state.skip_label ~= previous_label
+        or state.skip_target ~= previous_target then
         render_skip_button()
     end
 end
@@ -3494,6 +3809,49 @@ render_next_episode_countdown = function()
     state.next_ep_countdown_overlay:update()
 end
 
+-- Native equivalent of VideoPlayer.tsx's first-frame and buffering surfaces.
+-- Loading owns a solid black frame; rebuffering leaves the picture visible.
+render_playback_wait = function()
+    if not state.playback_loading and not state.playback_buffering then
+        if state.playback_wait_overlay then
+            state.playback_wait_overlay.data = ""
+            state.playback_wait_overlay:update()
+        end
+        return
+    end
+
+    update_osd_dimensions()
+    local W = state.osd_width
+    local H = state.osd_height
+    local sc = ui_scale()
+    local ass = assdraw.ass_new()
+    if state.playback_loading then
+        draw_rect(ass, 0, 0, W, H, "000000", "00", 1.0)
+    end
+
+    local spinner_radius = math.floor((state.playback_loading and 13 or 17) * sc)
+    local dot_radius = math.max(1.5, math.floor(2.2 * sc))
+    local frame = math.max(0, state.playback_spinner_frame)
+    local alphas = { "00", "28", "50", "78", "9C", "B8", "D0", "E4" }
+    for index = 0, 7 do
+        local angle = (index / 8) * math.pi * 2 - math.pi / 2
+        local x = W / 2 + math.cos(angle) * spinner_radius
+        local y = H / 2 + math.sin(angle) * spinner_radius
+        local distance = (index - frame) % 8
+        draw_circle(ass, x, y, dot_radius, config.text_color,
+            alphas[distance + 1], 1.0)
+    end
+
+    if not state.playback_wait_overlay then
+        state.playback_wait_overlay = mp.create_osd_overlay("ass-events")
+    end
+    state.playback_wait_overlay.data = ass.text
+    state.playback_wait_overlay.res_x = W
+    state.playback_wait_overlay.res_y = H
+    state.playback_wait_overlay.z = 90
+    state.playback_wait_overlay:update()
+end
+
 render_translation_buffering = function()
     if not state.translation_buffering then
         if state.translation_buffering_overlay then
@@ -3631,6 +3989,7 @@ end
 -- Toggle stats (defined here so handle_mouse_down can reference it)
 local function toggle_stats()
     state.stats_visible = not state.stats_visible
+    if state.stats_visible then state.stats_scroll_offset = 0 end
     render_stats()
 end
 
@@ -3912,6 +4271,11 @@ local function handle_mouse_down()
             render_stats()
             return
         end
+    end
+    if state.stats_visible and state.stats_panel_rect and
+        point_in_rect(mx, my, state.stats_panel_rect) then
+        consume_video_click()
+        return
     end
 
     -- Audio menu click handling
@@ -4230,6 +4594,13 @@ end
 
 -- Scroll wheel for volume
 local function handle_wheel_up()
+    if state.stats_visible and state.stats_panel_rect and
+        point_in_rect(state.mouse_x, state.mouse_y, state.stats_panel_rect) then
+        state.stats_scroll_offset = math.max(0,
+            (state.stats_scroll_offset or 0) - math.max(20, math.floor(40 * ui_scale())))
+        render_stats()
+        return
+    end
     if state.subtitle_menu_visible then
         state.subtitle_menu_offset = math.max(1, state.subtitle_menu_offset - 1)
         render_subtitle_menu()
@@ -4253,6 +4624,13 @@ local function handle_wheel_up()
 end
 
 local function handle_wheel_down()
+    if state.stats_visible and state.stats_panel_rect and
+        point_in_rect(state.mouse_x, state.mouse_y, state.stats_panel_rect) then
+        state.stats_scroll_offset = math.min(state.stats_scroll_max or 0,
+            (state.stats_scroll_offset or 0) + math.max(20, math.floor(40 * ui_scale())))
+        render_stats()
+        return
+    end
     if state.subtitle_menu_visible then
         state.subtitle_menu_offset = state.subtitle_menu_offset + 1
         render_subtitle_menu()
@@ -4312,11 +4690,19 @@ local function observe_properties()
 
     -- Fullscreen state is managed by the host — listen for its updates
     mp.register_script_message("osc-fullscreen-state", function(val)
-        state.fullscreen = (val == "true")
+        local fullscreen = (val == "true")
+        if state.fullscreen ~= fullscreen then
+            state.fullscreen = fullscreen
+            request_tick()
+        end
     end)
 
     mp.register_script_message("osc-pip-state", function(val)
-        state.picture_in_picture = (val == "true")
+        local picture_in_picture = (val == "true")
+        if state.picture_in_picture ~= picture_in_picture then
+            state.picture_in_picture = picture_in_picture
+            request_tick()
+        end
     end)
 
     mp.register_script_message("osc-set-subtitle-ai-available", function(val)
@@ -4416,6 +4802,46 @@ local function observe_properties()
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if ok and data then
             show_notice(data.title, data.message, data.tone)
+        end
+    end)
+
+    mp.register_script_message("osc-set-loading", function(value)
+        state.playback_loading = (value == "true" or value == "1")
+        if state.playback_loading then
+            state.playback_buffering = false
+            state.playback_buffering_requested = false
+            if state.playback_buffering_timer then
+                state.playback_buffering_timer:kill()
+                state.playback_buffering_timer = nil
+            end
+        end
+        state.playback_spinner_frame = -1
+        render_playback_wait()
+    end)
+
+    mp.register_script_message("osc-set-buffering", function(value)
+        local requested = (value == "true" or value == "1")
+        state.playback_buffering_requested = requested
+        if state.playback_buffering_timer then
+            state.playback_buffering_timer:kill()
+            state.playback_buffering_timer = nil
+        end
+
+        if requested then
+            -- Mirror the desktop's former XAML debounce so tiny cache refills
+            -- do not flash a spinner over otherwise smooth playback.
+            state.playback_buffering_timer = mp.add_timeout(0.5, function()
+                state.playback_buffering_timer = nil
+                if state.playback_buffering_requested then
+                    state.playback_buffering = true
+                    state.playback_spinner_frame = -1
+                    render_playback_wait()
+                end
+            end)
+        else
+            state.playback_buffering = false
+            state.playback_spinner_frame = -1
+            render_playback_wait()
         end
     end)
 
@@ -4607,6 +5033,24 @@ local function observe_properties()
         if val then
             if val.w and val.w > 0 then state.osd_width = val.w end
             if val.h and val.h > 0 then state.osd_height = val.h end
+
+            -- Every floating surface is positioned in OSD coordinates. mpv does
+            -- not automatically reflow an existing ASS overlay when the host
+            -- window changes size, so redraw every active surface immediately.
+            -- Without this, fullscreen transitions leave controls and menus at
+            -- coordinates calculated for the previous window size.
+            if state.stats_visible then render_stats() end
+            if state.subtitle_menu_visible then render_subtitle_menu() end
+            if state.quality_menu_visible then render_quality_menu() end
+            if state.audio_menu_visible then render_audio_menu() end
+            if state.chapter_menu_visible then render_chapter_menu() end
+            if state.notice_visible then render_notice() end
+            if state.skip_visible then render_skip_button() end
+            if state.next_ep_visible then render_next_episode_button() end
+            if state.next_ep_countdown_active then render_next_episode_countdown() end
+            if state.translation_buffering then render_translation_buffering() end
+            if state.playback_loading or state.playback_buffering then render_playback_wait() end
+            request_tick()
         end
     end)
 end
@@ -4968,9 +5412,11 @@ local function init()
         if state.next_ep_overlay then state.next_ep_overlay:remove() end
         if state.next_ep_countdown_overlay then state.next_ep_countdown_overlay:remove() end
         if state.translation_buffering_overlay then state.translation_buffering_overlay:remove() end
+        if state.playback_wait_overlay then state.playback_wait_overlay:remove() end
         if state.tick_timer then state.tick_timer:kill() end
         if state.hide_timer then state.hide_timer:kill() end
         if state.notice_timer then state.notice_timer:kill() end
+        if state.playback_buffering_timer then state.playback_buffering_timer:kill() end
     end)
 
     msg.info("Silo OSC initialized successfully")

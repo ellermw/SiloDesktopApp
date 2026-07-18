@@ -33,8 +33,18 @@ public class PlayerService : IDisposable
     private readonly SiloApiClient _apiClient;
     private readonly SettingsService _settingsService;
     private readonly SettingsApi _settingsApi;
+    private readonly object _watchDetailPrefetchLock = new();
+    private readonly Dictionary<string, WatchDetailPrefetchEntry> _watchDetailPrefetches =
+        new(StringComparer.Ordinal);
+    private static readonly TimeSpan WatchDetailPrefetchLifetime = TimeSpan.FromMinutes(2);
+    private const int MaxWatchDetailPrefetches = 8;
     private readonly SemaphoreSlim _subtitleAppearanceLoadGate = new(1, 1);
     private string? _subtitleAppearanceProfileId;
+
+    private sealed record WatchDetailPrefetchEntry(
+        string ProfileId,
+        DateTimeOffset CreatedAt,
+        Task<WatchDetailResponse> Task);
 
     private MpvPlayer? _mpv;
     private MpvVideoWindow? _videoWindow;
@@ -110,6 +120,7 @@ public class PlayerService : IDisposable
     private Action<bool>? _mpvPauseHandler;
     private Action<bool>? _mpvBufferingHandler;
     private Action? _mpvFileLoadedHandler;
+    private Action? _mpvPlaybackRestartedHandler;
     private Action? _mpvEofReachedHandler;
     private Action? _mpvPlaybackEndedHandler;
     private Action<string>? _mpvPlaybackErrorHandler;
@@ -180,6 +191,164 @@ public class PlayerService : IDisposable
             LogToFile("state_trace.txt", $"Native player prewarm failed (will retry on play): {ex.Message}");
             ResetFailedMpvInitialization();
         }
+    }
+
+    /// <summary>
+    /// Starts the watch-detail request while the user is deliberately hovering
+    /// a playable card. PlayAsync consumes the same in-flight task, removing a
+    /// serial network round trip from the common Home/Continue Watching path.
+    /// The cache is small, short-lived, and profile-scoped so it cannot leak
+    /// playback preferences between profiles or grow during long browsing.
+    /// </summary>
+    public void PrefetchWatchDetail(string? contentId)
+    {
+        if (string.IsNullOrWhiteSpace(contentId) || _closing)
+            return;
+
+        var profileId = _authService.SelectedProfileId;
+        if (string.IsNullOrWhiteSpace(profileId))
+            return;
+
+        lock (_watchDetailPrefetchLock)
+        {
+            PruneWatchDetailPrefetchesLocked(DateTimeOffset.UtcNow, profileId);
+            if (_watchDetailPrefetches.ContainsKey(contentId))
+                return;
+
+            // Enforce the bound only when inserting. Retrieval/pruning must
+            // never evict an otherwise-valid task immediately before Play
+            // attempts to consume it.
+            while (_watchDetailPrefetches.Count >= MaxWatchDetailPrefetches)
+            {
+                var oldest = _watchDetailPrefetches.MinBy(pair => pair.Value.CreatedAt);
+                if (oldest.Key == null)
+                    break;
+                _watchDetailPrefetches.Remove(oldest.Key);
+            }
+
+            var task = _playbackApi.GetWatchDetailAsync(contentId, CancellationToken.None);
+            _watchDetailPrefetches[contentId] = new WatchDetailPrefetchEntry(
+                profileId,
+                DateTimeOffset.UtcNow,
+                task);
+            _ = ObserveWatchDetailPrefetchAsync(contentId, task);
+        }
+    }
+
+    /// <summary>
+    /// Returns the same profile-scoped watch-detail task used by hover
+    /// prefetching, or starts the request when no prefetch exists. Detail pages
+    /// and the playback pipeline use this shared entry point so opening an item
+    /// and immediately pressing Play never issue duplicate /watch requests.
+    /// </summary>
+    public async Task<WatchDetailResponse> GetOrFetchWatchDetailAsync(
+        string contentId,
+        CancellationToken ct = default)
+        => await GetOrFetchWatchDetailCoreAsync(contentId, consumePrefetch: false, ct: ct)
+            .ConfigureAwait(false);
+
+    private async Task<WatchDetailResponse> GetOrFetchWatchDetailCoreAsync(
+        string contentId,
+        bool consumePrefetch,
+        CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentId);
+
+        // Starting through the cache also coalesces callers that arrive before
+        // a hover prefetch has fired (for example, Item Detail and Play racing
+        // immediately after navigation).
+        PrefetchWatchDetail(contentId);
+        var prefetched = await TryGetPrefetchedWatchDetailAsync(contentId, consumePrefetch, ct)
+            .ConfigureAwait(false);
+        if (prefetched != null)
+            return prefetched;
+
+        try
+        {
+            return await _playbackApi.GetWatchDetailAsync(contentId, ct)
+                .ConfigureAwait(false);
+        }
+        catch (ApiException ex) when (ex.StatusCode == 400)
+        {
+            // A just-retired session can briefly hold server-side state used by
+            // watch preparation. Match the playback startup retry without
+            // imposing this delay on successful requests.
+            await Task.Delay(300, ct).ConfigureAwait(false);
+            return await _playbackApi.GetWatchDetailAsync(contentId, ct)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private async Task ObserveWatchDetailPrefetchAsync(
+        string contentId,
+        Task<WatchDetailResponse> task)
+    {
+        try
+        {
+            await task.ConfigureAwait(false);
+        }
+        catch
+        {
+            lock (_watchDetailPrefetchLock)
+            {
+                if (_watchDetailPrefetches.TryGetValue(contentId, out var entry) &&
+                    ReferenceEquals(entry.Task, task))
+                    _watchDetailPrefetches.Remove(contentId);
+            }
+        }
+    }
+
+    private async Task<WatchDetailResponse?> TryGetPrefetchedWatchDetailAsync(
+        string contentId,
+        bool consume,
+        CancellationToken ct)
+    {
+        WatchDetailPrefetchEntry? entry;
+        var profileId = _authService.SelectedProfileId;
+        lock (_watchDetailPrefetchLock)
+        {
+            PruneWatchDetailPrefetchesLocked(DateTimeOffset.UtcNow, profileId);
+            _watchDetailPrefetches.TryGetValue(contentId, out entry);
+        }
+
+        if (entry == null || !string.Equals(entry.ProfileId, profileId, StringComparison.Ordinal))
+            return null;
+
+        try
+        {
+            var watchDetail = await entry.Task.WaitAsync(ct).ConfigureAwait(false);
+            if (consume)
+            {
+                lock (_watchDetailPrefetchLock)
+                {
+                    if (_watchDetailPrefetches.TryGetValue(contentId, out var current) &&
+                        ReferenceEquals(current.Task, entry.Task))
+                        _watchDetailPrefetches.Remove(contentId);
+                }
+            }
+            return string.Equals(watchDetail.ContentId, contentId, StringComparison.Ordinal)
+                ? watchDetail
+                : null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void PruneWatchDetailPrefetchesLocked(DateTimeOffset now, string? profileId)
+    {
+        foreach (var key in _watchDetailPrefetches
+                     .Where(pair =>
+                         !string.Equals(pair.Value.ProfileId, profileId, StringComparison.Ordinal) ||
+                         now - pair.Value.CreatedAt >= WatchDetailPrefetchLifetime)
+                     .Select(pair => pair.Key)
+                     .ToList())
+            _watchDetailPrefetches.Remove(key);
     }
 
     /// <summary>
@@ -1413,10 +1582,30 @@ public class PlayerService : IDisposable
             _playbackManager = new PlaybackManager(_playbackApi, _catalogApi, _authService, _apiClient, passthrough);
             _playbackManager.ProgressReportingFailed += OnProgressReportingFailed;
 
-            var watchDetail = prefetchedWatchDetail != null &&
-                              string.Equals(prefetchedWatchDetail.ContentId, contentId, StringComparison.Ordinal)
-                ? prefetchedWatchDetail
-                : await FetchWatchDetailAsync(contentId, requestToken);
+            // Start the network request before initializing libmpv. The native
+            // window remains hidden until SetState below, but first playback
+            // no longer pays the watch-detail and mpv startup costs serially.
+            // On deliberate hover the task is usually already complete, while
+            // direct clicks still benefit from this overlap.
+            WatchDetailResponse watchDetail;
+            if (prefetchedWatchDetail != null &&
+                string.Equals(prefetchedWatchDetail.ContentId, contentId, StringComparison.Ordinal))
+            {
+                EnsureMpvInitialized();
+                watchDetail = prefetchedWatchDetail;
+            }
+            else
+            {
+                // Prefetch owns and observes the network task. The shared core
+                // call below consumes it after libmpv initialization finishes.
+                PrefetchWatchDetail(contentId);
+                EnsureMpvInitialized();
+                watchDetail = await GetOrFetchWatchDetailCoreAsync(
+                    contentId,
+                    consumePrefetch: true,
+                    ct: requestToken);
+            }
+            _playbackManager.UseWatchDetail(watchDetail);
             SetTitleFromWatchDetail(watchDetail);
             IsAudiobook = watchDetail.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase);
             if (IsAudiobook)
@@ -1523,7 +1712,6 @@ public class PlayerService : IDisposable
             if (_closing || !ReferenceEquals(_playbackManager?.CurrentSession, session))
                 return;
 
-            EnsureMpvInitialized();
             _mpv?.SetProperty(
                 "speed",
                 (IsAudiobook ? _settingsService.GetAudiobookPlaybackRate(ContentId) : 1)
@@ -1696,6 +1884,7 @@ public class PlayerService : IDisposable
 
         try
         {
+            mpv.SendScriptMessage("osc-set-loading", "true");
             ConfigureAudioOutput(mpv);
             var bufferProfile = prepared.Plan.IsHls
                 ? MpvNetworkBufferSizing.Default
@@ -1713,6 +1902,8 @@ public class PlayerService : IDisposable
         }
         catch
         {
+            mpv.SendScriptMessage("osc-set-loading", "false");
+            mpv.SendScriptMessage("osc-set-buffering", "false");
             CancelPendingFileLoadTimeout();
             throw;
         }
@@ -2386,22 +2577,6 @@ public class PlayerService : IDisposable
         return $"track#{sel.Value}";
     }
 
-    private async Task<WatchDetailResponse> FetchWatchDetailAsync(
-        string contentId,
-        CancellationToken ct)
-    {
-        try
-        {
-            return await _playbackManager!.GetWatchDetailAsync(contentId, ct);
-        }
-        catch (ApiException ex) when (ex.StatusCode == 400)
-        {
-            // Retry once if server hasn't processed previous session stop
-            await Task.Delay(300, ct);
-            return await _playbackManager!.GetWatchDetailAsync(contentId, ct);
-        }
-    }
-
     private void SetTitleFromWatchDetail(WatchDetailResponse watchDetail)
     {
         if (watchDetail.SeasonNumber.HasValue && watchDetail.EpisodeNumber.HasValue)
@@ -2833,6 +3008,7 @@ public class PlayerService : IDisposable
         if (_mpvPauseHandler != null) _mpv.PauseChanged -= _mpvPauseHandler;
         if (_mpvBufferingHandler != null) _mpv.BufferingChanged -= _mpvBufferingHandler;
         if (_mpvFileLoadedHandler != null) _mpv.FileLoaded -= _mpvFileLoadedHandler;
+        if (_mpvPlaybackRestartedHandler != null) _mpv.PlaybackRestarted -= _mpvPlaybackRestartedHandler;
         if (_mpvEofReachedHandler != null) _mpv.EofReached -= _mpvEofReachedHandler;
         if (_mpvPlaybackEndedHandler != null) _mpv.PlaybackEnded -= _mpvPlaybackEndedHandler;
         if (_mpvPlaybackErrorHandler != null) _mpv.PlaybackError -= _mpvPlaybackErrorHandler;
@@ -3085,6 +3261,7 @@ public class PlayerService : IDisposable
         _mpvBufferingHandler = (buffering) =>
         {
             LogToFile("state_trace.txt", $"BufferingForCache changed: {buffering} pos={_mpv?.Position:F1} paused={_mpv?.IsPaused}");
+            _mpv?.SendScriptMessage("osc-set-buffering", buffering ? "true" : "false");
             BufferingChanged?.Invoke(buffering);
         };
         _mpv.BufferingChanged += _mpvBufferingHandler;
@@ -3136,7 +3313,6 @@ public class PlayerService : IDisposable
             PositionChanged?.Invoke(mediaPosition);
             DurationChanged?.Invoke(mediaDuration);
 
-            App.MainWindowInstance?.HideLoadingOverlay();
             StartPlaybackStallWatchdog();
             ContentLoaded?.Invoke();
 
@@ -3174,6 +3350,18 @@ public class PlayerService : IDisposable
             catch (Exception ex) { LogToFile("state_trace.txt", $"WebSocket connect failed: {ex.Message}"); }
         };
         _mpv.FileLoaded += _mpvFileLoadedHandler;
+
+        _mpvPlaybackRestartedHandler = () =>
+        {
+            // MPV_EVENT_PLAYBACK_RESTART is the first-frame-ready boundary for
+            // an initial load and fires again after seeks/cache recovery. Keep
+            // the opaque startup surface visible through FILE_LOADED so the
+            // user never sees an unlabelled black-frame gap.
+            _mpv?.SendScriptMessage("osc-set-loading", "false");
+            App.MainWindowInstance?.HideLoadingOverlay();
+            LogToFile("state_trace.txt", "PlaybackRestarted fired (video output ready)");
+        };
+        _mpv.PlaybackRestarted += _mpvPlaybackRestartedHandler;
 
         _mpvPlaybackEndedHandler = () => HandleMpvEndSignal("end-file");
         _mpv.PlaybackEnded += _mpvPlaybackEndedHandler;
@@ -3891,7 +4079,7 @@ public class PlayerService : IDisposable
         var playMethodDisplay = session.PlayMethod switch
         {
             "direct" => "Direct Play",
-            "remux" => "Remux",
+            "remux" => "Direct Streaming",
             "transcode" => "Transcode",
             _ => session.PlayMethod
         };

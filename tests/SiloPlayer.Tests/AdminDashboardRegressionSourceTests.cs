@@ -24,6 +24,8 @@ public class AdminDashboardRegressionSourceTests
         Assert.Contains("AdminActivityViewModel.GetSessionClientLabel(session)", DashboardSource, StringComparison.Ordinal);
         Assert.Contains("result.Message", DashboardSource, StringComparison.Ordinal);
         Assert.Contains("FormatDashboardLibraryScanProgress", DashboardSource, StringComparison.Ordinal);
+        Assert.Contains("Full ingest scan started for all libraries", DashboardSource, StringComparison.Ordinal);
+        Assert.Contains("Scan cancellation requested", DashboardSource, StringComparison.Ordinal);
     }
 
     [Fact]

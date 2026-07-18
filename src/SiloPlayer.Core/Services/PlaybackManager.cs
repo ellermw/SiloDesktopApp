@@ -48,6 +48,19 @@ public class PlaybackManager : IDisposable
         return WatchDetail;
     }
 
+    /// <summary>
+    /// Reuses watch data fetched before the user pressed Play. Keeping the
+    /// assignment inside PlaybackManager preserves the same session state as a
+    /// normal <see cref="GetWatchDetailAsync"/> call while avoiding a duplicate
+    /// round trip on the startup path.
+    /// </summary>
+    public WatchDetailResponse UseWatchDetail(WatchDetailResponse watchDetail)
+    {
+        ArgumentNullException.ThrowIfNull(watchDetail);
+        WatchDetail = watchDetail;
+        return watchDetail;
+    }
+
     public FileVersion? SelectBestVersion(
         List<FileVersion> versions,
         string? qualityPreference = null,

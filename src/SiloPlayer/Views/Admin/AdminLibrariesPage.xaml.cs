@@ -34,6 +34,7 @@ public sealed partial class AdminLibrariesPage : Page
     // Pagination
     private const int UNMATCHED_PAGE_SIZE = 10;
     private const int STALE_PAGE_SIZE = 10;
+    private const int AMBIGUOUS_PAGE_SIZE = 10;
     private const int SKIPPED_ROOTS_PAGE_SIZE = 10;
     private const int ScanUiRefreshMs = 300;
     private const int ScanLibraryRowsRefreshMs = 1500;
@@ -43,7 +44,12 @@ public sealed partial class AdminLibrariesPage : Page
     private string _unmatchedFilter = "";
     private string _staleFilter = "";
     private string _ambiguousFilter = "";
+    private int _ambiguousCurrentPage;
+    private string _staleSortField = "last_seen";
+    private bool _staleSortAscending;
     private int _skippedRootsCurrentPage;
+    private string _skippedRootsSortField = "last_seen";
+    private bool _skippedRootsSortAscending;
 
     public AdminLibrariesPage()
     {
@@ -1588,19 +1594,7 @@ public sealed partial class AdminLibrariesPage : Page
     private void BuildStaleTable()
     {
         StaleTablePanel.Children.Clear();
-
-        var items = ViewModel.StaleIds.AsEnumerable();
-        if (!string.IsNullOrEmpty(_staleFilter))
-        {
-            var q = _staleFilter.ToLowerInvariant();
-            items = items.Where(s =>
-                s.Title.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                s.ProviderId.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                s.Provider.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                s.LibraryName.Contains(q, StringComparison.OrdinalIgnoreCase)
-            );
-        }
-        var filteredList = items.ToList();
+        var filteredList = GetFilteredSortedStaleIds();
 
         // Paginate
         var totalPages = Math.Max(1, (int)Math.Ceiling((double)filteredList.Count / STALE_PAGE_SIZE));
@@ -1618,13 +1612,13 @@ public sealed partial class AdminLibrariesPage : Page
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });                    // Last Seen
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });                     // Actions
 
-        AddHeaderCell(header, 0, "Title");
-        AddHeaderCell(header, 1, "Year");
-        AddHeaderCell(header, 2, "Library");
-        AddHeaderCell(header, 3, "Provider");
+        AddSortableHeaderCell(header, 0, "Title", "title", _staleSortField, _staleSortAscending, SetStaleSort);
+        AddSortableHeaderCell(header, 1, "Year", "year", _staleSortField, _staleSortAscending, SetStaleSort);
+        AddSortableHeaderCell(header, 2, "Library", "library", _staleSortField, _staleSortAscending, SetStaleSort);
+        AddSortableHeaderCell(header, 3, "Provider", "provider", _staleSortField, _staleSortAscending, SetStaleSort);
         AddHeaderCell(header, 4, "Provider ID");
-        AddHeaderCell(header, 5, "First Seen");
-        AddHeaderCell(header, 6, "Last Seen");
+        AddSortableHeaderCell(header, 5, "First Seen", "first_seen", _staleSortField, _staleSortAscending, SetStaleSort);
+        AddSortableHeaderCell(header, 6, "Last Seen", "last_seen", _staleSortField, _staleSortAscending, SetStaleSort);
         AddHeaderCell(header, 7, "Actions");
 
         StaleTablePanel.Children.Add(header);
@@ -1689,7 +1683,7 @@ public sealed partial class AdminLibrariesPage : Page
     private void BuildStalePagination()
     {
         StalePaginationPanel.Children.Clear();
-        var total = ViewModel.StaleIds.Count;
+        var total = GetFilteredSortedStaleIds().Count;
         if (total <= STALE_PAGE_SIZE)
         {
             StalePaginationPanel.Visibility = Visibility.Collapsed;
@@ -1720,6 +1714,50 @@ public sealed partial class AdminLibrariesPage : Page
     private void StaleSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         _staleFilter = (sender as TextBox)?.Text ?? "";
+        _staleCurrentPage = 0;
+        BuildStaleTable();
+        BuildStalePagination();
+    }
+
+    private List<StaleMediaId> GetFilteredSortedStaleIds()
+    {
+        var items = ViewModel.StaleIds.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(_staleFilter))
+        {
+            var q = _staleFilter.Trim();
+            items = items.Where(s =>
+                s.Title.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                s.ProviderId.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                s.Provider.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                s.LibraryName.Contains(q, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return (_staleSortField, _staleSortAscending) switch
+        {
+            ("title", true) => items.OrderBy(s => s.Title, StringComparer.OrdinalIgnoreCase).ToList(),
+            ("title", false) => items.OrderByDescending(s => s.Title, StringComparer.OrdinalIgnoreCase).ToList(),
+            ("year", true) => items.OrderBy(s => s.Year).ToList(),
+            ("year", false) => items.OrderByDescending(s => s.Year).ToList(),
+            ("library", true) => items.OrderBy(s => s.LibraryName, StringComparer.OrdinalIgnoreCase).ToList(),
+            ("library", false) => items.OrderByDescending(s => s.LibraryName, StringComparer.OrdinalIgnoreCase).ToList(),
+            ("provider", true) => items.OrderBy(s => s.Provider, StringComparer.OrdinalIgnoreCase).ToList(),
+            ("provider", false) => items.OrderByDescending(s => s.Provider, StringComparer.OrdinalIgnoreCase).ToList(),
+            ("first_seen", true) => items.OrderBy(s => s.FirstSeenAt, StringComparer.Ordinal).ToList(),
+            ("first_seen", false) => items.OrderByDescending(s => s.FirstSeenAt, StringComparer.Ordinal).ToList(),
+            ("last_seen", true) => items.OrderBy(s => s.LastSeenAt, StringComparer.Ordinal).ToList(),
+            _ => items.OrderByDescending(s => s.LastSeenAt, StringComparer.Ordinal).ToList(),
+        };
+    }
+
+    private void SetStaleSort(string field)
+    {
+        if (_staleSortField == field)
+            _staleSortAscending = !_staleSortAscending;
+        else
+        {
+            _staleSortField = field;
+            _staleSortAscending = false;
+        }
         _staleCurrentPage = 0;
         BuildStaleTable();
         BuildStalePagination();
@@ -1758,6 +1796,8 @@ public sealed partial class AdminLibrariesPage : Page
     private void BuildAmbiguousTable()
     {
         AmbiguousTablePanel.Children.Clear();
+        AmbiguousPaginationPanel.Children.Clear();
+        AmbiguousPaginationPanel.Visibility = Visibility.Collapsed;
 
         var items = ViewModel.AmbiguousRoots.AsEnumerable();
         if (!string.IsNullOrEmpty(_ambiguousFilter))
@@ -1770,6 +1810,12 @@ public sealed partial class AdminLibrariesPage : Page
             );
         }
         var filteredList = items.ToList();
+        var totalPages = Math.Max(1, (int)Math.Ceiling((double)filteredList.Count / AMBIGUOUS_PAGE_SIZE));
+        _ambiguousCurrentPage = Math.Clamp(_ambiguousCurrentPage, 0, totalPages - 1);
+        var pageItems = filteredList
+            .Skip(_ambiguousCurrentPage * AMBIGUOUS_PAGE_SIZE)
+            .Take(AMBIGUOUS_PAGE_SIZE)
+            .ToList();
 
         // Table header
         var header = new Grid { Padding = new Thickness(12, 8, 12, 8), ColumnSpacing = 8 };
@@ -1777,7 +1823,7 @@ public sealed partial class AdminLibrariesPage : Page
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });                   // Type
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });                   // Confidence
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });                   // Files
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });                  // Actions
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });                  // Actions
 
         AddHeaderCell(header, 0, "Root");
         AddHeaderCell(header, 1, "Type");
@@ -1801,14 +1847,14 @@ public sealed partial class AdminLibrariesPage : Page
             return;
         }
 
-        foreach (var root in filteredList)
+        foreach (var root in pageItems)
         {
             var row = new Grid { Padding = new Thickness(12, 8, 12, 8), ColumnSpacing = 8 };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
 
             // Root column: title + path + evidence
             var rootStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
@@ -1868,7 +1914,8 @@ public sealed partial class AdminLibrariesPage : Page
             Grid.SetColumn(filesBlock, 3);
             row.Children.Add(filesBlock);
 
-            // Override button
+            // Actions match the WebUI: Override is always available and Resolve
+            // links to the matched item when the server supplied content_id.
             var capturedRoot = root;
             var overrideBtn = new Button
             {
@@ -1879,8 +1926,25 @@ public sealed partial class AdminLibrariesPage : Page
             };
             overrideBtn.Content = new TextBlock { Text = "Override", FontSize = 11 };
             overrideBtn.Click += async (_, _) => await OpenRootOverrideDialogAsync(capturedRoot);
-            Grid.SetColumn(overrideBtn, 4);
-            row.Children.Add(overrideBtn);
+            var actionPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            actionPanel.Children.Add(overrideBtn);
+            if (!string.IsNullOrWhiteSpace(root.ContentId))
+            {
+                var resolveButton = new Button
+                {
+                    Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
+                    Padding = new Thickness(8, 4, 8, 4),
+                    MinHeight = 28,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Content = new TextBlock { Text = "Resolve", FontSize = 11 },
+                };
+                var contentId = root.ContentId;
+                ToolTipService.SetToolTip(resolveButton, "Open the matched item; use Split Versions to separate wrongly merged files");
+                resolveButton.Click += (_, _) => Frame.Navigate(typeof(SiloPlayer.Views.ItemDetailPage), contentId);
+                actionPanel.Children.Add(resolveButton);
+            }
+            Grid.SetColumn(actionPanel, 4);
+            row.Children.Add(actionPanel);
 
             var rowBorder = new Border
             {
@@ -1891,12 +1955,62 @@ public sealed partial class AdminLibrariesPage : Page
             };
             AmbiguousTablePanel.Children.Add(rowBorder);
         }
+
+        BuildAmbiguousPagination(filteredList.Count, totalPages);
+    }
+
+    private void BuildAmbiguousPagination(int total, int totalPages)
+    {
+        AmbiguousPaginationPanel.Children.Clear();
+        if (total <= AMBIGUOUS_PAGE_SIZE)
+        {
+            AmbiguousPaginationPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        AmbiguousPaginationPanel.Visibility = Visibility.Visible;
+        var page = _ambiguousCurrentPage;
+        var rangeStart = page * AMBIGUOUS_PAGE_SIZE + 1;
+        var rangeEnd = Math.Min((page + 1) * AMBIGUOUS_PAGE_SIZE, total);
+        AmbiguousPaginationPanel.Children.Add(new TextBlock
+        {
+            Text = $"{rangeStart}\u2013{rangeEnd} of {total:N0}",
+            FontSize = 12,
+            Foreground = _tertiaryText,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+        });
+        AmbiguousPaginationPanel.Children.Add(MakePaginationButton("\uE892", page > 0, () =>
+        {
+            _ambiguousCurrentPage = 0;
+            BuildAmbiguousTable();
+            return Task.CompletedTask;
+        }));
+        AmbiguousPaginationPanel.Children.Add(MakePaginationButton("\uE76B", page > 0, () =>
+        {
+            _ambiguousCurrentPage = Math.Max(0, page - 1);
+            BuildAmbiguousTable();
+            return Task.CompletedTask;
+        }));
+        AmbiguousPaginationPanel.Children.Add(MakePaginationButton("\uE76C", page < totalPages - 1, () =>
+        {
+            _ambiguousCurrentPage = Math.Min(totalPages - 1, page + 1);
+            BuildAmbiguousTable();
+            return Task.CompletedTask;
+        }));
+        AmbiguousPaginationPanel.Children.Add(MakePaginationButton("\uE893", page < totalPages - 1, () =>
+        {
+            _ambiguousCurrentPage = totalPages - 1;
+            BuildAmbiguousTable();
+            return Task.CompletedTask;
+        }));
     }
 
     private async void AmbiguousLibraryCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (AmbiguousLibraryCombo.SelectedItem is ComboBoxItem item && item.Tag is int libraryId)
         {
+            _ambiguousCurrentPage = 0;
             await ViewModel.LoadAmbiguousRootsAsync(libraryId);
             BuildAmbiguousRootsSection();
         }
@@ -1905,6 +2019,7 @@ public sealed partial class AdminLibrariesPage : Page
     private void AmbiguousSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         _ambiguousFilter = (sender as TextBox)?.Text ?? "";
+        _ambiguousCurrentPage = 0;
         BuildAmbiguousTable();
     }
 
@@ -2251,6 +2366,37 @@ public sealed partial class AdminLibrariesPage : Page
         BuildSkippedRootsRows();
     }
 
+    private void SkippedItemHeader_Click(object sender, RoutedEventArgs e) => SetSkippedRootsSort("root_path");
+    private void SkippedLibraryHeader_Click(object sender, RoutedEventArgs e) => SetSkippedRootsSort("library");
+    private void SkippedReasonHeader_Click(object sender, RoutedEventArgs e) => SetSkippedRootsSort("reason");
+    private void SkippedFirstSeenHeader_Click(object sender, RoutedEventArgs e) => SetSkippedRootsSort("first_seen");
+    private void SkippedLastSeenHeader_Click(object sender, RoutedEventArgs e) => SetSkippedRootsSort("last_seen");
+
+    private void SetSkippedRootsSort(string field)
+    {
+        if (_skippedRootsSortField == field)
+            _skippedRootsSortAscending = !_skippedRootsSortAscending;
+        else
+        {
+            _skippedRootsSortField = field;
+            _skippedRootsSortAscending = false;
+        }
+        _skippedRootsCurrentPage = 0;
+        UpdateSkippedSortHeaders();
+        BuildSkippedRootsRows();
+    }
+
+    private void UpdateSkippedSortHeaders()
+    {
+        string Label(string title, string field) => _skippedRootsSortField == field
+            ? $"{title} {(_skippedRootsSortAscending ? "\u2191" : "\u2193")}" : title;
+        SkippedItemHeaderText.Text = Label("Item", "root_path");
+        SkippedLibraryHeaderText.Text = Label("Library", "library");
+        SkippedReasonHeaderText.Text = Label("Reason", "reason");
+        SkippedFirstSeenHeaderText.Text = Label("First Seen", "first_seen");
+        SkippedLastSeenHeaderText.Text = Label("Last Seen", "last_seen");
+    }
+
     private void BuildSkippedRootsRows()
     {
         SkippedRootsPanel.Children.Clear();
@@ -2296,10 +2442,20 @@ public sealed partial class AdminLibrariesPage : Page
                 (r.SampleFilePath?.ToLowerInvariant().Contains(q) == true));
         }
 
-        // Match the WebUI's default last-seen descending order.
-        var rows = filtered
-            .OrderByDescending(r => r.LastSeenAt, StringComparer.Ordinal)
-            .ToList();
+        // Match the WebUI's sortable headers and default last-seen descending order.
+        var rows = (_skippedRootsSortField, _skippedRootsSortAscending) switch
+        {
+            ("root_path", true) => filtered.OrderBy(r => r.RootPath, StringComparer.OrdinalIgnoreCase).ToList(),
+            ("root_path", false) => filtered.OrderByDescending(r => r.RootPath, StringComparer.OrdinalIgnoreCase).ToList(),
+            ("library", true) => filtered.OrderBy(r => r.LibraryName, StringComparer.OrdinalIgnoreCase).ToList(),
+            ("library", false) => filtered.OrderByDescending(r => r.LibraryName, StringComparer.OrdinalIgnoreCase).ToList(),
+            ("reason", true) => filtered.OrderBy(r => r.Reason, StringComparer.OrdinalIgnoreCase).ToList(),
+            ("reason", false) => filtered.OrderByDescending(r => r.Reason, StringComparer.OrdinalIgnoreCase).ToList(),
+            ("first_seen", true) => filtered.OrderBy(r => r.FirstSeenAt, StringComparer.Ordinal).ToList(),
+            ("first_seen", false) => filtered.OrderByDescending(r => r.FirstSeenAt, StringComparer.Ordinal).ToList(),
+            ("last_seen", true) => filtered.OrderBy(r => r.LastSeenAt, StringComparer.Ordinal).ToList(),
+            _ => filtered.OrderByDescending(r => r.LastSeenAt, StringComparer.Ordinal).ToList(),
+        };
         var total = rows.Count;
         var totalPages = Math.Max(1, (int)Math.Ceiling((double)total / SKIPPED_ROOTS_PAGE_SIZE));
         _skippedRootsCurrentPage = Math.Clamp(_skippedRootsCurrentPage, 0, totalPages - 1);
@@ -2678,6 +2834,37 @@ public sealed partial class AdminLibrariesPage : Page
         grid.Children.Add(tb);
     }
 
+    private void AddSortableHeaderCell(
+        Grid grid,
+        int column,
+        string title,
+        string field,
+        string activeField,
+        bool ascending,
+        Action<string> sort)
+    {
+        var label = new TextBlock
+        {
+            Text = activeField == field ? $"{title} {(ascending ? "\u2191" : "\u2193")}" : title,
+            FontSize = 12,
+            FontWeight = FontWeights.Medium,
+            Foreground = _tertiaryText,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var button = new Button
+        {
+            Content = label,
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+        button.Click += (_, _) => sort(field);
+        Grid.SetColumn(button, column);
+        grid.Children.Add(button);
+    }
+
     private void AddCell(Grid grid, int column, string text, Windows.UI.Text.FontWeight weight, SolidColorBrush fg, FontFamily? fontFamily = null, int fontSize = 13)
     {
         var tb = new TextBlock
@@ -2730,8 +2917,18 @@ public sealed partial class AdminLibrariesPage : Page
     //  Create Dialog
     // ===================================================================
 
-    private FrameworkElement BuildLibraryDialogTitle(bool editing)
+    private FrameworkElement BuildLibraryDialogTitle(Library? library)
     {
+        var librarySymbol = library?.Type switch
+        {
+            "movies" or "series" => Symbol.Video,
+            "audiobooks" => Symbol.Audio,
+            "ebooks" => Symbol.PreviewLink,
+            "manga" => Symbol.Library,
+            "podcasts" => Symbol.Microphone,
+            "mixed" => Symbol.AllApps,
+            _ => Symbol.Library,
+        };
         var icon = new Border
         {
             Width = 36,
@@ -2740,7 +2937,7 @@ public sealed partial class AdminLibrariesPage : Page
             Background = new SolidColorBrush(Color.FromArgb(0x1A, 0xC0, 0x84, 0xFC)),
             Child = new SymbolIcon
             {
-                Symbol = Symbol.Library,
+                Symbol = librarySymbol,
                 Foreground = _accentBrush,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -2749,15 +2946,15 @@ public sealed partial class AdminLibrariesPage : Page
         var copy = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
         copy.Children.Add(new TextBlock
         {
-            Text = editing ? "Edit Library" : "Add Library",
+            Text = library != null ? "Edit Library" : "Add Library",
             FontSize = 18,
             FontWeight = FontWeights.SemiBold,
             Foreground = _primaryText,
         });
         copy.Children.Add(new TextBlock
         {
-            Text = editing
-                ? "Update this library's folders, metadata, and processing options."
+            Text = library != null
+                ? $"Configure how \u201c{library.Name}\u201d is scanned and matched."
                 : "Set up a new library from folders on your server.",
             FontSize = 12,
             Foreground = _tertiaryText,
@@ -2771,46 +2968,54 @@ public sealed partial class AdminLibrariesPage : Page
     private async Task OpenCreateDialogAsync()
     {
         var (formContent, getBody, getProviderChain, getPosterFile) = BuildLibraryForm(null);
-        var (dialog, submitButton, cancelButton) = BuildLibraryEditorDialog(false, formContent);
-        var shouldSubmit = false;
-        submitButton.Click += (_, _) =>
+        var (dialog, submitButton, cancelButton, errorText) = BuildLibraryEditorDialog(null, formContent);
+        submitButton.Click += async (_, _) =>
         {
-            if (getBody() == null) return;
-            shouldSubmit = true;
+            var body = getBody();
+            if (body == null) return;
+            submitButton.IsEnabled = false;
+            submitButton.Content = "Creating\u2026";
+            errorText.Visibility = Visibility.Collapsed;
+            var created = await ViewModel.CreateLibraryForEditorAsync(body);
+            if (created == null)
+            {
+                ShowLibraryEditorError(errorText, ViewModel.ErrorMessage ?? "Unable to create library.");
+                submitButton.Content = "Create Library";
+                submitButton.IsEnabled = true;
+                return;
+            }
+
+            var chain = getProviderChain();
+            if (chain != null && !await ViewModel.SetLibraryProvidersAsync(created.Id, chain))
+            {
+                ShowLibraryEditorError(errorText, ViewModel.ErrorMessage ?? "Library created, but provider priority could not be saved.");
+                submitButton.Content = "Create Library";
+                submitButton.IsEnabled = true;
+                return;
+            }
+
+            var poster = getPosterFile();
+            if (poster.Bytes != null && poster.Name != null && poster.ContentType != null)
+            {
+                try
+                {
+                    var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
+                    await adminApi.SetLibraryPosterAsync(created.Id, poster.Bytes, poster.Name, poster.ContentType);
+                }
+                catch (Exception ex)
+                {
+                    ShowLibraryEditorError(errorText, $"Library created, but poster upload failed: {ex.Message}");
+                    submitButton.Content = "Create Library";
+                    submitButton.IsEnabled = true;
+                    return;
+                }
+            }
+            ShowStatus(ViewModel.StatusMessage ?? "Library created.");
             dialog.Hide();
         };
         cancelButton.Click += (_, _) => dialog.Hide();
 
         await dialog.ShowAsync();
-        if (shouldSubmit)
-        {
-            var body = getBody();
-            if (body == null) return;
-
-            try
-            {
-                await ViewModel.CreateLibraryCommand.ExecuteAsync(body);
-                ShowStatus(ViewModel.StatusMessage ?? "Library created.");
-
-                // Apply provider chain if modified
-                var chain = getProviderChain();
-                if (chain != null && ViewModel.Libraries.Count > 0)
-                {
-                    var newLib = ViewModel.Libraries.Last();
-                    await ViewModel.SetLibraryProvidersAsync(newLib.Id, chain);
-                }
-
-                // Poster upload is independent of provider-chain customization.
-                var poster = getPosterFile();
-                if (poster.Bytes != null && poster.Name != null && poster.ContentType != null && ViewModel.Libraries.Count > 0)
-                {
-                    var newLib = ViewModel.Libraries.Last();
-                    var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
-                    await adminApi.SetLibraryPosterAsync(newLib.Id, poster.Bytes, poster.Name, poster.ContentType);
-                }
-            }
-            catch { }
-        }
     }
 
     // ===================================================================
@@ -2820,46 +3025,57 @@ public sealed partial class AdminLibrariesPage : Page
     private async Task OpenEditDialogAsync(Library lib)
     {
         var (formContent, getBody, getProviderChain, getPosterFile) = BuildLibraryForm(lib);
-        var (dialog, submitButton, cancelButton) = BuildLibraryEditorDialog(true, formContent);
-        var shouldSubmit = false;
-        submitButton.Click += (_, _) =>
+        var (dialog, submitButton, cancelButton, errorText) = BuildLibraryEditorDialog(lib, formContent);
+        submitButton.Click += async (_, _) =>
         {
-            if (getBody() == null) return;
-            shouldSubmit = true;
+            var body = getBody();
+            if (body == null) return;
+            submitButton.IsEnabled = false;
+            submitButton.Content = "Saving\u2026";
+            errorText.Visibility = Visibility.Collapsed;
+            if (!await ViewModel.UpdateLibraryForEditorAsync(lib.Id, body))
+            {
+                ShowLibraryEditorError(errorText, ViewModel.ErrorMessage ?? "Unable to save library.");
+                submitButton.Content = "Save Changes";
+                submitButton.IsEnabled = true;
+                return;
+            }
+
+            var chain = getProviderChain();
+            if (chain != null && !await ViewModel.SetLibraryProvidersAsync(lib.Id, chain))
+            {
+                ShowLibraryEditorError(errorText, ViewModel.ErrorMessage ?? "Library saved, but provider priority could not be saved.");
+                submitButton.Content = "Save Changes";
+                submitButton.IsEnabled = true;
+                return;
+            }
+
+            var poster = getPosterFile();
+            if (poster.Bytes != null && poster.Name != null && poster.ContentType != null)
+            {
+                try
+                {
+                    var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
+                    await adminApi.SetLibraryPosterAsync(lib.Id, poster.Bytes, poster.Name, poster.ContentType);
+                }
+                catch (Exception ex)
+                {
+                    ShowLibraryEditorError(errorText, $"Library saved, but poster upload failed: {ex.Message}");
+                    submitButton.Content = "Save Changes";
+                    submitButton.IsEnabled = true;
+                    return;
+                }
+            }
+            ShowStatus(ViewModel.StatusMessage ?? "Library updated.");
             dialog.Hide();
         };
         cancelButton.Click += (_, _) => dialog.Hide();
 
         await dialog.ShowAsync();
-        if (shouldSubmit)
-        {
-            var body = getBody();
-            if (body == null) return;
-
-            try
-            {
-                await ViewModel.UpdateLibraryCommand.ExecuteAsync((lib.Id, body));
-                ShowStatus(ViewModel.StatusMessage ?? "Library updated.");
-
-                // Apply provider chain if modified
-                var chain = getProviderChain();
-                if (chain != null)
-                    await ViewModel.SetLibraryProvidersAsync(lib.Id, chain);
-
-                // Upload poster if selected
-                var poster = getPosterFile();
-                if (poster.Bytes != null && poster.Name != null && poster.ContentType != null)
-                {
-                    var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
-                    await adminApi.SetLibraryPosterAsync(lib.Id, poster.Bytes, poster.Name, poster.ContentType);
-                }
-            }
-            catch { }
-        }
     }
 
-    private (ContentDialog Dialog, Button SubmitButton, Button CancelButton) BuildLibraryEditorDialog(
-        bool editing, FrameworkElement formContent)
+    private (ContentDialog Dialog, Button SubmitButton, Button CancelButton, TextBlock ErrorText) BuildLibraryEditorDialog(
+        Library? library, FrameworkElement formContent)
     {
         var dialog = new ContentDialog { XamlRoot = XamlRoot };
 
@@ -2883,7 +3099,7 @@ public sealed partial class AdminLibrariesPage : Page
             BorderBrush = _borderBrush,
             BorderThickness = new Thickness(0, 0, 0, 1),
             Padding = new Thickness(0, 0, 0, 16),
-            Child = BuildLibraryDialogTitle(editing),
+            Child = BuildLibraryDialogTitle(library),
         };
         Grid.SetRow(header, 0);
         shell.Children.Add(header);
@@ -2899,7 +3115,7 @@ public sealed partial class AdminLibrariesPage : Page
         };
         var submitButton = new Button
         {
-            Content = editing ? "Save Changes" : "Create Library",
+            Content = library != null ? "Save Changes" : "Create Library",
             Padding = new Thickness(14, 7, 14, 7),
             Style = (Style)Application.Current.Resources["AccentButtonStyle"],
         };
@@ -2911,18 +3127,38 @@ public sealed partial class AdminLibrariesPage : Page
         };
         footerButtons.Children.Add(cancelButton);
         footerButtons.Children.Add(submitButton);
+        var errorText = new TextBlock
+        {
+            FontSize = 12,
+            Foreground = new SolidColorBrush(DestructiveColor),
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+        };
+        var footerGrid = new Grid { ColumnSpacing = 16 };
+        footerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        footerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        footerGrid.Children.Add(errorText);
+        Grid.SetColumn(footerButtons, 1);
+        footerGrid.Children.Add(footerButtons);
         var footer = new Border
         {
             BorderBrush = _borderBrush,
             BorderThickness = new Thickness(0, 1, 0, 0),
             Padding = new Thickness(0, 16, 0, 0),
-            Child = footerButtons,
+            Child = footerGrid,
         };
         Grid.SetRow(footer, 2);
         shell.Children.Add(footer);
         dialog.Content = shell;
 
-        return (dialog, submitButton, cancelButton);
+        return (dialog, submitButton, cancelButton, errorText);
+    }
+
+    private static void ShowLibraryEditorError(TextBlock errorText, string message)
+    {
+        errorText.Text = message;
+        errorText.Visibility = Visibility.Visible;
     }
 
     // ===================================================================
@@ -3262,6 +3498,22 @@ public sealed partial class AdminLibrariesPage : Page
             typeSelector.Children.Add(button);
         }
         RefreshTypeCards();
+        var typeChangeWarning = new TextBlock
+        {
+            Text = "Changing the type of an existing library may require a full rescan to rematch items.",
+            FontSize = 11,
+            Foreground = (Brush)Application.Current.Resources["WarningBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed,
+        };
+        void RefreshTypeChangeWarning()
+        {
+            var selectedType = (typeCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+            typeChangeWarning.Visibility = editingLib != null &&
+                !string.Equals(selectedType, editingLib.Type, StringComparison.OrdinalIgnoreCase)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
 
         // ---- Paths section ----
         var pathsPanel = new StackPanel { Spacing = 6 };
@@ -3418,6 +3670,7 @@ public sealed partial class AdminLibrariesPage : Page
         typeCombo.SelectionChanged += (_, _) =>
         {
             var newType = (typeCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "movies";
+            RefreshTypeChangeWarning();
             _ = LoadDefaultProvidersAsync(newType, providerSection, levelChains, () => chainDirty = true);
         };
 
@@ -3467,6 +3720,7 @@ public sealed partial class AdminLibrariesPage : Page
         var typeGroup = new StackPanel { Spacing = 6 };
         typeGroup.Children.Add(MakeFormLabel("Type"));
         typeGroup.Children.Add(typeSelector);
+        typeGroup.Children.Add(typeChangeWarning);
         Grid.SetRow(typeGroup, 0);
         typeRow.Children.Add(typeGroup);
 

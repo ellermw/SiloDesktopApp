@@ -24,6 +24,19 @@ public sealed class MpvPlayerSourceTests
     }
 
     [Fact]
+    public void PlaybackRestartEventExposesNativeFirstFrameBoundary()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Player", "MpvPlayer.cs"));
+        var interop = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Player", "MpvInterop.cs"));
+
+        Assert.Contains("MPV_EVENT_PLAYBACK_RESTART  = 21", interop, StringComparison.Ordinal);
+        Assert.Contains("public event Action? PlaybackRestarted;", source, StringComparison.Ordinal);
+        Assert.Contains("case MPV_EVENT_PLAYBACK_RESTART:", source, StringComparison.Ordinal);
+        Assert.Contains("PlaybackRestarted?.Invoke();", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CommandFailureLoggingRedactsQuerySecrets()
     {
         var source = File.ReadAllText(Path.Combine(

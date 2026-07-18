@@ -90,6 +90,13 @@ public sealed class MpvPlayer : IDisposable
     /// <summary>Fired when a file has been loaded and decoding starts.</summary>
     public event Action? FileLoaded;
 
+    /// <summary>
+    /// Fired when mpv has produced output after an initial load, seek, or
+    /// buffering pause. For initial loads this is the native first-frame-ready
+    /// boundary, which occurs after <see cref="FileLoaded"/>.
+    /// </summary>
+    public event Action? PlaybackRestarted;
+
     /// <summary>Fired when a file fails to load or a playback error occurs (END_FILE with reason=error).</summary>
     public event Action<string>? PlaybackError;
 
@@ -884,6 +891,10 @@ public sealed class MpvPlayer : IDisposable
                     FileLoaded?.Invoke();
                     break;
 
+                case MPV_EVENT_PLAYBACK_RESTART:
+                    PlaybackRestarted?.Invoke();
+                    break;
+
                 case MPV_EVENT_END_FILE:
                     if (ev.Data != IntPtr.Zero)
                     {
@@ -1048,6 +1059,7 @@ public sealed class MpvPlayer : IDisposable
         DurationChanged = null;
         PauseChanged = null;
         PlaybackEnded = null;
+        PlaybackRestarted = null;
         EofReached = null;
         FileLoaded = null;
         FrameReady = null;

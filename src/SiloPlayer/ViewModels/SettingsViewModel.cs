@@ -103,25 +103,6 @@ public partial class LibraryCardViewModel : ObservableObject
         string.IsNullOrEmpty(SubtitleMode) &&
         string.IsNullOrEmpty(ForcedSubtitles);
 
-    private static readonly Dictionary<string, string> LanguageNames = new()
-    {
-        [""] = "Profile default",
-        ["original"] = "Original",
-        ["en"] = "English",
-        ["es"] = "Spanish",
-        ["fr"] = "French",
-        ["de"] = "German",
-        ["it"] = "Italian",
-        ["pt"] = "Portuguese",
-        ["ja"] = "Japanese",
-        ["ko"] = "Korean",
-        ["zh"] = "Chinese",
-        ["ru"] = "Russian",
-        ["ar"] = "Arabic",
-        ["hi"] = "Hindi",
-        ["none"] = "None",
-    };
-
     private void UpdateSummary()
     {
         HasCustomOverrides = !IsAllDefaults;
@@ -147,7 +128,13 @@ public partial class LibraryCardViewModel : ObservableObject
 
     private static string GetLanguageName(string code)
     {
-        return LanguageNames.TryGetValue(code, out var name) ? name : code;
+        return code.Trim().ToLowerInvariant() switch
+        {
+            "" => "Profile default",
+            "original" => "Original Language",
+            "none" => "None",
+            _ => MediaLanguageCatalog.Label(code),
+        };
     }
 
     partial void OnAudioLanguageChanged(string value) => OnPrefChanged();

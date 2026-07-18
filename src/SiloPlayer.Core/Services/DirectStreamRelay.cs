@@ -21,6 +21,7 @@ public sealed class DirectStreamRelay
 {
     private const int BufferSize = 128 * 1024;
     private const int DefaultMaxRetries = 50;
+    private static readonly TimeSpan DefaultUpstreamIdleTimeout = TimeSpan.FromSeconds(20);
 
     private readonly HttpClient _httpClient;
     private readonly Uri _remoteUri;
@@ -28,6 +29,7 @@ public sealed class DirectStreamRelay
     private readonly Action<string>? _log;
     private readonly int _maxRetries;
     private readonly bool _supportsRanges;
+    private readonly TimeSpan _upstreamIdleTimeout;
 
     public DirectStreamRelay(
         HttpClient httpClient,
@@ -35,7 +37,8 @@ public sealed class DirectStreamRelay
         Func<string?> accessTokenProvider,
         Action<string>? log = null,
         int maxRetries = DefaultMaxRetries,
-        bool supportsRanges = true)
+        bool supportsRanges = true,
+        TimeSpan? upstreamIdleTimeout = null)
     {
         if (maxRetries < 0)
             throw new ArgumentOutOfRangeException(nameof(maxRetries));
@@ -46,6 +49,9 @@ public sealed class DirectStreamRelay
         _log = log;
         _maxRetries = maxRetries;
         _supportsRanges = supportsRanges;
+        _upstreamIdleTimeout = upstreamIdleTimeout ?? DefaultUpstreamIdleTimeout;
+        if (_upstreamIdleTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(upstreamIdleTimeout));
     }
 
     public async Task<DirectStreamRelayResult> RelayAsync(
@@ -119,7 +125,11 @@ public sealed class DirectStreamRelay
 
                 var expectedBytes = response.Content.Headers.ContentLength;
                 await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
-                var bytesThisAttempt = await CopyToAsync(input, output, cancellationToken);
+                var bytesThisAttempt = await CopyToAsync(
+                    input,
+                    output,
+                    _upstreamIdleTimeout,
+                    cancellationToken);
 
                 bytesWritten += bytesThisAttempt;
                 nextOffset += bytesThisAttempt;
@@ -201,7 +211,11 @@ public sealed class DirectStreamRelay
                  string.Equals(value, "bytes", StringComparison.OrdinalIgnoreCase))));
     }
 
-    private static async Task<long> CopyToAsync(Stream input, Stream output, CancellationToken cancellationToken)
+    private static async Task<long> CopyToAsync(
+        Stream input,
+        Stream output,
+        TimeSpan upstreamIdleTimeout,
+        CancellationToken cancellationToken)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
         var total = 0L;
@@ -213,7 +227,17 @@ public sealed class DirectStreamRelay
                 int read;
                 try
                 {
-                    read = await input.ReadAsync(buffer.AsMemory(0, BufferSize), cancellationToken);
+                    using var readTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    readTimeout.CancelAfter(upstreamIdleTimeout);
+                    try
+                    {
+                        read = await input.ReadAsync(buffer.AsMemory(0, BufferSize), readTimeout.Token);
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        throw new TimeoutException(
+                            $"Upstream sent no media data for {upstreamIdleTimeout.TotalSeconds:0} seconds.");
+                    }
                 }
                 catch (Exception ex) when (IsTransient(ex))
                 {
@@ -269,7 +293,8 @@ public sealed class DirectStreamRelay
     private static bool IsTransient(Exception ex)
     {
         return ex is not DirectStreamWriteException &&
-               (ex is HttpRequestException or IOException or TaskCanceledException or OperationCanceledException);
+               (ex is HttpRequestException or IOException or TaskCanceledException or
+                   OperationCanceledException or TimeoutException);
     }
 
     private sealed record RangeRequest(long From, long? To);

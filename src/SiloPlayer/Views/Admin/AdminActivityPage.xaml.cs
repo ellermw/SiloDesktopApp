@@ -616,7 +616,9 @@ public sealed partial class AdminActivityPage : Page
         userCol.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         userCol.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        string username = session.Username ?? $"User #{session.UserId}";
+        string username = !string.IsNullOrWhiteSpace(session.Username)
+            ? session.Username
+            : $"User #{session.UserId}";
         string initial = username.Length > 0 ? username[0].ToString().ToUpper() : "?";
         var avatar = new Border
         {
@@ -648,8 +650,12 @@ public sealed partial class AdminActivityPage : Page
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
         };
         userLink.Click += (_, _) => Frame.Navigate(typeof(AdminUserDetailPage), capturedUserId);
+        avatar.Tapped += (_, _) => Frame.Navigate(typeof(AdminUserDetailPage), capturedUserId);
+        ToolTipService.SetToolTip(avatar, $"Open {username}");
         userStack.Children.Add(userLink);
-        var profileDisplay = session.ProfileName ?? session.ProfileId;
+        var profileDisplay = !string.IsNullOrWhiteSpace(session.ProfileName)
+            ? session.ProfileName
+            : session.ProfileId;
         if (!string.IsNullOrWhiteSpace(profileDisplay))
         {
             userStack.Children.Add(new Border
@@ -751,10 +757,11 @@ public sealed partial class AdminActivityPage : Page
         Grid.SetColumn(streamStack, 1);
 
         // Col 2: Video — decision badge text-[9px] with border, summary text-[12px] font-medium, detail text-[10px]
-        string videoDecision = session.VideoDecision ?? session.PlayMethod;
+        string videoDecision = AdminActivityViewModel.NormalizeStreamDecision(session.VideoDecision ?? session.PlayMethod);
 
         // Col 3: Audio — same pattern as video
-        string audioDecision = session.AudioDecision ?? (session.TranscodeAudio ? "transcode" : session.PlayMethod);
+        string audioDecision = AdminActivityViewModel.NormalizeStreamDecision(
+            session.AudioDecision ?? (session.TranscodeAudio ? "transcode" : session.PlayMethod));
         var playbackStack = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
         var playbackHeader = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         var transcodeMode = AdminActivityViewModel.FormatTranscodeMode(session);
@@ -762,7 +769,7 @@ public sealed partial class AdminActivityPage : Page
             playbackHeader.Children.Add(BuildTranscodeModeBadge(transcodeMode));
         var detailsToggle = new Button
         {
-            Content = "Details  ⌄",
+            Content = "Details  \u25BC",
             Background = new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
             Padding = new Thickness(0),
@@ -771,14 +778,16 @@ public sealed partial class AdminActivityPage : Page
         };
         playbackHeader.Children.Add(detailsToggle);
         playbackStack.Children.Add(playbackHeader);
-        playbackStack.Children.Add(BuildPlaybackSummaryLine("Container", session.PlayMethod, AdminActivityViewModel.FormatDeliveredContainer(session)));
+        playbackStack.Children.Add(BuildPlaybackSummaryLine("Container", AdminActivityViewModel.NormalizeContainerDecision(session.PlayMethod), AdminActivityViewModel.FormatDeliveredContainer(session)));
         playbackStack.Children.Add(BuildPlaybackSummaryLine("Video", videoDecision, AdminActivityViewModel.FormatDeliveredVideo(session)));
         playbackStack.Children.Add(BuildPlaybackSummaryLine("Audio", audioDecision, AdminActivityViewModel.FormatDeliveredAudio(session)));
         Grid.SetColumn(playbackStack, 2);
 
         // Col 4: Node — text-[12px] muted (not bold), profile text-[10px]
         var nodeStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        string nodeName = session.NodeDisplayName ?? session.ReportingNode ?? "\u2014";
+        string nodeName = !string.IsNullOrWhiteSpace(session.NodeDisplayName)
+            ? session.NodeDisplayName
+            : !string.IsNullOrWhiteSpace(session.ReportingNode) ? session.ReportingNode : "\u2014";
         nodeStack.Children.Add(new TextBlock
         {
             Text = nodeName,
@@ -821,11 +830,16 @@ public sealed partial class AdminActivityPage : Page
             try
             {
                 if (isPaused)
-                    await adminApi.ResumeSessionAsync(capturedSession.SessionId);
+                {
+                    var response = await adminApi.ResumeSessionAsync(capturedSession.SessionId);
+                    toastService.Success(GetSessionCommandToast("Resume", response));
+                }
                 else
-                    await adminApi.PauseSessionAsync(capturedSession.SessionId);
-                toastService.Success(isPaused ? "Session resumed" : "Session paused");
-                await ViewModel.LoadCommand.ExecuteAsync(null);
+                {
+                    var response = await adminApi.PauseSessionAsync(capturedSession.SessionId);
+                    toastService.Success(GetSessionCommandToast("Pause", response));
+                }
+                await ViewModel.RefreshSilentAsync();
             }
             catch (Exception ex) { toastService.Error($"Failed: {ex.Message}"); }
         };
@@ -840,10 +854,10 @@ public sealed partial class AdminActivityPage : Page
         {
             try
             {
-                await adminApi.StopSessionAsync(capturedSession.SessionId);
-                toastService.Success("Session stopped");
+                var response = await adminApi.StopSessionAsync(capturedSession.SessionId);
+                toastService.Success(GetSessionCommandToast("Stop", response));
                 await Task.Delay(500);
-                await ViewModel.LoadCommand.ExecuteAsync(null);
+                await ViewModel.RefreshSilentAsync();
             }
             catch (Exception ex) { toastService.Error($"Stop failed: {ex.Message}"); }
         };
@@ -940,9 +954,9 @@ public sealed partial class AdminActivityPage : Page
             {
                 try
                 {
-                    await adminApi.TerminateSessionAsync(capturedSession.SessionId);
-                    toastService.Success("Session terminated");
-                    await ViewModel.LoadCommand.ExecuteAsync(null);
+                    var response = await adminApi.TerminateSessionAsync(capturedSession.SessionId);
+                    toastService.Success(GetSessionCommandToast("Terminate", response));
+                    await ViewModel.RefreshSilentAsync();
                 }
                 catch (Exception ex) { toastService.Error($"Terminate failed: {ex.Message}"); }
             }
@@ -1012,11 +1026,6 @@ public sealed partial class AdminActivityPage : Page
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x14, 0x15, 0x1E, 0x2B)),
         };
         expandedPanel.Children.Add(detailsPanel);
-        detailsToggle.Click += (_, _) =>
-        {
-            expandedPanel.Visibility = expandedPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-            detailsToggle.Content = expandedPanel.Visibility == Visibility.Visible ? "Details  ⌃" : "Details  ⌄";
-        };
 
         var ffmpegPanel = new StackPanel
         {
@@ -1026,6 +1035,27 @@ public sealed partial class AdminActivityPage : Page
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x14, 0x15, 0x1E, 0x2B)),
         };
         expandedPanel.Children.Add(ffmpegPanel);
+        bool detailsOpen = false;
+        bool ffmpegOpen = false;
+        void UpdateExpandedState()
+        {
+            expandedPanel.Visibility = detailsOpen || ffmpegOpen ? Visibility.Visible : Visibility.Collapsed;
+            ffmpegPanel.Visibility = ffmpegOpen ? Visibility.Visible : Visibility.Collapsed;
+            detailsToggle.Content = detailsOpen || ffmpegOpen ? "Details  \u25B2" : "Details  \u25BC";
+        }
+        detailsToggle.Click += (_, _) =>
+        {
+            if (detailsOpen)
+            {
+                detailsOpen = false;
+                ffmpegOpen = false;
+            }
+            else
+            {
+                detailsOpen = true;
+            }
+            UpdateExpandedState();
+        };
 
         // Add FFmpeg toggle to the control panel (next to logs links)
         var capturedSessionId = session.SessionId;
@@ -1061,12 +1091,12 @@ public sealed partial class AdminActivityPage : Page
         bool ffmpegLoaded = false;
         ffmpegToggle.Click += async (_, _) =>
         {
-            bool isNowOpen = ffmpegPanel.Visibility == Visibility.Collapsed;
-            if (isNowOpen) expandedPanel.Visibility = Visibility.Visible;
-            ffmpegPanel.Visibility = isNowOpen ? Visibility.Visible : Visibility.Collapsed;
-            ffmpegChevron.Glyph = isNowOpen ? "\uE70E" : "\uE70D"; // ChevronUp / ChevronDown
+            ffmpegOpen = !ffmpegOpen;
+            if (ffmpegOpen) detailsOpen = true;
+            UpdateExpandedState();
+            ffmpegChevron.Glyph = ffmpegOpen ? "\uE70E" : "\uE70D"; // ChevronUp / ChevronDown
 
-            if (isNowOpen && !ffmpegLoaded)
+            if (ffmpegOpen && !ffmpegLoaded)
             {
                 ffmpegLoaded = true;
                 ffmpegPanel.Children.Clear();
@@ -1141,7 +1171,7 @@ public sealed partial class AdminActivityPage : Page
 
                             var msgCol = new TextBlock
                             {
-                                Text = entry.Message ?? "",
+                                Text = GetFfmpegRowText(entry),
                                 FontSize = 11, FontFamily = new FontFamily("Consolas"),
                                 Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
                                 TextWrapping = TextWrapping.Wrap,
@@ -1184,7 +1214,7 @@ public sealed partial class AdminActivityPage : Page
             {
                 var response = await adminApi.TerminateSessionAsync(capturedSession.SessionId);
                 toastService.Success(GetSessionCommandToast("Terminate", response));
-                await ViewModel.LoadCommand.ExecuteAsync(null);
+                await ViewModel.RefreshSilentAsync();
             }
             catch (Exception ex) { toastService.Error($"Terminate failed: {ex.Message}"); }
         };
@@ -1206,6 +1236,22 @@ public sealed partial class AdminActivityPage : Page
         => response.Status == "fallback_scheduled"
             ? $"{action} could not reach the player directly. Silo will end the session shortly instead."
             : $"{action} command sent";
+
+    private static string GetFfmpegRowText(OperationalLogEntry entry)
+    {
+        static string? Attr(OperationalLogEntry value, string key)
+        {
+            if (value.Attrs == null || !value.Attrs.TryGetValue(key, out var raw) || raw == null)
+                return null;
+            var text = raw.ToString();
+            return string.IsNullOrWhiteSpace(text) || text == "-" ? null : text;
+        }
+
+        return Attr(entry, "ffmpeg_line")
+            ?? Attr(entry, "ffmpeg_event")
+            ?? entry.Message
+            ?? string.Empty;
+    }
 
     private static FrameworkElement BuildPlaybackSummaryLine(string label, string? decision, string value)
     {
@@ -1280,9 +1326,9 @@ public sealed partial class AdminActivityPage : Page
         for (var i = 0; i < 3; i++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var cards = new[]
         {
-            BuildPlaybackDetailCard("Container", session.PlayMethod, AdminActivityViewModel.FormatSourceContainer(session), AdminActivityViewModel.FormatDeliveredContainer(session), AdminActivityViewModel.FormatContainerDetail(session), null),
-            BuildPlaybackDetailCard("Video", session.VideoDecision ?? session.PlayMethod, AdminActivityViewModel.FormatVideoSummary(session), AdminActivityViewModel.FormatDeliveredVideo(session), AdminActivityViewModel.FormatVideoDetail(session), AdminActivityViewModel.FormatTranscodeMode(session)),
-            BuildPlaybackDetailCard("Audio", session.AudioDecision ?? (session.TranscodeAudio ? "transcode" : session.PlayMethod), AdminActivityViewModel.FormatAudioSummary(session), AdminActivityViewModel.FormatDeliveredAudio(session), AdminActivityViewModel.FormatAudioDetail(session), session.VideoDecision == "transcode" ? null : AdminActivityViewModel.FormatTranscodeMode(session)),
+            BuildPlaybackDetailCard("Container", AdminActivityViewModel.NormalizeContainerDecision(session.PlayMethod), AdminActivityViewModel.FormatSourceContainer(session), AdminActivityViewModel.FormatDeliveredContainer(session), AdminActivityViewModel.FormatContainerDetail(session), null),
+            BuildPlaybackDetailCard("Video", AdminActivityViewModel.NormalizeStreamDecision(session.VideoDecision ?? session.PlayMethod), AdminActivityViewModel.FormatVideoSummary(session), AdminActivityViewModel.FormatDeliveredVideo(session), AdminActivityViewModel.FormatVideoDetail(session), AdminActivityViewModel.FormatTranscodeMode(session)),
+            BuildPlaybackDetailCard("Audio", AdminActivityViewModel.NormalizeStreamDecision(session.AudioDecision ?? (session.TranscodeAudio ? "transcode" : session.PlayMethod)), AdminActivityViewModel.FormatAudioSummary(session), AdminActivityViewModel.FormatDeliveredAudio(session), AdminActivityViewModel.FormatAudioDetail(session), session.VideoDecision == "transcode" ? null : AdminActivityViewModel.FormatTranscodeMode(session)),
         };
         for (var i = 0; i < cards.Length; i++) { Grid.SetColumn(cards[i], i); grid.Children.Add(cards[i]); }
         root.Children.Add(grid);
@@ -1354,12 +1400,17 @@ public sealed partial class AdminActivityPage : Page
         switch (decision?.ToLowerInvariant())
         {
             case "direct":
-            case "copy":
                 // bg-green-500/10 text-green-400 border-green-500/15
                 bg = Color.FromArgb(26, 34, 197, 94);       // green-500 at 10%
                 fg = Green400;
                 border = Color.FromArgb(38, 34, 197, 94);   // green-500 at 15%
                 label = "Direct";
+                break;
+            case "copy":
+                bg = Color.FromArgb(26, 34, 197, 94);
+                fg = Green400;
+                border = Color.FromArgb(38, 34, 197, 94);
+                label = "Copy";
                 break;
             case "transcode":
                 // bg-amber-500/10 text-amber-400 border-amber-500/15
@@ -1374,6 +1425,12 @@ public sealed partial class AdminActivityPage : Page
                 fg = Blue400;
                 border = Color.FromArgb(38, 59, 130, 246);  // blue-500 at 15%
                 label = "Remux";
+                break;
+            case "hls":
+                bg = Color.FromArgb(26, 59, 130, 246);
+                fg = Blue400;
+                border = Color.FromArgb(38, 59, 130, 246);
+                label = "HLS";
                 break;
             default:
                 // Webui: neutral theme badge (muted-foreground)
@@ -1594,7 +1651,9 @@ public sealed partial class AdminActivityPage : Page
         IpLookupExpander.IsExpanded = true;
         ViewModel.IpLookupText = ip.Trim();
         IpLookupButton.IsEnabled = false;
-        await ViewModel.LookupIPCommand.ExecuteAsync(null);
+        var lookupTask = ViewModel.LookupIPCommand.ExecuteAsync(null);
+        RebuildIpResults();
+        await lookupTask;
         IpLookupButton.IsEnabled = !string.IsNullOrWhiteSpace(IpLookupBox.Text);
         RebuildIpResults();
     }

@@ -37,6 +37,8 @@ public class LibraryRoot
     public string LastSeenAt { get; set; } = "";
     [JsonPropertyName("active_override")]
     public LibraryRootOverride? ActiveOverride { get; set; }
+    [JsonPropertyName("content_id")]
+    public string? ContentId { get; set; }
 }
 
 public class LibraryRootOverride

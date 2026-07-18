@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 using SiloPlayer.Views;
 
 namespace SiloPlayer.Controls;
@@ -25,6 +26,7 @@ public sealed partial class PosterCard : UserControl
     }
 
     private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _playbackPrefetchCts;
     private MediaItem? _deferredPosterItem;
     private MediaItem? _deferredOverlayItem;
 
@@ -95,6 +97,7 @@ public sealed partial class PosterCard : UserControl
             try { _loadCts?.Cancel(); } catch { }
             _loadCts?.Dispose();
             _loadCts = null;
+            CancelPlaybackPrefetch();
             PosterImage.Source = null;
             ThumbhashImage.Source = null;
         };
@@ -625,6 +628,7 @@ public sealed partial class PosterCard : UserControl
 
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
     {
+        QueuePlaybackPrefetch();
         _hoverEnterTimer?.Stop();
         _hoverEnterTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
         _hoverEnterTimer.Tick += (_, _) =>
@@ -642,6 +646,7 @@ public sealed partial class PosterCard : UserControl
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
     {
+        CancelPlaybackPrefetch();
         // If the pointer never stayed long enough to commit a hover, just
         // cancel the pending timer — nothing to animate back.
         _hoverEnterTimer?.Stop();
@@ -652,6 +657,36 @@ public sealed partial class PosterCard : UserControl
             Application.Current.Resources["CardBackgroundBrush"];
         MoreButton.Opacity = 0;
         AnimateHover(scale: 1.0, translateY: 0.0, brightenOpacity: 0.0);
+    }
+
+    private async void QueuePlaybackPrefetch()
+    {
+        var item = MediaItem;
+        if (item == null || SelectionMode ||
+            item.Type is not ("movie" or "episode" or "audiobook"))
+            return;
+
+        CancelPlaybackPrefetch();
+        _playbackPrefetchCts = new CancellationTokenSource();
+        var ct = _playbackPrefetchCts.Token;
+        try
+        {
+            // Avoid turning fast pointer travel across a dense catalog into
+            // playback API traffic. A deliberate hover is early enough to hide
+            // the watch-detail request behind the user's decision time.
+            await Task.Delay(140, ct);
+            if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
+                App.Services.GetRequiredService<PlayerService>()
+                    .PrefetchWatchDetail(item.ContentId);
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private void CancelPlaybackPrefetch()
+    {
+        try { _playbackPrefetchCts?.Cancel(); } catch { }
+        _playbackPrefetchCts?.Dispose();
+        _playbackPrefetchCts = null;
     }
 
     private void MoreButton_Tapped(object sender, TappedRoutedEventArgs e)

@@ -232,7 +232,7 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
             var config = plugin.PluginId == "silo.autoscan.cephfs" || plugin.CapabilityId == "cephfs"
                 ? new Dictionary<string, string> { ["exclusions"] = "*.partial\n*.tmp\n@eaDir\n#recycle\n.downloads\n.recyclebin\nvolumes" }
                 : isWebhook ? new Dictionary<string, string> { ["webhook_provider"] = "auto" } : [];
-            await adminApi.CreateAutoscanSourceAsync(new AutoscanSourceCreateInput { PluginId = plugin.PluginId, CapabilityId = plugin.CapabilityId, ConnectionId = isWebhook ? null : connection?.Id, Enabled = true, DeliveryMode = isWebhook ? "webhook" : "poll", PollIntervalSeconds = isWebhook ? null : interval, PathRewrites = [], SourceConfig = config });
+            await adminApi.CreateAutoscanSourceAsync(new AutoscanSourceCreateInput { PluginId = plugin.PluginId, CapabilityId = plugin.CapabilityId, ConnectionId = isWebhook ? null : connection?.Id, Enabled = false, DeliveryMode = isWebhook ? "webhook" : "poll", PollIntervalSeconds = isWebhook ? null : interval, PathRewrites = [], SourceConfig = config });
             var sources = await adminApi.GetAutoscanSourcesAsync(); DecorateSources(sources); Replace(Sources, sources); StatusMessage = "Scan source added.";
             OnPropertyChanged(nameof(HasSources));
         });

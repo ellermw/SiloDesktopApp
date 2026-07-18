@@ -127,6 +127,7 @@ public sealed class CurrentServerContractDeltaTests
         var model = Read("src", "SiloPlayer.Core", "Models", "Admin", "AdminStats.cs");
         var viewModel = Read("src", "SiloPlayer", "ViewModels", "Admin", "AdminDashboardViewModel.cs");
         var page = Read("src", "SiloPlayer", "Views", "Admin", "AdminDashboardPage.xaml.cs");
+        var xaml = Read("src", "SiloPlayer", "Views", "Admin", "AdminDashboardPage.xaml");
         Assert.Contains("WatchProviderActivity", model);
         Assert.Contains("TotalMovieFiles", model);
         Assert.Contains("TotalShowFiles", model);
@@ -135,6 +136,12 @@ public sealed class CurrentServerContractDeltaTests
         Assert.Contains("LoadLibrariesSectionAsync", viewModel);
         Assert.Contains("LoadUsersSectionAsync", viewModel);
         Assert.Contains("LoadDashboardProgressivelyAsync", page);
+        Assert.Contains("BuildStatsError", page);
+        Assert.Contains("BuildSessionsError", page);
+        Assert.Contains("BuildLibrariesError", page);
+        Assert.Contains("BuildUsersError", page);
+        Assert.Contains("Failed to load activity.", page);
+        Assert.Contains("StatsErrorPanel", xaml);
         Assert.Contains("BuildTraktActivity", page);
         Assert.Contains("TimeSpan.FromSeconds(60)", page);
     }

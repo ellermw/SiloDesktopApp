@@ -158,6 +158,14 @@
                     <controls:SkeletonBox Grid.Column="3" Height="96" CornerRadius="16" />
                     <controls:SkeletonBox Grid.Column="4" Height="96" CornerRadius="16" />
                 </Grid>
+                <Border x:Name="StatsErrorPanel"
+                        Padding="0,16"
+                        Visibility="Collapsed">
+                    <TextBlock Text="Failed to load stats."
+                               FontSize="14"
+                               Foreground="{StaticResource ErrorBrush}"
+                               HorizontalAlignment="Center" />
+                </Border>
                 <Grid x:Name="StatsGrid" ColumnSpacing="14">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />

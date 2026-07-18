@@ -3,6 +3,49 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void PlayableHomeCardsPrefetchAndReuseWatchDetailBeforePlay()
+    {
+        var root = FindRepositoryRoot();
+        var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var manager = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Services", "PlaybackManager.cs"));
+        var card = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Controls", "LandscapeCard.xaml.cs"));
+        var posterCard = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Controls", "PosterCard.xaml.cs"));
+        var libraryCard = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Controls", "LibraryGridCard.cs"));
+        var hero = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Controls", "HeroCarousel.xaml.cs"));
+        var detail = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
+
+        Assert.Contains("public void PrefetchWatchDetail(string? contentId)", service, StringComparison.Ordinal);
+        Assert.Contains("public async Task<WatchDetailResponse> GetOrFetchWatchDetailAsync", service, StringComparison.Ordinal);
+        Assert.Contains("await GetOrFetchWatchDetailCoreAsync(", service, StringComparison.Ordinal);
+        Assert.Contains("consumePrefetch: true", service, StringComparison.Ordinal);
+        Assert.Contains("PrefetchWatchDetail(contentId);", service, StringComparison.Ordinal);
+        Assert.Contains("_playbackManager.UseWatchDetail(watchDetail);", service, StringComparison.Ordinal);
+        Assert.Contains("public WatchDetailResponse UseWatchDetail", manager, StringComparison.Ordinal);
+        Assert.Contains("QueuePlaybackPrefetch();", card, StringComparison.Ordinal);
+        Assert.Contains("await Task.Delay(140, ct);", card, StringComparison.Ordinal);
+        Assert.Contains("QueuePlaybackPrefetch();", posterCard, StringComparison.Ordinal);
+        Assert.Contains("QueuePlaybackPrefetch();", libraryCard, StringComparison.Ordinal);
+        Assert.Contains(".PrefetchWatchDetail(item.ContentId);", hero, StringComparison.Ordinal);
+        Assert.Contains("GetOrFetchWatchDetailAsync(contentId)", detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("playbackApi.GetWatchDetailAsync(contentId)", detail, StringComparison.Ordinal);
+
+        var playPrefetchIndex = service.IndexOf("// Prefetch owns and observes the network task", StringComparison.Ordinal);
+        var mpvInitIndex = service.IndexOf("EnsureMpvInitialized();", playPrefetchIndex, StringComparison.Ordinal);
+        var watchAwaitIndex = service.IndexOf("watchDetail = await GetOrFetchWatchDetailCoreAsync(", playPrefetchIndex, StringComparison.Ordinal);
+        Assert.True(playPrefetchIndex >= 0 && mpvInitIndex > playPrefetchIndex && watchAwaitIndex > mpvInitIndex,
+            "First-play libmpv initialization should overlap the in-flight watch-detail request.");
+        Assert.Contains("mpv.SendScriptMessage(\"osc-set-loading\", \"true\")", service, StringComparison.Ordinal);
+        Assert.Contains("_mpv?.SendScriptMessage(\"osc-set-loading\", \"false\")", service, StringComparison.Ordinal);
+        Assert.Contains("_mpv?.SendScriptMessage(\"osc-set-buffering\", buffering ? \"true\" : \"false\")", service, StringComparison.Ordinal);
+
+        var fileLoadedHandler = service.IndexOf("_mpvFileLoadedHandler = () =>", StringComparison.Ordinal);
+        var firstFrameHandler = service.IndexOf("_mpvPlaybackRestartedHandler = () =>", fileLoadedHandler, StringComparison.Ordinal);
+        var loadingDismissal = service.IndexOf("_mpv?.SendScriptMessage(\"osc-set-loading\", \"false\")", fileLoadedHandler, StringComparison.Ordinal);
+        Assert.True(fileLoadedHandler >= 0 && firstFrameHandler > fileLoadedHandler && loadingDismissal > firstFrameHandler,
+            "The startup surface must remain visible through FILE_LOADED and dismiss at PLAYBACK_RESTART (first output frame)." );
+    }
+
+    [Fact]
     public void HlsAndRemuxEmbeddedSubtitlesUseSlidingSidecarsWhileDirectPlayStaysNative()
     {
         var root = FindRepositoryRoot();

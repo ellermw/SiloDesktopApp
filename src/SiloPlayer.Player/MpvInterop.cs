@@ -24,6 +24,7 @@ public static class MpvInterop
     public const int MPV_EVENT_END_FILE         = 7;
     public const int MPV_EVENT_FILE_LOADED      = 8;
     public const int MPV_EVENT_CLIENT_MESSAGE    = 16;
+    public const int MPV_EVENT_PLAYBACK_RESTART  = 21;
     public const int MPV_EVENT_PROPERTY_CHANGE  = 22;
 
     // ── mpv_end_file_reason constants ───────────────────────────────────

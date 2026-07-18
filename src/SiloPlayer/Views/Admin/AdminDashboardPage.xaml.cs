@@ -208,23 +208,31 @@ public sealed partial class AdminDashboardPage : Page
         ViewModel.IsLoading = true;
         ViewModel.ErrorMessage = null;
         if (manual) RefreshButtonLabel.Text = "Refreshing…";
-        var errors = new List<string>();
-
-        async Task LoadSectionAsync(Func<Task> load, Action render, string label)
+        async Task LoadSectionAsync(Func<Task> load, Action render, Action renderError, string label)
         {
             try
             {
                 await load();
                 render();
             }
-            catch (Exception ex) { errors.Add($"{label}: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                renderError();
+                LocalLog.AppendLine(
+                    "admin_dashboard_errors.txt",
+                    $"{label} | {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         await Task.WhenAll(
-            LoadSectionAsync(ViewModel.LoadStatsSectionAsync, () => { UpdateStats(); BuildTraktActivity(); }, "Stats"),
-            LoadSectionAsync(ViewModel.LoadSessionsSectionAsync, () => { UpdateStats(); BuildStreamCards(); BuildActivityItems(); }, "Sessions"),
-            LoadSectionAsync(ViewModel.LoadLibrariesSectionAsync, BuildLibraryRows, "Libraries"),
-            LoadSectionAsync(ViewModel.LoadUsersSectionAsync, BuildUserRows, "Users"));
+            LoadSectionAsync(ViewModel.LoadStatsSectionAsync,
+                () => { UpdateStats(); BuildTraktActivity(); }, BuildStatsError, "Stats"),
+            LoadSectionAsync(ViewModel.LoadSessionsSectionAsync,
+                () => { UpdateStats(); BuildStreamCards(); BuildActivityItems(); }, BuildSessionsError, "Sessions"),
+            LoadSectionAsync(ViewModel.LoadLibrariesSectionAsync,
+                BuildLibraryRows, BuildLibrariesError, "Libraries"),
+            LoadSectionAsync(ViewModel.LoadUsersSectionAsync,
+                BuildUserRows, BuildUsersError, "Users"));
 
         if (manual)
         {
@@ -232,7 +240,9 @@ public sealed partial class AdminDashboardPage : Page
             if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
             RefreshButtonLabel.Text = "Refresh";
         }
-        ViewModel.ErrorMessage = errors.Count > 0 ? string.Join(Environment.NewLine, errors) : null;
+        // Query failures render inside their own sections. The page-level
+        // error slot remains reserved for user actions such as failed scans.
+        ViewModel.ErrorMessage = null;
         ViewModel.IsLoading = false;
         LastUpdatedText.Text = "Updated less than 1 minute ago";
         LastUpdatedText.Visibility = Visibility.Visible;
@@ -255,7 +265,13 @@ public sealed partial class AdminDashboardPage : Page
         if (ViewModel.Libraries.Count == 0) return;
         ScanAllButton.IsEnabled = false;
         ScanAllButtonLabel.Text = "Starting scans…";
+        ViewModel.ErrorMessage = null;
         await ViewModel.ScanAllCommand.ExecuteAsync(null);
+        var toast = App.Services.GetRequiredService<ToastService>();
+        if (string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+            toast.Success("Full ingest scan started for all libraries");
+        else
+            toast.Error(ViewModel.ErrorMessage);
         ScanAllButtonLabel.Text = "Scan All Libraries";
         ScanAllButton.IsEnabled = true;
     }
@@ -349,6 +365,7 @@ public sealed partial class AdminDashboardPage : Page
     private void BuildLoadingState()
     {
         StatsGrid.Visibility = Visibility.Collapsed;
+        StatsErrorPanel.Visibility = Visibility.Collapsed;
         StatsLoadingGrid.Visibility = Visibility.Visible;
         foreach (var value in new[] { StatActiveStreams, StatMovies, StatShows, StatUsers, StatStorage })
             value.Text = "";
@@ -432,6 +449,7 @@ public sealed partial class AdminDashboardPage : Page
 
     private void UpdateStats()
     {
+        StatsErrorPanel.Visibility = Visibility.Collapsed;
         StatsLoadingGrid.Visibility = Visibility.Collapsed;
         StatsGrid.Visibility = Visibility.Visible;
         var stats = ViewModel.Stats;
@@ -1076,8 +1094,15 @@ public sealed partial class AdminDashboardPage : Page
         scanButton.Click += async (s, e) =>
         {
             scanButton.IsEnabled = false;
-            if (activeScans.Count > 0) await ViewModel.CancelLibraryScansAsync(libId);
+            ViewModel.ErrorMessage = null;
+            var cancelling = activeScans.Count > 0;
+            if (cancelling) await ViewModel.CancelLibraryScansAsync(libId);
             else await ViewModel.ScanLibraryAsync(libId);
+            var toast = App.Services.GetRequiredService<ToastService>();
+            if (string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+                toast.Success(cancelling ? "Scan cancellation requested" : "Full ingest scan started");
+            else
+                toast.Error(ViewModel.ErrorMessage);
             scanButton.IsEnabled = true;
         };
 
@@ -1404,6 +1429,44 @@ public sealed partial class AdminDashboardPage : Page
             ActivityPanel.Children.Add(BuildActivityItem(session));
         }
     }
+
+    private void BuildStatsError()
+    {
+        StatsLoadingGrid.Visibility = Visibility.Collapsed;
+        StatsGrid.Visibility = Visibility.Collapsed;
+        StatsErrorPanel.Visibility = Visibility.Visible;
+        TraktActivityCard.Visibility = Visibility.Collapsed;
+    }
+
+    private void BuildSessionsError()
+    {
+        NowPlayingSection.Visibility = Visibility.Collapsed;
+        RecentActivitySection.Visibility = Visibility.Visible;
+        ActivityPanel.Children.Clear();
+        ActivityPanel.Children.Add(BuildSectionError("Failed to load activity."));
+    }
+
+    private void BuildLibrariesError()
+    {
+        LibrariesPanel.Children.Clear();
+        LibrariesPanel.Children.Add(BuildSectionError("Failed to load libraries."));
+    }
+
+    private void BuildUsersError()
+    {
+        UsersPanel.Children.Clear();
+        UsersPanel.Children.Add(BuildSectionError("Failed to load users."));
+    }
+
+    private static TextBlock BuildSectionError(string message) => new()
+    {
+        Text = message,
+        FontSize = 14,
+        Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+        HorizontalAlignment = HorizontalAlignment.Center,
+        TextAlignment = TextAlignment.Center,
+        Margin = new Thickness(0, 16, 0, 16),
+    };
 
     private FrameworkElement BuildActivityItem(AdminSession session)
     {

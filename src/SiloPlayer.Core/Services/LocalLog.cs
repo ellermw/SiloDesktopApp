@@ -5,6 +5,7 @@ namespace SiloPlayer.Core.Services;
 public static partial class LocalLog
 {
     public const long DefaultMaxBytes = 2 * 1024 * 1024;
+    public const string LogDirectoryEnvironmentVariable = "SILOPLAYER_LOG_DIRECTORY";
     private static readonly object s_gate = new();
 
     public static void AppendLine(
@@ -20,9 +21,7 @@ public static partial class LocalLog
                 return;
 
             fileName = Path.GetFileName(fileName);
-            logDirectory ??= Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "SiloPlayer");
+            logDirectory ??= ResolveDefaultLogDirectory();
 
             Directory.CreateDirectory(logDirectory);
             var path = Path.Combine(logDirectory, fileName);
@@ -52,9 +51,7 @@ public static partial class LocalLog
                 return;
 
             fileName = Path.GetFileName(fileName);
-            logDirectory ??= Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "SiloPlayer");
+            logDirectory ??= ResolveDefaultLogDirectory();
 
             Directory.CreateDirectory(logDirectory);
             var path = Path.Combine(logDirectory, fileName);
@@ -85,6 +82,16 @@ public static partial class LocalLog
         redacted = QuerySecretRegex().Replace(redacted, "${prefix}<redacted>");
         redacted = JsonSecretRegex().Replace(redacted, "${prefix}<redacted>${suffix}");
         return redacted;
+    }
+
+    private static string ResolveDefaultLogDirectory()
+    {
+        var overrideDirectory = Environment.GetEnvironmentVariable(LogDirectoryEnvironmentVariable);
+        return !string.IsNullOrWhiteSpace(overrideDirectory)
+            ? Path.GetFullPath(overrideDirectory)
+            : Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "SiloPlayer");
     }
 
     private static void RotateIfNeeded(string path, long maxBytes, int archiveCount)

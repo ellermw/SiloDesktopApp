@@ -27,6 +27,7 @@ public sealed class LibraryGridCard : Canvas
     private readonly StackPanel _overlayBottomLeft;
     private readonly StackPanel _overlayBottomRight;
     private CancellationTokenSource? _posterLoadCts;
+    private CancellationTokenSource? _playbackPrefetchCts;
     private int _posterLoadVersion;
     private double _posterHeight;
 
@@ -186,6 +187,7 @@ public sealed class LibraryGridCard : Canvas
     public void Bind(MediaItem item, string? sortKey)
     {
         CancelPosterLoad(clearImage: true);
+        CancelPlaybackPrefetch();
 
         // ItemGrid uses square artwork for audiobook items even inside a mixed
         // library. Keep the virtual row height stable, but size the individual
@@ -257,6 +259,7 @@ public sealed class LibraryGridCard : Canvas
     public void BindPlaceholder()
     {
         CancelPosterLoad(clearImage: true);
+        CancelPlaybackPrefetch();
         MediaItem = null;
         SortKey = null;
         IsHitTestVisible = false;
@@ -276,6 +279,7 @@ public sealed class LibraryGridCard : Canvas
     public void Reset()
     {
         CancelPosterLoad(clearImage: true);
+        CancelPlaybackPrefetch();
         MediaItem = null;
         SortKey = null;
         IsHitTestVisible = false;
@@ -372,6 +376,7 @@ public sealed class LibraryGridCard : Canvas
 
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
     {
+        QueuePlaybackPrefetch();
         _posterHoverTransform.ScaleX = 1.06;
         _posterHoverTransform.ScaleY = 1.06;
         _cardHoverTransform.TranslateY = -4;
@@ -381,8 +386,37 @@ public sealed class LibraryGridCard : Canvas
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
     {
+        CancelPlaybackPrefetch();
         ResetHoverVisuals();
         _moreButton.Opacity = 0;
+    }
+
+    private async void QueuePlaybackPrefetch()
+    {
+        var item = MediaItem;
+        if (item == null || item.Type is not ("movie" or "episode" or "audiobook"))
+            return;
+
+        CancelPlaybackPrefetch();
+        _playbackPrefetchCts = new CancellationTokenSource();
+        var ct = _playbackPrefetchCts.Token;
+        try
+        {
+            // Keep fast library scrolling free of speculative network work.
+            // Only a pointer that settles on a playable card primes playback.
+            await Task.Delay(140, ct);
+            if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
+                App.Services.GetRequiredService<PlayerService>()
+                    .PrefetchWatchDetail(item.ContentId);
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private void CancelPlaybackPrefetch()
+    {
+        try { _playbackPrefetchCts?.Cancel(); } catch { }
+        _playbackPrefetchCts?.Dispose();
+        _playbackPrefetchCts = null;
     }
 
     private void ResetHoverVisuals()

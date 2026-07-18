@@ -12,6 +12,7 @@ namespace SiloPlayer.Controls;
 public sealed partial class LandscapeCard : UserControl
 {
     private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _playbackPrefetchCts;
     public static readonly DependencyProperty MediaItemProperty =
         DependencyProperty.Register(
             nameof(MediaItem),
@@ -33,6 +34,9 @@ public sealed partial class LandscapeCard : UserControl
             try { _loadCts?.Cancel(); } catch { }
             _loadCts?.Dispose();
             _loadCts = null;
+            try { _playbackPrefetchCts?.Cancel(); } catch { }
+            _playbackPrefetchCts?.Dispose();
+            _playbackPrefetchCts = null;
             BackdropImage.Source = null;
         };
     }
@@ -306,13 +310,41 @@ public sealed partial class LandscapeCard : UserControl
         CardBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["SurfaceHoverBrush"];
         AnimateHover(scale: 1.04, borderOpacity: 1.0, dimOpacity: 1.0, playOpacity: 1.0, playScale: 1.0, dismissOpacity: 1.0);
+        QueuePlaybackPrefetch();
     }
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
     {
+        try { _playbackPrefetchCts?.Cancel(); } catch { }
+        _playbackPrefetchCts?.Dispose();
+        _playbackPrefetchCts = null;
         CardBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["CardBackgroundBrush"];
         AnimateHover(scale: 1.0, borderOpacity: 0.0, dimOpacity: 0.0, playOpacity: 0.0, playScale: 0.7, dismissOpacity: 0.0);
+    }
+
+    private async void QueuePlaybackPrefetch()
+    {
+        var item = MediaItem;
+        if (item == null || item.Type is not ("movie" or "episode" or "audiobook"))
+            return;
+
+        try { _playbackPrefetchCts?.Cancel(); } catch { }
+        _playbackPrefetchCts?.Dispose();
+        _playbackPrefetchCts = new CancellationTokenSource();
+        var ct = _playbackPrefetchCts.Token;
+
+        try
+        {
+            // Avoid issuing requests while the pointer is merely crossing a
+            // carousel. A deliberate hover still begins before the 180 ms play
+            // affordance animation has finished.
+            await Task.Delay(140, ct);
+            if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
+                App.Services.GetRequiredService<Services.PlayerService>()
+                    .PrefetchWatchDetail(item.ContentId);
+        }
+        catch (OperationCanceledException) { }
     }
 
     private void DismissButton_Click(object sender, RoutedEventArgs e)

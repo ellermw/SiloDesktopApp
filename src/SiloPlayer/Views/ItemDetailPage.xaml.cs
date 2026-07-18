@@ -3811,8 +3811,8 @@ public sealed partial class ItemDetailPage : Page
     {
         try
         {
-            var playbackApi = App.Services.GetRequiredService<PlaybackApi>();
-            _watchDetail = await playbackApi.GetWatchDetailAsync(contentId);
+            var playerService = App.Services.GetRequiredService<Services.PlayerService>();
+            _watchDetail = await playerService.GetOrFetchWatchDetailAsync(contentId);
             UpdatePlayButton();
             UpdateQualityBadges();
 

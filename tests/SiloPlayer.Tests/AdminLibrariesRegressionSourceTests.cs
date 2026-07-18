@@ -178,4 +178,45 @@ public class AdminLibrariesRegressionSourceTests
         Assert.Contains("levelChains.Values.Any(items => items.Count > 0)", page, StringComparison.Ordinal);
         Assert.Contains("GetLibraryProviderDefaultsAsync", page, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void DiagnosticTablesMatchCurrentPaginationSortingAndResolveActions()
+    {
+        var markup = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminLibrariesPage.xaml"));
+        var page = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminLibrariesPage.xaml.cs"));
+        var rootModel = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer.Core", "Models", "Admin", "LibraryRoot.cs"));
+
+        Assert.Contains("x:Name=\"AmbiguousPaginationPanel\"", markup, StringComparison.Ordinal);
+        Assert.Contains("private const int AMBIGUOUS_PAGE_SIZE = 10;", page, StringComparison.Ordinal);
+        Assert.Contains("BuildAmbiguousPagination(filteredList.Count, totalPages);", page, StringComparison.Ordinal);
+        Assert.Contains("[JsonPropertyName(\"content_id\")]", rootModel, StringComparison.Ordinal);
+        Assert.Contains("Text = \"Resolve\"", page, StringComparison.Ordinal);
+        Assert.Contains("AddSortableHeaderCell(header, 0, \"Title\"", page, StringComparison.Ordinal);
+        Assert.Contains("SkippedLastSeenHeader_Click", markup, StringComparison.Ordinal);
+        Assert.Contains("SetSkippedRootsSort(\"last_seen\")", page, StringComparison.Ordinal);
+        Assert.Contains("GetFilteredSortedStaleIds().Count", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LibraryEditorWaitsForSaveAndKeepsFailuresVisible()
+    {
+        var page = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminLibrariesPage.xaml.cs"));
+        var viewModel = File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "SiloPlayer", "ViewModels", "Admin", "AdminLibrariesViewModel.cs"));
+
+        Assert.Contains("submitButton.Content = \"Creating\\u2026\";", page, StringComparison.Ordinal);
+        Assert.Contains("submitButton.Content = \"Saving\\u2026\";", page, StringComparison.Ordinal);
+        Assert.Contains("ShowLibraryEditorError(errorText", page, StringComparison.Ordinal);
+        Assert.Contains("CreateLibraryForEditorAsync(body)", page, StringComparison.Ordinal);
+        Assert.Contains("UpdateLibraryForEditorAsync(lib.Id, body)", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("var newLib = ViewModel.Libraries.Last();", page, StringComparison.Ordinal);
+        Assert.Contains("public async Task<Library?> CreateLibraryForEditorAsync", viewModel, StringComparison.Ordinal);
+        Assert.Contains("public async Task<bool> UpdateLibraryForEditorAsync", viewModel, StringComparison.Ordinal);
+        Assert.Contains("Configure how \\u201c{library.Name}\\u201d is scanned and matched.", page, StringComparison.Ordinal);
+        Assert.Contains("Changing the type of an existing library may require a full rescan", page, StringComparison.Ordinal);
+    }
 }

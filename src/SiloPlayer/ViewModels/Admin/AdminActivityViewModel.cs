@@ -180,7 +180,7 @@ public partial class AdminActivityViewModel : ObservableObject
             "username" => s => s.Username ?? "",
             "media" => s => GetDisplayTitle(s),
             "method" => s => s.PlayMethod ?? "",
-            "node" => s => s.NodeDisplayName ?? s.ReportingNode ?? "",
+            "node" => s => s.ReportingNode ?? "",
             "started" => s => s.StartedAt ?? "",
             _ => s => s.StartedAt ?? ""
         };
@@ -231,17 +231,21 @@ public partial class AdminActivityViewModel : ObservableObject
 
     public static string GetDisplayTitle(AdminSession session)
     {
-        if (session.SeriesName != null && session.SeasonNumber != null && session.EpisodeNumber != null)
-            return session.SeriesName;
-        return session.MediaTitle ?? $"File #{session.MediaFileId}";
+        if (!string.IsNullOrWhiteSpace(session.SeriesName) && session.SeasonNumber != null && session.EpisodeNumber != null)
+            return !string.IsNullOrWhiteSpace(session.EpisodeName)
+                ? session.EpisodeName
+                : $"S{session.SeasonNumber}E{session.EpisodeNumber}";
+        return !string.IsNullOrWhiteSpace(session.MediaTitle)
+            ? session.MediaTitle
+            : $"File #{session.MediaFileId}";
     }
 
     public static string? GetDisplaySubtitle(AdminSession session)
     {
-        if (session.SeriesName != null && session.SeasonNumber != null && session.EpisodeNumber != null)
+        if (!string.IsNullOrWhiteSpace(session.SeriesName) && session.SeasonNumber != null && session.EpisodeNumber != null)
         {
             var ep = $"S{session.SeasonNumber}E{session.EpisodeNumber}";
-            return !string.IsNullOrEmpty(session.MediaTitle) ? $"{ep} \u00b7 {session.MediaTitle}" : ep;
+            return $"{ep} \u00b7 {session.SeriesName}";
         }
         if (session.MediaType == "movie") return "Movie";
         if (session.MediaType == "series") return "Series";
@@ -260,10 +264,16 @@ public partial class AdminActivityViewModel : ObservableObject
 
     public static string FormatVideoDetail(AdminSession session)
     {
-        var decision = session.VideoDecision ?? session.PlayMethod;
+        var decision = NormalizeStreamDecision(session.VideoDecision ?? session.PlayMethod);
 
-        // Auto-switched source hint: server chose a different file than requested
-        string switchPrefix = "";
+        var targetParts = new List<string>();
+        var targetCodec = FormatCodecLabel(session.TargetVideoCodec);
+        if (targetCodec != "\u2014") targetParts.Add(targetCodec);
+        var targetResolution = session.TargetResolution?.Trim();
+        if (!string.IsNullOrEmpty(targetResolution)) targetParts.Add(targetResolution);
+        var target = string.Join(" \u00b7 ", targetParts);
+
+        // Auto-switched source hint: server chose a different file than requested.
         if (session.RequestedMediaFileId > 0 && session.MediaFileId > 0
             && session.RequestedMediaFileId != session.MediaFileId)
         {
@@ -272,23 +282,21 @@ public partial class AdminActivityViewModel : ObservableObject
             if (reqCodec != "\u2014") reqParts.Add(reqCodec);
             var reqRes = session.RequestedVideoResolution?.Trim();
             if (!string.IsNullOrEmpty(reqRes)) reqParts.Add(reqRes);
-            var reqSrc = reqParts.Count > 0 ? string.Join(" \u00b7 ", reqParts) : "original";
-            switchPrefix = $"Auto-switched from {reqSrc}. ";
+            if (reqParts.Count > 0)
+            {
+                var autoSwitchParts = new List<string> { $"Auto-switched from {string.Join(" \u00b7 ", reqParts)}" };
+                if (!string.IsNullOrEmpty(target)) autoSwitchParts.Add($"Output \u2192 {target}");
+                else if (decision == "transcode") autoSwitchParts.Add("Transcoding");
+                return string.Join(" \u00b7 ", autoSwitchParts);
+            }
         }
 
         if (decision == "transcode")
         {
-            var parts = new List<string>();
-            var codec = FormatCodecLabel(session.TargetVideoCodec);
-            if (codec != "\u2014") parts.Add(codec);
-            var res = session.TargetResolution?.Trim();
-            if (!string.IsNullOrEmpty(res)) parts.Add(res);
-            var target = string.Join(" \u00b7 ", parts);
-            var detail = !string.IsNullOrEmpty(target) ? $"Output \u2192 {target}" : "Transcoding";
-            return switchPrefix + detail;
+            return !string.IsNullOrEmpty(target) ? $"Output \u2192 {target}" : "Transcoding";
         }
-        if (decision == "remux") return switchPrefix + "Container remux";
-        if (decision == "direct") return switchPrefix + "No video conversion";
+        if (decision == "copy") return "Video stream copied";
+        if (decision == "direct") return "No video conversion";
         return "\u2014";
     }
 
@@ -312,7 +320,7 @@ public partial class AdminActivityViewModel : ObservableObject
 
     public static string FormatAudioDetail(AdminSession session)
     {
-        var decision = session.AudioDecision ?? (session.TranscodeAudio ? "transcode" : session.PlayMethod);
+        var decision = NormalizeStreamDecision(session.AudioDecision ?? (session.TranscodeAudio ? "transcode" : session.PlayMethod));
         if (decision == "transcode")
         {
             var parts = new List<string>();
@@ -323,7 +331,7 @@ public partial class AdminActivityViewModel : ObservableObject
             var target = string.Join(" ", parts);
             return !string.IsNullOrEmpty(target) ? $"\u2192 {target}" : "Audio transcode";
         }
-        if (decision == "remux") return "Container remux";
+        if (decision == "copy") return "Audio stream copied";
         if (decision == "direct") return "No audio conversion";
         return "\u2014";
     }
@@ -391,6 +399,22 @@ public partial class AdminActivityViewModel : ObservableObject
         return session.ClientName?.Trim() ?? "";
     }
 
+    public static string NormalizeContainerDecision(string? playMethod) => playMethod?.Trim() switch
+    {
+        "direct" => "direct",
+        "remux" => "remux",
+        "transcode" or "hls" => "hls",
+        _ => "",
+    };
+
+    public static string NormalizeStreamDecision(string? decision) => decision?.Trim() switch
+    {
+        "direct" => "direct",
+        "copy" or "remux" => "copy",
+        "transcode" => "transcode",
+        _ => "",
+    };
+
     public static string FormatPlaybackPosition(AdminSession session)
     {
         var current = FormatClockTime(session.PositionSeconds);
@@ -423,7 +447,9 @@ public partial class AdminActivityViewModel : ObservableObject
         decision switch
         {
             "direct" => "Direct",
+            "copy" => "Copy",
             "remux" => "Remux",
+            "hls" => "HLS",
             "transcode" => "Transcode",
             _ => "Unknown"
         };

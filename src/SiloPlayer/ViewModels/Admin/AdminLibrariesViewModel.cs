@@ -315,17 +315,21 @@ public partial class AdminLibrariesViewModel : ObservableObject
 
     [RelayCommand]
     private async Task CreateLibraryAsync(object body)
+        => await CreateLibraryForEditorAsync(body);
+
+    public async Task<Library?> CreateLibraryForEditorAsync(object body)
     {
         IsLoading = true;
         ErrorMessage = null;
         StatusMessage = null;
         try
         {
-            await _adminApi.CreateLibraryAsync(body);
+            var created = await _adminApi.CreateLibraryAsync(body);
             await LoadAsync();
             StatusMessage = "Library created.";
+            return created;
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
+        catch (Exception ex) { ErrorMessage = ex.Message; return null; }
         finally { IsLoading = false; }
     }
 
@@ -333,17 +337,21 @@ public partial class AdminLibrariesViewModel : ObservableObject
 
     [RelayCommand]
     private async Task UpdateLibraryAsync((int Id, object Body) args)
+        => await UpdateLibraryForEditorAsync(args.Id, args.Body);
+
+    public async Task<bool> UpdateLibraryForEditorAsync(int id, object body)
     {
         IsLoading = true;
         ErrorMessage = null;
         StatusMessage = null;
         try
         {
-            await _adminApi.UpdateLibraryAsync(args.Id, args.Body);
+            await _adminApi.UpdateLibraryAsync(id, body);
             await LoadAsync();
             StatusMessage = "Library updated.";
+            return true;
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
+        catch (Exception ex) { ErrorMessage = ex.Message; return false; }
         finally { IsLoading = false; }
     }
 

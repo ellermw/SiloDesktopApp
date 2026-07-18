@@ -19,7 +19,9 @@ public sealed class FullscreenStateSyncSourceTests
     {
         var osc = ReadRepoFile("libs", "mpv", "scripts", "silo-osc.lua");
         Assert.Contains("mp.register_script_message(\"osc-fullscreen-state\"", osc);
-        Assert.Contains("state.fullscreen = (val == \"true\")", osc);
+        Assert.Contains("local fullscreen = (val == \"true\")", osc);
+        Assert.Contains("state.fullscreen = fullscreen", osc);
+        Assert.Contains("if state.fullscreen ~= fullscreen then", osc);
         Assert.Contains("draw_fullscreen_icon", osc);
     }
 

@@ -326,6 +326,8 @@
                                          TextChanged="AmbiguousSearchBox_TextChanged" />
                             </Grid>
                             <StackPanel x:Name="AmbiguousTablePanel" Spacing="0" />
+                            <StackPanel x:Name="AmbiguousPaginationPanel" Orientation="Horizontal" Spacing="4"
+                                        HorizontalAlignment="Right" Visibility="Collapsed" />
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -386,12 +388,17 @@
                                 <ColumnDefinition Width="140" />
                                 <ColumnDefinition Width="140" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Item" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock Grid.Column="1" Text="Library" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock Grid.Column="2" Text="Reason" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <Button Grid.Column="0" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left"
+                                    Click="SkippedItemHeader_Click"><TextBlock x:Name="SkippedItemHeaderText" Text="Item" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" /></Button>
+                            <Button Grid.Column="1" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left"
+                                    Click="SkippedLibraryHeader_Click"><TextBlock x:Name="SkippedLibraryHeaderText" Text="Library" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" /></Button>
+                            <Button Grid.Column="2" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left"
+                                    Click="SkippedReasonHeader_Click"><TextBlock x:Name="SkippedReasonHeaderText" Text="Reason" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" /></Button>
                             <TextBlock Grid.Column="3" Text="Files" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Right" />
-                            <TextBlock Grid.Column="4" Text="First Seen" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock Grid.Column="5" Text="Last Seen" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <Button Grid.Column="4" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left"
+                                    Click="SkippedFirstSeenHeader_Click"><TextBlock x:Name="SkippedFirstSeenHeaderText" Text="First Seen" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" /></Button>
+                            <Button Grid.Column="5" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left"
+                                    Click="SkippedLastSeenHeader_Click"><TextBlock x:Name="SkippedLastSeenHeaderText" Text="Last Seen ↓" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" /></Button>
                         </Grid>
 
                         <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />

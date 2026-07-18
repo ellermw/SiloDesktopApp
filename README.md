@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.48**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.48/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.49**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.49/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `7549D62D3418FE346236D9F9E42765F21B786F1DE22862AAB7731A4130791F6E`
+SHA-256: `28F7F6A87E69158398DB62EB60BAF982AE175C2230A7ADA69E7E0936A42BFDCE`
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -43,11 +43,21 @@ Status meanings:
 | Admin: System | Functional; visual parity incomplete | Settings, Plugins, Nodes, API Keys, and Maintenance were re-audited against the current WebUI. Current grouped settings navigation, branding asset upload/preview/delete, Search diagnostics, safe Source/Changelog/Support links, authenticated plugin pages, plugin configuration/update policy, node capacity/load columns, API-key flows, and catalog import/export jobs are implemented. Installed-build visual verification remains. |
 | Admin: Access Groups and Devices | Functional; visual parity incomplete | Access Groups now follows the current responsive cards and in-place editor sections. Devices now uses the current 1920px fleet console with pulse totals, grouping pivots, saved views, platform/override/recency facets, grouped device rows, and an in-place per-profile override editor. Installed-build side-by-side tuning and remaining keyboard/link refinements are still required. |
 | Remaining admin work | Partial | Provider/policy edge cases and final installed-build visual verification remain across the admin suite. Dashboard, Libraries, Activity, Collections, Sections, Requests, and other pages retain explicit visual-parity-incomplete status until those checks pass. |
-| Player on-screen controls | Substantial | Current cinema controls, marker/chapter seek regions, real chapter thumbnails, rich audio/subtitle/quality menus, live AI subtitle translation, playback-info sections, credits countdown, post-roll/finished screens, On Deck, PiP, keyboard shortcuts, and fullscreen synchronization are implemented. The marker editor, remaining overlay geometry, keyboard focus semantics, and installed playback comparison still need final parity work. |
-| Native playback engine | Hardening | Direct play, remux, HLS fallback, D3D11VA, HEVC/AV1/VP9/H.264, HDR paths, subtitle rendering, live track switching, progress/session keepalive, seamless replacement sessions, stall recovery, and premature-EOF guards are implemented. High-bitrate 4K, Dolby Vision, HDR/tone mapping, TrueHD/Atmos/DTS passthrough, fastest startup/seek, and long-session reliability remain active real-media validation work. |
+| Player on-screen controls | Substantial | Current cinema controls, recap/intro/credits actions, marker/chapter seek regions, real chapter thumbnails, rich audio/subtitle/quality menus, live AI subtitle translation, bounded playback-info sections, credits countdown, post-roll/finished screens, On Deck, PiP, keyboard shortcuts, and immediate fullscreen/PiP synchronization are implemented. Installed real-playback comparison and remaining edge-case geometry/focus validation are still required. |
+| Native playback engine | Hardening | Direct play, remux, HLS fallback, D3D11VA, HEVC/AV1/VP9/H.264, HDR paths, subtitle rendering, live track switching, progress/session keepalive, seamless replacement sessions, byte-range stall recovery, upstream-idle recovery, and premature-EOF guards are implemented. High-bitrate 4K, Dolby Vision, HDR/tone mapping, TrueHD/Atmos/DTS passthrough, fastest startup/seek, and long-session reliability remain active real-media validation work. |
 | Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
 
 ## Recent release work
+
+### 1.1.49
+
+- Re-audited the active native video HUD against public Silo Server commit `b96e359b4ebe3e6aea68ce327d180578bf0b04d0`, including current transport order, gradients, icons, hover states, notices, and first-frame behavior.
+- Added current recap skipping alongside intro and credits actions, corrected the floating skip pill's geometry and interaction states, and kept episode navigation visually distinct from timed seeking.
+- Made every open player surface reflow immediately during window/fullscreen changes and forced fullscreen/PiP icons to repaint on the exact host state transition.
+- Rebuilt playback notices and playback information around the current WebUI bounds, wrapping, tints, responsive height, wheel scrolling, and click isolation.
+- Delayed loading dismissal until mpv's first rendered playback restart event instead of hiding it at file-open time.
+- Added direct-stream upstream-idle recovery so a hung CDN read resumes from the last delivered byte instead of leaving high-bitrate playback permanently paused.
+- Isolated automated-test logs from installed runtime diagnostics and expanded regression coverage to 567 passing tests with a zero-warning x64 build.
 
 ### 1.1.48
 

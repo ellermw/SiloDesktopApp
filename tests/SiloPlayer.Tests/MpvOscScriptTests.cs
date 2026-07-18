@@ -137,21 +137,51 @@ public sealed class MpvOscScriptTests
     {
         var script = File.ReadAllText(FindOscScriptPath());
 
-        Assert.Contains("hud_height          = 172", script);
+        Assert.Contains("hud_height          = 144", script);
         Assert.Contains("hide_timeout        = 3.0", script);
         Assert.Contains("fade_duration       = 0.30", script);
         Assert.Contains("x = W / 2 - main_size / 2", script);
         Assert.Contains("L.metadata =", script);
         Assert.Contains("Seek rail spans the frame", script);
         Assert.Contains("Top-left chrome matches VideoPlayer.tsx", script);
-        Assert.Contains("Transparent cinema HUD gradient", script);
+        Assert.Contains("Exact player-hud CSS stops", script);
+        Assert.Contains("local hud_mid_y = L.gradient.y + L.gradient.h * 0.55", script);
         Assert.Contains("draw_secondary_disc", script);
+        Assert.Contains("hovered and \"C7\" or \"E6\"", script);
+        Assert.Contains("hovered and \"DB\" or \"EF\"", script);
+        Assert.Contains("local breathe_phase = (mp.get_time() % 2.6) / 2.6", script);
+        Assert.Contains("18 * sc * breathe_progress", script);
         Assert.Contains("state.next_ep_available", script);
         Assert.Contains("osc-set-audio-tracks", script);
         Assert.Contains("silo-audio-select", script);
         Assert.Contains("osc-set-chapters", script);
         Assert.Contains("render_chapter_menu", script);
         Assert.DoesNotContain("-- 2. Bar background", script);
+    }
+
+    [Fact]
+    public void PlayerHud_UsesCurrentWebUiIconsScrimsAndResponsiveVolume()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("local top_mid = math.floor(H * 0.14)", script);
+        Assert.Contains("local top_gh = math.floor(H * 0.28)", script);
+        Assert.Contains("draw_minimize_chevron_icon", script);
+        Assert.Contains("draw_captions_icon", script);
+        Assert.Contains("draw_audio_lines_icon", script);
+        Assert.Contains("draw_chapters_icon", script);
+        Assert.Contains("draw_settings_icon", script);
+        Assert.Contains("draw_info_icon", script);
+        Assert.Contains("draw_circle_outline", script);
+        Assert.DoesNotContain("\"\u2699\"", script);
+        Assert.DoesNotContain("\"\u24D8\"", script);
+        Assert.Contains("local compact = W < math.floor(640 * sc)", script);
+        Assert.Contains("local show_volume_group = not compact", script);
+        Assert.Contains("compact and 48 or config.button_size", script);
+        Assert.Contains("compact and 40 or config.small_button_size", script);
+        Assert.Contains("local divider_center_y = L.btn_play.cy", script);
+        Assert.Contains("truncate_display_text", script);
+        Assert.DoesNotContain("controls_y - divider_half_h", script);
     }
 
     [Fact]
@@ -177,6 +207,23 @@ public sealed class MpvOscScriptTests
         Assert.Contains("{ key = \"preview\", label = \"Preview\"", script);
         Assert.Contains("data.recap_start", script);
         Assert.Contains("data.preview_start", script);
+    }
+
+    [Fact]
+    public void SkipMarkerPillMatchesCurrentWebUiIntroAndRecapActions()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("if pos < 0 then return end", script);
+        Assert.Contains("state.skip_label = \"Skip Intro\"", script);
+        Assert.Contains("state.skip_label = \"Skip Recap\"", script);
+        Assert.Contains("state.skip_target = state.recap_end", script);
+        Assert.Contains("state.skip_label ~= previous_label", script);
+        Assert.Contains("state.skip_target ~= previous_target", script);
+        Assert.Contains("math.floor(24 * sc)", script);
+        Assert.Contains("local btn_h = math.floor(36 * sc)", script);
+        Assert.Contains("border-white/40 over bg-black/70", script);
+        Assert.Contains("state.skip_hovered and \"CC\" or \"4D\"", script);
     }
 
     [Fact]
@@ -252,6 +299,88 @@ public sealed class MpvOscScriptTests
         Assert.Contains("translation_buffering_overlay", script);
         Assert.Contains("translation_spinner_frame", script);
         Assert.Contains("not state.translation_buffering", script);
+    }
+
+    [Fact]
+    public void NativePopupShowsCurrentWebUiLoadingAndRebufferFeedback()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("render_playback_wait", script);
+        Assert.Contains("osc-set-loading", script);
+        Assert.Contains("osc-set-buffering", script);
+        Assert.Contains("mp.add_timeout(0.5", script);
+        Assert.Contains("state.playback_loading and 13 or 17", script);
+        Assert.Contains("state.playback_wait_overlay.z = 90", script);
+    }
+
+    [Fact]
+    public void PlaybackNoticeMatchesCurrentWebUiTintedWrappedCard()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("local function wrap_display_text", script);
+        Assert.Contains("local box_y = math.floor(80 * sc)", script);
+        Assert.Contains("math.floor(576 * sc)", script);
+        Assert.Contains("amber-500/15 + amber-400/50", script);
+        Assert.Contains("sky-500/15 + sky-400/50", script);
+        Assert.Contains("local radius = math.max(2, math.floor(16 * sc))", script);
+        Assert.Contains("wrap_display_text(state.notice_message, max_chars, 3)", script);
+    }
+
+    [Fact]
+    public void ActivePlayerSurfacesReflowWhenTheHostWindowChangesSize()
+    {
+        var script = File.ReadAllText(FindOscScriptPath()).Replace("\r\n", "\n");
+        var observerStart = script.IndexOf(
+            "mp.observe_property(\"osd-dimensions\", \"native\", function(_, val)",
+            StringComparison.Ordinal);
+        Assert.True(observerStart >= 0);
+
+        var observerEnd = script.IndexOf("    end)\nend", observerStart, StringComparison.Ordinal);
+        Assert.True(observerEnd > observerStart);
+        var observer = script[observerStart..observerEnd];
+
+        Assert.Contains("render_stats()", observer);
+        Assert.Contains("render_subtitle_menu()", observer);
+        Assert.Contains("render_quality_menu()", observer);
+        Assert.Contains("render_audio_menu()", observer);
+        Assert.Contains("render_chapter_menu()", observer);
+        Assert.Contains("render_notice()", observer);
+        Assert.Contains("render_skip_button()", observer);
+        Assert.Contains("render_next_episode_button()", observer);
+        Assert.Contains("render_next_episode_countdown()", observer);
+        Assert.Contains("render_translation_buffering()", observer);
+        Assert.Contains("render_playback_wait()", observer);
+        Assert.Contains("request_tick()", observer);
+    }
+
+    [Fact]
+    public void HostWindowModeChangesImmediatelyRefreshTheirControlIcons()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("if state.fullscreen ~= fullscreen then", script);
+        Assert.Contains("if state.picture_in_picture ~= picture_in_picture then", script);
+        Assert.Matches(
+            "(?s)osc-fullscreen-state.*?state\\.fullscreen = fullscreen.*?request_tick\\(\\)",
+            script);
+        Assert.Matches(
+            "(?s)osc-pip-state.*?state\\.picture_in_picture = picture_in_picture.*?request_tick\\(\\)",
+            script);
+    }
+
+    [Fact]
+    public void PlaybackInfoUsesTheWebUiBoundedScrollablePanelBehavior()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("H - math.floor(96 * sc)", script);
+        Assert.Contains("state.stats_scroll_max = math.max(0, total_h - box_h)", script);
+        Assert.Contains("state.stats_panel_rect = { x = box_x, y = box_y, w = box_w, h = box_h }", script);
+        Assert.Contains("point_in_rect(state.mouse_x, state.mouse_y, state.stats_panel_rect)", script);
+        Assert.Contains("state.stats_scroll_offset / state.stats_scroll_max", script);
+        Assert.Contains("point_in_rect(mx, my, state.stats_panel_rect)", script);
     }
 
     private static string FindOscScriptPath()

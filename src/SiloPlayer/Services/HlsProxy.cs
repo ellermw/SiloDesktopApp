@@ -128,6 +128,10 @@ public sealed class HlsProxy : IDisposable
         {
             using (client)
             {
+                // HLS consists of many small playlist/init/segment responses.
+                // Avoid Nagle-delaying the loopback hop between mpv and the
+                // proxy, especially during startup and after a seek.
+                client.NoDelay = true;
                 client.ReceiveTimeout = 10_000;
                 client.SendTimeout = 60_000;
                 var stream = client.GetStream();
