@@ -2650,7 +2650,14 @@ public sealed partial class ItemDetailPage : Page
         return hours > 0 ? $"{hours}h {minutes}m {remainder}s" : minutes > 0 ? $"{minutes}m {remainder}s" : $"{remainder}s";
     }
 
-    private static string? FormatMediaChannels(int? channels) => channels switch { 1 => "Mono", 2 => "Stereo", 6 => "5.1", 8 => "7.1", > 0 => $"{channels} ch", _ => null };
+    private static string? FormatMediaChannels(int? channels) => channels switch
+    {
+        8 => "7.1",
+        6 => "5.1",
+        2 => "stereo",
+        > 0 => $"{channels} ch",
+        _ => null
+    };
 
     private static string? FormatChromaSubsampling(string? pixelFormat)
     {
@@ -2669,16 +2676,101 @@ public sealed partial class ItemDetailPage : Page
     {
         if (level is null or <= 0) return null;
         var normalized = codec?.ToLowerInvariant() ?? "";
-        var value = normalized.Contains("hevc") || normalized.Contains("h265") || normalized.Contains("265") ? level.Value / 30d : normalized.Contains("avc") || normalized.Contains("h264") || normalized.Contains("264") ? level.Value / 10d : level.Value;
+        if (normalized.Contains("av1"))
+            return $"{2 + (level.Value >> 2)}.{level.Value & 3}";
+        var value = normalized.Contains("hevc") || normalized.Contains("h265") || normalized.Contains("265")
+            ? level.Value / 30d
+            : normalized.Contains("avc") || normalized.Contains("h264") || normalized.Contains("264")
+                ? level.Value / 10d
+                : level.Value;
         return Math.Abs(value - Math.Round(value)) < 0.001 ? Math.Round(value).ToString("0") : value.ToString("0.0");
     }
 
+    private static readonly Dictionary<int, string> DolbyVisionCompatibilityLabels = new()
+    {
+        [1] = "HDR10",
+        [2] = "SDR",
+        [4] = "HLG",
+        [6] = "HDR10",
+    };
+
+    private static readonly Dictionary<string, string> DolbyVisionRangeTypeDetails = new(StringComparer.Ordinal)
+    {
+        ["DOVIWithEL"] = "EL",
+        ["DOVIWithELHDR10Plus"] = "EL",
+        ["DOVIWithHDR10"] = "HDR10 compatible",
+        ["DOVIWithSDR"] = "SDR compatible",
+        ["DOVIWithHLG"] = "HLG compatible",
+    };
+
+    private static readonly Dictionary<string, string> VideoRangeTypeLabels = new(StringComparer.Ordinal)
+    {
+        ["SDR"] = "SDR",
+        ["HDR10"] = "HDR10",
+        ["HDR10Plus"] = "HDR10+",
+        ["HLG"] = "HLG",
+        ["DOVI"] = "Dolby Vision",
+        ["DOVIWithEL"] = "Dolby Vision (with EL)",
+        ["DOVIWithELHDR10Plus"] = "Dolby Vision (with EL) · HDR10+",
+        ["DOVIWithHDR10"] = "Dolby Vision (HDR10 compatible)",
+        ["DOVIWithHDR10Plus"] = "Dolby Vision · HDR10+",
+        ["DOVIWithHLG"] = "Dolby Vision (HLG compatible)",
+        ["DOVIWithSDR"] = "Dolby Vision (SDR compatible)",
+    };
+
     private static string? FormatTrackDynamicRange(VersionVideoTrack track)
     {
-        if (!string.IsNullOrWhiteSpace(track.DolbyVision)) return track.Hdr10Plus == true ? $"{track.DolbyVision} · HDR10+" : track.DolbyVision;
-        if (!string.IsNullOrWhiteSpace(track.VideoRangeType)) return track.VideoRangeType;
+        var dolbyVision = FormatDolbyVisionLabel(track);
+        if (!string.IsNullOrWhiteSpace(dolbyVision))
+            return AppendHdr10Plus(dolbyVision, track.Hdr10Plus);
+
+        var rangeType = track.VideoRangeType?.Trim();
+        if (!string.IsNullOrWhiteSpace(rangeType))
+        {
+            var label = VideoRangeTypeLabels.TryGetValue(rangeType, out var mapped)
+                ? mapped
+                : rangeType;
+            return AppendHdr10Plus(label, track.Hdr10Plus);
+        }
+
         if (track.Hdr10Plus == true) return "HDR10+";
         return track.VideoRange;
+    }
+
+    private static string? FormatDolbyVisionLabel(VersionVideoTrack track)
+    {
+        var raw = track.DolbyVision?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(raw) && track.DvProfile is null)
+            return null;
+
+        var baseLabel = !string.IsNullOrWhiteSpace(raw)
+            ? (raw.StartsWith("Dolby Vision", StringComparison.OrdinalIgnoreCase) ? raw : $"Dolby Vision {raw}")
+            : $"Dolby Vision Profile {track.DvProfile}";
+
+        var details = new List<string>();
+        if (track.DvBlCompatId is int compatId
+            && DolbyVisionCompatibilityLabels.TryGetValue(compatId, out var compatibility))
+        {
+            details.Add($"{compatibility} compatible");
+        }
+        if (track.DvElPresent == true)
+            details.Add("EL");
+
+        if (details.Count == 0
+            && !string.IsNullOrWhiteSpace(track.VideoRangeType)
+            && DolbyVisionRangeTypeDetails.TryGetValue(track.VideoRangeType.Trim(), out var rangeDetail))
+        {
+            details.Add(rangeDetail);
+        }
+
+        return details.Count > 0 ? $"{baseLabel} ({string.Join(", ", details)})" : baseLabel;
+    }
+
+    private static string AppendHdr10Plus(string label, bool? hdr10Plus)
+    {
+        return hdr10Plus == true && !label.Contains("HDR10+", StringComparison.Ordinal)
+            ? $"{label} · HDR10+"
+            : label;
     }
 
     private async Task ShowRefreshMetadataDialogAsync()
@@ -3800,7 +3892,7 @@ public sealed partial class ItemDetailPage : Page
 
         var imageHost = new Grid { Width = 280, Height = 158 };
         imageHost.Children.Add(thumbnail);
-        imageHost.Children.Add(new Border
+        var playOverlay = new Border
         {
             Width = 44,
             Height = 44,
@@ -3808,13 +3900,15 @@ public sealed partial class ItemDetailPage : Page
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xA8, 0, 0, 0)),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
+            Opacity = 0,
             Child = new FontIcon
             {
                 Glyph = "\uE768",
                 FontSize = 18,
                 Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
             },
-        });
+        };
+        imageHost.Children.Add(playOverlay);
 
         var imageClip = new Border
         {
@@ -3868,6 +3962,10 @@ public sealed partial class ItemDetailPage : Page
             Content = content,
             Tag = video,
         };
+        card.PointerEntered += (_, _) => playOverlay.Opacity = 1;
+        card.PointerExited += (_, _) => playOverlay.Opacity = card.FocusState == FocusState.Unfocused ? 0 : 1;
+        card.GotFocus += (_, _) => playOverlay.Opacity = 1;
+        card.LostFocus += (_, _) => playOverlay.Opacity = 0;
         card.Click += TrailerCard_Click;
         return card;
     }
@@ -4022,6 +4120,8 @@ public sealed partial class ItemDetailPage : Page
         var nav = App.Services.GetRequiredService<NavigationService>();
         if (nav.CanGoBack)
             nav.GoBack();
+        else
+            nav.Navigate<HomePage>();
     }
 
     private async void RetryDetailButton_Click(object sender, RoutedEventArgs e)
@@ -4763,28 +4863,32 @@ public sealed partial class ItemDetailPage : Page
         _selectedSubtitleSignature = null;
 
         var downloaded = _downloadedSubtitles;
+        var hasSubtitleInventory = subs.Count > 0 || downloaded.Count > 0;
 
-        if (subs.Count > 0 || downloaded.Count > 0)
+        // WebUI SubtitlesPopover always exposes the pre-play mode controls
+        // for a selected version, even before any tracks are available:
+        // Auto, Off, optional candidate sections, "No subtitles available.",
+        // then Add subtitles.
+        var autoItem = new MenuFlyoutItem { Text = "Auto" };
+        autoItem.Click += (_, _) =>
         {
-            // Off
-            var offItem = new MenuFlyoutItem { Text = "Off" };
-            offItem.Click += (_, _) =>
-            {
-                _selectedSubtitleIndex = -1;
-                _selectedSubtitleSignature = null;
-                UpdateSubtitlesPopoverSummary(subs);
-            };
-            SubtitlesPopoverFlyout.Items.Add(offItem);
+            _selectedSubtitleIndex = null;
+            _selectedSubtitleSignature = null;
+            UpdateSubtitlesPopoverSummary(subs);
+        };
+        SubtitlesPopoverFlyout.Items.Add(autoItem);
 
-            // Auto
-            var autoItem = new MenuFlyoutItem { Text = "Auto" };
-            autoItem.Click += (_, _) =>
-            {
-                _selectedSubtitleIndex = null;
-                _selectedSubtitleSignature = null;
-                UpdateSubtitlesPopoverSummary(subs);
-            };
-            SubtitlesPopoverFlyout.Items.Add(autoItem);
+        var offItem = new MenuFlyoutItem { Text = "Off" };
+        offItem.Click += (_, _) =>
+        {
+            _selectedSubtitleIndex = -1;
+            _selectedSubtitleSignature = null;
+            UpdateSubtitlesPopoverSummary(subs);
+        };
+        SubtitlesPopoverFlyout.Items.Add(offItem);
+
+        if (hasSubtitleInventory)
+        {
 
             SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutSeparator());
 
@@ -4834,13 +4938,23 @@ public sealed partial class ItemDetailPage : Page
 
             SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutSeparator());
         }
+        else
+        {
+            var emptyItem = new MenuFlyoutItem
+            {
+                Text = "No subtitles available.",
+                IsEnabled = false,
+            };
+            SubtitlesPopoverFlyout.Items.Add(emptyItem);
+            SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutSeparator());
+        }
 
         // Opens the full SubtitleSearchDialog for provider search or upload.
         var searchItem = new MenuFlyoutItem { Text = "Add subtitles..." };
         searchItem.Click += async (_, _) => await OpenSubtitleSearchDialogAsync();
         SubtitlesPopoverFlyout.Items.Add(searchItem);
 
-        if (subs.Count > 0 || downloaded.Count > 0)
+        if (hasSubtitleInventory)
             UpdateSubtitlesPopoverSummary(subs);
         else
             SubtitlesSummary.Text = "Auto: Off";

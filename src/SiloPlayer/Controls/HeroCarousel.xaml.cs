@@ -28,6 +28,9 @@ public sealed partial class HeroCarousel : UserControl
     private bool _isKeyboardFocusWithin;
     private bool _animationsEnabled = true;
     private double _restingArrowOpacity;
+    private string? _lastDisplayedContentId;
+    private string? _lastDisplayedBackdropUrl;
+    private string? _lastDisplayedBackdropThumbhash;
 
     // F-series hero polish:
     // - Crossfade between BackdropImageA / BackdropImageB. `_activeIsA`
@@ -72,8 +75,28 @@ public sealed partial class HeroCarousel : UserControl
         if (d is HeroCarousel carousel)
         {
             carousel.CancelBackdropLoad(clearImages: e.NewValue == null);
-            carousel._items = e.NewValue as IList<MediaItem>;
+            var previousContentId = carousel._items != null
+                && carousel._currentIndex >= 0
+                && carousel._currentIndex < carousel._items.Count
+                    ? carousel._items[carousel._currentIndex].ContentId
+                    : null;
+            var nextItems = e.NewValue as IList<MediaItem>;
+            carousel._items = nextItems;
             carousel._currentIndex = 0;
+            if (!string.IsNullOrWhiteSpace(previousContentId) && nextItems is { Count: > 0 })
+            {
+                var preservedIndex = -1;
+                for (var i = 0; i < nextItems.Count; i++)
+                {
+                    if (string.Equals(nextItems[i].ContentId, previousContentId, StringComparison.Ordinal))
+                    {
+                        preservedIndex = i;
+                        break;
+                    }
+                }
+                if (preservedIndex >= 0)
+                    carousel._currentIndex = preservedIndex;
+            }
             carousel.BuildDots();
             carousel.ShowCurrentItem();
         }
@@ -299,6 +322,11 @@ public sealed partial class HeroCarousel : UserControl
 
         Visibility = Visibility.Visible;
         var item = _items[_currentIndex];
+        var isSameVisibleSlide = string.Equals(_lastDisplayedContentId, item.ContentId, StringComparison.Ordinal);
+        var isSameBackdrop = isSameVisibleSlide
+            && string.Equals(_lastDisplayedBackdropUrl, item.BackdropUrl, StringComparison.Ordinal)
+            && string.Equals(_lastDisplayedBackdropThumbhash, item.BackdropThumbhash, StringComparison.Ordinal);
+        _lastDisplayedContentId = item.ContentId;
 
         var ambient = ThumbhashDecoder.GetAmbientColor(item.BackdropThumbhash);
         if (ambient.HasValue)
@@ -318,8 +346,12 @@ public sealed partial class HeroCarousel : UserControl
         // Slide counter: "01 / 04"
         SlideCounterText.Text = $"{(_currentIndex + 1):D2} / {_items.Count:D2}";
 
-        // Restart progress rail animation
-        AnimateProgressRail();
+        // The current WebUI keeps the active hero slide mounted when home
+        // sections refresh with updated item data. Keep the rail/backdrop
+        // stable for the same content id so background refreshes don't make
+        // the hero look like it jumped or restarted.
+        if (!isSameVisibleSlide)
+            AnimateProgressRail();
 
         // Metadata pills row: year · IMDb badge · first 3 genres as dark-glass
         // pills matching the webui .metadata-badge hero pattern.
@@ -340,11 +372,14 @@ public sealed partial class HeroCarousel : UserControl
 
         UpdateDots();
 
-        // Load backdrop image into the INACTIVE layer, then crossfade.
-        CancelBackdropLoad(clearImages: false);
-        _imageCts = new CancellationTokenSource();
-        var version = _imageLoadGate.BeginNextLoad();
-        _ = LoadBackdropAsync(item, version, _imageCts.Token);
+        if (!isSameBackdrop)
+        {
+            // Load backdrop image into the INACTIVE layer, then crossfade.
+            CancelBackdropLoad(clearImages: false);
+            _imageCts = new CancellationTokenSource();
+            var version = _imageLoadGate.BeginNextLoad();
+            _ = LoadBackdropAsync(item, version, _imageCts.Token);
+        }
     }
 
     private void CancelBackdropLoad(bool clearImages)
@@ -358,6 +393,9 @@ public sealed partial class HeroCarousel : UserControl
 
         BackdropImageA.ClearValue(Image.SourceProperty);
         BackdropImageB.ClearValue(Image.SourceProperty);
+        _lastDisplayedContentId = null;
+        _lastDisplayedBackdropUrl = null;
+        _lastDisplayedBackdropThumbhash = null;
     }
 
     private bool IsCurrentBackdropLoad(int version, CancellationToken ct) =>
@@ -513,7 +551,10 @@ public sealed partial class HeroCarousel : UserControl
         if (string.IsNullOrEmpty(item.BackdropUrl))
         {
             if (IsCurrentBackdropLoad(version, ct))
+            {
                 Crossfade();
+                MarkBackdropDisplayed(item);
+            }
             return;
         }
 
@@ -537,6 +578,7 @@ public sealed partial class HeroCarousel : UserControl
             App.SetPerfBreadcrumb($"Hero backdrop source assign item={item.ContentId}");
             incoming.Source = bitmapImage;
             Crossfade();
+            MarkBackdropDisplayed(item);
             App.SetPerfBreadcrumb($"Hero backdrop source end item={item.ContentId}");
         }
         catch (OperationCanceledException)
@@ -550,6 +592,12 @@ public sealed partial class HeroCarousel : UserControl
             if (IsCurrentBackdropLoad(version, ct))
                 Crossfade();
         }
+    }
+
+    private void MarkBackdropDisplayed(MediaItem item)
+    {
+        _lastDisplayedBackdropUrl = item.BackdropUrl;
+        _lastDisplayedBackdropThumbhash = item.BackdropThumbhash;
     }
 
     /// <summary>

@@ -6,11 +6,11 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.53**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.53/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.55**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.55/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `3C2A4C205D0FB9A0779891980083428F712A854D4AD4060A9E823651C4F61619`
+SHA-256: `A49C3060F1D0AE79BD39DC136E610CE0CF4A1B5B13B80CDFD3D3F05F2DC58FC0`
 
-The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
+The installer is currently locally test-signed for QA, so Windows may still display a SmartScreen warning on machines that do not trust the local certificate. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
 ## License / private use
 
@@ -52,6 +52,21 @@ Status meanings:
 | Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
 
 ## Recent release work
+
+### 1.1.55 (test build)
+
+- Fixed a fullscreen/post-roll next-episode transition bug where the native mpv video window could remain in a stale fullscreen/z-order state after auto-playing the next episode, leaving the video above the interactive mouse/OSC layer.
+- Captured fullscreen intent before Playing Next/post-roll hides or shrinks the native video surface, exits stale native fullscreen before hiding, and restores fullscreen intentionally after the next episode starts.
+- Reset native cursor visibility during post-roll and next-episode restore so the mouse remains visible and player controls stay clickable after automatic episode transitions.
+- Published the QA installer as `SiloInstaller-Windows-x64.exe` for GitHub Releases with SHA-256 `A49C3060F1D0AE79BD39DC136E610CE0CF4A1B5B13B80CDFD3D3F05F2DC58FC0`.
+
+### 1.1.54 (local QA build)
+
+- Preserved Home carousel scroll position through incremental background refresh, progress updates, and dismissals.
+- Avoided unnecessary Hero carousel restarts when refreshed data describes the same active slide.
+- Added pre-play subtitle menu parity refinements for Auto/Off, empty subtitle states, and Add Subtitles behavior.
+- Refined detail-page trailer overlay visibility, media-info formatting, and fallback back-navigation behavior.
+- Corrected library header overlay evaluation after returning to already-scrolled hero layouts.
 
 ### 1.1.53 (test build)
 

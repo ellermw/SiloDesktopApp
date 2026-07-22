@@ -160,6 +160,9 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("RetryLibrarySectionAsync", page);
         Assert.Contains("LoadPinnedCollectionRowsAsync", page);
         Assert.Contains("Grid.SetRow(RecommendedPanel, overlay ? 0 : 3)", page);
+        Assert.Contains("LibraryHeaderGlassThreshold = 160", page);
+        Assert.Contains("ApplyRecommendedHeaderForCurrentScroll();", page);
+        Assert.Contains("RecommendedPanel.VerticalOffset > LibraryHeaderGlassThreshold", page);
         Assert.Contains("ApplyHeaderPalette", page);
         Assert.Contains("/layout", api);
         Assert.Contains("HomeSectionItemsResponse", api);

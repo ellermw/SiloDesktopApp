@@ -36,6 +36,8 @@ public sealed partial class SectionRow : UserControl
     private double _dragStartOffset;
     private bool _isDragging;
     private System.Collections.ObjectModel.ObservableCollection<MediaItem>? _observedItems;
+    private string? _lastRenderedSectionId;
+    private string? _lastRenderedTemplateKey;
     private const double DragThreshold = 7;
 
     private static readonly HashSet<string> BrowseableSectionTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -142,6 +144,8 @@ public sealed partial class SectionRow : UserControl
 
     private void UpdateSection(HomeSectionWithItems section)
     {
+        var previousOffset = CardsScrollViewer.HorizontalOffset;
+        var isSameSection = string.Equals(_lastRenderedSectionId, section.Id, StringComparison.Ordinal);
         SectionTitle.Text = section.Title;
         TitleLinkTitle.Text = section.Title;
 
@@ -172,8 +176,11 @@ public sealed partial class SectionRow : UserControl
             : allCoverMedia ? "ContinuePosterCardTemplate"
             : useLandscape ? "LandscapeCardTemplate"
             : "PosterCardTemplate";
+        var templateChanged = !string.Equals(_lastRenderedTemplateKey, templateKey, StringComparison.Ordinal);
         CardsRepeater.ItemTemplate = (DataTemplate)this.Resources[templateKey];
         CardsRepeater.ItemsSource = section.Items;
+        _lastRenderedSectionId = section.Id;
+        _lastRenderedTemplateKey = templateKey;
 
         // F6: show a skeleton row while items are still loading (empty list
         // during F12 per-section fetch). Replaced by the real cards as soon
@@ -209,9 +216,33 @@ public sealed partial class SectionRow : UserControl
             CardsScrollViewer.Visibility = Visibility.Collapsed;
         }
 
-        // Reset scroll position on re-bind so the first item is always visible.
-        CardsScrollViewer.ChangeView(0, null, null, disableAnimation: true);
+        // The current WebUI keeps carousel state mounted while section items
+        // update. Preserve horizontal position for the same section/template
+        // so background refreshes, progress updates, and item dismissals don't
+        // snap the user back to the first card. New sections or card-shape
+        // changes still reset to the beginning.
+        RestoreScrollPositionAfterRebind(isSameSection && !templateChanged, previousOffset);
         UpdateScrollBounds();
+    }
+
+    private void RestoreScrollPositionAfterRebind(bool preserveOffset, double previousOffset)
+    {
+        if (!preserveOffset)
+        {
+            CardsScrollViewer.ChangeView(0, null, null, disableAnimation: true);
+            return;
+        }
+
+        var targetOffset = Math.Max(0, previousOffset);
+        if (targetOffset <= 1)
+            return;
+
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var clamped = Math.Clamp(targetOffset, 0, CardsScrollViewer.ScrollableWidth);
+            CardsScrollViewer.ChangeView(clamped, null, null, disableAnimation: true);
+            UpdateScrollBounds();
+        });
     }
 
     private void UpdateSectionVisibility(HomeSectionWithItems section)

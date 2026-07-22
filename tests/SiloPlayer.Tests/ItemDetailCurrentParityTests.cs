@@ -196,12 +196,20 @@ public sealed class ItemDetailCurrentParityTests
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var models = Read("src", "SiloPlayer.Core", "Models", "Playback", "WatchDetailResponse.cs");
+        var web = ReadWeb("web", "src", "pages", "ItemDetail", "components", "mediaSpecSections.ts");
 
         Assert.Contains("BuildMediaInfoSpecSheet", page);
         Assert.Contains("new Expander", page);
         Assert.Contains("(\"Profile\", track.Profile)", page);
         Assert.Contains("(\"Chroma Subsampling\"", page);
         Assert.Contains("(\"Hearing Impaired\"", page);
+        Assert.Contains("DOVIWithHDR10", web);
+        Assert.Contains("Dolby Vision (HDR10 compatible)", page);
+        Assert.Contains("HDR10 compatible", page);
+        Assert.Contains("DolbyVisionCompatibilityLabels", page);
+        Assert.Contains("VideoRangeTypeLabels", page);
+        Assert.Contains("2 => \"stereo\"", page);
+        Assert.Contains("normalized.Contains(\"av1\")", page);
         Assert.Contains("public string? Profile { get; set; }", models);
         Assert.DoesNotContain("AUDIO TRACKS", page, StringComparison.Ordinal);
     }
@@ -249,7 +257,24 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("VersionRanking.MapAudioLabel(track.Codec)", page);
         Assert.Contains("return string.Join(\" · \", parts)", page);
         Assert.Contains("2 => \"stereo\"", page);
+        Assert.Contains("Auto, Off, optional candidate sections", page);
+        Assert.Contains("var autoItem = new MenuFlyoutItem { Text = \"Auto\" }", page);
+        Assert.Contains("var offItem = new MenuFlyoutItem { Text = \"Off\" }", page);
+        Assert.Contains("Text = \"No subtitles available.\"", page);
         Assert.Contains("SubtitlesSummary.Text = \"Auto: Off\"", page);
+    }
+
+    [Fact]
+    public void TrailerCardsRevealThePlayOverlayOnlyOnHoverOrFocusLikeTheWebUi()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var web = ReadWeb("web", "src", "pages", "ItemDetail", "components", "TrailersSection.tsx");
+
+        Assert.Contains("group-hover/trailer:opacity-100", web);
+        Assert.Contains("var playOverlay = new Border", page);
+        Assert.Contains("Opacity = 0", page);
+        Assert.Contains("card.PointerEntered += (_, _) => playOverlay.Opacity = 1", page);
+        Assert.Contains("card.GotFocus += (_, _) => playOverlay.Opacity = 1", page);
     }
 
     [Fact]
@@ -504,6 +529,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("BuildMediaLocationsSection(canCurateMetadata, _watchDetail.Versions)", page);
         Assert.Contains("UnderlineStyle = UnderlineStyle.None", page);
         Assert.Contains("Navigate<PersonDetailPage>(personId)", page);
+        Assert.Contains("nav.Navigate<HomePage>();", page);
         Assert.DoesNotContain("Resources[\"SurfaceBorderBrush\"]", page);
         Assert.DoesNotContain("Executive Producer\", StringComparison.OrdinalIgnoreCase", page);
         Assert.Contains("var episodeAirDate = FormatDetailDate(episode.AirDate)", page);
@@ -512,6 +538,20 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("userData.WatchedCount > 0 || userData.InProgressCount > 0", page);
         Assert.Contains("$\"{userData!.WatchedCount} of {season.EpisodeCount} episodes\"", page);
         Assert.Contains("FormatSeasonProgressText(season)", page);
+    }
+
+    [Fact]
+    public void DetailBackButtonFallsBackToHomeLikeCurrentPageBack()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var web = ReadWeb("web", "src", "components", "PageBack.tsx");
+        var webTest = ReadWeb("web", "src", "components", "PageBack.test.tsx");
+
+        Assert.Contains("to = \"/\"", web);
+        Assert.Contains("falls back to the default route when there is no router history", webTest);
+        Assert.Contains("if (nav.CanGoBack)", page);
+        Assert.Contains("nav.GoBack();", page);
+        Assert.Contains("nav.Navigate<HomePage>();", page);
     }
 
     [Fact]

@@ -48,6 +48,7 @@ public sealed class CurrentPeopleOnboardingParitySourceTests
         Assert.Contains("x:Name=\"FilmographyGridLayout\"", xaml);
         Assert.Contains("FilmographyRepeater_ElementPrepared", page);
         Assert.Contains("e.NewSize.Width >= 1280 ? 8", page);
+        Assert.Contains("nav.Navigate<HomePage>();", page);
         Assert.Contains("public string BirthDateDisplay", viewModel);
         Assert.Contains("public string DeathDateDisplay", viewModel);
     }

@@ -309,6 +309,8 @@ public sealed partial class PersonDetailPage : Page
         var nav = App.Services.GetRequiredService<NavigationService>();
         if (nav.CanGoBack)
             nav.GoBack();
+        else
+            nav.Navigate<HomePage>();
     }
 
     private async Task LoadPersonPhotoAsync(string photoUrl, string name)

@@ -64,6 +64,7 @@ public class PlayerService : IDisposable
     private bool _playingNextShown;
     private bool _postRollActive;
     private bool _postRollVideoEnded;
+    private bool _restoreFullscreenAfterPostRollContinue;
     // Premature-EOF loop-breaker. mpv keep-open=yes pauses at EOF; our handler
     // restarts the stream to punch through transient CDN/server drops. Track
     // last attempt time and streak length so rapid duplicate EOFs do not spawn
@@ -2436,18 +2437,30 @@ public class PlayerService : IDisposable
     /// approved the Playing Next prompt (or the countdown expired).
     /// Clears the next-episode state so the new session has no stale hint.
     /// </summary>
-    public Task ContinuePlayingNextAsync()
+    public async Task ContinuePlayingNextAsync()
     {
         var nextId = NextEpisodeContentId;
+        var restoreFullscreen = _restoreFullscreenAfterPostRollContinue
+            || State == PlayerState.Fullscreen
+            || _videoWindow?.IsFullscreen == true;
         ClearNextEpisodeHint();
-        if (string.IsNullOrEmpty(nextId)) return Task.CompletedTask;
+        if (string.IsNullOrEmpty(nextId)) return;
 
         // PlayAsync handles old-session cleanup internally with
         // _switchingContent = true set BEFORE _mpv.Stop(), which suppresses
         // the end-file handler. Calling CloseAsync here would over-kill
         // the teardown and break transcode sessions (the proxy + manifest
         // get torn down before the new session can start).
-        return PlayAsync(nextId);
+        try
+        {
+            await PlayAsync(nextId);
+            if (restoreFullscreen)
+                RestoreFullscreenAfterPostRollContinue();
+        }
+        finally
+        {
+            _restoreFullscreenAfterPostRollContinue = false;
+        }
     }
 
     public Task PlayPreviousEpisodeAsync()
@@ -2466,6 +2479,7 @@ public class PlayerService : IDisposable
     {
         _postRollActive = false;
         _postRollVideoEnded = false;
+        _restoreFullscreenAfterPostRollContinue = false;
         ClearNextEpisodeHint();
         InvokeSubscribersSafely(PlaybackEnded, nameof(PlaybackEnded));
         var dispatcher = App.MainWindowInstance?.DispatcherQueue;
@@ -2499,6 +2513,7 @@ public class PlayerService : IDisposable
         _playingNextShown = false;
         _postRollActive = false;
         _postRollVideoEnded = false;
+        _restoreFullscreenAfterPostRollContinue = false;
         NextEpisodeContentId = null;
         NextEpisodeTitle = null;
         NextEpisodeSeriesTitle = null;
@@ -2758,12 +2773,14 @@ public class PlayerService : IDisposable
         if (IsAudiobook || _videoWindow == null || _postRollVideoEnded)
             return;
 
-        if (State == PlayerState.Fullscreen)
+        if (State == PlayerState.Fullscreen || _videoWindow.IsFullscreen)
         {
+            _restoreFullscreenAfterPostRollContinue = true;
             _videoWindow.ExitFullscreen();
             SetState(PlayerState.Expanded);
         }
 
+        _videoWindow.SetCursorVisible(true);
         _mpv?.SendScriptMessage("osc-set-post-roll", "true");
         _mpv?.SendScriptMessage("osc-set-visibility", "false");
         _videoWindow.EnterPostRollPreview();
@@ -2773,7 +2790,40 @@ public class PlayerService : IDisposable
     public void FinishPostRollPreview()
     {
         _postRollVideoEnded = true;
+        if (_videoWindow?.IsFullscreen == true || State == PlayerState.Fullscreen)
+        {
+            _restoreFullscreenAfterPostRollContinue = true;
+            _videoWindow?.ExitFullscreen();
+            SetState(PlayerState.Expanded);
+        }
+        _videoWindow?.SetCursorVisible(true);
         _videoWindow?.Hide();
+    }
+
+    private void RestoreFullscreenAfterPostRollContinue()
+    {
+        if (IsAudiobook || _videoWindow == null || State == PlayerState.Idle)
+            return;
+
+        void Restore()
+        {
+            if (IsAudiobook || _videoWindow == null || State == PlayerState.Idle)
+                return;
+
+            _videoWindow.SetCursorVisible(true);
+            _videoWindow.EnterFullscreen();
+            SetState(PlayerState.Fullscreen);
+            PublishFullscreenVisualState(true);
+            LogToFile("state_trace.txt", "Restored fullscreen after Playing Next transition");
+        }
+
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+        if (dispatcher?.HasThreadAccess == true)
+            Restore();
+        else if (dispatcher != null)
+            dispatcher.TryEnqueue(Restore);
+        else
+            Restore();
     }
 
     private void ReturnFromPostRollPreview()

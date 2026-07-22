@@ -130,24 +130,7 @@ public sealed partial class HomePage : Page
         {
             // F12: sections with empty Items are still loading (skeleton shown
             // by SectionRow). Include them so skeletons render.
-            var row = new SectionRow { Section = section };
-            row.OnRetry = failed => _ = ViewModel.RetrySectionAsync(failed.Id);
-
-            // Browse the exact stored home recipe. Opening an inferred library
-            // would silently lose custom filters and section ordering.
-            if (SectionRow.IsBrowseSupported(section.SectionType)
-                && section.TotalCount > section.ItemLimit)
-            {
-                row.OnViewAll = () =>
-                {
-                    var nav = App.Services.GetRequiredService<NavigationService>();
-                    nav.Navigate<CatalogPage>(new CatalogNavigation(
-                        Source: "section",
-                        Title: section.Title,
-                        Scope: "home",
-                        SectionId: section.Id));
-                };
-            }
+            var row = CreateSectionRow(section);
 
             SectionsPanel.Children.Add(row);
         }
@@ -274,12 +257,17 @@ public sealed partial class HomePage : Page
                 case System.Collections.Specialized.NotifyCollectionChangedAction.Add:
                     if (e.NewItems != null)
                     {
+                        int? insertIndex = e.NewStartingIndex >= 0 ? e.NewStartingIndex : null;
                         foreach (HomeSectionWithItems added in e.NewItems)
                         {
                             if (isFeaturedCollection)
                                 RefreshHero();
                             else
-                                AddSectionRow(added);
+                            {
+                                AddSectionRow(added, insertIndex);
+                                if (insertIndex.HasValue)
+                                    insertIndex++;
+                            }
                         }
                     }
                     break;
@@ -348,10 +336,10 @@ public sealed partial class HomePage : Page
             }
         }
         // Row didn't exist yet (section arrived after initial build) — append it.
-        AddSectionRow(updated);
+        AddSectionRow(updated, IndexOfSection(updated.Id));
     }
 
-    private void AddSectionRow(HomeSectionWithItems section)
+    private SectionRow CreateSectionRow(HomeSectionWithItems section)
     {
         var row = new SectionRow { Section = section };
         row.OnRetry = failed => _ = ViewModel.RetrySectionAsync(failed.Id);
@@ -368,7 +356,16 @@ public sealed partial class HomePage : Page
                     SectionId: section.Id));
             };
         }
-        SectionsPanel.Children.Add(row);
+        return row;
+    }
+
+    private void AddSectionRow(HomeSectionWithItems section, int? preferredIndex = null)
+    {
+        var row = CreateSectionRow(section);
+        var index = preferredIndex is >= 0
+            ? Math.Min(preferredIndex.Value, SectionsPanel.Children.Count)
+            : SectionsPanel.Children.Count;
+        SectionsPanel.Children.Insert(index, row);
     }
 
     private void RemoveSectionRow(string sectionId)
@@ -381,6 +378,16 @@ public sealed partial class HomePage : Page
                 return;
             }
         }
+    }
+
+    private int? IndexOfSection(string sectionId)
+    {
+        for (var i = 0; i < ViewModel.Sections.Count; i++)
+        {
+            if (ViewModel.Sections[i].Id == sectionId)
+                return i;
+        }
+        return null;
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

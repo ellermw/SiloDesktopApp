@@ -106,6 +106,9 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("CardsScrollViewer.ViewportWidth * 0.82", code);
         Assert.Contains("case VirtualKey.Left", code);
         Assert.Contains("case VirtualKey.Right", code);
+        Assert.Contains("RestoreScrollPositionAfterRebind", code);
+        Assert.Contains("isSameSection && !templateChanged", code);
+        Assert.Contains("background refreshes, progress updates, and item dismissals", code);
     }
 
     [Fact]
@@ -150,6 +153,22 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("border-b border-border/60", hero, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Height=\"1\"", hero);
         Assert.Contains("Opacity=\"0.6\"", hero);
+    }
+
+    [Fact]
+    public void HomeHeroPreservesTheActiveSlideAcrossBackgroundRefreshes()
+    {
+        var hero = ReadRepoFile("src", "SiloPlayer", "Controls", "HeroCarousel.xaml.cs");
+        var web = ReadWebUiFile("web", "src", "components", "HeroBanner.tsx");
+
+        Assert.Contains("const [activeIndex, setActiveIndex] = useState(0)", web);
+        Assert.Contains("key={`${activeIndex}-${playCycle}`}", web);
+        Assert.Contains("previousContentId", hero);
+        Assert.Contains("preservedIndex", hero);
+        Assert.Contains("isSameVisibleSlide", hero);
+        Assert.Contains("if (!isSameVisibleSlide)", hero);
+        Assert.Contains("AnimateProgressRail();", hero);
+        Assert.Contains("MarkBackdropDisplayed(item)", hero);
     }
 
     [Fact]

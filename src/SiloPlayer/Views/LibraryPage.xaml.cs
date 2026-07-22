@@ -154,6 +154,7 @@ public sealed partial class LibraryPage : Page,
     private const int CardBindsPerTick = 12;
     private const int MaxRealizedLibraryCards = 40;
     private const int LibraryOverscanRows = 1;
+    private const double LibraryHeaderGlassThreshold = 160;
 
     public LibraryPage()
     {
@@ -2303,16 +2304,18 @@ public sealed partial class LibraryPage : Page,
 
         if (overlay)
         {
-            // Transparent background — header floats over hero
-            HeaderGrid.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
-            ApplyHeaderPalette(overlay: true, glass: false);
-
             // Attach scroll listener for glass transition
             if (!_scrollListenerAttached)
             {
                 _scrollListenerAttached = true;
                 RecommendedPanel.ViewChanged += RecommendedPanel_ViewChanged;
             }
+
+            // Match WebUI LibraryHeader: evaluate the current scroll position
+            // immediately when overlay activates, not only after the next
+            // ViewChanged event. This prevents a transparent header over
+            // normal content when returning to an already-scrolled hero page.
+            ApplyRecommendedHeaderForCurrentScroll();
         }
         else
         {
@@ -2325,9 +2328,12 @@ public sealed partial class LibraryPage : Page,
     private void RecommendedPanel_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
         if (!_overlayMode) return;
+        ApplyRecommendedHeaderForCurrentScroll();
+    }
 
-        const double GLASS_THRESHOLD = 160;
-        bool pastThreshold = RecommendedPanel.VerticalOffset > GLASS_THRESHOLD;
+    private void ApplyRecommendedHeaderForCurrentScroll()
+    {
+        bool pastThreshold = RecommendedPanel.VerticalOffset > LibraryHeaderGlassThreshold;
 
         if (pastThreshold)
         {
