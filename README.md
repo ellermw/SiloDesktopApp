@@ -6,11 +6,15 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.49**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.49/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.53**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.53/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `28F7F6A87E69158398DB62EB60BAF982AE175C2230A7ADA69E7E0936A42BFDCE`
+SHA-256: `3C2A4C205D0FB9A0779891980083428F712A854D4AD4060A9E823651C4F61619`
 
 The installer is currently unsigned, so Windows may display a SmartScreen warning. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
+
+## License / private use
+
+This repository and its contents are proprietary and private. All rights are reserved by the project owner. No license is granted to copy, distribute, publish, sublicense, sell, host, modify, or use this software, source code, installers, artwork, branding, documentation, or related assets except with explicit written permission from the owner.
 
 ## Current parity
 
@@ -48,6 +52,40 @@ Status meanings:
 | Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
 
 ## Recent release work
+
+### 1.1.53 (test build)
+
+- Refreshed the parity reference against the current public Silo Server GitHub `main` branch at commit `0a914441ea54d02ffc7bcdd24f5b8e3b8353d06a`.
+- Continued the end-user parity pass with Home carousel edge-fade polish, compact Taste Seed typography behavior, and detail-page spacing refinements for Media Locations.
+- Tightened movie/show/episode detail parity by matching the current WebUI crew-role rows, preserving selected episode centering, and correcting version-selector sort and container fallback display.
+- Preserved the recent playback-control hardening work for in-player subtitle/search/translation surfaces, subtitle-state changes, fullscreen synchronization, and mouse/OSC interactivity during playback.
+- Restored authenticated navigation pane expansion after login/profile restore so the sidebar does not strand itself in a clipped compact state.
+- Replaced one hard-coded detail-date formatter with the shared user date-preference formatter and hardened source tests for environments without `git.exe`.
+- Added private-use/all-rights-reserved project licensing language for the now-private GitHub repository.
+
+### 1.1.52 (test build)
+
+- Fixed the installed Search crash caused by compiled XAML attempting to assign nullable request-provider poster URL strings directly to `Image.Source`; all remaining direct nullable poster bindings now use a validated image-source converter.
+- Removed Search's duplicate custom clear buttons and retained the TextBox's single native clear control.
+- Made the primary catalog request start after the 100 ms typing debounce without waiting for settings/filter warmup, and publish local results without waiting for optional outside-library discovery.
+- Isolated slow request-provider discovery behind a six-second bound with stale-query ownership checks, so it can populate later but cannot delay, overwrite, or crash primary results.
+- Added focused Search runtime regressions. The complete suite now passes 604 tests with a zero-warning x64 build.
+
+### 1.1.51 (test build)
+
+- Fixed Search, Home-return, library, catalog, and collection navigation failures caused by browse pages referencing a removed XAML button style; sidebar navigation failures are now contained and logged instead of damaging the remaining navigation session.
+- Matched the current WebUI's quality-switch cache isolation by assigning every HLS transport a unique manifest URL and explicitly bypassing stale playlist caches.
+- Kept the outgoing transport paused until mpv confirms the replacement file is loaded, preventing old/pre-seek frames from leaking into a quality change and replaying the opening transcode segment.
+- Added dedicated navigation, HLS cache, and transport-replacement regressions. The complete suite now passes 601 tests with a zero-warning x64 build.
+
+### 1.1.50 (test build)
+
+- Completed the integrated native-player hardening pass against public Silo Server commit `b96e359b4ebe3e6aea68ce327d180578bf0b04d0`, covering direct play, progressive remux, HLS fallback, byte-range recovery, file-load deadlines, progress keepalive recovery, premature EOF, and teardown.
+- Kept audio as the stable playback clock across application focus changes, added automatic deinterlacing, bitrate-aware buffering, D3D11 hardware decode, HDR output hints, and safe passthrough handling for high-bitrate HEVC/HDR/Dolby Vision and lossless audio workflows.
+- Matched the current WebUI player transport layout and active controls, including distinct previous/next episode actions, curved 10/30-second controls, responsive HUD geometry, exact fullscreen/PiP state, keyboard/menu dismissal, marker editing, rich track/quality menus, playback information, notices, post-roll, and watch-party surfaces.
+- Added profile/device-effective intro, recap, and credits auto-skip through the same transport-aware seek path, with per-media reset and watch-party host authority.
+- Prevented stale reload workers and subtitle-window races during rapid quality, version, audio, and bitmap-subtitle switches; external subtitles now load on demand instead of delaying startup.
+- Added a real bundled-libmpv/Lua initialization test, transient CDN status recovery for direct/HLS startup, and repaired repository-root discovery in older parity tests. The complete suite now passes 597 tests with a zero-warning x64 build.
 
 ### 1.1.49
 
@@ -286,4 +324,4 @@ powershell -ExecutionPolicy Bypass -File installer/build.ps1
 
 ## Reference source
 
-Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Release 1.1.47 was compared against Silo Server commit `b96e359b4ebe3e6aea68ce327d180578bf0b04d0` from July 16, 2026.
+Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Test build 1.1.52 was compared against Silo Server commit `b96e359b4ebe3e6aea68ce327d180578bf0b04d0` from July 16, 2026.

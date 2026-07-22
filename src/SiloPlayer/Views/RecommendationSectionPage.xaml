@@ -26,8 +26,9 @@
 
             <StackPanel Margin="0,12,0,0" Spacing="6">
                 <TextBlock
+                    x:Name="PageTitleText"
                     Text="{x:Bind ViewModel.Title, Mode=OneWay}"
-                    FontSize="{StaticResource FontSizeDisplayLarge}"
+                    FontSize="30"
                     FontWeight="Bold"
                     Foreground="{StaticResource PrimaryTextBrush}" />
                 <TextBlock
@@ -37,24 +38,24 @@
                     Visibility="Collapsed" />
             </StackPanel>
 
-            <StackPanel x:Name="LoadingSkeleton" Spacing="24">
-                <StackPanel Orientation="Horizontal" Spacing="16">
-                    <controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster />
-                    <controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="16">
-                    <controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster />
-                    <controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="16">
-                    <controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster />
-                    <controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="16">
-                    <controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster />
-                    <controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster />
-                </StackPanel>
-            </StackPanel>
+            <ItemsRepeater x:Name="LoadingSkeleton" ElementPrepared="LoadingSkeleton_ElementPrepared">
+                <ItemsRepeater.Layout>
+                    <UniformGridLayout x:Name="LoadingLayout"
+                                       MinItemWidth="165"
+                                       MinColumnSpacing="16"
+                                       MinRowSpacing="24"
+                                       ItemsStretch="Fill" />
+                </ItemsRepeater.Layout>
+                <ItemsRepeater.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Spacing="9">
+                            <controls:SkeletonBox Height="248" CornerRadius="12" />
+                            <controls:SkeletonText Width="120" Height="14" HorizontalAlignment="Left" />
+                            <controls:SkeletonText Width="80" Height="11" HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsRepeater.ItemTemplate>
+            </ItemsRepeater>
 
             <StackPanel
                 x:Name="ErrorState"
@@ -96,7 +97,10 @@
                     MaxWidth="380" />
             </StackPanel>
 
-            <ItemsRepeater x:Name="ItemsGrid" ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}" Visibility="Collapsed">
+            <ItemsRepeater x:Name="ItemsGrid"
+                           ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
+                           Visibility="Collapsed"
+                           ElementPrepared="ItemsGrid_ElementPrepared">
                 <ItemsRepeater.Layout>
                     <UniformGridLayout x:Name="ItemsLayout" MinItemWidth="165" MinColumnSpacing="16" MinRowSpacing="24" ItemsStretch="Fill" />
                 </ItemsRepeater.Layout>

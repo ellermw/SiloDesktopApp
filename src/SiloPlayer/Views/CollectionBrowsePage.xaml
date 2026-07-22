@@ -122,6 +122,7 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
             <ComboBox x:Name="MediaScopeCombo" Grid.Column="0" MinWidth="150"
                       SelectionChanged="MediaScopeCombo_SelectionChanged">
@@ -174,6 +175,16 @@
             <TextBlock x:Name="LoadedCountText" Grid.Column="4" VerticalAlignment="Center"
                        HorizontalAlignment="Left" FontSize="14" Foreground="{StaticResource TertiaryTextBrush}"
                        Visibility="Collapsed" />
+
+            <!-- WebUI ActiveFilterBadges: every applied refinement stays visible and
+                 can be cleared without reopening the filter sheet. -->
+            <StackPanel x:Name="ActiveFiltersPanel"
+                        Grid.Row="3"
+                        Grid.ColumnSpan="5"
+                        Orientation="Horizontal"
+                        Spacing="8"
+                        Margin="0,10,0,0"
+                        Visibility="Collapsed" />
         </Grid>
 
         <!-- Loading: mirror the WebUI ItemGrid skeleton so the layout stays stable. -->
@@ -314,7 +325,7 @@
                     <Border Grid.Row="2" Padding="0,12,0,0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
                         <Grid ColumnDefinitions="*,Auto">
                             <Button Content="Clear All" Style="{StaticResource OutlineButtonStyle}" Click="ClearFilters_Click" />
-                            <Button Grid.Column="1" Content="Done" Style="{StaticResource PrimaryButtonStyle}" Click="ApplyFilters_Click" />
+                            <Button Grid.Column="1" Content="Done" Style="{StaticResource AccentButtonStyle}" Click="ApplyFilters_Click" />
                         </Grid>
                     </Border>
                 </Grid>

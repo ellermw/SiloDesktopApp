@@ -353,7 +353,7 @@ public sealed partial class HistoryPage : Page
         {
             var selected = _selectedIds.Contains(item.ContentId);
             card.BorderThickness = new Thickness(selected ? 2 : 1);
-            card.BorderBrush = (Brush)Application.Current.Resources[selected ? "AccentBrush" : "SurfaceBorderBrush"];
+            card.BorderBrush = (Brush)Application.Current.Resources[selected ? "AccentBrush" : "BorderBrush"];
             var selectionBadge = new CheckBox
             {
                 IsChecked = selected,

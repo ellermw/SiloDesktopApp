@@ -36,9 +36,27 @@ public sealed class PlaybackSeekBehaviorTests
         Assert.Contains("MpvLoadStartSeconds: mediaStartSeconds", source);
         Assert.Contains("TimelineOffsetSeconds: mediaStartSeconds", source);
         Assert.Contains("BeginMpvLoad(prepared, restorePaused: false);", source);
-        Assert.Contains("Task.Delay(TimeSpan.FromSeconds(30), ownerCts.Token)", source);
+        Assert.Contains("prepared.Plan.TransportKind == PlaybackTransportKind.DirectProgressive", source);
+        Assert.Contains("? TimeSpan.FromSeconds(15)", source);
+        Assert.Contains("await Task.Delay(loadDeadline, ownerCts.Token)", source);
         Assert.Contains("Position = mediaPosition;", source);
         Assert.Contains("Duration = mediaDuration;", source);
+    }
+
+    [Fact]
+    public void TransportReplacementStaysPausedUntilTheNewFileIsLoaded()
+    {
+        var source = File.ReadAllText(FindRepoFile("src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var methodStart = source.IndexOf("private void BeginMpvLoad", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private async Task MonitorFileLoadAsync", methodStart, StringComparison.Ordinal);
+        Assert.True(methodStart >= 0 && methodEnd > methodStart);
+
+        var method = source[methodStart..methodEnd];
+        var pauseIndex = method.IndexOf("mpv.Pause();", StringComparison.Ordinal);
+        var loadIndex = method.IndexOf("mpv.LoadFile(", StringComparison.Ordinal);
+        Assert.True(pauseIndex >= 0 && loadIndex > pauseIndex);
+        Assert.DoesNotContain("mpv.Play();", method, StringComparison.Ordinal);
+        Assert.Contains("FileLoaded is the single authority", method, StringComparison.Ordinal);
     }
 
     private static string FindRepoFile(params string[] pathParts)

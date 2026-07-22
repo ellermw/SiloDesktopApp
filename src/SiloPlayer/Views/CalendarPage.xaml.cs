@@ -25,6 +25,7 @@ namespace SiloPlayer.Views;
 /// </summary>
 public sealed partial class CalendarPage : Page
 {
+    private static readonly AsyncWorkThrottle PosterLoadThrottle = new(4);
     public CalendarViewModel ViewModel { get; }
 
     private bool _eventsAttached;
@@ -39,6 +40,7 @@ public sealed partial class CalendarPage : Page
     private int _layoutBucket = -1;
     private double _gutter = 48;
     private double _eventCardWidth = 185;
+    private CancellationTokenSource? _imageLoadCts;
 
     public CalendarPage()
     {
@@ -46,6 +48,12 @@ public sealed partial class CalendarPage : Page
         this.InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Required;
         BuildLoadingSkeleton();
+    }
+
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        RenewImageLoadScope();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
@@ -76,6 +84,7 @@ public sealed partial class CalendarPage : Page
     {
         base.OnNavigatedFrom(e);
         ViewModel.CancelLoad();
+        CancelImageLoads();
         if (_eventsAttached)
         {
             ViewModel.Days.CollectionChanged -= OnDaysChanged;
@@ -336,6 +345,9 @@ public sealed partial class CalendarPage : Page
 
     private void BuildDayRows()
     {
+        // A week, preset, or responsive rebuild replaces every card. Stop the
+        // detached poster work before queuing the replacement set.
+        RenewImageLoadScope();
         DaysPanel.Children.Clear();
         _dayGroups.Clear();
 
@@ -654,14 +666,17 @@ public sealed partial class CalendarPage : Page
     {
         var url = ev.PosterUrl;
         if (string.IsNullOrEmpty(url)) return;
+        var ct = _imageLoadCts?.Token ?? CancellationToken.None;
 
         try
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
-            var bytes = await Task.Run(async () =>
-                await imageService.GetImageAsync(ev.ContentId, "poster", url, httpClient, default));
+            var bytes = await PosterLoadThrottle.RunAsync(
+                token => imageService.GetImageAsync(ev.ContentId, "poster", url, httpClient, token),
+                ct);
+            ct.ThrowIfCancellationRequested();
             if (bytes == null) return;
 
             var bitmap = new BitmapImage
@@ -671,11 +686,25 @@ public sealed partial class CalendarPage : Page
             };
             using var stream = new MemoryStream(bytes);
             await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+            ct.ThrowIfCancellationRequested();
 
             target.Source = bitmap;
             target.Opacity = 1;
         }
         catch { /* ignore — card simply shows the placeholder background */ }
+    }
+
+    private void RenewImageLoadScope()
+    {
+        CancelImageLoads();
+        _imageLoadCts = new CancellationTokenSource();
+    }
+
+    private void CancelImageLoads()
+    {
+        _imageLoadCts?.Cancel();
+        _imageLoadCts?.Dispose();
+        _imageLoadCts = null;
     }
 
     // ---------- Empty state ----------

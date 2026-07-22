@@ -109,6 +109,30 @@ public partial class PersonDetailViewModel : ObservableObject
         }
     }
 
+    public string BirthDateDisplay
+    {
+        get
+        {
+            if (Person == null || string.IsNullOrEmpty(Person.BirthDate)) return "";
+            return DateTime.TryParse(Person.BirthDate, out var birth)
+                ? $"Born {birth:MMMM d, yyyy}"
+                : $"Born {Person.BirthDate}";
+        }
+    }
+
+    public string DeathDateDisplay
+    {
+        get
+        {
+            if (Person == null || string.IsNullOrEmpty(Person.DeathDate)) return "";
+            var age = ComputeAge(Person.BirthDate, Person.DeathDate);
+            var label = DateTime.TryParse(Person.DeathDate, out var death)
+                ? $"Died {death:MMMM d, yyyy}"
+                : $"Died {Person.DeathDate}";
+            return age > 0 ? $"{label} (age {age})" : label;
+        }
+    }
+
     private static int ComputeAge(string? birthDate, string? endDate)
     {
         if (!DateTime.TryParse(birthDate, out var birth) || !DateTime.TryParse(endDate, out var end)) return 0;
@@ -146,6 +170,8 @@ public partial class PersonDetailViewModel : ObservableObject
             ApplyFilmography(filmographyTask.Result);
             OnPropertyChanged(nameof(AgeDisplay));
             OnPropertyChanged(nameof(DatesDisplay));
+            OnPropertyChanged(nameof(BirthDateDisplay));
+            OnPropertyChanged(nameof(DeathDateDisplay));
             OnPropertyChanged(nameof(IsAdmin));
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
@@ -191,6 +217,8 @@ public partial class PersonDetailViewModel : ObservableObject
             }
             OnPropertyChanged(nameof(AgeDisplay));
             OnPropertyChanged(nameof(DatesDisplay));
+            OnPropertyChanged(nameof(BirthDateDisplay));
+            OnPropertyChanged(nameof(DeathDateDisplay));
         }
         catch (Exception ex) { ErrorMessage = $"Refresh failed: {ex.Message}"; }
         finally

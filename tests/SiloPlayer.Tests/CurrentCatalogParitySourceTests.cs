@@ -24,6 +24,16 @@ public sealed class CurrentCatalogParitySourceTests
         Assert.Contains("LoadMoreAsync", viewModel);
         Assert.DoesNotContain("Task.Delay(300", viewModel);
         Assert.Contains("TimeSpan.FromMilliseconds(100)", code);
+        Assert.Contains("x:Name=\"ResultsToolbar\"", xaml);
+        Assert.Contains("x:Name=\"SearchLoadingGridLayout\"", xaml);
+        Assert.Contains("ElementPrepared=\"SearchLoadingRepeater_ElementPrepared\"", xaml);
+        Assert.Contains("await EnsureInitializedAsync();", code);
+        Assert.Contains("ViewModel.CancelPendingSearch();", code);
+        Assert.Contains("querySnapshot", code);
+        Assert.Contains("SearchLoadingGridLayout.MinItemWidth = _catalogCardWidth", code);
+        Assert.Contains("public void CancelPendingSearch()", viewModel);
+        Assert.Contains("Results.Clear();", viewModel);
+        Assert.Contains("ReferenceEquals(_searchCts, searchCts)", viewModel);
     }
 
     [Fact]
@@ -41,6 +51,19 @@ public sealed class CurrentCatalogParitySourceTests
         Assert.Contains("MaximumRowsOrColumns=\"8\"", xaml);
         Assert.Contains("LockedFiltersPanel.Visibility = Visibility.Visible", code);
         Assert.Contains("UpdateFilterCount", code);
+    }
+
+    [Fact]
+    public void CollectionCatalogShowsAndIndividuallyClearsAppliedFilterBadges()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "CollectionBrowsePage.xaml");
+        var code = ReadRepoFile("src", "SiloPlayer", "Views", "CollectionBrowsePage.xaml.cs");
+
+        Assert.Contains("x:Name=\"ActiveFiltersPanel\"", xaml);
+        Assert.Contains("BuildActiveFilterBadges", code);
+        Assert.Contains("ActiveFilterBadge_Click", code);
+        Assert.Contains("Clear {badge.Label}", code);
+        Assert.Contains("await LoadFirstPageAsync();", code);
     }
 
     private static string ReadRepoFile(params string[] parts)

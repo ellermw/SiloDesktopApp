@@ -1156,7 +1156,7 @@ public sealed partial class PlayerOverlay : UserControl
             var fromAudio = (mode.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "audio";
             helpText.Text = fromAudio
                 ? "The audio is transcribed on the server (and translated if the language differs) — longer files take a while. The finished track is saved for everyone."
-                : "Playback pauses while the first lines are translated, then resumes with subtitles streaming in. The finished track is saved for everyone.";
+                : "Playback keeps running while the first translated lines are prepared, then subtitles stream in. The finished track is saved for everyone.";
         }
         UpdateHelpText();
         var form = new StackPanel { Spacing = 12, MinWidth = 390, Children = { mode, source, target, quotaText, helpText } };

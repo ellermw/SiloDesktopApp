@@ -17,6 +17,7 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
+        <converters:UrlToImageSourceConverter x:Key="UrlToImage" />
     </Page.Resources>
 
     <Grid>
@@ -74,27 +75,11 @@
                         TextChanged="SearchBox_TextChanged"
                         KeyDown="SearchBox_KeyDown"
                         FontSize="15"
-                        Padding="46,14,40,14"
+                        Padding="46,14,12,14"
                         Background="Transparent"
                         BorderThickness="0"
                         CornerRadius="20"
                         Foreground="{StaticResource PrimaryTextBrush}" />
-                    <Button
-                        x:Name="SearchBoxClearButton"
-                        Click="ClearButton_Click"
-                        Visibility="Collapsed"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        Padding="8"
-                        HorizontalAlignment="Right"
-                        VerticalAlignment="Center"
-                        Margin="0,0,8,0"
-                        CornerRadius="12">
-                        <FontIcon
-                            Glyph="&#xE711;"
-                            FontSize="12"
-                            Foreground="{StaticResource SecondaryTextBrush}" />
-                    </Button>
                 </Grid>
             </Border>
             <StackPanel x:Name="EmptyScopeChips" Orientation="Horizontal" Spacing="8"
@@ -119,7 +104,7 @@
             </Grid.RowDefinitions>
 
             <!-- Header with title + inline result count (web: page-header in CatalogResults) -->
-            <StackPanel Grid.Row="0" MaxWidth="1400" HorizontalAlignment="Center" Margin="40,24,40,20" Spacing="6">
+            <StackPanel x:Name="ResultsHeader" Grid.Row="0" MaxWidth="1400" HorizontalAlignment="Stretch" Margin="40,24,40,20" Spacing="6">
                 <TextBlock
                     x:Name="ResultsTitle"
                     FontSize="{StaticResource FontSizeDisplayLarge}"
@@ -141,6 +126,7 @@
 
             <!-- Search bar in results view (web: centered prominent SearchBar) -->
             <Border
+                x:Name="ResultsSearchSurface"
                 Grid.Row="1"
                 Background="{StaticResource SurfaceBrush}"
                 CornerRadius="20"
@@ -161,44 +147,24 @@
                         TextChanged="SearchBox_TextChanged"
                         KeyDown="SearchBox_KeyDown"
                         FontSize="14"
-                        Padding="40,10,36,10"
+                        Padding="40,10,12,10"
                         Background="Transparent"
                         BorderThickness="0"
                         CornerRadius="20"
                         Foreground="{StaticResource PrimaryTextBrush}" />
-                    <Button
-                        x:Name="ResultsSearchBoxClearButton"
-                        Click="ClearButton_Click"
-                        Visibility="Collapsed"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        Padding="8"
-                        HorizontalAlignment="Right"
-                        VerticalAlignment="Center"
-                        Margin="0,0,6,0"
-                        CornerRadius="12">
-                        <FontIcon
-                            Glyph="&#xE711;"
-                            FontSize="12"
-                            Foreground="{StaticResource SecondaryTextBrush}" />
-                    </Button>
                 </Grid>
             </Border>
 
-            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Margin="0,0,0,16">
+            <StackPanel x:Name="ResultsScopePanel" Grid.Row="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Margin="0,0,0,16">
                 <Button x:Name="ResultsVideoScope" Content="Media" Tag="video" Click="Scope_Click" />
                 <Button x:Name="ResultsAudiobookScope" Content="Audiobooks" Tag="audiobook" Click="Scope_Click" />
                 <Button x:Name="ResultsAllScope" Content="All" Tag="all" Click="Scope_Click" />
             </StackPanel>
 
-            <Grid Grid.Row="3" MaxWidth="1400" Margin="40,0,40,16" ColumnSpacing="10" HorizontalAlignment="Center">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="180" />
-                    <ColumnDefinition Width="180" />
-                    <ColumnDefinition Width="140" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <ComboBox x:Name="ResultTypeCombo" SelectionChanged="ResultFilter_Changed">
+            <controls:WrapPanel x:Name="ResultsToolbar" Grid.Row="3" MaxWidth="1400"
+                                Margin="40,0,40,16" HorizontalSpacing="10" VerticalSpacing="10"
+                                HorizontalAlignment="Stretch">
+                <ComboBox x:Name="ResultTypeCombo" Width="180" SelectionChanged="ResultFilter_Changed">
                     <ComboBoxItem Content="Movies &amp; Series" Tag="video" IsSelected="True" />
                     <ComboBoxItem Content="Movies" Tag="movie" />
                     <ComboBoxItem Content="Series" Tag="series" />
@@ -208,7 +174,7 @@
                     <ComboBoxItem Content="Manga" Tag="manga" />
                     <ComboBoxItem Content="All Media" Tag="all" />
                 </ComboBox>
-                <ComboBox x:Name="ResultSortCombo" Grid.Column="1" SelectionChanged="ResultSort_Changed">
+                <ComboBox x:Name="ResultSortCombo" Width="180" SelectionChanged="ResultSort_Changed">
                     <ComboBoxItem Content="Date Added" Tag="added_at" IsSelected="True" />
                     <ComboBoxItem Content="Title" Tag="title" />
                     <ComboBoxItem Content="Release Date" Tag="release_date" />
@@ -230,17 +196,17 @@
                     <ComboBoxItem Content="Narrator" Tag="narrator" />
                     <ComboBoxItem Content="Series" Tag="series" />
                 </ComboBox>
-                <ComboBox x:Name="ResultOrderCombo" Grid.Column="2" SelectionChanged="ResultFilter_Changed">
+                <ComboBox x:Name="ResultOrderCombo" Width="140" SelectionChanged="ResultFilter_Changed">
                     <ComboBoxItem Content="Descending" Tag="desc" IsSelected="True" />
                     <ComboBoxItem Content="Ascending" Tag="asc" />
                 </ComboBox>
-                <Button Grid.Column="3" Style="{StaticResource OutlineButtonStyle}" Click="OpenResultFilters_Click">
+                <Button Style="{StaticResource OutlineButtonStyle}" Click="OpenResultFilters_Click">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon Glyph="&#xE71C;" FontSize="14" />
                         <TextBlock Text="Filters" />
                     </StackPanel>
                 </Button>
-            </Grid>
+            </controls:WrapPanel>
 
             <!-- Results grid -->
             <ScrollViewer x:Name="ResultsScroll" Grid.Row="4" Padding="40,0,40,24"
@@ -333,7 +299,7 @@
                                 <ItemsRepeater.ItemTemplate>
                                     <DataTemplate x:DataType="requests:RequestMediaResult">
                                         <Button Tag="{x:Bind}" Click="RequestResult_Click" Padding="0" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch">
-                                            <StackPanel Spacing="6"><Border Height="240" CornerRadius="8" Background="{StaticResource CardBackgroundBrush}"><Image Source="{x:Bind PosterUrl}" Stretch="UniformToFill" /></Border><TextBlock Text="{x:Bind Title}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{x:Bind YearText}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+                                            <StackPanel Spacing="6"><Border Height="240" CornerRadius="8" Background="{StaticResource CardBackgroundBrush}"><Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" /></Border><TextBlock Text="{x:Bind Title}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{x:Bind YearText}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
                                         </Button>
                                     </DataTemplate>
                                 </ItemsRepeater.ItemTemplate>
@@ -342,9 +308,10 @@
 
                     <!-- Skeleton while search results load (inline rows) -->
                     <ItemsRepeater x:Name="SearchLoadingRepeater"
+                                   ElementPrepared="SearchLoadingRepeater_ElementPrepared"
                                    Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                         <ItemsRepeater.Layout>
-                            <UniformGridLayout MinItemWidth="178" MinItemHeight="310"
+                            <UniformGridLayout x:Name="SearchLoadingGridLayout" MinItemWidth="178" MinItemHeight="310"
                                                MinColumnSpacing="12" MinRowSpacing="16" ItemsStretch="None" />
                         </ItemsRepeater.Layout>
                         <ItemsRepeater.ItemTemplate>
@@ -402,7 +369,7 @@
                     </ScrollViewer>
                     <Grid Grid.Row="2" ColumnDefinitions="*,Auto">
                         <Button Content="Clear All" Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Left" Click="ClearResultFilters_Click" />
-                        <Button Grid.Column="1" Content="Done" Style="{StaticResource PrimaryButtonStyle}" Click="CloseResultFilters_Click" />
+                        <Button Grid.Column="1" Content="Done" Style="{StaticResource AccentButtonStyle}" Click="CloseResultFilters_Click" />
                     </Grid>
                 </Grid>
             </controls:SlideSheet.SheetContent>

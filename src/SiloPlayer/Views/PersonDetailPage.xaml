@@ -9,7 +9,8 @@
     xmlns:converters="using:SiloPlayer.Converters"
     xmlns:models="using:SiloPlayer.Core.Models.Home"
     mc:Ignorable="d"
-    Background="{StaticResource AppBackgroundBrush}">
+    Background="{StaticResource AppBackgroundBrush}"
+    SizeChanged="PersonDetailPage_SizeChanged">
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
@@ -20,23 +21,25 @@
         <Style x:Key="FilterTabStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
-            <Setter Property="CornerRadius" Value="12" />
-            <Setter Property="Padding" Value="16,8,16,8" />
-            <Setter Property="FontSize" Value="13" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="12,6,12,6" />
+            <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
             <Setter Property="MinHeight" Value="0" />
             <Setter Property="MinWidth" Value="0" />
         </Style>
 
         <Style x:Key="FilterTabActiveStyle" TargetType="Button">
-            <Setter Property="Background" Value="{StaticResource AccentBackgroundBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
-            <Setter Property="CornerRadius" Value="12" />
-            <Setter Property="Padding" Value="16,8,16,8" />
-            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Background" Value="{StaticResource SurfaceHoverBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="12,6,12,6" />
+            <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
             <Setter Property="MinHeight" Value="0" />
             <Setter Property="MinWidth" Value="0" />
         </Style>
@@ -48,7 +51,8 @@
         <ScrollViewer
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
             VerticalScrollBarVisibility="Disabled">
-            <StackPanel Padding="40,24,40,48" Spacing="24">
+            <StackPanel x:Name="PersonSkeletonShell" Padding="40,32,40,48" Spacing="24"
+                        MaxWidth="1400" HorizontalAlignment="Stretch">
                 <Grid ColumnSpacing="24">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -99,7 +103,8 @@
             x:Name="ContentScroll"
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
 
-            <StackPanel Padding="40,24,40,48">
+            <StackPanel x:Name="PersonContentShell" Padding="40,32,40,48"
+                        MaxWidth="1400" HorizontalAlignment="Stretch">
 
                 <!-- Back button -->
                 <Button
@@ -147,15 +152,9 @@
                         <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                             <TextBlock
                                 x:Name="PersonName"
-                                FontSize="{StaticResource FontSizeDisplayLarge}"
-                                FontWeight="Bold"
+                                FontSize="30"
+                                FontWeight="SemiBold"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
-
-                            <Border x:Name="AgeBadge" Background="{StaticResource SurfaceRaisedBrush}"
-                                    CornerRadius="12" Padding="10,4,10,4" VerticalAlignment="Center">
-                                <TextBlock x:Name="AgeText" FontSize="13" FontWeight="Medium"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
-                            </Border>
 
                             <!-- Refresh metadata (all users; admins refresh immediately, others queue) -->
                             <Button
@@ -193,18 +192,22 @@
                                 Visibility="Collapsed" />
                         </StackPanel>
 
-                        <!-- Dates line -->
-                        <TextBlock
-                            x:Name="DatesText"
-                            FontSize="14"
-                            Foreground="{StaticResource SecondaryTextBrush}" />
-
-                        <!-- Birthplace line -->
-                        <TextBlock
-                            x:Name="BirthplaceText"
-                            FontSize="14"
-                            Foreground="{StaticResource TertiaryTextBrush}"
-                            Visibility="Collapsed" />
+                        <!-- Current WebUI renders person facts as independent
+                             metadata badges below the name/actions row. -->
+                        <controls:WrapPanel x:Name="PersonMetadataBadges" HorizontalSpacing="8" VerticalSpacing="8" Margin="0,4,0,0">
+                            <Border x:Name="BirthDateBadge" Background="{StaticResource SurfaceRaisedBrush}" CornerRadius="6" Padding="9,3">
+                                <TextBlock x:Name="BirthDateText" FontSize="12" Foreground="{StaticResource PrimaryTextBrush}" />
+                            </Border>
+                            <Border x:Name="AgeBadge" Background="{StaticResource SurfaceRaisedBrush}" CornerRadius="6" Padding="9,3">
+                                <TextBlock x:Name="AgeText" FontSize="12" Foreground="{StaticResource PrimaryTextBrush}" />
+                            </Border>
+                            <Border x:Name="DeathDateBadge" Background="{StaticResource SurfaceRaisedBrush}" CornerRadius="6" Padding="9,3">
+                                <TextBlock x:Name="DeathDateText" FontSize="12" Foreground="{StaticResource PrimaryTextBrush}" />
+                            </Border>
+                            <Border x:Name="BirthplaceBadge" Background="{StaticResource SurfaceRaisedBrush}" CornerRadius="6" Padding="9,3">
+                                <TextBlock x:Name="BirthplaceText" FontSize="12" Foreground="{StaticResource PrimaryTextBrush}" />
+                            </Border>
+                        </controls:WrapPanel>
 
                         <!-- Bio -->
                         <TextBlock
@@ -289,13 +292,15 @@
                             Grid.Column="3"
                             FontSize="13"
                             Foreground="{StaticResource TertiaryTextBrush}"
-                            VerticalAlignment="Center" />
+                            VerticalAlignment="Center"
+                            Visibility="Collapsed" />
                     </Grid>
 
                     <!-- Filmography grid -->
-                    <ItemsRepeater x:Name="FilmographyRepeater">
+                    <ItemsRepeater x:Name="FilmographyRepeater" ElementPrepared="FilmographyRepeater_ElementPrepared">
                         <ItemsRepeater.Layout>
                             <UniformGridLayout
+                                x:Name="FilmographyGridLayout"
                                 MinItemWidth="{StaticResource PosterCardWidth}"
                                 MinItemHeight="{StaticResource PosterCardTotalHeight}"
                                 MinColumnSpacing="12"

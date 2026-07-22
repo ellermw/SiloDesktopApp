@@ -8,8 +8,8 @@ public sealed class NotificationsCurrentParitySourceTests
         var source = ReadRepoFile("src", "SiloPlayer", "ViewModels", "NotificationsViewModel.cs");
 
         Assert.Contains("var inbox = await inboxTask", source);
-        Assert.Contains("TryLoadUnreadCountAsync()", source);
-        Assert.Contains("TryLoadPreferencesAsync()", source);
+        Assert.Contains("TryLoadUnreadCountAsync(ct)", source);
+        Assert.Contains("TryLoadPreferencesAsync(ct)", source);
         Assert.Contains("if (preferencesResult.Value != null)", source);
         Assert.DoesNotContain("await Task.WhenAll(inboxTask, unreadTask, prefsTask)", source);
     }

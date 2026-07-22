@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Navigation;
+using SiloPlayer.Controls;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 
@@ -11,11 +12,13 @@ public sealed partial class RecommendationSectionPage : Page
 
     private RecommendationSectionNavigationArgs? _args;
     private bool _loaded;
+    private double _cardWidth = 165;
 
     public RecommendationSectionPage()
     {
         ViewModel = App.Services.GetRequiredService<RecommendationSectionViewModel>();
         this.InitializeComponent();
+        LoadingSkeleton.ItemsSource = Enumerable.Range(0, 24).ToArray();
         ViewModel.Items.CollectionChanged += (_, _) => Bindings.Update();
         ViewModel.PropertyChanged += (_, args) =>
         {
@@ -84,6 +87,37 @@ public sealed partial class RecommendationSectionPage : Page
         var gutter = width < 640 ? 16d : width < 1024 ? 24d : width < 1280 ? 40d : 48d;
         PageContent.Padding = new Thickness(gutter, width < 640 ? 24 : 32, gutter, 48);
         var columns = width < 640 ? 3 : width < 768 ? 4 : width < 1024 ? 5 : width < 1280 ? 6 : 7;
-        ItemsLayout.MinItemWidth = Math.Max(96, Math.Floor((width - gutter * 2 - (columns - 1) * 16) / columns));
+        PageTitleText.FontSize = width < 640 ? 24 : 30;
+        _cardWidth = Math.Max(96, Math.Floor((width - gutter * 2 - (columns - 1) * 16) / columns));
+        ItemsLayout.MaximumRowsOrColumns = columns;
+        ItemsLayout.MinItemWidth = _cardWidth;
+        LoadingLayout.MaximumRowsOrColumns = columns;
+        LoadingLayout.MinItemWidth = _cardWidth;
+
+        for (var index = 0; index < ViewModel.Items.Count; index++)
+            if (ItemsGrid.TryGetElement(index) is PosterCard card)
+                card.SetCatalogGridLayout(_cardWidth);
+        for (var index = 0; index < 24; index++)
+            if (LoadingSkeleton.TryGetElement(index) is StackPanel skeleton)
+                ResizeSkeleton(skeleton);
+    }
+
+    private void ItemsGrid_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
+    {
+        if (args.Element is PosterCard card)
+            card.SetCatalogGridLayout(_cardWidth);
+    }
+
+    private void LoadingSkeleton_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
+    {
+        if (args.Element is StackPanel skeleton)
+            ResizeSkeleton(skeleton);
+    }
+
+    private void ResizeSkeleton(StackPanel skeleton)
+    {
+        skeleton.Width = _cardWidth;
+        if (skeleton.Children.FirstOrDefault() is FrameworkElement poster)
+            poster.Height = _cardWidth * 1.5;
     }
 }

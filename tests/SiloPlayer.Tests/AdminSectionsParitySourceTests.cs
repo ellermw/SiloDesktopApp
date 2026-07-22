@@ -3,7 +3,7 @@ namespace SiloPlayer.Tests;
 public class AdminSectionsParitySourceTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".."));
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
 
     private static string PageSource => File.ReadAllText(Path.Combine(
         RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminSectionsPage.xaml.cs"));

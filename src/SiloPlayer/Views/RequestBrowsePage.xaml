@@ -4,8 +4,10 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:requests="using:SiloPlayer.Core.Models.Requests"
     xmlns:controls="using:SiloPlayer.Controls"
+    xmlns:converters="using:SiloPlayer.Converters"
     Background="{StaticResource AppBackgroundBrush}"
     SizeChanged="Page_SizeChanged">
+    <Page.Resources><converters:UrlToImageSourceConverter x:Key="UrlToImage" /></Page.Resources>
     <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
         <StackPanel x:Name="HeaderPanel" Grid.Row="0" Padding="40,24,40,12" Spacing="18">
@@ -38,7 +40,7 @@
                     <Grid Width="184" Margin="6" PointerEntered="ResultCard_PointerEntered" PointerExited="ResultCard_PointerExited">
                         <Grid.RowDefinitions><RowDefinition Height="276" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                         <Grid>
-                            <Border CornerRadius="8" Background="{StaticResource SurfaceRaisedBrush}"><Image Source="{x:Bind PosterUrl}" Stretch="UniformToFill" /></Border>
+                            <Border CornerRadius="8" Background="{StaticResource SurfaceRaisedBrush}"><Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" /></Border>
                             <Button x:Name="InlineRequestButton" Content="{x:Bind RequestLabel}" Tag="{x:Bind}" Click="Request_Click" Tapped="InlineRequest_Tapped" IsEnabled="{x:Bind Request.Requestable}" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,12" Padding="14,6" CornerRadius="16" Opacity="0" />
                         </Grid>
                         <TextBlock Grid.Row="1" Text="{x:Bind Title}" Margin="1,7,1,0" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />

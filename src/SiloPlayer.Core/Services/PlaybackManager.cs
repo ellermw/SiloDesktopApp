@@ -456,6 +456,18 @@ public class PlaybackManager : IDisposable
         }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(7));
     }
 
+    /// <summary>
+    /// Restarts the bounded keepalive loop for the current session after a
+    /// transient control-plane outage. Direct media delivery can remain healthy
+    /// while progress requests fail, so the player may reopen the existing
+    /// byte-range stream before creating a replacement session.
+    /// </summary>
+    public void ResumeProgressReporting()
+    {
+        if (!string.IsNullOrWhiteSpace(_sessionId))
+            StartProgressReporting();
+    }
+
     private void StopProgressReporting()
     {
         var stopCts = Interlocked.Exchange(ref _progressStopCts, null);

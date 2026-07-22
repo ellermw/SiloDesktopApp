@@ -424,7 +424,7 @@
                                HorizontalAlignment="Center" Margin="0,4,0,0" />
 
                     <StackPanel x:Name="PlayingNextEpisodePanel" Spacing="12">
-                        <Border Height="400" MaxWidth="820" CornerRadius="16"
+                        <Border x:Name="PlayingNextHero" Height="400" MaxWidth="820" CornerRadius="16"
                                 Background="#202733" BorderBrush="#14FFFFFF" BorderThickness="1">
                             <Image x:Name="PlayingNextPoster" Stretch="UniformToFill" />
                         </Border>

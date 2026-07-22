@@ -3,7 +3,7 @@ namespace SiloPlayer.Tests;
 public class AdminSubtitlesParitySourceTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".."));
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
 
     private static string Markup => File.ReadAllText(Path.Combine(
         RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminSubtitlesPage.xaml"));

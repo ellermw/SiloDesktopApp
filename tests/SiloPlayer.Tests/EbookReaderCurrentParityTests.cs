@@ -6,7 +6,7 @@ namespace SiloPlayer.Tests;
 
 public sealed class EbookReaderCurrentParityTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".."));
+    private static readonly string RepoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
     private static string Markup => Read("src", "SiloPlayer", "Views", "EbookReaderPage.xaml");
     private static string CodeBehind => Read("src", "SiloPlayer", "Views", "EbookReaderPage.xaml.cs");
 

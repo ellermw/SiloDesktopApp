@@ -21,6 +21,19 @@ public sealed class CalendarCurrentParitySourceTests
     {
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "CalendarPage.xaml.cs");
         Assert.Contains("ViewModel.CancelLoad();", page);
+        Assert.Contains("CancelImageLoads();", page);
+    }
+
+    [Fact]
+    public void CalendarPosterWorkIsBoundedAndCanceledWhenCardsAreReplaced()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "CalendarPage.xaml.cs");
+
+        Assert.Contains("new(4)", page);
+        Assert.Contains("RenewImageLoadScope();", page);
+        Assert.Contains("PosterLoadThrottle.RunAsync", page);
+        Assert.Contains("ct.ThrowIfCancellationRequested();", page);
+        Assert.DoesNotContain("Task.Run(async ()", page);
     }
 
     private static string ReadRepoFile(params string[] parts)

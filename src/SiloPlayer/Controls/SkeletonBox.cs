@@ -89,7 +89,14 @@ public class SkeletonPoster : SkeletonBox
         double height = (double)Application.Current.Resources["PosterCardHeight"];
         Width = width;
         Height = height;
-        CornerRadius = new CornerRadius(12);
+        CornerRadius = new CornerRadius(8);
+    }
+
+    public void SetResponsiveWidth(double width)
+    {
+        var safeWidth = Math.Max(96, width);
+        Width = safeWidth;
+        Height = safeWidth * 1.5;
     }
 }
 

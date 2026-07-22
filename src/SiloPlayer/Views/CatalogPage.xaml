@@ -112,6 +112,28 @@
             <StackPanel Spacing="16">
                 <TextBlock x:Name="ErrorText" Visibility="Collapsed" Foreground="{StaticResource ErrorBrush}"
                            TextWrapping="Wrap" HorizontalAlignment="Center" />
+                <ItemsRepeater x:Name="CatalogLoadingRepeater"
+                               ElementPrepared="CatalogLoadingRepeater_ElementPrepared"
+                               Visibility="Collapsed">
+                    <ItemsRepeater.Layout>
+                        <UniformGridLayout x:Name="CatalogLoadingGridLayout"
+                                           MinItemWidth="150"
+                                           MinItemHeight="281"
+                                           MinColumnSpacing="12"
+                                           MinRowSpacing="16"
+                                           ItemsStretch="Fill"
+                                           MaximumRowsOrColumns="8" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Spacing="9">
+                                <controls:SkeletonBox Height="225" CornerRadius="12" />
+                                <controls:SkeletonText Width="112" Height="14" HorizontalAlignment="Left" />
+                                <controls:SkeletonText Width="72" Height="11" HorizontalAlignment="Left" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
                 <ItemsRepeater x:Name="ItemsRepeater" ElementPrepared="ItemsRepeater_ElementPrepared">
                     <ItemsRepeater.Layout>
                         <UniformGridLayout x:Name="CatalogGridLayout" MinItemWidth="150" MinItemHeight="260" MinColumnSpacing="12"
@@ -121,7 +143,7 @@
                         <DataTemplate x:DataType="models:MediaItem"><controls:PosterCard MediaItem="{x:Bind}" /></DataTemplate>
                     </ItemsRepeater.ItemTemplate>
                 </ItemsRepeater>
-                <ProgressRing x:Name="LoadingRing" Width="30" Height="30" HorizontalAlignment="Center" />
+                <ProgressRing x:Name="LoadingRing" Width="30" Height="30" HorizontalAlignment="Center" Visibility="Collapsed" />
                 <TextBlock x:Name="EmptyText" Text="No items found." HorizontalAlignment="Center" Visibility="Collapsed"
                            Foreground="{StaticResource SecondaryTextBrush}" />
                 <Button x:Name="LoadMoreButton" Content="Load more" Click="LoadMore_Click" HorizontalAlignment="Center" Visibility="Collapsed" />
@@ -226,7 +248,7 @@
                     </ScrollViewer>
                     <Grid Grid.Row="2" ColumnDefinitions="*,Auto">
                         <Button Content="Clear All" Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Left" Click="ClearFilters_Click" />
-                        <Button Grid.Column="1" Content="Done" Style="{StaticResource PrimaryButtonStyle}" Click="CloseFilters_Click" />
+                        <Button Grid.Column="1" Content="Done" Style="{StaticResource AccentButtonStyle}" Click="CloseFilters_Click" />
                     </Grid>
                 </Grid>
             </controls:SlideSheet.SheetContent>

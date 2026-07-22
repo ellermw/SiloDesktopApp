@@ -531,7 +531,7 @@
 
                     <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
                         <Button x:Name="GuidedFilterModeButton" Content="Guided"
-                                Style="{StaticResource PrimaryButtonStyle}"
+                                Style="{StaticResource AccentButtonStyle}"
                                 MinWidth="0" Padding="12,5" Click="GuidedFilterMode_Click" />
                         <Button x:Name="AdvancedFilterModeButton" Content="Advanced"
                                 Style="{StaticResource OutlineButtonStyle}"
@@ -792,7 +792,7 @@
                         <Grid ColumnDefinitions="*,Auto">
                             <Button Content="Clear All" Style="{StaticResource OutlineButtonStyle}"
                                     HorizontalAlignment="Left" Click="ClearAllFilters_Click" />
-                            <Button Grid.Column="1" Content="Done" Style="{StaticResource PrimaryButtonStyle}"
+                            <Button Grid.Column="1" Content="Done" Style="{StaticResource AccentButtonStyle}"
                                     Click="CloseFilters_Click" />
                         </Grid>
                     </Border>

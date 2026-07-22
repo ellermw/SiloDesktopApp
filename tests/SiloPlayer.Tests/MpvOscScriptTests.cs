@@ -3,6 +3,31 @@ namespace SiloPlayer.Tests;
 public sealed class MpvOscScriptTests
 {
     [Fact]
+    public void PostRollCancelsTheCreditsCountdownOwnedByTheForegroundPlayer()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("post_roll_active = false", script);
+        Assert.Contains("osc-set-post-roll", script);
+        Assert.Contains("state.next_ep_countdown_cancelled = true", script);
+        Assert.Contains("state.post_roll_active or state.next_ep_countdown_cancelled", script);
+    }
+
+    [Fact]
+    public void DetachedPlaybackHidesEveryOverlayWithoutSuspendingCreditsAutoplay()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("if state.osc_disabled then", script);
+        Assert.Contains("check_next_episode_countdown()", script);
+        Assert.Contains("state.osc_disabled or not state.next_ep_countdown_active", script);
+        Assert.Contains("state.osc_disabled or not state.skip_visible", script);
+        Assert.Contains("state.osc_disabled or not state.next_ep_visible", script);
+        Assert.Contains("render_playback_wait()", script);
+        Assert.Contains("render_translation_buffering()", script);
+    }
+
+    [Fact]
     public void NextEpisodeUsesDistinctGlyphAndAction()
     {
         var script = File.ReadAllText(FindOscScriptPath());
@@ -11,6 +36,19 @@ public sealed class MpvOscScriptTests
         Assert.Contains("draw_next_episode_icon(ass, L.btn_next_ep.cx", script);
         Assert.DoesNotContain("draw_skip_fwd_icon(ass, L.btn_next_ep.cx", script);
         Assert.Contains("mp.commandv(\"script-message\", \"silo-next-episode\")", script);
+    }
+
+    [Fact]
+    public void TimedSkipButtonsUseCurrentWebUiCurvedArrowGlyphs()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("local function draw_skip_arrow_icon", script);
+        Assert.Contains("direction == \"back\" and -1 or 1", script);
+        Assert.Contains("\"back\", \"10\"", script);
+        Assert.Contains("\"forward\", \"30\"", script);
+        Assert.DoesNotContain("two left-pointing triangles", script);
+        Assert.DoesNotContain("two right-pointing triangles", script);
     }
 
     [Fact]
@@ -227,6 +265,20 @@ public sealed class MpvOscScriptTests
     }
 
     [Fact]
+    public void AutoSkipMarkersUseTransportAwareSeekAndResetPerMediaLoad()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("osc-set-auto-skip", script);
+        Assert.Contains("state.auto_skip_intro and not state.intro_auto_skipped", script);
+        Assert.Contains("state.auto_skip_recap and not state.recap_auto_skipped", script);
+        Assert.Contains("state.auto_skip_credits and not state.credits_auto_skipped", script);
+        Assert.Contains("state.watch_party == nil or state.watch_party.is_host == true", script);
+        Assert.Contains("seek_and_resume(state.intro_end", script);
+        Assert.Contains("state.intro_auto_skipped = false", script);
+    }
+
+    [Fact]
     public void SeekRail_MatchesCurrentWebUiChapterAndMarkerPreview()
     {
         var script = File.ReadAllText(FindOscScriptPath());
@@ -381,6 +433,56 @@ public sealed class MpvOscScriptTests
         Assert.Contains("point_in_rect(state.mouse_x, state.mouse_y, state.stats_panel_rect)", script);
         Assert.Contains("state.stats_scroll_offset / state.stats_scroll_max", script);
         Assert.Contains("point_in_rect(mx, my, state.stats_panel_rect)", script);
+    }
+
+    [Fact]
+    public void TransportMenusSwitchAndToggleInOneClickWithoutLeakingToVideo()
+    {
+        var script = File.ReadAllText(FindOscScriptPath()).Replace("\r\n", "\n");
+
+        Assert.Contains("local function toggle_transport_menu_from_button(mx, my)", script);
+        Assert.Contains("set_keyboard_transport_menu(\"subtitles\", opening)", script);
+        Assert.Contains("set_keyboard_transport_menu(\"quality\", opening)", script);
+        Assert.Contains("set_keyboard_transport_menu(\"audio\", opening)", script);
+        Assert.Contains("set_keyboard_transport_menu(\"chapters\", opening)", script);
+
+        var handlerStart = script.IndexOf("local function handle_mouse_down()", StringComparison.Ordinal);
+        var handlerEnd = script.IndexOf("local function handle_mouse_down_right()", handlerStart, StringComparison.Ordinal);
+        Assert.True(handlerStart >= 0 && handlerEnd > handlerStart);
+        var handler = script[handlerStart..handlerEnd];
+        Assert.True(
+            handler.Split("toggle_transport_menu_from_button(mx, my)", StringSplitOptions.None).Length >= 5,
+            "Open menu outside-click branches should route transport-button clicks through the one-click switcher.");
+
+        var videoClickStart = script.IndexOf("mp.register_script_message(\"osc-video-click\"", StringComparison.Ordinal);
+        var videoClickEnd = script.IndexOf("-- Initialization", videoClickStart, StringComparison.Ordinal);
+        Assert.True(videoClickStart >= 0 && videoClickEnd > videoClickStart);
+        var videoClick = script[videoClickStart..videoClickEnd];
+        Assert.Contains("state.subtitle_menu_visible or state.quality_menu_visible", videoClick);
+        Assert.Contains("or state.audio_menu_visible or state.chapter_menu_visible", videoClick);
+    }
+
+    [Fact]
+    public void SubtitleKeyboardNavigationCanOpenFixedSubtitleActions()
+    {
+        var script = File.ReadAllText(FindOscScriptPath()).Replace("\r\n", "\n");
+
+        var itemsStart = script.IndexOf("local function keyboard_menu_items(kind, source)", StringComparison.Ordinal);
+        var itemsEnd = script.IndexOf("local function render_keyboard_menu(kind)", itemsStart, StringComparison.Ordinal);
+        Assert.True(itemsStart >= 0 && itemsEnd > itemsStart);
+        var items = script[itemsStart..itemsEnd];
+        Assert.Contains("item.action == \"search\"", items);
+        Assert.Contains("item.action == \"appearance\"", items);
+        Assert.Contains("item.action == \"ai\"", items);
+
+        var activateStart = script.IndexOf("local function activate_keyboard_menu_item()", StringComparison.Ordinal);
+        var activateEnd = script.IndexOf("local function close_keyboard_surface()", activateStart, StringComparison.Ordinal);
+        Assert.True(activateStart >= 0 && activateEnd > activateStart);
+        var activate = script[activateStart..activateEnd];
+        Assert.Contains("silo-subtitle-search", activate);
+        Assert.Contains("silo-subtitle-appearance", activate);
+        Assert.Contains("silo-subtitle-ai", activate);
+        Assert.Contains("state.subtitle_menu_visible = false", activate);
     }
 
     private static string FindOscScriptPath()

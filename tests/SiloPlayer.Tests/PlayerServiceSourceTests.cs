@@ -3,6 +3,28 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void FileLoadedInitialization_CancelsStaleReloadWork()
+    {
+        var root = FindRepositoryRoot();
+        var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+
+        Assert.Contains("StartLoadedMediaInitialization();", service, StringComparison.Ordinal);
+        Assert.Contains("CancelPendingLoadedMediaInitialization();", service, StringComparison.Ordinal);
+        Assert.Contains("IsLoadedMediaInitializationCurrent(generation, ownerCts)", service, StringComparison.Ordinal);
+        Assert.Contains("Loaded-media initialization failed", service, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SubtitleSlidingWindowState_IsProtectedAcrossMpvAndWorkerThreads()
+    {
+        var root = FindRepositoryRoot();
+        var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+
+        Assert.Contains("private readonly object _subtitleTrackStateLock = new();", service, StringComparison.Ordinal);
+        Assert.Contains("lock (_subtitleTrackStateLock)", service, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlayableHomeCardsPrefetchAndReuseWatchDetailBeforePlay()
     {
         var root = FindRepositoryRoot();
@@ -129,6 +151,7 @@ public sealed class PlayerServiceSourceTests
         var root = FindRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
         var mpv = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Player", "MpvPlayer.cs"));
+        var overlay = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Controls", "PlayerOverlay.xaml.cs"));
 
         Assert.Contains("subtitle_translation_started", source);
         Assert.Contains("subtitle_translation_cues", source);
@@ -144,6 +167,13 @@ public sealed class PlayerServiceSourceTests
         var refreshEnd = source.IndexOf("private void WriteLiveSubtitleFileLocked", refreshStart, StringComparison.Ordinal);
         Assert.True(refreshStart >= 0 && refreshEnd > refreshStart);
         Assert.DoesNotContain("SwitchVersionAsync", source[refreshStart..refreshEnd]);
+
+        var beginStart = source.IndexOf("private void BeginLiveSubtitleTranslation", StringComparison.Ordinal);
+        var beginEnd = source.IndexOf("private void ApplySubtitleTranslationCues", beginStart, StringComparison.Ordinal);
+        Assert.True(beginStart >= 0 && beginEnd > beginStart);
+        var begin = source[beginStart..beginEnd];
+        Assert.DoesNotContain("_mpv.Pause();", begin, StringComparison.Ordinal);
+        Assert.Contains("Playback keeps running while the first translated lines are prepared", overlay, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -178,12 +208,13 @@ public sealed class PlayerServiceSourceTests
         Assert.DoesNotContain("PlaybackNaturalEndDetector", source);
         Assert.DoesNotContain("HandleNaturalPlaybackEnded", source);
         Assert.DoesNotContain("Logical natural end detected", source);
-        Assert.Contains("ShowPlayingNextRequested?.Invoke();", source);
-        Assert.Contains("PlaybackEnded?.Invoke();", source);
+        Assert.Contains("InvokeSubscribersSafely(ShowPlayingNextRequested, true", source);
+        Assert.Contains("InvokeSubscribersSafely(ShowPlayingNextRequested, false", source);
+        Assert.Contains("InvokeSubscribersSafely(PlaybackEnded", source);
     }
 
     [Fact]
-    public void PlayingNextCountdownIsOnlyRequestedFromMpvEndSignal()
+    public void SeriesPostRollEntersEarlyButMarksTrueEndSeparately()
     {
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
@@ -198,9 +229,18 @@ public sealed class PlayerServiceSourceTests
         Assert.True(methodEnd > methodStart);
 
         var method = source[methodStart..methodEnd];
-        Assert.Contains("ShowPlayingNextRequested?.Invoke();", method);
+        Assert.Contains("InvokeSubscribersSafely(ShowPlayingNextRequested, true", method);
         Assert.Contains("IsAtMediaEnd(pos, dur)", method);
         Assert.DoesNotContain("dur * 0.95", method);
+
+        var wireStart = methodEnd;
+        var wireEnd = source.IndexOf("private void HandleMpvPlaybackError", wireStart, StringComparison.Ordinal);
+        Assert.True(wireEnd > wireStart);
+        var playerEvents = source[wireStart..wireEnd];
+        Assert.Contains("CurrentMediaDuration - mediaPosition <= 30", playerEvents);
+        Assert.Contains("InvokeSubscribersSafely(ShowPlayingNextRequested, false", playerEvents);
+        Assert.Contains("SendScriptMessage(\"osc-set-post-roll\", \"true\")", source);
+        Assert.Contains("SendScriptMessage(\"osc-set-post-roll\", \"false\")", source);
     }
 
     [Fact]
@@ -220,6 +260,32 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("HandleMpvEndSignal(\"end-file\")", source);
         Assert.Contains("RecoverInterruptedStreamAsync(pos, trigger)", source);
         Assert.DoesNotContain("_mpvPlaybackEndedHandler?.Invoke();", source);
+    }
+
+    [Fact]
+    public void ActivePlaybackOwnsAndReleasesAWindowsDisplayWakeRequest()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        Assert.Contains("private DisplayRequest? _displayRequest;", source);
+        Assert.Contains("_displayRequest.RequestActive();", source);
+        Assert.Contains("_displayRequest.RequestRelease();", source);
+        Assert.Contains("UpdateDisplayWakeLock(!paused", source);
+        Assert.Contains("if (newState == PlayerState.Idle)", source);
+        Assert.Contains("UpdateDisplayWakeLock(false);", source);
+
+        var disposeStart = source.IndexOf("public void Dispose()", StringComparison.Ordinal);
+        var disposeEnd = source.IndexOf("// ── WebSocket session control", disposeStart, StringComparison.Ordinal);
+        Assert.True(disposeStart >= 0 && disposeEnd > disposeStart);
+        var dispose = source[disposeStart..disposeEnd];
+        Assert.Contains("UpdateDisplayWakeLock(false);", dispose, StringComparison.Ordinal);
+        Assert.Contains("DisconnectWebSocket();", dispose, StringComparison.Ordinal);
+        Assert.Contains("_playbackCts?.Cancel();", dispose, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -324,6 +390,23 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("if (!transportReplaced)", method);
         Assert.Contains("RecoverInterruptedStreamAsync(currentPos, \"quality-switch-failed\")", method);
         Assert.DoesNotContain("ShowPlaybackError(\"Transcode failed\"", method);
+    }
+
+    [Fact]
+    public void AcceptedVersionAndBitmapTransportSwitchesRecoverInsteadOfClosingPlayback()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        Assert.Contains("var replacementAccepted = false;", source, StringComparison.Ordinal);
+        Assert.Contains("RecoverInterruptedStreamAsync(currentPos, \"version-switch-failed\")", source, StringComparison.Ordinal);
+        Assert.Contains("RecoverInterruptedStreamAsync(currentPos, \"quality-reset-failed\")", source, StringComparison.Ordinal);
+        Assert.Contains("var transportMutationAttempted = false;", source, StringComparison.Ordinal);
+        Assert.Contains("RecoverInterruptedStreamAsync(CurrentMediaPosition, \"subtitle-switch-failed\")", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -554,6 +637,77 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
+    public void AcceptedHlsAudioSwitchRecoversInsteadOfLeavingAnInvalidatedStream()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+        var methodStart = source.IndexOf("public async Task SwitchAudioTrackAsync", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("// ── Subtitles", methodStart, StringComparison.Ordinal);
+        Assert.True(methodStart >= 0 && methodEnd > methodStart);
+        var method = source[methodStart..methodEnd];
+
+        Assert.Contains("var serverTransportChanged = false;", method, StringComparison.Ordinal);
+        Assert.Contains("manager.ApplyAudioChange(response);", method, StringComparison.Ordinal);
+        Assert.Contains("serverTransportChanged = true;", method, StringComparison.Ordinal);
+        Assert.Contains("RecoverInterruptedStreamAsync(currentPos, \"audio-switch-failed\")", method, StringComparison.Ordinal);
+        Assert.Contains("if (serverTransportChanged && !_closing", method, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DirectPlaySurvivesTransientKeepaliveOutagesBeforeReplacingItsSession()
+    {
+        var root = FindRepositoryRoot();
+        var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var manager = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Services", "PlaybackManager.cs"));
+        var policy = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Services", "PlaybackRecoveryPolicy.cs"));
+
+        Assert.Contains("\"progress-reporting-failed\"", policy, StringComparison.Ordinal);
+        Assert.Contains("public void ResumeProgressReporting()", manager, StringComparison.Ordinal);
+        Assert.Contains("manager.ResumeProgressReporting();", service, StringComparison.Ordinal);
+        Assert.Contains("PreparePlaybackTransportAsync(", service, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PlayerCallbacksIsolateSubscribersSoUiFailuresCannotStopPlaybackStateUpdates()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        Assert.Contains("private static void InvokeSubscribersSafely(Action? handlers", source, StringComparison.Ordinal);
+        Assert.Contains("handlers.GetInvocationList().Cast<Action>()", source, StringComparison.Ordinal);
+        Assert.Contains("handlers.GetInvocationList().Cast<Action<T>>()", source, StringComparison.Ordinal);
+        Assert.Contains("InvokeSubscribersSafely(PositionChanged, mediaPosition", source, StringComparison.Ordinal);
+        Assert.Contains("InvokeSubscribersSafely(PauseChanged, paused", source, StringComparison.Ordinal);
+        Assert.Contains("InvokeSubscribersSafely(ContentLoaded", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("PositionChanged?.Invoke", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PostRollPreviewSurvivesWindowChangesAndDisposeAlwaysRetiresTheSession()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        Assert.Contains("else if (_postRollActive && !_postRollVideoEnded)", source, StringComparison.Ordinal);
+        Assert.Contains("_videoWindow?.EnterPostRollPreview();", source, StringComparison.Ordinal);
+        Assert.Contains("_closing = true;", source, StringComparison.Ordinal);
+        Assert.Contains("_playbackManager.ProgressReportingFailed -= OnProgressReportingFailed;", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("if (State != PlayerState.Idle)\n        {\n            _playbackManager?.Dispose();", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlayerHudUsesCurrentDynamicRangeVocabulary()
     {
         var source = File.ReadAllText(Path.Combine(
@@ -566,6 +720,8 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("FormatVideoRangeForHud(version, videoTrack)", source);
         Assert.Contains("MediaVideoRange.Label(requested)", source);
         Assert.Contains("Dolby Vision {track.DolbyVision}", source);
+        Assert.Contains("compactRange.StartsWith(\"DV\"", source);
+        Assert.Contains("Current Silo probes may identify Dolby Vision through dv_profile", source);
         Assert.DoesNotContain("requested.Hdr ? \"HDR\"", source);
     }
 
@@ -598,6 +754,25 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
+    public void NativeOscReceivesProfileAndDeviceEffectiveAutoSkipSettings()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        Assert.Contains("SendAutoSkipSettingsToOscAsync(ct)", source, StringComparison.Ordinal);
+        Assert.Contains("GetProfilesAsync(ct)", source, StringComparison.Ordinal);
+        Assert.Contains("GetEffectiveSettingsAsync(", source, StringComparison.Ordinal);
+        Assert.Contains("osc-set-auto-skip", source, StringComparison.Ordinal);
+        Assert.Contains("AutoSkipIntroSettingKey", source, StringComparison.Ordinal);
+        Assert.Contains("AutoSkipRecapSettingKey", source, StringComparison.Ordinal);
+        Assert.Contains("AutoSkipCreditsSettingKey", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NativePlayerIsPrewarmedAfterAuthenticatedNavigationAtLowPriority()
     {
         var root = FindRepositoryRoot();
@@ -608,6 +783,76 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("ResetFailedMpvInitialization", service);
         Assert.Contains("DispatcherQueuePriority.Low", window);
         Assert.Contains("() => _playerService.Prewarm()", window);
+    }
+
+    [Fact]
+    public void SubtitleSelectionRestoresPreviousPlaybackStateInsteadOfPausing()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        var methodStart = source.IndexOf(
+            "public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)",
+            StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private void RestorePlaybackStateAfterSubtitleChange", methodStart, StringComparison.Ordinal);
+        Assert.True(methodStart >= 0 && methodEnd > methodStart);
+        var method = source[methodStart..methodEnd];
+
+        Assert.Contains("var wasPaused = _mpv?.IsPaused ?? IsPaused;", method, StringComparison.Ordinal);
+        Assert.Contains("var position = CurrentMediaPosition;", method, StringComparison.Ordinal);
+        Assert.Contains("RestorePlaybackStateAfterSubtitleChange(wasPaused, position, allowSeek: true);", method, StringComparison.Ordinal);
+
+        var restoreStart = source.IndexOf("private void RestorePlaybackStateAfterSubtitleChange", StringComparison.Ordinal);
+        var restoreEnd = source.IndexOf("/// <summary>", restoreStart, StringComparison.Ordinal);
+        Assert.True(restoreStart >= 0 && restoreEnd > restoreStart);
+        var restore = source[restoreStart..restoreEnd];
+        Assert.Contains("_mpv.Play();", restore, StringComparison.Ordinal);
+        Assert.Contains("_mpv.Pause();", restore, StringComparison.Ordinal);
+        Assert.Contains("_mpv.SeekFast(position);", restore, StringComparison.Ordinal);
+        Assert.Contains("IsPaused = wasPaused;", restore, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SubtitleDialogsRestorePlaybackSurfaceWithoutRestartingCurrentStream()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        Assert.Contains("private sealed record PlaybackUiSnapshot(bool WasFullscreen, bool WasPaused, double Position);", source, StringComparison.Ordinal);
+        Assert.Contains("private PlaybackUiSnapshot CapturePlaybackUiSnapshot()", source, StringComparison.Ordinal);
+        Assert.Contains("private void RestorePlaybackUiSnapshot(PlaybackUiSnapshot snapshot)", source, StringComparison.Ordinal);
+
+        var searchStart = source.IndexOf("private async Task ShowSubtitleSearchDialogAsync()", StringComparison.Ordinal);
+        var searchEnd = source.IndexOf("private async Task ShowSubtitleAppearanceDialogAsync()", searchStart, StringComparison.Ordinal);
+        Assert.True(searchStart >= 0 && searchEnd > searchStart);
+        var search = source[searchStart..searchEnd];
+        Assert.Contains("var snapshot = CapturePlaybackUiSnapshot();", search, StringComparison.Ordinal);
+        Assert.Contains("RestorePlaybackUiSnapshot(snapshot);", search, StringComparison.Ordinal);
+        Assert.Contains("await RefreshSubtitlesAfterAiAsync(session.MediaFileId);", search, StringComparison.Ordinal);
+        Assert.Contains("RestorePlaybackStateAfterSubtitleChange(snapshot.WasPaused, snapshot.Position, allowSeek: true);", search, StringComparison.Ordinal);
+        Assert.DoesNotContain("SwitchVersionAsync", search, StringComparison.Ordinal);
+
+        var appearanceStart = source.IndexOf("private async Task ShowSubtitleAppearanceDialogAsync()", StringComparison.Ordinal);
+        var appearanceEnd = source.IndexOf("private async Task ShowSubtitleAiDialogAsync()", appearanceStart, StringComparison.Ordinal);
+        Assert.True(appearanceStart >= 0 && appearanceEnd > appearanceStart);
+        var appearance = source[appearanceStart..appearanceEnd];
+        Assert.Contains("var snapshot = CapturePlaybackUiSnapshot();", appearance, StringComparison.Ordinal);
+        Assert.Contains("RestorePlaybackUiSnapshot(snapshot);", appearance, StringComparison.Ordinal);
+
+        var aiStart = source.IndexOf("private async Task ShowSubtitleAiDialogAsync()", StringComparison.Ordinal);
+        var aiEnd = source.IndexOf("private sealed record PlaybackUiSnapshot", aiStart, StringComparison.Ordinal);
+        Assert.True(aiStart >= 0 && aiEnd > aiStart);
+        var ai = source[aiStart..aiEnd];
+        Assert.Contains("var snapshot = CapturePlaybackUiSnapshot();", ai, StringComparison.Ordinal);
+        Assert.Contains("RestorePlaybackUiSnapshot(snapshot);", ai, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

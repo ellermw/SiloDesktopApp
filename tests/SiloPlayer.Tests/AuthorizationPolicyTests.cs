@@ -16,6 +16,15 @@ public sealed class AuthorizationPolicyTests
     }
 
     [Fact]
+    public void SelectedButUnresolvedProfileFailsClosedLikeTheWebUi()
+    {
+        var admin = new UserInfo { Role = "admin" };
+
+        Assert.False(AuthorizationPolicy.IsActingAdmin(admin, profile: null, hasSelectedProfile: true));
+        Assert.True(AuthorizationPolicy.IsActingAdmin(admin, profile: null, hasSelectedProfile: false));
+    }
+
+    [Fact]
     public void ExplicitPermissionsRemainAvailableOnNonPrimaryProfiles()
     {
         var admin = new UserInfo { Role = "admin", Permissions = [AuthorizationPolicy.MarkerEdit] };

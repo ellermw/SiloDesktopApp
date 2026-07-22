@@ -19,6 +19,7 @@ public sealed class MpvNativePlaybackCapabilitiesTests
         Assert.Contains("SetOption(\"demuxer-max-bytes\", \"256MiB\")", source);
         Assert.Contains("SetOption(\"cache-pause-initial\", \"no\")", source);
         Assert.Contains("SetOption(\"cache-pause-wait\", \"2\")", source);
+        Assert.Contains("SetOption(\"deinterlace\", \"auto\")", source);
         Assert.DoesNotContain("SetOption(\"vo\", \"gpu\");", source);
         Assert.DoesNotContain("SetOption(\"demuxer-max-bytes\", \"800MiB\")", source);
         Assert.DoesNotContain("SetOption(\"audio-spdif\"", source);

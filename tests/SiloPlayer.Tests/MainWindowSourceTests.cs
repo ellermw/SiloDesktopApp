@@ -49,9 +49,18 @@ public sealed class MainWindowSourceTests
         Assert.Contains("playback.auto_play_next", code);
         Assert.Contains("GetPlayingNextAutoPlayAsync", code);
         Assert.Contains("PutDeviceSettingAsync", code);
-        Assert.Contains("if (hasNextEpisode && _playingNextAutoPlay)", code);
+        Assert.Contains("_playerService.IsPostRollVideoEnded", code);
+        Assert.Contains("_playerService.EnterPostRollPreview();", code);
+        Assert.Contains("_playerService.FinishPostRollPreview();", code);
+        Assert.Contains("if (playbackHasEnded && hasNextEpisode && _playingNextAutoPlay)", code);
         Assert.Contains("PlayingNextFinishedHeading.Text", code);
         Assert.Contains("PlayingNextOnDeckScroller.ChangeView", code);
+        Assert.Contains("x:Name=\"PlayingNextHero\"", xaml);
+        Assert.Contains("UpdatePlayingNextLayout(e.Size.Width, e.Size.Height)", code);
+        Assert.Contains("RefreshPlayingNextAutoPlayAsync(presentationGeneration)", code);
+        Assert.Contains("The effective-setting request must never hold", code);
+        Assert.Contains("_playerService.IsPostRollVideoEnded &&", code);
+        Assert.Contains("PlayingNextOverlay.Visibility != Visibility.Visible", code);
     }
 
     [Fact]
@@ -94,6 +103,13 @@ public sealed class MainWindowSourceTests
         Assert.Contains("NotificationUnreadBadge.Value = isOpen ? _notificationUnreadCount : -1", code);
         Assert.Contains("UpdateSidebarPanePresentation", code);
         Assert.Contains("args.Cancel = true", code);
+        Assert.Contains("_routeWantsCompactPane = IsDetailPage(pageType)", code);
+        Assert.Contains("ApplyResponsiveShellLayout", code);
+        Assert.Contains("_currentWindowWidth < 1024", code);
+        Assert.Contains("NavigationViewPaneDisplayMode.LeftMinimal", code);
+        Assert.Contains("NavView.IsPaneToggleButtonVisible = isNarrow", code);
+        Assert.Contains("var shouldOpen = !isNarrow && !_routeWantsCompactPane", code);
+        Assert.Contains("CanExposeAuthenticatedNavigation && !_routeWantsCompactPane", code);
         Assert.Contains("ContentFrame.Content is Views.Admin.AdminShellPage", code);
         Assert.Contains("AdminShell owns both its sidebar and ServerActivity button", code);
     }

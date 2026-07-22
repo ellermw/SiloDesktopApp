@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
@@ -17,6 +18,9 @@ namespace SiloPlayer.Services;
 /// </summary>
 public sealed class HlsProxy : IDisposable
 {
+    private const int CopyBufferSize = 128 * 1024;
+    private static readonly TimeSpan UpstreamIdleTimeout = TimeSpan.FromSeconds(20);
+
     private static readonly Regex PlaylistUriRegex = new(
         "URI=\"(?<uri>[^\"]+)\"",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -52,7 +56,11 @@ public sealed class HlsProxy : IDisposable
                 nameof(remoteManifestUrl));
         }
 
-        _remoteManifestUri = remoteManifestUri;
+        // Match the WebUI's quality-switch contract: every new HLS transport
+        // gets a unique root manifest URL. Reusing /master.m3u8 for the same
+        // session can let a CDN briefly return the previous playlist, causing
+        // its opening 2-second segments to play and then repeat after refresh.
+        _remoteManifestUri = AddManifestCacheBuster(remoteManifestUri);
         _authenticationOrigin = IsSignedNodeUrl(remoteManifestUri) ? null : remoteManifestUri;
         _accessTokenProvider = accessTokenProvider ?? throw new ArgumentNullException(nameof(accessTokenProvider));
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
@@ -189,6 +197,14 @@ public sealed class HlsProxy : IDisposable
                 using var request = new HttpRequestMessage(HttpMethod.Get, remoteUrl);
                 if (!string.IsNullOrWhiteSpace(range) && RangeHeaderValue.TryParse(range, out var parsedRange))
                     request.Headers.Range = parsedRange;
+                if (IsPlaylistUrl(request.RequestUri))
+                {
+                    request.Headers.CacheControl = new CacheControlHeaderValue
+                    {
+                        NoCache = true,
+                        NoStore = true,
+                    };
+                }
 
                 using var response = await _http.SendAsync(
                     request,
@@ -225,7 +241,8 @@ public sealed class HlsProxy : IDisposable
                 var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
                 if (IsPlaylist(effectiveRemoteUri.AbsoluteUri, contentType))
                 {
-                    var playlist = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                    var playlist = await ReadPlaylistWithIdleTimeoutAsync(response.Content, ct)
+                        .ConfigureAwait(false);
                     var rewritten = RewritePlaylist(playlist, effectiveRemoteUri);
                     var body = Encoding.UTF8.GetBytes(rewritten);
                     await WriteResponseAsync(
@@ -253,7 +270,7 @@ public sealed class HlsProxy : IDisposable
                 if (!headOnly)
                 {
                     await using var remoteStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-                    await remoteStream.CopyToAsync(stream, ct).ConfigureAwait(false);
+                    await CopyWithIdleTimeoutAsync(remoteStream, stream, ct).ConfigureAwait(false);
                 }
                 return;
             }
@@ -288,9 +305,80 @@ public sealed class HlsProxy : IDisposable
                 Log($"HTTP error: {ex.Message}; retry {attempt + 1}");
                 await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
             }
+            catch (TimeoutException ex)
+            {
+                // Headers may already be visible to mpv, so the current local
+                // response cannot be replaced safely. Close it promptly; mpv
+                // will request the segment again and the stall watchdog remains
+                // available if the upstream outage persists.
+                Log($"Upstream media body stalled: {ex.Message}");
+                if (responseStarted)
+                    return;
+                if (attempt >= 14)
+                    return;
+                await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+            }
         }
 
         await WriteResponseAsync(stream, 404, "Not Found", "text/plain", null, headOnly, ct).ConfigureAwait(false);
+    }
+
+    private static async Task CopyWithIdleTimeoutAsync(
+        Stream input,
+        Stream output,
+        CancellationToken ct)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
+        try
+        {
+            while (true)
+            {
+                int read;
+                using (var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                {
+                    idleCts.CancelAfter(UpstreamIdleTimeout);
+                    try
+                    {
+                        read = await input.ReadAsync(
+                            buffer.AsMemory(0, CopyBufferSize),
+                            idleCts.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        throw new TimeoutException(
+                            $"No HLS media data arrived for {UpstreamIdleTimeout.TotalSeconds:0} seconds.");
+                    }
+                }
+
+                if (read == 0)
+                    break;
+
+                await output.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+            }
+
+            await output.FlushAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private static async Task<string> ReadPlaylistWithIdleTimeoutAsync(
+        HttpContent content,
+        CancellationToken ct)
+    {
+        using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        idleCts.CancelAfter(UpstreamIdleTimeout);
+        try
+        {
+            return await content.ReadAsStringAsync(idleCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"No complete HLS playlist arrived for {UpstreamIdleTimeout.TotalSeconds:0} seconds.");
+        }
     }
 
     private string? ResolveRemoteUrl(string target)
@@ -467,6 +555,8 @@ public sealed class HlsProxy : IDisposable
 
     private static bool ShouldRetryStatus(HttpStatusCode statusCode) =>
         statusCode is HttpStatusCode.NotFound or
+            HttpStatusCode.RequestTimeout or
+            HttpStatusCode.TooManyRequests or
             HttpStatusCode.BadGateway or
             HttpStatusCode.ServiceUnavailable or
             HttpStatusCode.GatewayTimeout;
@@ -479,6 +569,19 @@ public sealed class HlsProxy : IDisposable
     private static bool IsPlaylist(string url, string contentType) =>
         url.Contains(".m3u8", StringComparison.OrdinalIgnoreCase) ||
         contentType.Contains("mpegurl", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPlaylistUrl(Uri? uri) =>
+        uri?.AbsolutePath.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static Uri AddManifestCacheBuster(Uri manifestUri)
+    {
+        var builder = new UriBuilder(manifestUri);
+        var query = builder.Query.TrimStart('?');
+        var cacheBuster = "silo_v=" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + "-" +
+            Convert.ToHexString(RandomNumberGenerator.GetBytes(6));
+        builder.Query = string.IsNullOrEmpty(query) ? cacheBuster : query + "&" + cacheBuster;
+        return builder.Uri;
+    }
 
     private static async Task<ProxyRequest?> ReadRequestAsync(StreamReader reader, CancellationToken ct)
     {

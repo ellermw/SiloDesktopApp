@@ -11,8 +11,11 @@ namespace SiloPlayer.Controls;
 
 public sealed partial class LandscapeCard : UserControl
 {
+    private double _cardWidth = 315;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _playbackPrefetchCts;
+    private bool _isPointerOver;
+    private bool _isKeyboardFocusWithin;
     public static readonly DependencyProperty MediaItemProperty =
         DependencyProperty.Register(
             nameof(MediaItem),
@@ -26,9 +29,33 @@ public sealed partial class LandscapeCard : UserControl
         set => SetValue(MediaItemProperty, value);
     }
 
+    public static readonly DependencyProperty UsePosterAspectProperty =
+        DependencyProperty.Register(
+            nameof(UsePosterAspect),
+            typeof(bool),
+            typeof(LandscapeCard),
+            new PropertyMetadata(false, OnUsePosterAspectChanged));
+
+    public bool UsePosterAspect
+    {
+        get => (bool)GetValue(UsePosterAspectProperty);
+        set => SetValue(UsePosterAspectProperty, value);
+    }
+
     public LandscapeCard()
     {
         this.InitializeComponent();
+        this.Loaded += (_, _) =>
+        {
+            // HomePage is navigation-cached. Unloaded releases decoded artwork,
+            // but the existing card and its MediaItem are reused when Home is
+            // revisited, so the dependency property does not change again.
+            if (_loadCts == null && BackdropImage.Source == null && MediaItem is { } item)
+            {
+                _loadCts = new CancellationTokenSource();
+                _ = LoadImageAsync(item, _loadCts.Token);
+            }
+        };
         this.Unloaded += (_, _) =>
         {
             try { _loadCts?.Cancel(); } catch { }
@@ -41,6 +68,31 @@ public sealed partial class LandscapeCard : UserControl
         };
     }
 
+    public void SetCardWidth(double width)
+    {
+        _cardWidth = Math.Max(UsePosterAspect ? 96 : 180, width);
+        Width = _cardWidth;
+        RootGrid.Width = _cardWidth;
+        var imageHeight = UsePosterAspect
+            ? MediaItem?.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase) == true
+                ? _cardWidth
+                : _cardWidth * 1.5d
+            : _cardWidth * 9d / 16d;
+        RootGrid.RowDefinitions[0].Height = new GridLength(imageHeight);
+        DismissButton.Width = DismissButton.Height = UsePosterAspect ? 32 : 36;
+        DismissButton.Margin = UsePosterAspect
+            ? new Thickness(0, 0, 10, 10)
+            : new Thickness(0, 0, 12, 12);
+
+        var item = MediaItem;
+        if (item?.PositionSeconds is double position &&
+            item.DurationSeconds is double duration && duration > 0 &&
+            item.ItemSource != "next_up")
+        {
+            ProgressFill.Width = _cardWidth * Math.Clamp(position / duration, 0, 1);
+        }
+    }
+
     private static void OnMediaItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is LandscapeCard card && e.NewValue is MediaItem item)
@@ -49,8 +101,19 @@ public sealed partial class LandscapeCard : UserControl
         }
     }
 
+    private static void OnUsePosterAspectChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is LandscapeCard card && card.RootGrid != null)
+        {
+            card.SetCardWidth(card._cardWidth);
+            if (card.MediaItem != null)
+                card.UpdateContent(card.MediaItem);
+        }
+    }
+
     private void UpdateContent(MediaItem item)
     {
+        SetCardWidth(_cardWidth);
         _loadCts?.Cancel();
         _loadCts = new CancellationTokenSource();
         var ct = _loadCts.Token;
@@ -64,7 +127,11 @@ public sealed partial class LandscapeCard : UserControl
             "next_up" => MediaItemMenu.Surface.NextUp,
             _ => MediaItemMenu.Surface.Default,
         };
-        this.ContextFlyout = MediaItemMenu.Build(item, surface);
+        this.ContextFlyout = MediaItemMenu.Build(
+            item,
+            surface,
+            showCollectionActions: item.ItemSource != "episode_carousel",
+            stateChanged: () => RefreshMenuState(item));
 
         // Show dismiss X button for CW/NU cards — enables quick-dismiss
         // from the home screen without opening a context menu.
@@ -73,14 +140,41 @@ public sealed partial class LandscapeCard : UserControl
         HoverPlayIcon.Glyph = item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase)
             ? "\uE736"
             : "\uE768";
+        var displayTitle = MediaItemDisplayText.BuildTitle(item);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, displayTitle);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            HoverPlayButton,
+            item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase)
+                ? $"Read {displayTitle}"
+                : $"Play {displayTitle}");
+        var isEpisodeCarousel = item.ItemSource == "episode_carousel";
+        HoverPlayButton.Visibility = isEpisodeCarousel ? Visibility.Collapsed : Visibility.Visible;
+        CurrentItemBadge.Visibility = isEpisodeCarousel &&
+            item.Badges?.Contains("now_viewing", StringComparer.OrdinalIgnoreCase) == true
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        CurrentItemBorder.Visibility = CurrentItemBadge.Visibility;
+        EpisodeWatchedBadge.Visibility = isEpisodeCarousel && item.UserState?.Played == true
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
         // B31: Match the webui ContinueWatchingCard hierarchy. For episodes,
         // the series title is the primary heading and the episode context
         // ("Season 1 Episode 1 · Pilot") is the secondary line. Movies fall
         // through to title-as-heading with no subtitle.
         bool hasEpisodeMeta = item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue;
-        if (hasEpisodeMeta && !string.IsNullOrEmpty(item.SeriesTitle))
+        if (item.ItemSource == "episode_carousel")
         {
+            TitleText.Text = item.Title;
+            var metadata = item.EpisodeNumber.HasValue ? $"Episode {item.EpisodeNumber}" : "Episode";
+            if (item.Runtime > 0) metadata += $" · {item.Runtime}m";
+            SubtitleText.Text = metadata;
+            SubtitleText.Visibility = Visibility.Visible;
+            ConfigureEpisodeCarouselText(item);
+        }
+        else if (hasEpisodeMeta && !string.IsNullOrEmpty(item.SeriesTitle))
+        {
+            ResetTextPresentation();
             TitleText.Text = item.SeriesTitle!;
             string epLine = $"Season {item.SeasonNumber} Episode {item.EpisodeNumber}";
             if (!string.IsNullOrEmpty(item.Title) && item.Title != item.SeriesTitle)
@@ -90,13 +184,14 @@ public sealed partial class LandscapeCard : UserControl
         }
         else
         {
+            ResetTextPresentation();
             TitleText.Text = item.Title;
             SubtitleText.Visibility = Visibility.Collapsed;
         }
 
         // Badge pill (e.g. "SEASON PREMIERE") — mirrors WebUI ContinueWatchingCard.
         // Server attaches badge strings to section items; we render the first known one.
-        var badgeLabel = GetBadgeLabel(item);
+        var badgeLabel = isEpisodeCarousel ? null : GetBadgeLabel(item);
         if (badgeLabel != null)
         {
             BadgeText.Text = badgeLabel;
@@ -113,7 +208,7 @@ public sealed partial class LandscapeCard : UserControl
             TimeLeftText.Text = badgeLabel == null ? "Next Episode" : "";
             TimeLeftText.Visibility = badgeLabel == null ? Visibility.Visible : Visibility.Collapsed;
         }
-        else if (item.PositionSeconds.HasValue && item.DurationSeconds.HasValue && item.DurationSeconds.Value > 0)
+        else if (!isEpisodeCarousel && item.PositionSeconds.HasValue && item.DurationSeconds.HasValue && item.DurationSeconds.Value > 0)
         {
             var remainingMinutes = Math.Max(0, (int)Math.Round(
                 (item.DurationSeconds.Value - item.PositionSeconds.Value) / 60));
@@ -122,7 +217,7 @@ public sealed partial class LandscapeCard : UserControl
                 : $"{remainingMinutes} min left";
             TimeLeftText.Visibility = Visibility.Visible;
         }
-        else
+        else if (!isEpisodeCarousel)
         {
             TimeLeftText.Visibility = Visibility.Collapsed;
         }
@@ -134,7 +229,7 @@ public sealed partial class LandscapeCard : UserControl
             progress = Math.Clamp(progress, 0, 1);
 
             ProgressContainer.Visibility = Visibility.Visible;
-            ProgressFill.Width = 315 * progress;
+            ProgressFill.Width = _cardWidth * progress;
         }
         else
         {
@@ -149,6 +244,55 @@ public sealed partial class LandscapeCard : UserControl
         BackdropImage.Opacity = 0;
 
         _ = LoadImageAsync(item, ct);
+    }
+
+    private void ConfigureEpisodeCarouselText(MediaItem item)
+    {
+        var isCurrent = item.Badges?.Contains("now_viewing", StringComparer.OrdinalIgnoreCase) == true;
+        TitleText.Text = item.EpisodeNumber.HasValue ? $"Episode {item.EpisodeNumber}" : "Episode";
+        TitleText.FontSize = 12;
+        TitleText.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
+        TitleText.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
+        SubtitleText.Text = string.IsNullOrWhiteSpace(item.Title) ? TitleText.Text : item.Title;
+        SubtitleText.FontSize = 14;
+        SubtitleText.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+        SubtitleText.Foreground = isCurrent
+            ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"]
+            : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
+        SubtitleText.Visibility = Visibility.Visible;
+        TimeLeftText.Text = item.Runtime > 0 ? $"{item.Runtime}m" : "";
+        TimeLeftText.Visibility = item.Runtime > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void ResetTextPresentation()
+    {
+        TitleText.FontSize = 13;
+        TitleText.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+        TitleText.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
+        SubtitleText.FontSize = 12;
+        SubtitleText.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
+        SubtitleText.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
+        TimeLeftText.FontSize = 12;
+        TimeLeftText.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
+    }
+
+    private void RefreshMenuState(MediaItem item)
+    {
+        if (!ReferenceEquals(MediaItem, item)) return;
+        var surface = item.ItemSource switch
+        {
+            "continue_watching" => MediaItemMenu.Surface.ContinueWatching,
+            "next_up" => MediaItemMenu.Surface.NextUp,
+            _ => MediaItemMenu.Surface.Default,
+        };
+        ContextFlyout = MediaItemMenu.Build(
+            item,
+            surface,
+            showCollectionActions: item.ItemSource != "episode_carousel",
+            stateChanged: () => RefreshMenuState(item));
+        EpisodeWatchedBadge.Visibility = item.ItemSource == "episode_carousel" && item.UserState?.Played == true
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     private async Task EnsureBadgesLoadedAsync(MediaItem item, CancellationToken ct)
@@ -199,8 +343,13 @@ public sealed partial class LandscapeCard : UserControl
         // Current WebUI wide cards use backdrop_url first. Section episode
         // payloads now reserve poster_url for vertical series/season artwork
         // and backdrop_url for the episode still.
-        var usesBackdrop = !string.IsNullOrEmpty(item.BackdropUrl);
+        var usesBackdrop = !UsePosterAspect && !string.IsNullOrEmpty(item.BackdropUrl);
         var imageUrl = usesBackdrop ? item.BackdropUrl : item.PosterUrl;
+        if (string.IsNullOrEmpty(imageUrl) && !string.IsNullOrEmpty(item.BackdropUrl))
+        {
+            imageUrl = item.BackdropUrl;
+            usesBackdrop = true;
+        }
         if (string.IsNullOrEmpty(imageUrl)) return;
 
         try
@@ -225,7 +374,7 @@ public sealed partial class LandscapeCard : UserControl
             // the rendering pipeline ever scales it up.
             var bitmapImage = new BitmapImage
             {
-                DecodePixelWidth = 630,
+                DecodePixelWidth = (int)Math.Ceiling(_cardWidth * 2),
                 DecodePixelType = DecodePixelType.Logical,
                 UriSource = new Uri(diskPath),
             };
@@ -266,6 +415,17 @@ public sealed partial class LandscapeCard : UserControl
         navigationService.Navigate<ItemDetailPage>(MediaItem.ContentId);
     }
 
+    private void OnCardKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key is not (Windows.System.VirtualKey.Enter or Windows.System.VirtualKey.Space)
+            || MediaItem == null)
+            return;
+
+        App.Services.GetRequiredService<NavigationService>()
+            .Navigate<ItemDetailPage>(MediaItem.ContentId);
+        e.Handled = true;
+    }
+
     private void OnPlayTapped(object sender, TappedRoutedEventArgs e)
     {
         e.Handled = true;
@@ -292,35 +452,73 @@ public sealed partial class LandscapeCard : UserControl
         nav.Navigate<ItemDetailPage>(MediaItem.ContentId);
     }
 
-    private void OnTextTapped(object sender, TappedRoutedEventArgs e)
+    private void OnHeadingTapped(object sender, TappedRoutedEventArgs e)
     {
         if (MediaItem == null) return;
         e.Handled = true;
         var nav = App.Services.GetRequiredService<NavigationService>();
-        // For TV episodes, navigate to the series detail page (which has full
-        // cast/crew/poster) rather than the sparse episode detail.
-        var targetId = !string.IsNullOrEmpty(MediaItem.SeriesId)
-            ? MediaItem.SeriesId
-            : MediaItem.ContentId;
-        nav.Navigate<ItemDetailPage>(targetId);
+        var headingIsSeries = !string.IsNullOrWhiteSpace(MediaItem.SeriesId)
+            && !string.IsNullOrWhiteSpace(MediaItem.SeriesTitle)
+            && (MediaItem.SeasonNumber.HasValue && MediaItem.EpisodeNumber.HasValue
+                || MediaItem.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase));
+        nav.Navigate<ItemDetailPage>(headingIsSeries ? MediaItem.SeriesId! : MediaItem.ContentId);
+    }
+
+    private void OnMetadataTapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (MediaItem == null) return;
+        e.Handled = true;
+        var nav = App.Services.GetRequiredService<NavigationService>();
+        var isMangaChapter = MediaItem.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(MediaItem.SeriesId);
+        if (isMangaChapter)
+            nav.Navigate<EbookReaderPage>(new EbookReaderNavigation(MediaItem.ContentId));
+        else
+            nav.Navigate<ItemDetailPage>(MediaItem.ContentId);
     }
 
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
     {
-        CardBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
-            Application.Current.Resources["SurfaceHoverBrush"];
-        AnimateHover(scale: 1.04, borderOpacity: 1.0, dimOpacity: 1.0, playOpacity: 1.0, playScale: 1.0, dismissOpacity: 1.0);
+        _isPointerOver = true;
+        AnimateHover(scale: 1.05, dimOpacity: 1.0, playOpacity: 1.0, playScale: 1.0, dismissOpacity: 1.0);
         QueuePlaybackPrefetch();
     }
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
     {
+        _isPointerOver = false;
         try { _playbackPrefetchCts?.Cancel(); } catch { }
         _playbackPrefetchCts?.Dispose();
         _playbackPrefetchCts = null;
-        CardBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
-            Application.Current.Resources["CardBackgroundBrush"];
-        AnimateHover(scale: 1.0, borderOpacity: 0.0, dimOpacity: 0.0, playOpacity: 0.0, playScale: 0.7, dismissOpacity: 0.0);
+        if (!_isKeyboardFocusWithin)
+            AnimateHover(scale: 1.0, dimOpacity: 0.0, playOpacity: 0.0, playScale: 0.7, dismissOpacity: 0.0);
+    }
+
+    private void OnCardGotFocus(object sender, RoutedEventArgs e)
+    {
+        _isKeyboardFocusWithin = true;
+        AnimateHover(scale: 1.05, dimOpacity: 1.0, playOpacity: 1.0, playScale: 1.0, dismissOpacity: 1.0);
+    }
+
+    private void OnCardLostFocus(object sender, RoutedEventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var focused = XamlRoot == null ? null : FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
+            _isKeyboardFocusWithin = IsDescendantOf(focused, this);
+            if (!_isKeyboardFocusWithin && !_isPointerOver)
+                AnimateHover(scale: 1.0, dimOpacity: 0.0, playOpacity: 0.0, playScale: 0.7, dismissOpacity: 0.0);
+        });
+    }
+
+    private static bool IsDescendantOf(DependencyObject? element, DependencyObject ancestor)
+    {
+        for (var current = element; current != null; current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current))
+        {
+            if (ReferenceEquals(current, ancestor))
+                return true;
+        }
+        return false;
     }
 
     private async void QueuePlaybackPrefetch()
@@ -352,6 +550,13 @@ public sealed partial class LandscapeCard : UserControl
         ContextFlyout?.ShowAt(DismissButton);
     }
 
+    private void DismissButton_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        // Keep the overlay action from bubbling into the backdrop's play tap
+        // or the card's detail-navigation tap. PosterCard uses the same guard.
+        e.Handled = true;
+    }
+
     private void UpdateDismissVisibility()
     {
         if (DismissButton == null) return;
@@ -363,29 +568,32 @@ public sealed partial class LandscapeCard : UserControl
     /// border glow, dark tint overlay, and a centered Play circle that fades
     /// and scales in. Short ease-out curve matching the webui transition timing.
     /// </summary>
-    private void AnimateHover(double scale, double borderOpacity, double dimOpacity, double playOpacity, double playScale, double dismissOpacity = 0)
+    private void AnimateHover(double scale, double dimOpacity, double playOpacity, double playScale, double dismissOpacity = 0)
     {
         var storyboard = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
-        var duration = new Duration(TimeSpan.FromMilliseconds(180));
         var ease = new Microsoft.UI.Xaml.Media.Animation.CubicEase { EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut };
 
-        void Add(DependencyObject target, string prop, double to)
+        void Add(DependencyObject target, string prop, double to, int durationMs)
         {
-            var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation { To = to, Duration = duration, EasingFunction = ease };
+            var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+            {
+                To = to,
+                Duration = new Duration(TimeSpan.FromMilliseconds(durationMs)),
+                EasingFunction = ease,
+            };
             Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(anim, target);
             Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(anim, prop);
             storyboard.Children.Add(anim);
         }
 
-        Add(HoverTransform, "ScaleX", scale);
-        Add(HoverTransform, "ScaleY", scale);
-        Add(HoverBorder, "Opacity", borderOpacity);
-        Add(HoverDim, "Opacity", dimOpacity);
-        Add(HoverPlayButton, "Opacity", playOpacity);
-        Add(HoverPlayButtonTransform, "ScaleX", playScale);
-        Add(HoverPlayButtonTransform, "ScaleY", playScale);
+        Add(HoverTransform, "ScaleX", scale, 300);
+        Add(HoverTransform, "ScaleY", scale, 300);
+        Add(HoverDim, "Opacity", dimOpacity, 150);
+        Add(HoverPlayButton, "Opacity", playOpacity, 200);
+        Add(HoverPlayButtonTransform, "ScaleX", playScale, 200);
+        Add(HoverPlayButtonTransform, "ScaleY", playScale, 200);
         if (DismissButton.Visibility == Visibility.Visible)
-            Add(DismissButton, "Opacity", dismissOpacity);
+            Add(DismissButton, "Opacity", dismissOpacity, 200);
 
         storyboard.Begin();
     }

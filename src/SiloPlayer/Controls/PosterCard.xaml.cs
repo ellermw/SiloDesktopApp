@@ -88,6 +88,21 @@ public sealed partial class PosterCard : UserControl
     public PosterCard()
     {
         this.InitializeComponent();
+        this.Loaded += (_, _) =>
+        {
+            // Cached pages retain their card controls across navigation. Their
+            // Unloaded handler deliberately drops the decoded bitmap, so reload
+            // the unchanged item when the card becomes live again.
+            if (_loadCts == null &&
+                PosterImage.Source == null &&
+                !SuppressImageLoading &&
+                !DeferImageLoading &&
+                MediaItem is { } item)
+            {
+                _loadCts = new CancellationTokenSource();
+                _ = LoadPosterAsync(item, _loadCts.Token);
+            }
+        };
         // When ItemsRepeater recycles the card out of the viewport, Unloaded
         // fires. Cancel any in-flight image download and release the decoded
         // BitmapImage so its pixel data can be garbage-collected instead of
@@ -178,6 +193,7 @@ public sealed partial class PosterCard : UserControl
         // stall in large libraries.
 
         TitleText.Text = MediaItemDisplayText.BuildTitle(item);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, TitleText.Text);
         var secondaryTitle = item.UpcomingEvent is { } upcoming
             ? MediaItemDisplayText.FormatUpcomingSubtitle(upcoming)
             : MediaItemDisplayText.BuildEpisodeTitle(item);
@@ -604,18 +620,31 @@ public sealed partial class PosterCard : UserControl
 
     private void OnCardTapped(object sender, TappedRoutedEventArgs e)
     {
-        if (MediaItem == null) return;
+        if (ActivateCard())
+            e.Handled = true;
+    }
+
+    private void OnCardKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key is not (Windows.System.VirtualKey.Enter or Windows.System.VirtualKey.Space))
+            return;
+        e.Handled = ActivateCard();
+    }
+
+    private bool ActivateCard()
+    {
+        if (MediaItem == null) return false;
 
         if (SelectionMode)
         {
             IsSelected = !IsSelected;
             SelectionToggled?.Invoke(this, EventArgs.Empty);
-            e.Handled = true;
-            return;
+            return true;
         }
 
-        var nav = App.Services.GetRequiredService<NavigationService>();
-        nav.Navigate<ItemDetailPage>(MediaItem.ContentId);
+        App.Services.GetRequiredService<NavigationService>()
+            .Navigate<ItemDetailPage>(MediaItem.ContentId);
+        return true;
     }
 
     // Hover animations are deferred: only fire if the pointer stays over the

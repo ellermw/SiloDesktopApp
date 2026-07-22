@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Controls;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
@@ -12,6 +13,7 @@ public sealed partial class PersonDetailPage : Page
 {
     public PersonDetailViewModel ViewModel { get; }
     private bool _bioExpanded;
+    private double _filmographyCardWidth = 178;
 
     public PersonDetailPage()
     {
@@ -94,17 +96,22 @@ public sealed partial class PersonDetailPage : Page
         AgeBadge.Visibility = string.IsNullOrWhiteSpace(ViewModel.AgeDisplay)
             ? Visibility.Collapsed
             : Visibility.Visible;
-        DatesText.Text = ViewModel.DatesDisplay;
+        BirthDateText.Text = ViewModel.BirthDateDisplay;
+        BirthDateBadge.Visibility = string.IsNullOrWhiteSpace(ViewModel.BirthDateDisplay)
+            ? Visibility.Collapsed : Visibility.Visible;
+        DeathDateText.Text = ViewModel.DeathDateDisplay;
+        DeathDateBadge.Visibility = string.IsNullOrWhiteSpace(ViewModel.DeathDateDisplay)
+            ? Visibility.Collapsed : Visibility.Visible;
 
         // Birthplace
         if (!string.IsNullOrEmpty(person.Birthplace))
         {
             BirthplaceText.Text = person.Birthplace;
-            BirthplaceText.Visibility = Visibility.Visible;
+            BirthplaceBadge.Visibility = Visibility.Visible;
         }
         else
         {
-            BirthplaceText.Visibility = Visibility.Collapsed;
+            BirthplaceBadge.Visibility = Visibility.Collapsed;
         }
 
         // Bio
@@ -145,6 +152,41 @@ public sealed partial class PersonDetailPage : Page
 
         UpdateFilmographyState();
         UpdateFilterTabStyles();
+    }
+
+    private void PersonDetailPage_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var gutter = e.NewSize.Width >= 1024 ? 40d
+            : e.NewSize.Width >= 640 ? 24d
+            : 16d;
+        PersonContentShell.Padding = new Thickness(gutter, e.NewSize.Width >= 640 ? 40 : 32, gutter, 48);
+        PersonSkeletonShell.Padding = new Thickness(gutter, e.NewSize.Width >= 640 ? 40 : 32, gutter, 48);
+        var photoWidth = e.NewSize.Width >= 640 ? 180d : 140d;
+        PersonPhotoBorder.Width = photoWidth;
+        PersonPhotoBorder.Height = photoWidth * 1.5;
+        PersonName.FontSize = e.NewSize.Width >= 640 ? 30 : 24;
+
+        var columns = e.NewSize.Width >= 1280 ? 8
+            : e.NewSize.Width >= 1024 ? 7
+            : e.NewSize.Width >= 768 ? 5
+            : e.NewSize.Width >= 640 ? 4
+            : 3;
+        var innerWidth = Math.Max(320, Math.Min(1400, e.NewSize.Width) - (gutter * 2));
+        _filmographyCardWidth = Math.Max(96, (innerWidth - ((columns - 1) * 12)) / columns);
+        FilmographyGridLayout.MaximumRowsOrColumns = columns;
+        FilmographyGridLayout.MinItemWidth = _filmographyCardWidth;
+        FilmographyGridLayout.MinItemHeight = (_filmographyCardWidth * 1.5) + 56;
+        for (var index = 0; index < ViewModel.Filmography.Count; index++)
+        {
+            if (FilmographyRepeater.TryGetElement(index) is PosterCard card)
+                card.SetCatalogGridLayout(_filmographyCardWidth);
+        }
+    }
+
+    private void FilmographyRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
+    {
+        if (args.Element is PosterCard card)
+            card.SetCatalogGridLayout(_filmographyCardWidth);
     }
 
     private void UpdateFilmographyState()

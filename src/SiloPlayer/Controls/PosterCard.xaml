@@ -8,6 +8,9 @@
     mc:Ignorable="d"
     Width="{StaticResource PosterCardWidth}"
     Height="{StaticResource PosterCardTotalHeight}"
+    IsTabStop="True"
+    UseSystemFocusVisuals="True"
+    KeyDown="OnCardKeyDown"
     PointerEntered="OnPointerEntered"
     PointerExited="OnPointerExited"
     Tapped="OnCardTapped">
@@ -176,6 +179,7 @@
                 BorderBrush="#30FFFFFF"
                 BorderThickness="1"
                 Opacity="0"
+                AutomationProperties.Name="More actions"
                 GotFocus="MoreButton_GotFocus"
                 LostFocus="MoreButton_LostFocus"
                 Click="MoreButton_Click"

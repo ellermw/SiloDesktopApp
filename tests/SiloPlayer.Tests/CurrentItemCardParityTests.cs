@@ -17,7 +17,9 @@ public sealed class CurrentItemCardParityTests
         Assert.DoesNotContain("HoverDim", xaml);
         Assert.DoesNotContain("HoverBorder", xaml);
         Assert.Contains("x:Name=\"MoreButton\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"More actions\"", xaml);
         Assert.Contains("MoreButton_Click", code);
+        Assert.Contains("AutomationProperties.SetName(this, TitleText.Text)", code);
         Assert.Contains("scale: 1.06, translateY: -4.0", code);
     }
 
@@ -89,10 +91,61 @@ public sealed class CurrentItemCardParityTests
         var root = FindRepositoryRoot();
         var code = File.ReadAllText(Path.Combine(
             root, "src", "SiloPlayer", "Controls", "SectionRow.xaml.cs"));
+        var xaml = File.ReadAllText(Path.Combine(
+            root, "src", "SiloPlayer", "Controls", "SectionRow.xaml"));
 
         Assert.Contains("allCoverMedia", code);
         Assert.Contains("item.Type is \"movie\" or \"audiobook\" or \"ebook\"", code);
-        Assert.Contains("allAudiobooks", code);
+        Assert.Contains("ContinuePosterCardTemplate", code);
+        Assert.Contains("UsePosterAspect=\"True\"", xaml);
+        Assert.Contains("item.ItemSource = section.SectionType", code);
+    }
+
+    [Fact]
+    public void ContinueWatchingWideCardMatchesCurrentHoverAndGeometry()
+    {
+        var root = FindRepositoryRoot();
+        var xaml = File.ReadAllText(Path.Combine(
+            root, "src", "SiloPlayer", "Controls", "LandscapeCard.xaml"));
+        var code = File.ReadAllText(Path.Combine(
+            root, "src", "SiloPlayer", "Controls", "LandscapeCard.xaml.cs"));
+
+        Assert.Contains("CornerRadius=\"12\"", xaml);
+        Assert.DoesNotContain("x:Name=\"HoverBorder\"", xaml);
+        Assert.DoesNotContain("Bottom gradient overlay", xaml);
+        Assert.Contains("scale: 1.05", code);
+        Assert.Contains("OnCardGotFocus", code);
+        Assert.Contains("ScaleX\", scale, 300", code);
+        Assert.Contains("HoverDim, \"Opacity\", dimOpacity, 150", code);
+        Assert.Contains("AutomationProperties.Name=\"More actions\"", xaml);
+        Assert.Contains("var displayTitle = MediaItemDisplayText.BuildTitle(item)", code);
+        Assert.Contains("$\"Play {displayTitle}\"", code);
+        Assert.Contains("Tapped=\"DismissButton_Tapped\"", xaml);
+        Assert.Contains("private void DismissButton_Tapped", code);
+    }
+
+    [Fact]
+    public void CardActionMenuMatchesCurrentWebModelAndAdminGate()
+    {
+        var root = FindRepositoryRoot();
+        var code = File.ReadAllText(Path.Combine(
+            root, "src", "SiloPlayer", "Controls", "MediaItemMenu.cs"));
+
+        Assert.Contains("AuthorizationPolicy.IsActingAdmin(authService)", code);
+        Assert.Contains("item.UserState != null", code);
+        Assert.Contains("item.Type is \"movie\" or \"episode\" or \"audiobook\"", code);
+        Assert.Contains("PlayAsync(item.ContentId, fromStart: true)", code);
+        Assert.Contains("View Play History", code);
+        Assert.Contains("ShowRefreshMetadataDialogAsync", code);
+        Assert.Contains("progress_updated_at = item.ProgressUpdatedAt", code);
+        Assert.DoesNotContain("AuthorizationPolicy.CanCurateMetadata(authService)", code);
+
+        var restart = code.IndexOf("Play from Beginning", StringComparison.Ordinal);
+        var watched = code.IndexOf("GetWatchedActionLabel", StringComparison.Ordinal);
+        var history = code.IndexOf("View Play History", StringComparison.Ordinal);
+        var dismiss = code.IndexOf("var canDismiss", StringComparison.Ordinal);
+        Assert.True(restart >= 0 && restart < watched);
+        Assert.True(watched < history && history < dismiss);
     }
 
     [Fact]

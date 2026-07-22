@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 
 namespace SiloPlayer.Services;
@@ -11,9 +13,12 @@ public sealed class MpvVideoWindow : IDisposable
 {
     private IntPtr _hwnd;
     private IntPtr _parentHwnd;
-    private GCHandle _wndProcHandle;
     private bool _disposed;
     private const string ClassName = "SiloMpvHost";
+    private const int ErrorClassAlreadyExists = 1410;
+    private static readonly ConcurrentDictionary<IntPtr, MpvVideoWindow> s_windows = new();
+    private static readonly WndProcDelegate s_wndProc = StaticWndProc;
+    private static readonly object s_classRegistrationLock = new();
     private static bool _classRegistered;
 
     // Win32 constants
@@ -108,6 +113,9 @@ public sealed class MpvVideoWindow : IDisposable
     [DllImport("user32.dll")]
     private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT lpEventTrack);
 
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct TRACKMOUSEEVENT
     {
@@ -132,6 +140,25 @@ public sealed class MpvVideoWindow : IDisposable
     private bool _cursorHidden;
 
     private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    private static IntPtr StaticWndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+    {
+        if (!s_windows.TryGetValue(hWnd, out var window))
+            return DefWindowProcW(hWnd, msg, wParam, lParam);
+
+        try
+        {
+            return window.WndProcInstance(hWnd, msg, wParam, lParam);
+        }
+        catch (Exception ex)
+        {
+            // Managed exceptions must never cross the native callback boundary.
+            SiloPlayer.Core.Services.LocalLog.AppendLine(
+                "native_window_error.txt",
+                $"WndProc message 0x{msg:X} failed: {ex}");
+            return DefWindowProcW(hWnd, msg, wParam, lParam);
+        }
+    }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct WNDCLASSEX
@@ -179,24 +206,29 @@ public sealed class MpvVideoWindow : IDisposable
     {
         _parentHwnd = parentHwnd;
 
-        if (!_classRegistered)
+        lock (s_classRegistrationLock)
         {
-            WndProcDelegate wndProc = WndProcInstance;
-            _wndProcHandle = GCHandle.Alloc(wndProc);
-
+            if (!_classRegistered)
+            {
             var wc = new WNDCLASSEX
             {
                 cbSize = Marshal.SizeOf<WNDCLASSEX>(),
                 style = 0x0008, // CS_DBLCLKS — enable double-click messages
-                lpfnWndProc = Marshal.GetFunctionPointerForDelegate(wndProc),
+                lpfnWndProc = Marshal.GetFunctionPointerForDelegate(s_wndProc),
                 hInstance = GetModuleHandleW(null),
                 hCursor = LoadCursorW(IntPtr.Zero, IDC_ARROW), // Normal arrow cursor
                 hbrBackground = IntPtr.Zero, // Black background (mpv will paint over)
                 lpszClassName = ClassName
             };
 
-            RegisterClassExW(ref wc);
-            _classRegistered = true;
+            if (RegisterClassExW(ref wc) == 0)
+            {
+                var error = Marshal.GetLastWin32Error();
+                if (error != ErrorClassAlreadyExists)
+                    throw new Win32Exception(error, "Failed to register the mpv video window class.");
+            }
+                _classRegistered = true;
+            }
         }
 
         // Create an OWNED popup window — owned windows always stay above their owner.
@@ -204,7 +236,7 @@ public sealed class MpvVideoWindow : IDisposable
         // Passing parentHwnd as hWndParent with WS_POPUP creates ownership (not child).
         GetWindowRect(parentHwnd, out var parentRect);
 
-        _hwnd = CreateWindowExW(
+        var hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW,
             ClassName,
             "Silo Player",
@@ -216,19 +248,34 @@ public sealed class MpvVideoWindow : IDisposable
             IntPtr.Zero,
             GetModuleHandleW(null),
             IntPtr.Zero);
+
+        if (hwnd == IntPtr.Zero)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Failed to create the mpv video window.");
+
+        _hwnd = hwnd;
+        s_windows[hwnd] = this;
     }
 
     public void Show()
     {
         if (_hwnd == IntPtr.Zero) return;
         _isMiniBar = false;
-        MatchParentPosition();
+        if (_isPictureInPicture)
+            EnterPictureInPicture();
+        else if (_isFullscreen)
+            PositionFullscreen(preserveZOrder: true);
+        else
+            MatchParentPosition();
         ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
     }
 
     public void EnterFullscreen()
     {
         if (_hwnd == IntPtr.Zero) return;
+        // Fullscreen can be requested directly from the popup while it is in
+        // picture-in-picture. Drop the topmost PiP contract first so the
+        // fullscreen window cannot remain above unrelated applications.
+        ExitPictureInPicture();
         GetWindowRect(_hwnd, out _savedRect);
         var monitor = MonitorFromWindow(_hwnd, 2 /*MONITOR_DEFAULTTONEAREST*/);
         var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
@@ -253,14 +300,22 @@ public sealed class MpvVideoWindow : IDisposable
         {
             if (_isFullscreen && _hwnd != IntPtr.Zero)
             {
-                SetWindowPos(_hwnd, HWND_TOP,
-                    _fullscreenRect.Left, _fullscreenRect.Top,
-                    _fullscreenRect.Right - _fullscreenRect.Left,
-                    _fullscreenRect.Bottom - _fullscreenRect.Top,
-                    SWP_SHOWWINDOW);
-                SetForegroundWindow(_hwnd);
+                PositionFullscreen(preserveZOrder: true);
             }
         });
+    }
+
+    private void PositionFullscreen(bool preserveZOrder)
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        var flags = SWP_NOACTIVATE | SWP_SHOWWINDOW;
+        if (preserveZOrder)
+            flags |= SWP_NOZORDER;
+        SetWindowPos(_hwnd, preserveZOrder ? IntPtr.Zero : HWND_TOP,
+            _fullscreenRect.Left, _fullscreenRect.Top,
+            _fullscreenRect.Right - _fullscreenRect.Left,
+            _fullscreenRect.Bottom - _fullscreenRect.Top,
+            flags);
     }
 
     private RECT _fullscreenRect;
@@ -309,6 +364,31 @@ public sealed class MpvVideoWindow : IDisposable
             SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
 
+    /// <summary>
+    /// Matches the WebUI post-roll preview: a 320x180 logical-pixel video in
+    /// the top-left of the app client area with a 24-pixel inset. Positioning
+    /// relative to the client area keeps the native popup aligned below the
+    /// Windows title bar at every display scale.
+    /// </summary>
+    public void EnterPostRollPreview()
+    {
+        if (_hwnd == IntPtr.Zero || _parentHwnd == IntPtr.Zero) return;
+
+        ExitPictureInPicture();
+        if (_isFullscreen)
+            ExitFullscreen();
+
+        GetClientRect(_parentHwnd, out var client);
+        var topLeft = new POINT { X = client.Left, Y = client.Top };
+        ClientToScreen(_parentHwnd, ref topLeft);
+
+        var scale = Math.Max(1d, GetDpiForWindow(_parentHwnd) / 96d);
+        var margin = (int)Math.Round(24 * scale);
+        var width = (int)Math.Round(320 * scale);
+        var height = (int)Math.Round(180 * scale);
+        PositionAt(topLeft.X + margin, topLeft.Y + margin, width, height);
+    }
+
     public void EnterPictureInPicture()
     {
         if (_hwnd == IntPtr.Zero) return;
@@ -317,9 +397,10 @@ public sealed class MpvVideoWindow : IDisposable
         var monitor = MonitorFromWindow(_hwnd, 2);
         var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
         GetMonitorInfoW(monitor, ref info);
-        const int width = 480;
-        const int height = 270;
-        const int margin = 24;
+        var scale = Math.Max(1d, GetDpiForWindow(_hwnd) / 96d);
+        var width = (int)Math.Round(480 * scale);
+        var height = (int)Math.Round(270 * scale);
+        var margin = (int)Math.Round(24 * scale);
         SetWindowPos(_hwnd, HWND_TOPMOST,
             info.rcWork.Right - width - margin,
             info.rcWork.Bottom - height - margin,
@@ -447,6 +528,13 @@ public sealed class MpvVideoWindow : IDisposable
         }
         else if (msg == WM_LBUTTONDBLCLK)
         {
+            // Windows replaces the second button-down with WM_LBUTTONDBLCLK.
+            // Seed the matching button-up as a second clean video click so a
+            // double-click preserves play/pause while toggling fullscreen.
+            int x = loWord(lParam), y = hiWord(lParam);
+            _lbuttonDownTicks = Environment.TickCount64;
+            _lbuttonDownX = x;
+            _lbuttonDownY = y;
             _mpv?.SendKeypress("MBTN_LEFT_DBL");
         }
         else if (msg == WM_RBUTTONUP)
@@ -461,12 +549,25 @@ public sealed class MpvVideoWindow : IDisposable
         else if (msg == WM_KEYDOWN)
         {
             int vk = (int)wParam & 0xFF;
-            // Escape — our custom handling
-            if (vk == 0x1B) { EscapeRequested?.Invoke(); return IntPtr.Zero; }
+            bool isRepeat = (lParam.ToInt64() & (1L << 30)) != 0;
+            // Browser parity: Escape exits fullscreen, but in windowed mode it
+            // belongs to the OSC so an open audio/subtitle/quality/chapter menu
+            // closes without terminating playback.
+            if (vk == 0x1B)
+            {
+                if (!isRepeat)
+                {
+                    if (_isFullscreen)
+                        EscapeRequested?.Invoke();
+                    else
+                        _mpv?.SendKeypress("ESC");
+                }
+                return IntPtr.Zero;
+            }
             // N — minimize
-            if (vk == 0x4E) { MinimizeRequested?.Invoke(); return IntPtr.Zero; }
+            if (vk == 0x4E) { if (!isRepeat) MinimizeRequested?.Invoke(); return IntPtr.Zero; }
             // F — fullscreen toggle (handled by host, not mpv)
-            if (vk == 0x46) { FullscreenToggleRequested?.Invoke(); return IntPtr.Zero; }
+            if (vk == 0x46) { if (!isRepeat) FullscreenToggleRequested?.Invoke(); return IntPtr.Zero; }
             // Forward all other keys to mpv
             var keyName = VkToMpvKey(vk);
             if (keyName != null) _mpv?.SendKeypress(keyName);
@@ -505,10 +606,10 @@ public sealed class MpvVideoWindow : IDisposable
         _disposed = true;
         if (_hwnd != IntPtr.Zero)
         {
-            DestroyWindow(_hwnd);
+            var hwnd = _hwnd;
             _hwnd = IntPtr.Zero;
+            s_windows.TryRemove(hwnd, out _);
+            DestroyWindow(hwnd);
         }
-        if (_wndProcHandle.IsAllocated)
-            _wndProcHandle.Free();
     }
 }

@@ -33,6 +33,12 @@ public sealed partial class NotificationsPage : Page
         UpdateVisuals();
     }
 
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        ViewModel.CancelPendingLoad();
+        base.OnNavigatedFrom(e);
+    }
+
     private async void Filter_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string filter }) return;

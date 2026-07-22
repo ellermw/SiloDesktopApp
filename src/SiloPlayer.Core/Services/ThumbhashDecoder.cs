@@ -2,6 +2,8 @@ namespace SiloPlayer.Core.Services;
 
 public record ThumbhashImage(int Width, int Height, byte[] Rgba);
 
+public readonly record struct ThumbhashAmbientColor(byte R, byte G, byte B);
+
 /// <summary>
 /// Thumbhash decoder — ports the reference JavaScript implementation to C#.
 /// https://github.com/evanw/thumbhash
@@ -12,6 +14,68 @@ public record ThumbhashImage(int Width, int Height, byte[] Rgba);
 /// </summary>
 public static class ThumbhashDecoder
 {
+    /// <summary>
+    /// Returns the guarded average color used by the current WebUI ambient-glow
+    /// treatment. The color comes from the thumbhash DC components, so it is
+    /// available without decoding the placeholder bitmap.
+    /// </summary>
+    public static ThumbhashAmbientColor? GetAmbientColor(string? base64Hash)
+    {
+        if (string.IsNullOrWhiteSpace(base64Hash))
+            return null;
+
+        try
+        {
+            var hash = Convert.FromBase64String(base64Hash);
+            if (hash.Length < 5)
+                return null;
+
+            int header24 = hash[0] | (hash[1] << 8) | (hash[2] << 16);
+            double l = (header24 & 63) / 63d;
+            double p = ((header24 >> 6) & 63) / 31.5d - 1d;
+            double q = ((header24 >> 12) & 63) / 31.5d - 1d;
+            double b = Math.Clamp(l - (2d / 3d * p), 0d, 1d);
+            double r = Math.Clamp((3d * l - b + q) / 2d, 0d, 1d);
+            double g = Math.Clamp(r - q, 0d, 1d);
+
+            int rr = (int)Math.Round(r * 255);
+            int gg = (int)Math.Round(g * 255);
+            int bb = (int)Math.Round(b * 255);
+            double luminance = 0.2126d * r + 0.7152d * g + 0.0722d * b;
+
+            if (luminance < 0.08d)
+            {
+                double boost = 0.08d / Math.Max(luminance, 0.001d);
+                rr = Math.Min(255, (int)Math.Round(rr * boost));
+                gg = Math.Min(255, (int)Math.Round(gg * boost));
+                bb = Math.Min(255, (int)Math.Round(bb * boost));
+            }
+            else if (luminance > 0.85d)
+            {
+                double factor = 0.85d / luminance;
+                rr = (int)Math.Round(rr * factor);
+                gg = (int)Math.Round(gg * factor);
+                bb = (int)Math.Round(bb * factor);
+            }
+
+            int max = Math.Max(rr, Math.Max(gg, bb));
+            int min = Math.Min(rr, Math.Min(gg, bb));
+            if (max > 30 && (max - min) / (double)max < 0.15d)
+            {
+                double average = (rr + gg + bb) / 3d;
+                rr = Math.Clamp((int)Math.Round(average + (rr - average) * 2d), 0, 255);
+                gg = Math.Clamp((int)Math.Round(average + (gg - average) * 2d), 0, 255);
+                bb = Math.Clamp((int)Math.Round(average + (bb - average) * 2d), 0, 255);
+            }
+
+            return new ThumbhashAmbientColor((byte)rr, (byte)gg, (byte)bb);
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
     public static ThumbhashImage Decode(string base64Hash)
     {
         var hash = Convert.FromBase64String(base64Hash);

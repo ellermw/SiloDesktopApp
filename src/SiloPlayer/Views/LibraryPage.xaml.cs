@@ -111,6 +111,8 @@ public sealed partial class LibraryPage : Page,
     private readonly HashSet<string> _selectedGenres = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedOriginalLanguages = new(StringComparer.OrdinalIgnoreCase);
     private bool _recommendedLoaded;
+    private bool _recommendationsLoading;
+    private CancellationTokenSource? _recommendationsLoadCts;
     private bool _collectionsLoaded;
     private bool _libraryCatalogLoaded;
     private int _recommendationsVersion;
@@ -121,6 +123,7 @@ public sealed partial class LibraryPage : Page,
     private DispatcherTimer? _yearDebounceTimer;
     private DispatcherTimer? _advancedFilterDebounceTimer;
     private DispatcherTimer? _audiobookGroupSearchTimer;
+    private readonly DispatcherTimer _collectionsResizeTimer;
     private CancellationTokenSource? _audiobookGroupLoadCts;
     private string _currentAudiobookAxis = "books";
     private int _audiobookGroupsOffset;
@@ -163,6 +166,13 @@ public sealed partial class LibraryPage : Page,
         _visibleRangeDebounceTimer.Tick += VisibleRangeDebounceTimer_Tick;
         _cardBindTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
         _cardBindTimer.Tick += CardBindTimer_Tick;
+        _collectionsResizeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+        _collectionsResizeTimer.Tick += (_, _) =>
+        {
+            _collectionsResizeTimer.Stop();
+            if (_isNavigated && _collectionsLoaded && CollectionsPanel.Visibility == Visibility.Visible)
+                BuildCollectionCards();
+        };
 
         _suppressFilterEvents = true;
         OrderComboBox.SelectedIndex = 1;
@@ -279,6 +289,7 @@ public sealed partial class LibraryPage : Page,
             var sameLibrary = _activeLibraryId == library.Id && ViewModel.Library?.Id == library.Id;
             if (!sameLibrary)
             {
+                ResetRecommendedContent();
                 ViewModel.CancelCatalogLoads();
                 ClearVirtualCards();
                 _currentFirstRow = 0;
@@ -410,6 +421,8 @@ public sealed partial class LibraryPage : Page,
         _visibleRangeDebounceTimer?.Stop();
         _cardBindTimer?.Stop();
         _audiobookGroupSearchTimer?.Stop();
+        _collectionsResizeTimer.Stop();
+        CancelIncompleteRecommendedContent();
         _audiobookGroupLoadCts?.Cancel();
         _audiobookGroupLoadCts?.Dispose();
         _audiobookGroupLoadCts = null;
@@ -735,9 +748,10 @@ public sealed partial class LibraryPage : Page,
         };
         activeTab.Style = (Style)Resources["PillTabButtonActiveStyle"];
 
-        // Toggle panel visibility
-        if (tag == "Library")
-            ReleaseRecommendedContent();
+        // Preserve a completed recommendation surface so returning to the tab
+        // is instant. Only incomplete work is canceled when leaving it.
+        if (tag != "Recommended")
+            CancelIncompleteRecommendedContent();
 
         FilterBar.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
         LibraryContentArea.Visibility = tag == "Library" && _currentAudiobookAxis == "books" ? Visibility.Visible : Visibility.Collapsed;
@@ -972,7 +986,7 @@ public sealed partial class LibraryPage : Page,
         ViewModel.UseAdvancedRules = false;
         GuidedFiltersScroll.Visibility = Visibility.Visible;
         AdvancedFiltersScroll.Visibility = Visibility.Collapsed;
-        GuidedFilterModeButton.Style = (Style)Resources["PrimaryButtonStyle"];
+            GuidedFilterModeButton.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         AdvancedFilterModeButton.Style = (Style)Resources["OutlineButtonStyle"];
         await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
         await FillViewportAsync();
@@ -991,7 +1005,7 @@ public sealed partial class LibraryPage : Page,
         GuidedFiltersScroll.Visibility = Visibility.Collapsed;
         AdvancedFiltersScroll.Visibility = Visibility.Visible;
         GuidedFilterModeButton.Style = (Style)Resources["OutlineButtonStyle"];
-        AdvancedFilterModeButton.Style = (Style)Resources["PrimaryButtonStyle"];
+            AdvancedFilterModeButton.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
         await FillViewportAsync();
         UpdateActiveFilterBadges();
@@ -2371,6 +2385,9 @@ public sealed partial class LibraryPage : Page,
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
+        if (tag == _currentTab)
+            return;
+
         ShowTab(tag);
 
         if (tag == "Recommended" && !_recommendedLoaded)
@@ -2431,10 +2448,13 @@ public sealed partial class LibraryPage : Page,
         }
     }
 
-    private void ReleaseRecommendedContent()
+    private void ResetRecommendedContent()
     {
         _recommendationsVersion++;
-        if (!_recommendedLoaded) return;
+        _recommendationsLoadCts?.Cancel();
+        _recommendationsLoadCts?.Dispose();
+        _recommendationsLoadCts = null;
+        _recommendationsLoading = false;
 
         RecommendedHeroCarousel.ItemsSource = null;
         RecommendedHeroCarousel.Visibility = Visibility.Collapsed;
@@ -2452,9 +2472,23 @@ public sealed partial class LibraryPage : Page,
         _recommendedLoaded = false;
     }
 
+    private void CancelIncompleteRecommendedContent()
+    {
+        if (!_recommendationsLoading)
+            return;
+
+        ResetRecommendedContent();
+    }
+
     private async Task LoadRecommendationsAsync()
     {
         var version = ++_recommendationsVersion;
+        _recommendationsLoadCts?.Cancel();
+        _recommendationsLoadCts?.Dispose();
+        var loadCts = new CancellationTokenSource();
+        _recommendationsLoadCts = loadCts;
+        var cancellationToken = loadCts.Token;
+        _recommendationsLoading = true;
         _recommendedLoaded = true;
         // Current WebUI leaves this region empty while the layout request is
         // pending, then renders per-slot skeletons once the layout arrives.
@@ -2477,7 +2511,7 @@ public sealed partial class LibraryPage : Page,
         {
             var catalogApi = App.Services.GetRequiredService<CatalogApi>();
             var libraryId = ViewModel.Library?.Id ?? 0;
-            var layoutResponse = await catalogApi.GetLibraryLayoutAsync(libraryId);
+            var layoutResponse = await catalogApi.GetLibraryLayoutAsync(libraryId, cancellationToken);
             if (version != _recommendationsVersion || _currentTab != "Recommended")
                 return;
 
@@ -2506,10 +2540,10 @@ public sealed partial class LibraryPage : Page,
             using var gate = new SemaphoreSlim(4, 4);
             var tasks = layoutResponse.Sections.Select(async layout =>
             {
-                await gate.WaitAsync();
+                await gate.WaitAsync(cancellationToken);
                 try
                 {
-                    var response = await catalogApi.GetLibrarySectionItemsAsync(libraryId, layout.Id);
+                    var response = await catalogApi.GetLibrarySectionItemsAsync(libraryId, layout.Id, cancellationToken);
                     if (version != _recommendationsVersion || _currentTab != "Recommended") return;
                     var section = response.Section;
 
@@ -2589,6 +2623,11 @@ public sealed partial class LibraryPage : Page,
             if (version == _recommendationsVersion && _currentTab == "Recommended")
                 await LoadPinnedCollectionRowsAsync(catalogApi, libraryId, version);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Leaving the tab or page cancels incomplete discovery work. A
+            // completed recommendation surface is retained for instant return.
+        }
         catch (Exception ex)
         {
             if (version != _recommendationsVersion)
@@ -2599,6 +2638,15 @@ public sealed partial class LibraryPage : Page,
             RecommendedHeroSkeleton.Visibility = Visibility.Collapsed;
             RecommendedError.Text = $"Failed to load recommendations: {ex.Message}";
             RecommendedErrorPanel.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            if (ReferenceEquals(_recommendationsLoadCts, loadCts))
+            {
+                _recommendationsLoadCts.Dispose();
+                _recommendationsLoadCts = null;
+                _recommendationsLoading = false;
+            }
         }
     }
 
@@ -2968,7 +3016,8 @@ public sealed partial class LibraryPage : Page,
             return;
 
         _collectionCardWidth = nextWidth;
-        BuildCollectionCards();
+        _collectionsResizeTimer.Stop();
+        _collectionsResizeTimer.Start();
     }
 
     private void BuildCollectionSkeletons()

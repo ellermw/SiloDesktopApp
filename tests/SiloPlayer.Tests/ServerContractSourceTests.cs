@@ -9,18 +9,8 @@ public sealed class ServerContractSourceTests
     public void TrackedFileAndDirectoryNamesUseSiloBranding()
     {
         var root = FindRepositoryRoot();
-        var startInfo = new System.Diagnostics.ProcessStartInfo("git", "ls-files")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        using var process = System.Diagnostics.Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Failed to start git.");
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, error);
+        var output = TryListTrackedFiles(root)
+            ?? string.Join('\n', EnumerateProjectSourcePaths(root));
 
         var brandedPaths = output
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
@@ -29,6 +19,52 @@ public sealed class ServerContractSourceTests
             .ToArray();
 
         Assert.Empty(brandedPaths);
+    }
+
+    private static string? TryListTrackedFiles(string root)
+    {
+        try
+        {
+            var startInfo = new System.Diagnostics.ProcessStartInfo("git", "ls-files")
+            {
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var process = System.Diagnostics.Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Failed to start git.");
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            Assert.True(process.ExitCode == 0, error);
+            return output;
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+    }
+
+    private static IEnumerable<string> EnumerateProjectSourcePaths(string root)
+    {
+        string[] topLevelDirectories = ["src", "tests", "installer", "libs"];
+        foreach (var directory in topLevelDirectories.Select(name => Path.Combine(root, name)).Where(Directory.Exists))
+        {
+            foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(root, path);
+                if (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    .Any(segment => segment is "bin" or "obj" or "output" or "publish"))
+                    continue;
+                yield return relative;
+            }
+        }
+
+        foreach (var file in new[] { "README.md", "LICENSE", "SiloPlayer.sln", ".gitignore" })
+        {
+            if (File.Exists(Path.Combine(root, file)))
+                yield return file;
+        }
     }
 
     [Fact]

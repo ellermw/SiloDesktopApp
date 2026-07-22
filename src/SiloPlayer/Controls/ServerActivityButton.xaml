@@ -77,7 +77,16 @@
                         <Setter Property="CornerRadius" Value="16" />
                     </Style>
                 </Flyout.FlyoutPresenterStyle>
-                <StackPanel x:Name="PopoverRoot" Width="320" />
+                <!-- Current WebUI caps the activity body at 400px and scrolls
+                     it. Without this bound a large accepted-scan queue can
+                     grow the flyout to nearly the full window height. -->
+                <ScrollViewer
+                    Width="320"
+                    MaxHeight="400"
+                    VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="PopoverRoot" Width="320" />
+                </ScrollViewer>
             </Flyout>
         </Button.Flyout>
     </Button>

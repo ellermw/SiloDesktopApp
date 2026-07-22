@@ -38,6 +38,9 @@ public sealed partial class MainWindow : Window
     private readonly ThemeService _themeService;
     private bool _notificationsAvailable = true;
     private int _notificationUnreadCount;
+    private bool _routeWantsCompactPane;
+    private bool _isNarrowShell;
+    private double _currentWindowWidth = 1280;
 
     public MainWindow()
     {
@@ -135,10 +138,11 @@ public sealed partial class MainWindow : Window
         _authService.ProfileVerificationRequired += OnProfileVerificationRequired;
         _authService.CredentialStoreFailed += OnCredentialStoreFailed;
 
-        // Playing Next cinematic overlay — fires when an episode ends with
-        // another episode queued. PlayerOverlay used to own this but its
+        // Playing Next cinematic overlay — enters during the final 30 seconds
+        // of a series episode and marks true EOF separately. PlayerOverlay used to own this but its
         // Activate() is never called, so the subscription lives here now.
         _playerService.ShowPlayingNextRequested += OnShowPlayingNextRequested;
+        _playerService.PostRollReturnRequested += OnPostRollReturnRequested;
 
         // Keep native video window matched to main window size
         this.SizeChanged += OnWindowSizeChanged;
@@ -155,7 +159,32 @@ public sealed partial class MainWindow : Window
 
     private void OnWindowSizeChanged(object sender, WindowSizeChangedEventArgs e)
     {
+        _currentWindowWidth = e.Size.Width;
+        ApplyResponsiveShellLayout();
         _playerService.HandleWindowResize();
+        UpdatePlayingNextLayout(e.Size.Width, e.Size.Height);
+    }
+
+    private void ApplyResponsiveShellLayout()
+    {
+        var isNarrow = _currentWindowWidth < 1024;
+        _isNarrowShell = isNarrow;
+
+        // Layout.tsx hides the fixed desktop sidebar below Tailwind's lg
+        // breakpoint and exposes navigation through a mobile menu. WinUI's
+        // LeftMinimal mode is the native equivalent: content receives the
+        // full window width and the pane opens as an overlay from its toggle.
+        NavView.PaneDisplayMode = isNarrow
+            ? NavigationViewPaneDisplayMode.LeftMinimal
+            : NavigationViewPaneDisplayMode.Left;
+        NavView.IsPaneToggleButtonVisible = isNarrow;
+
+        if (!NavView.IsPaneVisible)
+            return;
+
+        var shouldOpen = !isNarrow && !_routeWantsCompactPane;
+        NavView.IsPaneOpen = shouldOpen;
+        UpdateSidebarPanePresentation(shouldOpen);
     }
 
     private void OnAppWindowChanged(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args)
@@ -178,6 +207,7 @@ public sealed partial class MainWindow : Window
         _authService.ProfileVerificationRequired -= OnProfileVerificationRequired;
         _authService.CredentialStoreFailed -= OnCredentialStoreFailed;
         _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
+        _playerService.PostRollReturnRequested -= OnPostRollReturnRequested;
         this.SizeChanged -= OnWindowSizeChanged;
         if (AppWindow != null) AppWindow.Changed -= OnAppWindowChanged;
         _navigationService.Navigated -= OnNavigated_UpdateWindowTitle;
@@ -191,14 +221,31 @@ public sealed partial class MainWindow : Window
     private DispatcherTimer? _playingNextTimer;
     private int _playingNextRemaining;
     private bool _playingNextAutoPlay = true;
+    private long _playingNextPresentationGeneration;
     private const int PlayingNextCountdownSeconds = 10;
     private const string AutoPlayNextSettingKey = "playback.auto_play_next";
 
-    private void OnShowPlayingNextRequested()
+    private void OnShowPlayingNextRequested(bool videoEnded)
     {
-        DispatcherQueue.TryEnqueue(async () =>
+        DispatcherQueue.TryEnqueue(() =>
         {
+            // The early post-roll surface can already be visible when true EOF
+            // arrives. In that case only transition the preview/countdown state;
+            // do not rebuild the artwork and On Deck data.
+            if (videoEnded && PlayingNextOverlay.Visibility == Visibility.Visible)
+            {
+                _playerService.FinishPostRollPreview();
+                UpdatePlayingNextAutoPlayVisuals();
+                if (!string.IsNullOrWhiteSpace(_playerService.NextEpisodeContentId) &&
+                    _playingNextAutoPlay)
+                {
+                    StartPlayingNextCountdown();
+                }
+                return;
+            }
+
             var hasNextEpisode = !string.IsNullOrWhiteSpace(_playerService.NextEpisodeContentId);
+            var presentationGeneration = Interlocked.Increment(ref _playingNextPresentationGeneration);
             var title = _playerService.NextEpisodeTitle ?? "Next episode";
             var series = _playerService.NextEpisodeSeriesTitle;
             var overview = _playerService.NextEpisodeOverview ?? "";
@@ -229,7 +276,7 @@ public sealed partial class MainWindow : Window
             PlayingNextOnDeckSection.Visibility = Visibility.Collapsed;
             _ = LoadPlayingNextOnDeckAsync();
 
-            _playingNextAutoPlay = await GetPlayingNextAutoPlayAsync();
+            var playbackHasEnded = videoEnded || _playerService.IsPostRollVideoEnded;
             _playingNextRemaining = PlayingNextCountdownSeconds;
             PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
             PlayingNextCountdownRing.Value = _playingNextRemaining;
@@ -237,21 +284,35 @@ public sealed partial class MainWindow : Window
             UpdatePlayingNextAutoPlayVisuals();
             PlayingNextOverlay.Visibility = Visibility.Visible;
 
-            // Post-roll starts only after mpv reports true media end. Move the
-            // finished player to the mini bar while the Up Next card owns the
-            // countdown, matching the user's "after playback ends" contract.
-            if (_playerService.State == PlayerState.Expanded || _playerService.State == PlayerState.Fullscreen)
-            {
-                _playerService.Minimize();
-            }
+            if (playbackHasEnded)
+                _playerService.FinishPostRollPreview();
+            else
+                _playerService.EnterPostRollPreview();
 
-            if (hasNextEpisode && _playingNextAutoPlay)
+            // Match the current WebUI: entering post-roll early does not start
+            // autoplay while the episode is still visibly playing.
+            if (playbackHasEnded && hasNextEpisode && _playingNextAutoPlay)
                 StartPlayingNextCountdown();
 
             if (hasNextEpisode)
                 PlayingNextPlayNowButton.Focus(FocusState.Programmatic);
             else
                 PlayingNextCloseButton.Focus(FocusState.Programmatic);
+
+            // The effective-setting request must never hold the entire
+            // post-roll surface behind network latency. Early post-roll gives
+            // this refresh up to 30 seconds to finish before true EOF.
+            _ = RefreshPlayingNextAutoPlayAsync(presentationGeneration);
+        });
+    }
+
+    private void OnPostRollReturnRequested()
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            Interlocked.Increment(ref _playingNextPresentationGeneration);
+            StopPlayingNextCountdown();
+            PlayingNextOverlay.Visibility = Visibility.Collapsed;
         });
     }
 
@@ -310,6 +371,36 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async Task RefreshPlayingNextAutoPlayAsync(long presentationGeneration)
+    {
+        var autoPlay = await GetPlayingNextAutoPlayAsync();
+        if (presentationGeneration != Volatile.Read(ref _playingNextPresentationGeneration) ||
+            PlayingNextOverlay.Visibility != Visibility.Visible)
+        {
+            return;
+        }
+
+        _playingNextAutoPlay = autoPlay;
+        if (!autoPlay)
+        {
+            StopPlayingNextCountdown();
+            _playingNextRemaining = PlayingNextCountdownSeconds;
+            PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+            PlayingNextCountdownRing.Value = _playingNextRemaining;
+        }
+        UpdatePlayingNextAutoPlayVisuals();
+        if (_playerService.IsPostRollVideoEnded &&
+            !string.IsNullOrWhiteSpace(_playerService.NextEpisodeContentId) &&
+            autoPlay &&
+            _playingNextTimer == null)
+        {
+            _playingNextRemaining = PlayingNextCountdownSeconds;
+            PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+            PlayingNextCountdownRing.Value = _playingNextRemaining;
+            StartPlayingNextCountdown();
+        }
+    }
+
     private async void PlayingNextAutoplayToggle_Click(object sender, RoutedEventArgs e)
     {
         _playingNextAutoPlay = !_playingNextAutoPlay;
@@ -329,14 +420,18 @@ public sealed partial class MainWindow : Window
         PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
         PlayingNextCountdownRing.Value = _playingNextRemaining;
 
-        if (_playingNextAutoPlay && PlayingNextOverlay.Visibility == Visibility.Visible)
+        if (_playingNextAutoPlay &&
+            _playerService.IsPostRollVideoEnded &&
+            PlayingNextOverlay.Visibility == Visibility.Visible)
             StartPlayingNextCountdown();
     }
 
     private void UpdatePlayingNextAutoPlayVisuals()
     {
         var hasNextEpisode = !string.IsNullOrWhiteSpace(_playerService.NextEpisodeContentId);
-        PlayingNextCountdownPanel.Visibility = hasNextEpisode && _playingNextAutoPlay
+        PlayingNextCountdownPanel.Visibility = hasNextEpisode &&
+            _playingNextAutoPlay &&
+            _playerService.IsPostRollVideoEnded
             ? Visibility.Visible
             : Visibility.Collapsed;
         PlayingNextAutoplayToggle.Visibility = hasNextEpisode ? Visibility.Visible : Visibility.Collapsed;
@@ -347,6 +442,7 @@ public sealed partial class MainWindow : Window
 
     private async void PlayingNextPlayNow_Click(object sender, RoutedEventArgs e)
     {
+        Interlocked.Increment(ref _playingNextPresentationGeneration);
         StopPlayingNextCountdown();
         PlayingNextOverlay.Visibility = Visibility.Collapsed;
         try
@@ -363,6 +459,7 @@ public sealed partial class MainWindow : Window
 
     private void PlayingNextCancel_Click(object sender, RoutedEventArgs e)
     {
+        Interlocked.Increment(ref _playingNextPresentationGeneration);
         StopPlayingNextCountdown();
         PlayingNextOverlay.Visibility = Visibility.Collapsed;
         _playerService.CancelPlayingNext();
@@ -371,6 +468,7 @@ public sealed partial class MainWindow : Window
     private async Task LoadPlayingNextPosterAsync()
     {
         var url = _playerService.NextEpisodePosterUrl;
+        var contentId = _playerService.NextEpisodeContentId;
         if (string.IsNullOrEmpty(url)) return;
         try
         {
@@ -379,6 +477,11 @@ public sealed partial class MainWindow : Window
             var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
             using var stream = new MemoryStream(bytes);
             await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+            if (!string.Equals(contentId, _playerService.NextEpisodeContentId, StringComparison.Ordinal) ||
+                PlayingNextOverlay.Visibility != Visibility.Visible)
+            {
+                return;
+            }
             PlayingNextPoster.Source = bitmap;
             PlayingNextBackdrop.Source = bitmap;
         }
@@ -393,6 +496,16 @@ public sealed partial class MainWindow : Window
         if (runtimeSeconds > 0)
             parts.Add($"{Math.Max(1, (int)Math.Round(runtimeSeconds / 60d))} min");
         return string.Join("  •  ", parts);
+    }
+
+    private void UpdatePlayingNextLayout(double windowWidth, double windowHeight)
+    {
+        if (PlayingNextHero == null || windowWidth <= 0 || windowHeight <= 0)
+            return;
+
+        var availableWidth = Math.Min(820, Math.Max(280, windowWidth - 48));
+        var aspectHeight = availableWidth * 9d / 16d;
+        PlayingNextHero.Height = Math.Max(180, Math.Min(400, Math.Min(windowHeight * 0.38, aspectHeight)));
     }
 
     private async Task LoadPlayingNextOnDeckAsync()
@@ -493,6 +606,7 @@ public sealed partial class MainWindow : Window
         if (sender is not Button { Tag: PlayingNextOnDeckItem item })
             return;
 
+        Interlocked.Increment(ref _playingNextPresentationGeneration);
         StopPlayingNextCountdown();
         PlayingNextOverlay.Visibility = Visibility.Collapsed;
         try
@@ -529,14 +643,8 @@ public sealed partial class MainWindow : Window
         // sidebar from 260px to 64px). Browse-type pages expand back.
         // Only applies in Idle / Minimized states where the pane is
         // visible at all.
-        if (NavView.IsPaneVisible)
-        {
-            // NavigationView's compact rail cannot reproduce the WebUI's
-            // hover-to-expand overlay. Keep authenticated navigation open so
-            // detail routes cannot strand or clip the custom footer controls.
-            NavView.IsPaneOpen = true;
-            UpdateSidebarPanePresentation(isOpen: true);
-        }
+        _routeWantsCompactPane = IsDetailPage(pageType);
+        ApplyResponsiveShellLayout();
     }
 
     /// <summary>
@@ -841,6 +949,7 @@ public sealed partial class MainWindow : Window
             // footer controls. Restore the route-appropriate pane state as part
             // of the same authenticated shell transition.
             NavView.IsPaneOpen = true;
+            ApplyResponsiveShellLayout();
             UpdateSidebarPanePresentation(NavView.IsPaneOpen);
             MainServerActivityButton.SetHostVisibility(isAdmin);
         });
@@ -1152,10 +1261,18 @@ public sealed partial class MainWindow : Window
         // footer inside a clipped 64px rail and it can remain stranded there
         // after the window grows again. Authenticated navigation is therefore
         // persistently open, matching the desktop WebUI sidebar.
-        if (sender.IsPaneVisible && CanExposeAuthenticatedNavigation)
+        if (_isNarrowShell)
+        {
+            UpdateSidebarPanePresentation(isOpen: false);
+        }
+        else if (sender.IsPaneVisible && CanExposeAuthenticatedNavigation && !_routeWantsCompactPane)
         {
             args.Cancel = true;
             UpdateSidebarPanePresentation(isOpen: true);
+        }
+        else if (_routeWantsCompactPane)
+        {
+            UpdateSidebarPanePresentation(isOpen: false);
         }
     }
 
@@ -1167,9 +1284,10 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        _routeWantsCompactPane = false;
         NavView.IsPaneVisible = true;
         NavView.IsPaneOpen = true;
-        UpdateSidebarPanePresentation(NavView.IsPaneOpen);
+        ApplyResponsiveShellLayout();
         MainServerActivityButton.SetHostVisibility(AuthorizationPolicy.IsActingAdmin(_authService));
     }
 
@@ -1191,6 +1309,8 @@ public sealed partial class MainWindow : Window
         switch (state)
         {
             case PlayerState.Idle:
+                StopPlayingNextCountdown();
+                PlayingNextOverlay.Visibility = Visibility.Collapsed;
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
                 PlayerOverlayControl.Deactivate();
                 AudiobookNowListeningControl.Visibility = Visibility.Collapsed;
@@ -1764,93 +1884,103 @@ public sealed partial class MainWindow : Window
 
     private void NavView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
     {
-        if (args.InvokedItemContainer is NavigationViewItem item && item.Tag is string tag)
+        try
         {
-            switch (tag)
+            if (args.InvokedItemContainer is NavigationViewItem item && item.Tag is string tag)
             {
-                case "Home":
-                    _navigationService.Navigate<HomePage>();
-                    break;
-                case "Search":
-                    _navigationService.Navigate<SearchPage>();
-                    break;
-                case "Catalog":
-                    _navigationService.Navigate<CatalogPage>();
-                    break;
-                case "Recommendations":
-                    _navigationService.Navigate<RecommendationsPage>();
-                    break;
-                case "Calendar":
-                    _navigationService.Navigate<CalendarPage>();
-                    break;
-                case "Requests":
-                    _navigationService.Navigate<RequestsPage>();
-                    break;
-                case "Notifications":
-                    _navigationService.Navigate<NotificationsPage>();
-                    break;
-                case "Favorites":
-                    _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
-                        "favorites",
-                        "Favorites",
-                        "Movies and shows you've marked as favorites."));
-                    break;
-                case "Watchlist":
-                    _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
-                        "watchlist",
-                        "Watchlist",
-                        "Things you've saved to watch later."));
-                    break;
-                case "WatchParty":
-                    _navigationService.Navigate<WatchTogetherJoinPage>();
-                    break;
-                case "History":
-                    _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
-                        "history",
-                        "History",
-                        "Everything you've recently watched."));
-                    break;
-                case "Collections":
-                    _navigationService.Navigate<CollectionsPage>();
-                    break;
-                case "Downloads":
-                    _navigationService.Navigate<DownloadsPage>();
-                    break;
-            }
-        }
-        else if (args.InvokedItemContainer is NavigationViewItem libItem && libItem.Tag is Library library)
-        {
-            _navigationService.Navigate<LibraryPage>(library);
-        }
-        else if (args.InvokedItemContainer is NavigationViewItem pinItem && pinItem.Tag is SidebarPinNavTag pinTag)
-        {
-            if (string.Equals(pinTag.PinType, "section", StringComparison.OrdinalIgnoreCase))
-            {
-                _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
-                    Source: "section",
-                    Title: pinTag.Label,
-                    Scope: "library",
-                    SectionId: pinTag.PinId,
-                    LibraryId: pinTag.LibraryId));
-            }
-            else
-            {
-                _navigationService.Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
+                switch (tag)
                 {
-                    CollectionId = pinTag.PinId,
-                    Title = pinTag.Label,
-                    IsUserCollection = false,
-                    LibraryId = pinTag.LibraryId,
-                });
+                    case "Home":
+                        _navigationService.Navigate<HomePage>();
+                        break;
+                    case "Search":
+                        _navigationService.Navigate<SearchPage>();
+                        break;
+                    case "Catalog":
+                        _navigationService.Navigate<CatalogPage>();
+                        break;
+                    case "Recommendations":
+                        _navigationService.Navigate<RecommendationsPage>();
+                        break;
+                    case "Calendar":
+                        _navigationService.Navigate<CalendarPage>();
+                        break;
+                    case "Requests":
+                        _navigationService.Navigate<RequestsPage>();
+                        break;
+                    case "Notifications":
+                        _navigationService.Navigate<NotificationsPage>();
+                        break;
+                    case "Favorites":
+                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
+                            "favorites",
+                            "Favorites",
+                            "Movies and shows you've marked as favorites."));
+                        break;
+                    case "Watchlist":
+                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
+                            "watchlist",
+                            "Watchlist",
+                            "Things you've saved to watch later."));
+                        break;
+                    case "WatchParty":
+                        _navigationService.Navigate<WatchTogetherJoinPage>();
+                        break;
+                    case "History":
+                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
+                            "history",
+                            "History",
+                            "Everything you've recently watched."));
+                        break;
+                    case "Collections":
+                        _navigationService.Navigate<CollectionsPage>();
+                        break;
+                    case "Downloads":
+                        _navigationService.Navigate<DownloadsPage>();
+                        break;
+                }
+            }
+            else if (args.InvokedItemContainer is NavigationViewItem libItem && libItem.Tag is Library library)
+            {
+                _navigationService.Navigate<LibraryPage>(library);
+            }
+            else if (args.InvokedItemContainer is NavigationViewItem pinItem && pinItem.Tag is SidebarPinNavTag pinTag)
+            {
+                if (string.Equals(pinTag.PinType, "section", StringComparison.OrdinalIgnoreCase))
+                {
+                    _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
+                        Source: "section",
+                        Title: pinTag.Label,
+                        Scope: "library",
+                        SectionId: pinTag.PinId,
+                        LibraryId: pinTag.LibraryId));
+                }
+                else
+                {
+                    _navigationService.Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
+                    {
+                        CollectionId = pinTag.PinId,
+                        Title = pinTag.Label,
+                        IsUserCollection = false,
+                        LibraryId = pinTag.LibraryId,
+                    });
+                }
+            }
+            else if (args.InvokedItemContainer is NavigationViewItem pluginItem &&
+                     pluginItem.Tag is PluginAppNavTag pluginTag)
+            {
+                _navigationService.Navigate<PluginRoutePage>(new PluginRoutePage.NavigationArgs(
+                    pluginTag.InstallationId,
+                    pluginTag.RoutePath,
+                    pluginTag.Label));
             }
         }
-        else if (args.InvokedItemContainer is NavigationViewItem pluginItem &&
-                 pluginItem.Tag is PluginAppNavTag pluginTag)
+        catch (Exception ex)
         {
-            _navigationService.Navigate<PluginRoutePage>(new PluginRoutePage.NavigationArgs(
-                pluginTag.InstallationId,
-                pluginTag.RoutePath,
-                pluginTag.Label));
+            LogNavigationFailure("sidebar_navigation", ex);
+            ShowPlaybackError(
+                "Page failed to open",
+                "Silo could not open that page. The current page is still available, and you can dismiss this message and continue navigating.");
         }
     }
 

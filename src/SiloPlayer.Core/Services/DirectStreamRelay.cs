@@ -21,6 +21,7 @@ public sealed class DirectStreamRelay
 {
     private const int BufferSize = 128 * 1024;
     private const int DefaultMaxRetries = 50;
+    private const int MaxInitialStatusRetries = 5;
     private static readonly TimeSpan DefaultUpstreamIdleTimeout = TimeSpan.FromSeconds(20);
 
     private readonly HttpClient _httpClient;
@@ -86,6 +87,20 @@ public sealed class DirectStreamRelay
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
                     cancellationToken);
+
+                // CDN edges and a just-started server stream can briefly return
+                // 404/429/5xx before media bytes are available. Retry these
+                // before exposing headers to mpv; after headers or body bytes
+                // have been sent, only byte-range continuation is safe.
+                if (!headersWritten && bytesWritten == 0 &&
+                    ShouldRetryInitialStatus(response.StatusCode) &&
+                    attempts <= Math.Min(_maxRetries, MaxInitialStatusRetries))
+                {
+                    _log?.Invoke(
+                        $"Direct stream initial HTTP {(int)response.StatusCode}; retry {attempts}/{Math.Min(_maxRetries, MaxInitialStatusRetries)}.");
+                    await DelayBeforeRetryAsync(attempts, cancellationToken);
+                    continue;
+                }
 
                 // An origin is allowed to ignore a client's initial Range request and
                 // return the complete representation with 200. It is not safe to accept
@@ -296,6 +311,14 @@ public sealed class DirectStreamRelay
                (ex is HttpRequestException or IOException or TaskCanceledException or
                    OperationCanceledException or TimeoutException);
     }
+
+    private static bool ShouldRetryInitialStatus(HttpStatusCode statusCode) =>
+        statusCode is HttpStatusCode.NotFound or
+            HttpStatusCode.RequestTimeout or
+            HttpStatusCode.TooManyRequests or
+            HttpStatusCode.BadGateway or
+            HttpStatusCode.ServiceUnavailable or
+            HttpStatusCode.GatewayTimeout;
 
     private sealed record RangeRequest(long From, long? To);
 

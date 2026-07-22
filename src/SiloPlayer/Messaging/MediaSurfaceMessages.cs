@@ -17,6 +17,7 @@ public enum MediaSurfaceChangeKind
     HomeDismissed,
     ItemMetadataRefreshed,
     CollectionChanged,
+    HomeLayoutChanged,
 }
 
 /// <summary>

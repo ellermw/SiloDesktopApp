@@ -229,6 +229,12 @@ local state = {
     skip_overlay    = nil,
     skip_rect       = nil,
     skip_hovered    = false,
+    auto_skip_intro = false,
+    auto_skip_recap = false,
+    auto_skip_credits = false,
+    intro_auto_skipped = false,
+    recap_auto_skipped = false,
+    credits_auto_skipped = false,
 
     -- Episode navigation. The host resolves the previous/next episode and
     -- tells us when the current item belongs to a series.
@@ -250,6 +256,7 @@ local state = {
     next_ep_countdown_remaining = 10,
     next_ep_countdown_overlay = nil,
     next_ep_countdown_actions = {},
+    post_roll_active = false,
 
     -- Pause center indicator — 64x64 translucent circle with a play icon.
     -- Drawn via ASS overlay, shown on pause, hidden on resume.
@@ -673,64 +680,64 @@ local function draw_pause_icon(ass, cx, cy, size, color, alpha, master_alpha)
         color, alpha, master_alpha)
 end
 
--- Skip backward icon (two left-pointing triangles + "10" text)
-local function draw_skip_back_icon(ass, cx, cy, size, color, alpha, master_alpha)
+-- Curved RotateCcw/RotateCw transport glyphs matching PlayerControls.tsx.
+-- The old double-triangle artwork looked like a second episode-skip control.
+local function draw_skip_arrow_icon(ass, cx, cy, size, color, alpha, master_alpha, direction, label)
     local a = blend_alpha(alpha, master_alpha)
-    local s = size * 0.35
-    -- Left triangle
+    local r = size * 0.38
+    local stroke = math.max(1.25, size * 0.055)
+    local mirror = direction == "back" and -1 or 1
+    local sx = cx + mirror * r * 0.78
+    local sy = cy - r * 0.50
+
+    -- Open circular stroke. Mirroring the x coordinates yields the matching
+    -- clockwise/counter-clockwise Lucide pair without changing proportions.
+    local function arc_x(radius_multiplier)
+        return cx + mirror * r * radius_multiplier
+    end
     ass:new_event()
     ass:pos(0, 0)
     ass:append(string.format(
-        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
-        "m %d %d l %d %d %d %d{\\p0}",
-        ass_color(color), ass_alpha(a),
-        math.floor(cx + 1), math.floor(cy - s),
-        math.floor(cx - s + 1), math.floor(cy),
-        math.floor(cx + 1), math.floor(cy + s)
+        "{\\an7\\bord%.2f\\shad0\\1a&HFF&\\3c&H%s&\\3a&H%s&\\p1}" ..
+        "m %d %d " ..
+        "b %d %d %d %d %d %d " ..
+        "b %d %d %d %d %d %d " ..
+        "b %d %d %d %d %d %d{\\p0}",
+        stroke, color, a,
+        math.floor(sx), math.floor(sy),
+        math.floor(arc_x(1.00)), math.floor(cy - r * 0.05),
+        math.floor(arc_x(0.88)), math.floor(cy + r * 0.62),
+        math.floor(arc_x(0.30)), math.floor(cy + r * 0.92),
+        math.floor(arc_x(-0.34)), math.floor(cy + r * 1.08),
+        math.floor(arc_x(-0.94)), math.floor(cy + r * 0.52),
+        math.floor(arc_x(-0.88)), math.floor(cy - r * 0.10),
+        math.floor(arc_x(-0.82)), math.floor(cy - r * 0.66),
+        math.floor(arc_x(-0.32)), math.floor(cy - r * 0.94),
+        math.floor(arc_x(0.22)), math.floor(cy - r * 0.86)
     ))
-    -- Right triangle
+
+    -- Open arrow head at the beginning of the circular stroke.
     ass:new_event()
     ass:pos(0, 0)
     ass:append(string.format(
-        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
+        "{\\an7\\bord%.2f\\shad0\\1a&HFF&\\3c&H%s&\\3a&H%s&\\p1}" ..
         "m %d %d l %d %d %d %d{\\p0}",
-        ass_color(color), ass_alpha(a),
-        math.floor(cx + s + 2), math.floor(cy - s),
-        math.floor(cx + 2), math.floor(cy),
-        math.floor(cx + s + 2), math.floor(cy + s)
+        stroke, color, a,
+        math.floor(sx - mirror * r * 0.05), math.floor(sy + r * 0.42),
+        math.floor(sx), math.floor(sy),
+        math.floor(sx - mirror * r * 0.42), math.floor(sy + r * 0.04)
     ))
-    -- "10" label
-    draw_text(ass, cx, cy + size * 0.55, "10", math.floor(size * 0.45), color, alpha, master_alpha, 8)
+
+    draw_text(ass, cx, cy + size * 0.02, label,
+        math.floor(size * 0.30), color, alpha, master_alpha, 5, nil, true)
 end
 
--- Skip forward icon (two right-pointing triangles + "30" text)
+local function draw_skip_back_icon(ass, cx, cy, size, color, alpha, master_alpha)
+    draw_skip_arrow_icon(ass, cx, cy, size, color, alpha, master_alpha, "back", "10")
+end
+
 local function draw_skip_fwd_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    local a = blend_alpha(alpha, master_alpha)
-    local s = size * 0.35
-    -- Left triangle
-    ass:new_event()
-    ass:pos(0, 0)
-    ass:append(string.format(
-        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
-        "m %d %d l %d %d %d %d{\\p0}",
-        ass_color(color), ass_alpha(a),
-        math.floor(cx - s - 2), math.floor(cy - s),
-        math.floor(cx - 2), math.floor(cy),
-        math.floor(cx - s - 2), math.floor(cy + s)
-    ))
-    -- Right triangle
-    ass:new_event()
-    ass:pos(0, 0)
-    ass:append(string.format(
-        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
-        "m %d %d l %d %d %d %d{\\p0}",
-        ass_color(color), ass_alpha(a),
-        math.floor(cx - 1), math.floor(cy - s),
-        math.floor(cx + s - 1), math.floor(cy),
-        math.floor(cx - 1), math.floor(cy + s)
-    ))
-    -- "30" label
-    draw_text(ass, cx, cy + size * 0.55, "30", math.floor(size * 0.45), color, alpha, master_alpha, 8)
+    draw_skip_arrow_icon(ass, cx, cy, size, color, alpha, master_alpha, "forward", "30")
 end
 
 local function draw_circle_outline(ass, cx, cy, r, thickness, color, alpha, master_alpha)
@@ -2625,9 +2632,16 @@ local render_pause_indicator
 local render_playback_wait
 
 local function tick()
-    if state.osc_disabled then return end
-    -- Animate alpha
     local now = mp.get_time()
+    if state.osc_disabled then
+        -- Detached/minimized WebUI playback hides the controls but does not
+        -- suspend the credits autoplay lifecycle. Keep only that functional
+        -- clock running while every visual overlay remains suppressed.
+        state.last_fade_time = now
+        check_next_episode_countdown()
+        return
+    end
+    -- Animate alpha
     local dt = now - state.last_fade_time
     state.last_fade_time = now
 
@@ -3165,7 +3179,7 @@ end
 --------------------------------------------------------------------------------
 
 local function render_notice()
-    if not state.notice_visible then
+    if state.osc_disabled or not state.notice_visible then
         if state.notice_overlay then
             state.notice_overlay.data = ""
             state.notice_overlay:update()
@@ -3559,7 +3573,7 @@ local function point_on_floating_action_button(mx, my)
 end
 
 render_skip_button = function()
-    if not state.skip_visible then
+    if state.osc_disabled or not state.skip_visible then
         state.skip_hovered = false
         if state.skip_overlay then
             state.skip_overlay.data = ""
@@ -3605,6 +3619,35 @@ end
 check_skip_markers = function()
     local pos = state.time_pos
     if pos < 0 then return end
+
+    -- Auto-skip uses the same transport-aware host seek as a manual marker
+    -- click. That keeps direct, remux, and HLS semantics identical and also
+    -- preserves the current paused state. Watch-together guests never issue
+    -- an independent seek; the room host remains authoritative.
+    local can_manage_timeline = state.watch_party == nil or state.watch_party.is_host == true
+    if can_manage_timeline then
+        if state.auto_skip_intro and not state.intro_auto_skipped
+            and state.intro_end > state.intro_start
+            and pos >= state.intro_start and pos < state.intro_end then
+            state.intro_auto_skipped = true
+            seek_and_resume(state.intro_end, "absolute+keyframes")
+            return
+        end
+        if state.auto_skip_recap and not state.recap_auto_skipped
+            and state.recap_end > state.recap_start
+            and pos >= state.recap_start and pos < state.recap_end then
+            state.recap_auto_skipped = true
+            seek_and_resume(state.recap_end, "absolute+keyframes")
+            return
+        end
+        if state.auto_skip_credits and not state.credits_auto_skipped
+            and credits_marker_is_plausible()
+            and pos >= state.credits_start and pos < state.credits_end then
+            state.credits_auto_skipped = true
+            seek_and_resume(state.credits_end, "absolute+keyframes")
+            return
+        end
+    end
 
     local was_visible = state.skip_visible
     local previous_label = state.skip_label
@@ -3703,7 +3746,8 @@ end
 -- and expiry both advance through the same host-owned navigation path.
 check_next_episode_countdown = function()
     if not state.next_ep_available or not state.next_ep_detail or
-       state.next_ep_countdown_cancelled or not credits_marker_is_plausible() then
+       state.post_roll_active or state.next_ep_countdown_cancelled or
+       not credits_marker_is_plausible() then
         if state.next_ep_countdown_active then
             state.next_ep_countdown_active = false
             render_next_episode_countdown()
@@ -3741,7 +3785,7 @@ check_next_episode_countdown = function()
 end
 
 render_next_episode_countdown = function()
-    if not state.next_ep_countdown_active or not state.next_ep_detail then
+    if state.osc_disabled or not state.next_ep_countdown_active or not state.next_ep_detail then
         if state.next_ep_countdown_overlay then
             state.next_ep_countdown_overlay.data = ""
             state.next_ep_countdown_overlay:update()
@@ -3812,7 +3856,7 @@ end
 -- Native equivalent of VideoPlayer.tsx's first-frame and buffering surfaces.
 -- Loading owns a solid black frame; rebuffering leaves the picture visible.
 render_playback_wait = function()
-    if not state.playback_loading and not state.playback_buffering then
+    if state.osc_disabled or (not state.playback_loading and not state.playback_buffering) then
         if state.playback_wait_overlay then
             state.playback_wait_overlay.data = ""
             state.playback_wait_overlay:update()
@@ -3853,7 +3897,7 @@ render_playback_wait = function()
 end
 
 render_translation_buffering = function()
-    if not state.translation_buffering then
+    if state.osc_disabled or not state.translation_buffering then
         if state.translation_buffering_overlay then
             state.translation_buffering_overlay.data = ""
             state.translation_buffering_overlay:update()
@@ -3895,7 +3939,7 @@ end
 -- Draw a pill "Next Episode ▶" button in the bottom-right corner above
 -- the progress bar, offset left of the Skip button if both are visible.
 render_next_episode_button = function()
-    if not state.next_ep_visible then
+    if state.osc_disabled or not state.next_ep_visible then
         if state.next_ep_overlay then
             state.next_ep_overlay.data = ""
             state.next_ep_overlay:update()
@@ -4025,7 +4069,8 @@ local function keyboard_menu_items(kind, source)
     for _, item in ipairs(source or {}) do
         local include = kind == "audio" or kind == "chapters"
             or (kind == "quality" and (item.action == "version" or item.action == "quality"))
-            or (kind == "subtitles" and (item.action == "off" or item.action == "select"))
+            or (kind == "subtitles" and (item.action == "off" or item.action == "select"
+                or item.action == "search" or item.action == "appearance" or item.action == "ai"))
         if include then table.insert(result, item) end
     end
     return result
@@ -4067,8 +4112,17 @@ local function activate_keyboard_menu_item()
     local item = items[state.keyboard_menu_index]
     if not item then return true end
     if kind == "subtitles" then
-        local index = item.action == "off" and -1 or item.index
-        mp.commandv("script-message", "silo-subtitle-select", tostring(index))
+        if item.action == "off" then
+            mp.commandv("script-message", "silo-subtitle-select", "-1")
+        elseif item.action == "select" then
+            mp.commandv("script-message", "silo-subtitle-select", tostring(item.index))
+        elseif item.action == "search" then
+            mp.commandv("script-message", "silo-subtitle-search")
+        elseif item.action == "appearance" then
+            mp.commandv("script-message", "silo-subtitle-appearance")
+        elseif item.action == "ai" then
+            mp.commandv("script-message", "silo-subtitle-ai")
+        end
         state.subtitle_menu_visible = false
         render_subtitle_menu()
     elseif kind == "quality" then
@@ -4106,6 +4160,54 @@ local function close_keyboard_surface()
         close_marker_editor()
         return true
     end
+    return false
+end
+
+local function set_keyboard_transport_menu(kind, visible)
+    state.keyboard_menu_kind = visible and kind or nil
+    state.keyboard_menu_index = -1
+end
+
+local function toggle_transport_menu_from_button(mx, my)
+    compute_layout()
+    local L = state.layout
+
+    if L.btn_audio and point_in_rect(mx, my, L.btn_audio) and #state.audio_tracks > 1 then
+        local opening = not state.audio_menu_visible
+        close_transport_menus("audio")
+        state.audio_menu_visible = opening
+        set_keyboard_transport_menu("audio", opening)
+        render_audio_menu()
+        return true
+    end
+
+    if L.btn_chapters and point_in_rect(mx, my, L.btn_chapters) and #state.chapters > 0 then
+        local opening = not state.chapter_menu_visible
+        close_transport_menus("chapters")
+        state.chapter_menu_visible = opening
+        set_keyboard_transport_menu("chapters", opening)
+        render_chapter_menu()
+        return true
+    end
+
+    if L.btn_cc and point_in_rect(mx, my, L.btn_cc) then
+        local opening = not state.subtitle_menu_visible
+        close_transport_menus("subtitles")
+        state.subtitle_menu_visible = opening
+        set_keyboard_transport_menu("subtitles", opening)
+        render_subtitle_menu()
+        return true
+    end
+
+    if L.btn_quality and point_in_rect(mx, my, L.btn_quality) then
+        local opening = not state.quality_menu_visible
+        close_transport_menus("quality")
+        state.quality_menu_visible = opening
+        set_keyboard_transport_menu("quality", opening)
+        render_quality_menu()
+        return true
+    end
+
     return false
 end
 
@@ -4289,6 +4391,7 @@ local function handle_mouse_down()
                 return
             end
         end
+        if toggle_transport_menu_from_button(mx, my) then return end
         state.audio_menu_visible = false
         render_audio_menu()
         return
@@ -4304,6 +4407,7 @@ local function handle_mouse_down()
                 return
             end
         end
+        if toggle_transport_menu_from_button(mx, my) then return end
         state.chapter_menu_visible = false
         render_chapter_menu()
         return
@@ -4343,6 +4447,7 @@ local function handle_mouse_down()
             end
         end
         -- Click outside menu — close it
+        if toggle_transport_menu_from_button(mx, my) then return end
         state.subtitle_menu_visible = false
         render_subtitle_menu()
         return
@@ -4364,6 +4469,7 @@ local function handle_mouse_down()
             end
         end
         -- Click outside menu — close it
+        if toggle_transport_menu_from_button(mx, my) then return end
         state.quality_menu_visible = false
         render_quality_menu()
         return
@@ -4445,45 +4551,8 @@ local function handle_mouse_down()
         return
     end
 
-    -- Check audio tracks
-    if L.btn_audio and point_in_rect(mx, my, L.btn_audio) and #state.audio_tracks > 1 then
-        close_transport_menus("audio")
-        state.audio_menu_visible = not state.audio_menu_visible
-        state.keyboard_menu_kind = state.audio_menu_visible and "audio" or nil
-        state.keyboard_menu_index = -1
-        render_audio_menu()
-        return
-    end
-
-    -- Check chapters
-    if L.btn_chapters and point_in_rect(mx, my, L.btn_chapters) and #state.chapters > 0 then
-        close_transport_menus("chapters")
-        state.chapter_menu_visible = not state.chapter_menu_visible
-        state.keyboard_menu_kind = state.chapter_menu_visible and "chapters" or nil
-        state.keyboard_menu_index = -1
-        render_chapter_menu()
-        return
-    end
-
-    -- Check CC (subtitle menu toggle)
-    if L.btn_cc and point_in_rect(mx, my, L.btn_cc) then
-        close_transport_menus("subtitles")
-        state.subtitle_menu_visible = not state.subtitle_menu_visible
-        state.keyboard_menu_kind = state.subtitle_menu_visible and "subtitles" or nil
-        state.keyboard_menu_index = -1
-        render_subtitle_menu()
-        return
-    end
-
-    -- Check quality/settings button
-    if L.btn_quality and point_in_rect(mx, my, L.btn_quality) then
-        close_transport_menus("quality")
-        state.quality_menu_visible = not state.quality_menu_visible
-        state.keyboard_menu_kind = state.quality_menu_visible and "quality" or nil
-        state.keyboard_menu_index = -1
-        render_quality_menu()
-        return
-    end
+    -- Check transport menus.
+    if toggle_transport_menu_from_button(mx, my) then return end
 
     -- Check stats toggle
     if L.btn_stats and point_in_rect(mx, my, L.btn_stats) then
@@ -4766,6 +4835,17 @@ local function observe_properties()
             state.audio_menu_visible = false
             state.chapter_menu_visible = false
         end
+        -- Standalone overlays do not share osc_overlay, so explicitly
+        -- refresh them on both detach and return. Their renderers suppress
+        -- output while osc_disabled without destroying lifecycle state.
+        render_notice()
+        render_skip_button()
+        render_next_episode_button()
+        render_next_episode_countdown()
+        render_translation_buffering()
+        render_playback_wait()
+        render_pause_indicator()
+        request_tick()
     end)
 
     mp.register_script_message("osc-set-title", function(title, subtitle)
@@ -4784,7 +4864,16 @@ local function observe_properties()
             state.credits_end = tonumber(data.credits_end) or 0
             state.preview_start = tonumber(data.preview_start) or 0
             state.preview_end = tonumber(data.preview_end) or 0
+            state.intro_auto_skipped = false
+            state.recap_auto_skipped = false
+            state.credits_auto_skipped = false
         end
+    end)
+
+    mp.register_script_message("osc-set-auto-skip", function(intro, recap, credits)
+        state.auto_skip_intro = (intro == "true" or intro == "1")
+        state.auto_skip_recap = (recap == "true" or recap == "1")
+        state.auto_skip_credits = (credits == "true" or credits == "1")
     end)
 
     -- Host tells us whether a next episode is queued. When "true", the
@@ -4802,6 +4891,19 @@ local function observe_properties()
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if ok and data then
             show_notice(data.title, data.message, data.tone)
+        end
+    end)
+
+    -- VideoPlayer.tsx explicitly cancels its credits countdown when the
+    -- outer WatchPlaybackChrome enters post-roll. Keep that lifecycle split
+    -- here too: the full post-roll screen owns autoplay after true EOF.
+    mp.register_script_message("osc-set-post-roll", function(val)
+        state.post_roll_active = (val == "true" or val == "1")
+        if state.post_roll_active then
+            state.next_ep_countdown_cancelled = true
+            state.next_ep_countdown_active = false
+            state.next_ep_countdown_actions = {}
+            render_next_episode_countdown()
         end
     end)
 
@@ -5337,7 +5439,8 @@ local function setup_script_messages()
         end
 
         -- Any menu overlay open? Let that handle its own clicks.
-        if state.subtitle_menu_visible or state.quality_menu_visible then
+        if state.subtitle_menu_visible or state.quality_menu_visible
+            or state.audio_menu_visible or state.chapter_menu_visible then
             return
         end
 
@@ -5397,6 +5500,7 @@ local function init()
         state.next_ep_countdown_cancelled = false
         state.next_ep_countdown_started_at = 0
         state.next_ep_countdown_remaining = 10
+        state.post_roll_active = false
         render_next_episode_countdown()
         show_osc()
     end)

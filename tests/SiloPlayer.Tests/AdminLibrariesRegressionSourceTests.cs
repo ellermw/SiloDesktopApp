@@ -3,7 +3,7 @@ namespace SiloPlayer.Tests;
 public class AdminLibrariesRegressionSourceTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".."));
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
 
     [Fact]
     public void StaleIdRoutesMatchCurrentLibrariesContract()
@@ -70,7 +70,7 @@ public class AdminLibrariesRegressionSourceTests
     }
 
     [Fact]
-    public void QueuedScansRemainVisibleAsActiveLibraryWork()
+    public void QueuedScansRemainVisibleOnLibrariesButNotInServerActivityBadge()
     {
         var source = File.ReadAllText(Path.Combine(
             RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminLibrariesPage.xaml.cs"));
@@ -83,9 +83,11 @@ public class AdminLibrariesRegressionSourceTests
         var activitySource = File.ReadAllText(Path.Combine(
             RepoRoot, "src", "SiloPlayer", "Controls", "ServerActivityButton.xaml.cs"));
         Assert.Contains(
-            "run.Status is \"accepted\" or \"queued\" or \"running\"",
+            "run.Status is \"accepted\" or \"running\"",
             activitySource,
             StringComparison.Ordinal);
+        Assert.Contains("MaxActivityScanRows = 25", activitySource, StringComparison.Ordinal);
+        Assert.Contains("_lastActiveScans.Take(MaxActivityScanRows)", activitySource, StringComparison.Ordinal);
     }
 
     [Fact]

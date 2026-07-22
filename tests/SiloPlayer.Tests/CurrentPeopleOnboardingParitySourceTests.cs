@@ -32,6 +32,27 @@ public sealed class CurrentPeopleOnboardingParitySourceTests
     }
 
     [Fact]
+    public void PersonDetailUsesCurrentBadgeHeaderAndResponsiveFilmographyGrid()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "PersonDetailPage.xaml");
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "PersonDetailPage.xaml.cs");
+        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "PersonDetailViewModel.cs");
+
+        Assert.Contains("x:Name=\"PersonContentShell\"", xaml);
+        Assert.Contains("MaxWidth=\"1400\"", xaml);
+        Assert.Contains("x:Name=\"PersonMetadataBadges\"", xaml);
+        Assert.Contains("x:Name=\"BirthDateBadge\"", xaml);
+        Assert.Contains("x:Name=\"DeathDateBadge\"", xaml);
+        Assert.Contains("x:Name=\"BirthplaceBadge\"", xaml);
+        Assert.Contains("FontSize=\"30\"", xaml);
+        Assert.Contains("x:Name=\"FilmographyGridLayout\"", xaml);
+        Assert.Contains("FilmographyRepeater_ElementPrepared", page);
+        Assert.Contains("e.NewSize.Width >= 1280 ? 8", page);
+        Assert.Contains("public string BirthDateDisplay", viewModel);
+        Assert.Contains("public string DeathDateDisplay", viewModel);
+    }
+
+    [Fact]
     public void ProfileSelectionEntersHomeBeforeOptionalTasteSeedLookupCompletes()
     {
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "ProfileSelectViewModel.cs");

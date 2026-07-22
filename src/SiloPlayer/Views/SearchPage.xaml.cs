@@ -12,7 +12,12 @@ public sealed partial class SearchPage : Page
     public SearchViewModel ViewModel { get; }
     private bool _filterInitializing = true;
     private bool _initialized;
+    private bool _isNavigated;
+    private Task? _initializationTask;
     private double _catalogCardWidth = 178;
+    private bool _syncingSearchText;
+    private bool _pendingResultsSearchFocus;
+    private FocusState _pendingResultsSearchFocusState = FocusState.Programmatic;
 
     public SearchPage()
     {
@@ -47,17 +52,10 @@ public sealed partial class SearchPage : Page
         SizeChanged += SearchPage_SizeChanged;
     }
 
-    protected override async void OnNavigatedTo(NavigationEventArgs e)
+    protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-
-        if (!_initialized)
-        {
-            await Task.WhenAll(ViewModel.LoadMediaScopeAsync(), ViewModel.LoadFiltersAsync());
-            PopulateResultFilters();
-            _filterInitializing = false;
-            _initialized = true;
-        }
+        _isNavigated = true;
 
         if (e.NavigationMode == NavigationMode.Back && !string.IsNullOrWhiteSpace(ViewModel.Query))
         {
@@ -65,20 +63,39 @@ public sealed partial class SearchPage : Page
             ResultsSearchBox.Text = ViewModel.Query;
             UpdateScopeButtons();
             UpdateResultsState();
-            return;
+        }
+        else
+        {
+            ViewModel.CancelPendingSearch();
+            ViewModel.Query = "";
+            ViewModel.Results.Clear();
+            ViewModel.PeopleResults.Clear();
+            ViewModel.OutsideLibraryResults.Clear();
+            SearchBox.Text = "";
+            ResultsSearchBox.Text = "";
+            UpdateScopeButtons();
+            EmptyState.Visibility = Visibility.Visible;
+            ResultsState.Visibility = Visibility.Collapsed;
+            SearchBox.Focus(FocusState.Programmatic);
         }
 
-        ViewModel.Query = "";
-        ViewModel.Results.Clear();
-        ViewModel.PeopleResults.Clear();
-        ViewModel.OutsideLibraryResults.Clear();
-        SearchBox.Text = "";
-        ResultsSearchBox.Text = "";
-        UpdateScopeButtons();
-        EmptyState.Visibility = Visibility.Visible;
-        ResultsState.Visibility = Visibility.Collapsed;
+        // The empty search surface is interactive immediately. Settings and
+        // filter metadata warm in parallel, but never block the primary
+        // catalog request when the user starts typing.
+        _ = EnsureInitializedAsync();
+    }
 
-        SearchBox.Focus(FocusState.Programmatic);
+    private Task EnsureInitializedAsync() => _initialized
+        ? Task.CompletedTask
+        : _initializationTask ??= InitializeAsync();
+
+    private async Task InitializeAsync()
+    {
+        await Task.WhenAll(ViewModel.LoadMediaScopeAsync(), ViewModel.LoadFiltersAsync());
+        PopulateResultFilters();
+        _filterInitializing = false;
+        _initialized = true;
+        UpdateScopeButtons();
     }
 
     private void UpdateResultsState()
@@ -113,6 +130,7 @@ public sealed partial class SearchPage : Page
     private async void Scope_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string scope }) return;
+        await EnsureInitializedAsync();
         await ViewModel.SetMediaScopeAsync(scope);
         UpdateScopeButtons();
     }
@@ -150,22 +168,51 @@ public sealed partial class SearchPage : Page
             ViewModel.Query = textBox.Text;
 
             // Sync the other search box without retriggering
-            if (textBox == SearchBox && ResultsSearchBox.Text != textBox.Text)
-                ResultsSearchBox.Text = textBox.Text;
-            else if (textBox == ResultsSearchBox && SearchBox.Text != textBox.Text)
-                SearchBox.Text = textBox.Text;
-        }
+            if (!_syncingSearchText)
+            {
+                _syncingSearchText = true;
+                try
+                {
+                    if (textBox == SearchBox && ResultsSearchBox.Text != textBox.Text)
+                        ResultsSearchBox.Text = textBox.Text;
+                    else if (textBox == ResultsSearchBox && SearchBox.Text != textBox.Text)
+                        SearchBox.Text = textBox.Text;
+                }
+                finally
+                {
+                    _syncingSearchText = false;
+                }
+            }
 
-        // Toggle clear button visibility based on whether text is present
-        var hasText = !string.IsNullOrEmpty(ViewModel.Query);
-        SearchBoxClearButton.Visibility = hasText ? Visibility.Visible : Visibility.Collapsed;
-        ResultsSearchBoxClearButton.Visibility = hasText ? Visibility.Visible : Visibility.Collapsed;
+            if (_syncingSearchText)
+                return;
+
+            if (textBox == SearchBox && !string.IsNullOrWhiteSpace(textBox.Text))
+            {
+                _pendingResultsSearchFocus = true;
+                _pendingResultsSearchFocusState = textBox.FocusState == FocusState.Keyboard
+                    ? FocusState.Keyboard
+                    : FocusState.Programmatic;
+                ShowResultsShellForCurrentQuery();
+                FocusResultsSearchBox(_pendingResultsSearchFocusState);
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (_pendingResultsSearchFocus && !string.IsNullOrWhiteSpace(ViewModel.Query))
+                        FocusResultsSearchBox(_pendingResultsSearchFocusState);
+                });
+            }
+        }
 
         if (string.IsNullOrWhiteSpace(ViewModel.Query))
         {
             _searchDebounce?.Stop();
+            ViewModel.CancelPendingSearch();
+            ViewModel.Results.Clear();
+            ViewModel.PeopleResults.Clear();
+            ViewModel.OutsideLibraryResults.Clear();
             EmptyState.Visibility = Visibility.Visible;
             ResultsState.Visibility = Visibility.Collapsed;
+            _pendingResultsSearchFocus = false;
             return;
         }
 
@@ -176,13 +223,45 @@ public sealed partial class SearchPage : Page
         {
             _searchDebounce?.Stop();
 
-            EmptyState.Visibility = Visibility.Collapsed;
-            ResultsState.Visibility = Visibility.Visible;
-            ResultsTitle.Text = $"Results for \"{ViewModel.Query}\"";
+            var querySnapshot = ViewModel.Query.Trim();
+            if (!_isNavigated || !string.Equals(querySnapshot, ViewModel.Query.Trim(), StringComparison.Ordinal))
+                return;
+
+            var transferSearchFocus = _pendingResultsSearchFocus || SearchBox.FocusState != FocusState.Unfocused;
+            var priorFocusState = SearchBox.FocusState;
+            ShowResultsShellForCurrentQuery();
+
+            // The empty and results surfaces intentionally use different
+            // TextBox instances. When the first character reveals results,
+            // transfer focus and the caret before awaiting network work so
+            // continued typing remains uninterrupted.
+            if (transferSearchFocus)
+            {
+                FocusResultsSearchBox(_pendingResultsSearchFocus
+                    ? _pendingResultsSearchFocusState
+                    : priorFocusState == FocusState.Keyboard
+                        ? FocusState.Keyboard
+                        : FocusState.Programmatic);
+                _pendingResultsSearchFocus = false;
+            }
 
             await ViewModel.SearchCommand.ExecuteAsync(null);
         };
         _searchDebounce.Start();
+    }
+
+    private void ShowResultsShellForCurrentQuery()
+    {
+        EmptyState.Visibility = Visibility.Collapsed;
+        ResultsState.Visibility = Visibility.Visible;
+        ResultsTitle.Text = $"Results for \"{ViewModel.Query}\"";
+    }
+
+    private void FocusResultsSearchBox(FocusState focusState)
+    {
+        ResultsSearchBox.Focus(focusState);
+        ResultsSearchBox.SelectionStart = ResultsSearchBox.Text.Length;
+        ResultsSearchBox.SelectionLength = 0;
     }
 
     private void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -207,23 +286,6 @@ public sealed partial class SearchPage : Page
         }
     }
 
-    private void ClearButton_Click(object sender, RoutedEventArgs e)
-    {
-        // Clear both search boxes and reset to empty state
-        SearchBox.Text = "";
-        ResultsSearchBox.Text = "";
-        ViewModel.Query = "";
-        ViewModel.Results.Clear();
-        ViewModel.PeopleResults.Clear();
-        ViewModel.OutsideLibraryResults.Clear();
-        SearchBoxClearButton.Visibility = Visibility.Collapsed;
-        ResultsSearchBoxClearButton.Visibility = Visibility.Collapsed;
-        EmptyState.Visibility = Visibility.Visible;
-        ResultsState.Visibility = Visibility.Collapsed;
-        _searchDebounce?.Stop();
-        SearchBox.Focus(FocusState.Programmatic);
-    }
-
     private async void ResultsScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
         if (ResultsScroll.ScrollableHeight - ResultsScroll.VerticalOffset < 900)
@@ -232,7 +294,13 @@ public sealed partial class SearchPage : Page
 
     private void SearchPage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        var gutter = e.NewSize.Width < 640 ? 16 : e.NewSize.Width < 1024 ? 24 : 40;
+        var gutter = e.NewSize.Width < 640 ? 16
+            : e.NewSize.Width < 1024 ? 24
+            : e.NewSize.Width < 1280 ? 40
+            : 48;
+        ResultsHeader.Margin = new Thickness(gutter, 24, gutter, 20);
+        ResultsSearchSurface.Margin = new Thickness(gutter, 0, gutter, 20);
+        ResultsToolbar.Margin = new Thickness(gutter, 0, gutter, 16);
         ResultsScroll.Padding = new Thickness(gutter, 0, gutter, 24);
         UpdateCatalogGridLayout(e.NewSize.Width, gutter);
     }
@@ -249,9 +317,15 @@ public sealed partial class SearchPage : Page
         ResultsGridLayout.MaximumRowsOrColumns = columns;
         ResultsGridLayout.MinItemWidth = _catalogCardWidth;
         ResultsGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + 56;
+        SearchLoadingGridLayout.MaximumRowsOrColumns = columns;
+        SearchLoadingGridLayout.MinItemWidth = _catalogCardWidth;
+        SearchLoadingGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + 43;
         for (var index = 0; index < ViewModel.Results.Count; index++)
             if (ResultsRepeater.TryGetElement(index) is SiloPlayer.Controls.PosterCard card)
                 card.SetCatalogGridLayout(_catalogCardWidth);
+        for (var index = 0; index < 24; index++)
+            if (SearchLoadingRepeater.TryGetElement(index) is StackPanel skeleton)
+                SetSearchSkeletonLayout(skeleton);
     }
 
     private void ResultsRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
@@ -260,9 +334,29 @@ public sealed partial class SearchPage : Page
             card.SetCatalogGridLayout(_catalogCardWidth);
     }
 
+    private void SearchLoadingRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
+    {
+        if (args.Element is StackPanel skeleton)
+            SetSearchSkeletonLayout(skeleton);
+    }
+
+    private void SetSearchSkeletonLayout(StackPanel skeleton)
+    {
+        skeleton.Width = _catalogCardWidth;
+        if (skeleton.Children.Count > 0 && skeleton.Children[0] is Border poster)
+        {
+            poster.Width = _catalogCardWidth;
+            poster.Height = _catalogCardWidth * 1.5;
+        }
+        if (skeleton.Children.Count > 1 && skeleton.Children[1] is Border title)
+            title.Width = _catalogCardWidth * 0.74;
+    }
+
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _isNavigated = false;
         _searchDebounce?.Stop();
+        ViewModel.CancelPendingSearch();
         base.OnNavigatedFrom(e);
     }
 

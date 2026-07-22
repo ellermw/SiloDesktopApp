@@ -144,7 +144,7 @@ public sealed class UpgradeAuthenticationRegressionTests
 
     private static string ReadRepoFile(params string[] parts)
     {
-        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".."));
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
         return File.ReadAllText(Path.Combine([root, .. parts]));
     }
 

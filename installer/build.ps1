@@ -6,7 +6,8 @@
 param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
-    [string]$PublishDirectory = ""
+    [string]$PublishDirectory = "",
+    [string]$SigningCertificateThumbprint = $env:SILO_SIGNING_CERT_THUMBPRINT
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,6 +22,34 @@ $PublishDir = if ([string]::IsNullOrWhiteSpace($PublishDirectory)) {
 }
 $OutputDir = "$InstallerDir\output"
 $ProjectPath = "$RepoRoot\src\SiloPlayer\SiloPlayer.csproj"
+
+$SigningCertificate = $null
+if (-not [string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
+    $normalizedThumbprint = $SigningCertificateThumbprint.Replace(" ", "").ToUpperInvariant()
+    $SigningCertificate = Get-ChildItem Cert:\CurrentUser\My |
+        Where-Object { $_.Thumbprint -eq $normalizedThumbprint -and $_.HasPrivateKey } |
+        Select-Object -First 1
+    if (-not $SigningCertificate) {
+        throw "The requested code-signing certificate was not found with a private key in Cert:\CurrentUser\My."
+    }
+    if ($SigningCertificate.NotAfter -le (Get-Date)) {
+        throw "The requested code-signing certificate has expired."
+    }
+    Write-Host "Local signing enabled: $($SigningCertificate.Subject) [$($SigningCertificate.Thumbprint)]"
+}
+
+function Set-LocalCodeSignature {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not $SigningCertificate) { return }
+    $signature = Set-AuthenticodeSignature `
+        -LiteralPath $Path `
+        -Certificate $SigningCertificate `
+        -HashAlgorithm SHA256
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+        throw "Signing failed for '$Path': $($signature.Status) - $($signature.StatusMessage)"
+    }
+}
 
 # Find ISCC.exe (check multiple locations)
 $IsccPaths = @(
@@ -105,6 +134,18 @@ if ($SourceMpvHash -ne $PublishedMpvHash) {
     throw "Published libmpv-2.dll does not match the verified repository asset."
 }
 
+if ($SigningCertificate) {
+    Write-Host "=== Signing locally produced and unsigned application binaries ==="
+    $PublishBinaries = Get-ChildItem $PublishDir -Recurse -File -Include *.exe,*.dll
+    foreach ($binary in $PublishBinaries) {
+        if ((Get-AuthenticodeSignature -LiteralPath $binary.FullName).Status -eq
+            [System.Management.Automation.SignatureStatus]::NotSigned) {
+            Set-LocalCodeSignature -Path $binary.FullName
+            Write-Host "Signed $($binary.Name)"
+        }
+    }
+}
+
 # Prove the native loader can resolve the bundled library and its dependencies.
 $EscapedMpvPath = $MpvDll.Replace('\', '\\')
 $MpvSmokeSource = @"
@@ -149,6 +190,11 @@ $SetupExe = Get-ChildItem "$OutputDir\SiloInstaller-*-Setup.exe" -ErrorAction Si
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
 if ($SetupExe) {
+    if ($SigningCertificate) {
+        Set-LocalCodeSignature -Path $SetupExe.FullName
+        Write-Host "Signed installer with $($SigningCertificate.Subject)."
+    }
+
     # GitHub publishes a stable asset name. Always refresh it from the installer
     # produced by this invocation so a release can never upload an older build.
     $StableSetupExe = Join-Path $OutputDir "SiloInstaller-Windows-x64.exe"

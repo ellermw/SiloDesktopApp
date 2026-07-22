@@ -14,6 +14,10 @@ public partial class ItemDetailViewModel : ObservableObject,
     IRecipient<PlaybackProgressUpdated>
 {
     private readonly CatalogApi _catalogApi;
+    private CancellationTokenSource? _loadCts;
+    private long _similarLoadGeneration;
+    private long _seasonsLoadGeneration;
+    private long _episodesLoadGeneration;
 
     public ItemDetailViewModel(CatalogApi catalogApi)
     {
@@ -110,14 +114,28 @@ public partial class ItemDetailViewModel : ObservableObject,
     private bool _isEpisodesLoading;
 
     [ObservableProperty]
+    private bool _seasonsLoadFailed;
+
+    [ObservableProperty]
+    private bool _episodesLoadFailed;
+
+    [ObservableProperty]
+    private bool _similarLoadFailed;
+
+    [ObservableProperty]
     private int _selectedSeasonNumber;
 
     public ObservableCollection<Season> Seasons { get; } = [];
     public ObservableCollection<Episode> Episodes { get; } = [];
     public ObservableCollection<MediaItem> SimilarItems { get; } = [];
 
-    public string RuntimeDisplay =>
-        Item?.Runtime > 0 ? $"{Item.Runtime / 60}h {Item.Runtime % 60}m" : "";
+    public string RuntimeDisplay => Item?.Runtime > 0
+        ? Item.Runtime >= 60
+            ? Item.Runtime % 60 == 0
+                ? $"{Item.Runtime / 60}h"
+                : $"{Item.Runtime / 60}h {Item.Runtime % 60}m"
+            : $"{Item.Runtime}m"
+        : "";
 
     public string GenresDisplay =>
         Item?.Genres.Count > 0 ? string.Join(", ", Item.Genres) : "";
@@ -125,23 +143,45 @@ public partial class ItemDetailViewModel : ObservableObject,
     public string RatingDisplay =>
         Item?.RatingTmdb != null ? $"{Item.RatingTmdb:F1}" : "";
 
-    [RelayCommand]
+    public void CancelPendingLoads()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = null;
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task LoadAsync(string contentId)
     {
-        if (IsLoading) return;
+        CancelPendingLoads();
+        var loadCts = new CancellationTokenSource();
+        _loadCts = loadCts;
+        var ct = loadCts.Token;
 
         IsLoading = true;
         ErrorMessage = null;
+        Item = null;
+        Interlocked.Increment(ref _similarLoadGeneration);
+        Interlocked.Increment(ref _seasonsLoadGeneration);
+        Interlocked.Increment(ref _episodesLoadGeneration);
         IsSeries = false;
+        IsSeasonsLoading = false;
+        IsEpisodesLoading = false;
         Seasons.Clear();
         Episodes.Clear();
         SimilarItems.Clear();
+        SeasonsLoadFailed = false;
+        EpisodesLoadFailed = false;
+        SimilarLoadFailed = false;
         SelectedSeasonNumber = 0;
         UserRating = null;
 
         try
         {
-            Item = await _catalogApi.GetItemDetailAsync(contentId);
+            var item = await _catalogApi.GetItemDetailAsync(contentId, ct);
+            ct.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_loadCts, loadCts)) return;
+            Item = item;
 
             // Server commit 4172a16 inlines favorite/watchlist/rating on the item
             // detail response via `user_state` + `user_rating`. Prefer those over
@@ -156,7 +196,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             {
                 IsFavorite = false;
                 InWatchlist = false;
-                _ = CheckFavoriteWatchlistAsync(contentId);
+                await CheckFavoriteWatchlistAsync(contentId, loadCts);
             }
 
             UserRating = Item?.UserRating;
@@ -167,25 +207,39 @@ public partial class ItemDetailViewModel : ObservableObject,
             OnPropertyChanged(nameof(GenresDisplay));
             OnPropertyChanged(nameof(RatingDisplay));
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load item: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine($"Item detail load failed for {contentId}: {ex}");
+            ErrorMessage = "Silo could not load this item. Check the connection and try again.";
         }
         finally
         {
-            IsLoading = false;
+            if (ReferenceEquals(_loadCts, loadCts))
+            {
+                IsLoading = false;
+                _loadCts.Dispose();
+                _loadCts = null;
+            }
         }
     }
 
-    private async Task CheckFavoriteWatchlistAsync(string contentId)
+    private async Task CheckFavoriteWatchlistAsync(string contentId, CancellationTokenSource owner)
     {
         try
         {
-            var favTask = _catalogApi.GetFavoriteItemAsync(contentId);
-            var wlTask = _catalogApi.GetWatchlistItemAsync(contentId);
+            var ct = owner.Token;
+            var favTask = _catalogApi.GetFavoriteItemAsync(contentId, ct);
+            var wlTask = _catalogApi.GetWatchlistItemAsync(contentId, ct);
             await Task.WhenAll(favTask, wlTask);
+            if (!ReferenceEquals(_loadCts, owner) || Item?.ContentId != contentId) return;
             IsFavorite = await favTask;
             InWatchlist = await wlTask;
+        }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested)
+        {
         }
         catch
         {
@@ -265,14 +319,18 @@ public partial class ItemDetailViewModel : ObservableObject,
     private async Task LoadSimilarAsync()
     {
         if (Item == null) return;
+        var contentId = Item.ContentId;
+        var generation = Interlocked.Increment(ref _similarLoadGeneration);
+        SimilarLoadFailed = false;
         try
         {
-            var response = await _catalogApi.GetSimilarAsync(Item.ContentId);
-            SimilarItems.Clear();
+            var response = await _catalogApi.GetSimilarAsync(contentId);
+            if (generation != Volatile.Read(ref _similarLoadGeneration)
+                || Item?.ContentId != contentId) return;
 
             // The API returns only IDs + scores, not full MediaItem objects.
-            // Fetch each item's detail in parallel (limit to first 15).
-            var tasks = response.Items.Take(15).Select(async s =>
+            // The current WebUI recommendation grid caps this surface at 12.
+            var tasks = response.Items.Take(12).Select(async s =>
             {
                 try
                 {
@@ -282,6 +340,11 @@ public partial class ItemDetailViewModel : ObservableObject,
             });
 
             var details = await Task.WhenAll(tasks);
+
+            if (generation != Volatile.Read(ref _similarLoadGeneration)
+                || Item?.ContentId != contentId) return;
+
+            SimilarItems.Clear();
 
             foreach (var detail in details)
             {
@@ -305,9 +368,12 @@ public partial class ItemDetailViewModel : ObservableObject,
                 SimilarItems.Add(mediaItem);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Similar items load failure is non-fatal
+            if (generation != Volatile.Read(ref _similarLoadGeneration)
+                || Item?.ContentId != contentId) return;
+            SimilarLoadFailed = true;
+            System.Diagnostics.Debug.WriteLine($"Similar-items load failed for {contentId}: {ex}");
         }
     }
 
@@ -316,10 +382,16 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         if (Item == null || !IsSeries || IsSeasonsLoading) return;
 
+        var contentId = Item.ContentId;
+        var generation = Interlocked.Increment(ref _seasonsLoadGeneration);
+
         IsSeasonsLoading = true;
+        SeasonsLoadFailed = false;
         try
         {
-            var response = await _catalogApi.GetSeasonsAsync(Item.ContentId);
+            var response = await _catalogApi.GetSeasonsAsync(contentId);
+            if (generation != Volatile.Read(ref _seasonsLoadGeneration)
+                || Item?.ContentId != contentId) return;
             Seasons.Clear();
             foreach (var season in response.Seasons)
                 Seasons.Add(season);
@@ -328,13 +400,18 @@ public partial class ItemDetailViewModel : ObservableObject,
             if (Seasons.Count > 0)
                 await SelectSeasonAsync(Seasons[0].SeasonNumber);
         }
-        catch
+        catch (Exception ex)
         {
-            // Seasons load failure is non-fatal
+            if (generation != Volatile.Read(ref _seasonsLoadGeneration)
+                || Item?.ContentId != contentId) return;
+            SeasonsLoadFailed = true;
+            System.Diagnostics.Debug.WriteLine($"Seasons load failed for {contentId}: {ex}");
         }
         finally
         {
-            IsSeasonsLoading = false;
+            if (generation == Volatile.Read(ref _seasonsLoadGeneration)
+                && Item?.ContentId == contentId)
+                IsSeasonsLoading = false;
         }
     }
 
@@ -343,23 +420,34 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         if (Item == null || seasonNumber == 0) return;
 
+        var contentId = Item.ContentId;
+        var generation = Interlocked.Increment(ref _episodesLoadGeneration);
+
         SelectedSeasonNumber = seasonNumber;
         IsEpisodesLoading = true;
+        EpisodesLoadFailed = false;
         Episodes.Clear();
 
         try
         {
-            var response = await _catalogApi.GetEpisodesAsync(Item.ContentId, seasonNumber);
+            var response = await _catalogApi.GetEpisodesAsync(contentId, seasonNumber);
+            if (generation != Volatile.Read(ref _episodesLoadGeneration)
+                || Item?.ContentId != contentId) return;
             foreach (var episode in response.Episodes)
                 Episodes.Add(episode);
         }
-        catch
+        catch (Exception ex)
         {
-            // Episode load failure is non-fatal
+            if (generation != Volatile.Read(ref _episodesLoadGeneration)
+                || Item?.ContentId != contentId) return;
+            EpisodesLoadFailed = true;
+            System.Diagnostics.Debug.WriteLine($"Episode load failed for season {seasonNumber}: {ex}");
         }
         finally
         {
-            IsEpisodesLoading = false;
+            if (generation == Volatile.Read(ref _episodesLoadGeneration)
+                && Item?.ContentId == contentId)
+                IsEpisodesLoading = false;
         }
     }
 

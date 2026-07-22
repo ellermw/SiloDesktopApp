@@ -27,16 +27,30 @@ public sealed class HomeHeroCurrentParityTests
 
         Assert.Contains("FormatRuntime(item.DurationSeconds", code);
         Assert.Contains("AddHeroMeta($\"IMDb", code);
-        Assert.Contains("root.ActualWidth >= 1400 ? 68d", code);
+        Assert.Contains("width >= 1280 ? 72d", code);
+        Assert.Contains("width >= 640 ? 48d", code);
         Assert.Contains("Math.Clamp(root.ActualHeight * heightRatio, 350, 700)", code);
         Assert.Contains("_sizeRoot.SizeChanged -= SizeRoot_SizeChanged", code);
         Assert.Contains("RootGrid_PointerEntered", code);
         Assert.Contains("PauseCarouselButton_Click", code);
         Assert.Contains("private bool _isPaused;", code);
+        Assert.Contains("UpdateThemeGradientColors", code);
+        Assert.Contains("ThumbhashDecoder.GetAmbientColor", code);
+        Assert.Contains("AreSystemAnimationsEnabled", code);
+        Assert.Contains("OnHeroGotFocus", code);
+        Assert.Contains("HeroOverview.MaxLines = width >= 640 ? 0 : 2", code);
+        Assert.Contains("_restingArrowOpacity", code);
         Assert.DoesNotContain("_manuallyPaused", code);
         Assert.DoesNotContain("_pointerPaused", code);
         Assert.Contains("x:Name=\"PauseCarouselButton\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"Previous slide\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"Next slide\"", xaml);
+        Assert.Contains("x:Name=\"ProgressRailContainer\"", xaml);
+        Assert.Contains("ProgressRailContainer.Visibility = Visibility.Collapsed", code);
+        Assert.Contains("BuildOpacity(incoming, 1, 1000)", code);
         Assert.Contains("Click=\"MoreInfoButton_Click\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"Featured content\"", xaml);
+        Assert.Contains("x:Name=\"AmbientGlowColor\"", xaml);
     }
 
     private static string FindRepositoryRoot()

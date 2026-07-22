@@ -8,7 +8,10 @@
     xmlns:controls="using:SiloPlayer.Controls"
     mc:Ignorable="d"
     IsTabStop="True"
+    AutomationProperties.Name="Featured content"
     KeyDown="OnKeyDown"
+    GotFocus="OnHeroGotFocus"
+    LostFocus="OnHeroLostFocus"
     Loaded="OnLoaded"
     Unloaded="OnUnloaded">
 
@@ -31,18 +34,28 @@
             Opacity="0" />
 
         <!-- Brightness overlay: web uses brightness(0.78), so ~22% darkening -->
-        <Border Background="#101722" Opacity="0.22" />
+        <Border Background="Black" Opacity="0.22" />
 
         <!-- Bottom-to-top gradient (hero-gradient) -->
         <Border>
             <Border.Background>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                    <GradientStop Color="Transparent" Offset="0.0" />
-                    <GradientStop Color="#33101722" Offset="0.25" />
-                    <GradientStop Color="#8C101722" Offset="0.5" />
-                    <GradientStop Color="#EB101722" Offset="0.8" />
-                    <GradientStop Color="#101722" Offset="1.0" />
+                    <GradientStop x:Name="HeroBottomTransparent" Color="Transparent" Offset="0.0" />
+                    <GradientStop x:Name="HeroBottomSoft" Color="#33101722" Offset="0.25" />
+                    <GradientStop x:Name="HeroBottomMid" Color="#8C101722" Offset="0.5" />
+                    <GradientStop x:Name="HeroBottomStrong" Color="#EB101722" Offset="0.8" />
+                    <GradientStop x:Name="HeroBottomSolid" Color="#101722" Offset="1.0" />
                 </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+
+        <!-- Current WebUI ambient glow, tinted from the active backdrop. -->
+        <Border x:Name="AmbientGlowBorder" Opacity="0.08" IsHitTestVisible="False">
+            <Border.Background>
+                <RadialGradientBrush Center="0.5,0.8" GradientOrigin="0.5,0.8" RadiusX="0.7" RadiusY="0.7">
+                    <GradientStop x:Name="AmbientGlowColor" Color="#78AEFC" Offset="0" />
+                    <GradientStop Color="Transparent" Offset="1" />
+                </RadialGradientBrush>
             </Border.Background>
         </Border>
 
@@ -50,10 +63,10 @@
         <Border>
             <Border.Background>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                    <GradientStop Color="#101722" Offset="0.0" />
-                    <GradientStop Color="#CC101722" Offset="0.2" />
-                    <GradientStop Color="#66101722" Offset="0.4" />
-                    <GradientStop Color="Transparent" Offset="0.6" />
+                    <GradientStop x:Name="HeroLeftSolid" Color="#101722" Offset="0.0" />
+                    <GradientStop x:Name="HeroLeftStrong" Color="#CC101722" Offset="0.2" />
+                    <GradientStop x:Name="HeroLeftSoft" Color="#66101722" Offset="0.4" />
+                    <GradientStop x:Name="HeroLeftTransparent" Color="Transparent" Offset="0.6" />
                 </LinearGradientBrush>
             </Border.Background>
         </Border>
@@ -62,20 +75,31 @@
         <Border>
             <Border.Background>
                 <LinearGradientBrush StartPoint="0,1" EndPoint="1,0">
-                    <GradientStop Color="#66101722" Offset="0.0" />
-                    <GradientStop Color="#33101722" Offset="0.3" />
-                    <GradientStop Color="Transparent" Offset="0.6" />
+                    <GradientStop x:Name="HeroVignetteStrong" Color="#66101722" Offset="0.0" />
+                    <GradientStop x:Name="HeroVignetteSoft" Color="#33101722" Offset="0.3" />
+                    <GradientStop x:Name="HeroVignetteTransparent" Color="Transparent" Offset="0.6" />
                 </LinearGradientBrush>
             </Border.Background>
         </Border>
 
+        <!-- WebUI home hero has border-b border-border/60 before the next
+             stack item. Keep it as a 1px overlay so it survives backdrop
+             crossfades without affecting hero layout height. -->
+        <Border
+            VerticalAlignment="Bottom"
+            Height="1"
+            Background="{StaticResource BorderBrush}"
+            Opacity="0.6"
+            IsHitTestVisible="False" />
+
         <!-- Content overlay -->
         <StackPanel
+            x:Name="HeroContent"
             VerticalAlignment="Bottom"
             HorizontalAlignment="Left"
             Margin="48,0,0,60"
-            MaxWidth="600"
-            Spacing="8">
+            MaxWidth="768"
+            Spacing="0">
 
             <!-- Stacked title: a dark "shadow" copy behind the white text
                  to approximate a CSS text-shadow (WinUI TextBlock has no
@@ -89,13 +113,14 @@
                 FontWeight="SemiBold"
                 CharacterSpacing="200"
                 Foreground="{StaticResource TertiaryTextBrush}"
-                Margin="0,0,0,4" />
+                Margin="0,0,0,16" />
 
-            <Grid>
+            <Grid Margin="0,0,0,16">
                 <TextBlock
                     x:Name="HeroTitleShadow"
                     Style="{StaticResource DisplayTextStyle}"
                     FontSize="48"
+                    FontWeight="ExtraBold"
                     TextWrapping="Wrap"
                     MaxLines="2"
                     Foreground="#99000000"
@@ -103,8 +128,10 @@
                     IsHitTestVisible="False" />
                 <TextBlock
                     x:Name="HeroTitle"
+                    AutomationProperties.LiveSetting="Polite"
                     Style="{StaticResource DisplayTextStyle}"
                     FontSize="48"
+                    FontWeight="ExtraBold"
                     TextWrapping="Wrap"
                     MaxLines="2" />
             </Grid>
@@ -112,14 +139,16 @@
             <!-- Metadata pills row: year · IMDb badge · first 3 genres.
                  Dark-glass pills matching webui .metadata-badge pattern.
                  Populated in code-behind ShowCurrentItem(). -->
-            <StackPanel x:Name="HeroMetaPillsRow" Orientation="Horizontal" Spacing="8" />
+            <StackPanel x:Name="HeroMetaPillsRow" Orientation="Horizontal" Spacing="0" Margin="0,0,0,20" />
 
             <TextBlock x:Name="HeroOverview"
                 Style="{StaticResource SecondaryTextStyle}"
                 TextWrapping="Wrap" MaxLines="3"
-                TextTrimming="CharacterEllipsis" />
+                TextTrimming="CharacterEllipsis"
+                LineHeight="28"
+                Margin="0,0,0,28" />
 
-            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,8,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="12">
                 <!-- Primary CTA: Play (pill-primary) -->
                 <Button x:Name="PlayButton" Style="{StaticResource AccentButtonStyle}" Padding="20,10"
                         CornerRadius="20"
@@ -146,12 +175,14 @@
         <!-- Nav arrows — hover-reveal (web: lg:opacity-0 lg:group-hover:opacity-100).
              Start invisible; PointerEntered on RootGrid animates to full. -->
         <Button x:Name="PrevButton" Style="{StaticResource GhostButtonStyle}"
+            AutomationProperties.Name="Previous slide"
             VerticalAlignment="Center" HorizontalAlignment="Left"
             Margin="8,0,0,0" Width="40" Height="40"
             Click="PrevButton_Click" Opacity="0">
             <FontIcon Glyph="&#xE76B;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
         </Button>
         <Button x:Name="NextButton" Style="{StaticResource GhostButtonStyle}"
+            AutomationProperties.Name="Next slide"
             VerticalAlignment="Center" HorizontalAlignment="Right"
             Margin="0,0,8,0" Width="40" Height="40"
             Click="NextButton_Click" Opacity="0">
@@ -177,6 +208,7 @@
                 VerticalAlignment="Center" />
             <!-- Progress rail: animated fill bar (8s duration) -->
             <Border
+                x:Name="ProgressRailContainer"
                 Width="100"
                 Height="3"
                 CornerRadius="2"
@@ -199,6 +231,7 @@
                 Background="Transparent"
                 BorderThickness="0"
                 ToolTipService.ToolTip="Pause slideshow"
+                AutomationProperties.Name="Pause slideshow"
                 Click="PauseCarouselButton_Click">
                 <FontIcon x:Name="PauseCarouselIcon" Glyph="&#xE769;" FontSize="12" Foreground="#CCFFFFFF" />
             </Button>

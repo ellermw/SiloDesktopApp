@@ -7,7 +7,7 @@
     Background="{StaticResource AppBackgroundBrush}"
     SizeChanged="Page_SizeChanged">
 
-    <Page.Resources><converters:BoolToVisibilityConverter x:Key="BoolToVis" /></Page.Resources>
+    <Page.Resources><converters:BoolToVisibilityConverter x:Key="BoolToVis" /><converters:UrlToImageSourceConverter x:Key="UrlToImage" /></Page.Resources>
 
     <Grid x:Name="PageContent" MaxWidth="768" HorizontalAlignment="Center" Padding="24,32" RowSpacing="16">
         <Grid.RowDefinitions>
@@ -56,7 +56,7 @@
                     <DataTemplate x:DataType="models:AppNotification">
                         <Grid x:Name="NotificationRowRoot" Padding="12" ColumnSpacing="12" MinHeight="88" CornerRadius="12" Loaded="NotificationRow_Loaded" PointerEntered="NotificationRow_PointerEntered" PointerExited="NotificationRow_PointerExited">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <Border Width="44" Height="64" CornerRadius="6" Background="{StaticResource SurfaceBrush}"><Image Source="{x:Bind PosterUrl}" Stretch="UniformToFill" /></Border>
+                            <Border Width="44" Height="64" CornerRadius="6" Background="{StaticResource SurfaceBrush}"><Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" /></Border>
                             <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
                                 <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><Ellipse Width="8" Height="8" Fill="{StaticResource AccentBrush}" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" VerticalAlignment="Center" /><TextBlock Grid.Column="1" Text="{x:Bind DisplayTitle}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{x:Bind RelativeTime}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></Grid>
                                 <TextBlock Text="{x:Bind Subtitle}" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />

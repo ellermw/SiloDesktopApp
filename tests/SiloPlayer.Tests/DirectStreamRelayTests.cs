@@ -7,6 +7,41 @@ namespace SiloPlayer.Tests;
 public sealed class DirectStreamRelayTests
 {
     [Fact]
+    public async Task RelayAsync_RetriesTransientInitialStatusBeforeWritingHeaders()
+    {
+        var bytes = new byte[] { 4, 5, 6 };
+        var calls = 0;
+        var handler = new SequenceHandler(_ =>
+        {
+            calls++;
+            return calls == 1
+                ? CreateResponse(HttpStatusCode.ServiceUnavailable, Stream.Null, 0, contentRange: null)
+                : CreateResponse(HttpStatusCode.OK, new MemoryStream(bytes), bytes.Length, contentRange: null);
+        });
+        var relay = new DirectStreamRelay(
+            new HttpClient(handler),
+            new Uri("https://example.test/api/v1/stream/session"),
+            () => "access-token",
+            maxRetries: 2);
+        DirectStreamRelayHeaders? headers = null;
+        using var output = new MemoryStream();
+
+        var result = await relay.RelayAsync(
+            output,
+            rangeHeader: null,
+            (value, _) =>
+            {
+                headers = value;
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        Assert.Equal(2, result.UpstreamAttempts);
+        Assert.Equal(HttpStatusCode.OK, headers?.StatusCode);
+        Assert.Equal(bytes, output.ToArray());
+    }
+
+    [Fact]
     public async Task RelayAsync_RetriesFromLastByte_WhenUpstreamReadFails()
     {
         var bytes = Enumerable.Range(0, 1024).Select(i => (byte)(i % 251)).ToArray();

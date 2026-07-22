@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
@@ -10,6 +11,7 @@ using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Plugins;
 using SiloPlayer.Core.Models.WatchProviders;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Messaging;
 using SiloPlayer.Services;
 
 namespace SiloPlayer.ViewModels;
@@ -1368,6 +1370,12 @@ public partial class SettingsViewModel : ObservableObject
                 LibraryId = libraryId,
                 Overrides = overrides,
             });
+            if (string.Equals(scope, "home", StringComparison.OrdinalIgnoreCase))
+            {
+                WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+                    MediaSurfaceChangeKind.HomeLayoutChanged,
+                    string.Empty));
+            }
             ShowStatus("Home sections saved");
         }
         catch (Exception ex)
@@ -1383,6 +1391,12 @@ public partial class SettingsViewModel : ObservableObject
         {
             var (scope, libraryId) = GetSectionScope();
             await _settingsApi.ResetProfileSectionsAsync(scope, libraryId);
+            if (string.Equals(scope, "home", StringComparison.OrdinalIgnoreCase))
+            {
+                WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+                    MediaSurfaceChangeKind.HomeLayoutChanged,
+                    string.Empty));
+            }
             ShowStatus("Home sections reset to defaults");
             await LoadHomeSectionsAsync();
         }

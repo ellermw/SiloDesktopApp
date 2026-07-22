@@ -24,6 +24,10 @@ public sealed partial class HeroCarousel : UserControl
     // leaving the hero resumes it, and the explicit control can resume while
     // the pointer is still over the hero.
     private bool _isPaused;
+    private bool _isPointerOver;
+    private bool _isKeyboardFocusWithin;
+    private bool _animationsEnabled = true;
+    private double _restingArrowOpacity;
 
     // F-series hero polish:
     // - Crossfade between BackdropImageA / BackdropImageB. `_activeIsA`
@@ -77,7 +81,9 @@ public sealed partial class HeroCarousel : UserControl
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        _animationsEnabled = AreSystemAnimationsEnabled();
         StartAutoAdvance();
+        UpdateThemeGradientColors();
         UpdateHeightFromWindow();
 
         DetachSizeRoot();
@@ -101,10 +107,72 @@ public sealed partial class HeroCarousel : UserControl
             Height = IsTall
                 ? Math.Clamp(root.ActualHeight * heightRatio, 420, 760)
                 : Math.Clamp(root.ActualHeight * heightRatio, 350, 700);
-            var titleSize = root.ActualWidth >= 1400 ? 68d : root.ActualWidth >= 1024 ? 60d : 48d;
+            var width = root.ActualWidth;
+            var titleSize = width >= 1280 ? 72d
+                : width >= 1024 ? 60d
+                : width >= 640 ? 48d
+                : 36d;
             HeroTitle.FontSize = titleSize;
             HeroTitleShadow.FontSize = titleSize;
+
+            var gutter = width >= 1280 ? 48d
+                : width >= 1024 ? 40d
+                : width >= 640 ? 24d
+                : 16d;
+            var bottom = width >= 1024 ? 64d : width >= 640 ? 48d : 40d;
+            HeroContent.Margin = new Thickness(gutter, 0, gutter, bottom);
+            HeroContent.MaxWidth = Math.Min(768, Math.Max(280, width - (gutter * 2)));
+            HeroEyebrow.Visibility = width >= 640 ? Visibility.Visible : Visibility.Collapsed;
+            HeroOverview.FontSize = width >= 640 ? 16 : 14;
+            HeroOverview.MaxLines = width >= 640 ? 0 : 2;
+
+            var arrowSize = width >= 640 ? 36d : 28d;
+            PrevButton.Width = PrevButton.Height = arrowSize;
+            NextButton.Width = NextButton.Height = arrowSize;
+            PrevButton.Margin = new Thickness(width >= 640 ? 20 : 12, 0, 0, 0);
+            NextButton.Margin = new Thickness(0, 0, width >= 640 ? 20 : 12, 0);
+            _restingArrowOpacity = width >= 1024 ? 0 : width >= 640 ? 0.8 : 0.6;
+            if (!_isPointerOver)
+            {
+                PrevButton.Opacity = _restingArrowOpacity;
+                NextButton.Opacity = _restingArrowOpacity;
+            }
+
+            if (width < 640)
+            {
+                SlideControlsPanel.VerticalAlignment = VerticalAlignment.Top;
+                SlideControlsPanel.Margin = new Thickness(0, 16, 16, 0);
+                ProgressRailContainer.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                SlideControlsPanel.VerticalAlignment = VerticalAlignment.Bottom;
+                SlideControlsPanel.Margin = new Thickness(0, 0, 24, 20);
+                ProgressRailContainer.Visibility = Visibility.Visible;
+            }
         }
+    }
+
+    private void UpdateThemeGradientColors()
+    {
+        if (Application.Current.Resources["AppBackgroundColor"] is not Windows.UI.Color background)
+            return;
+
+        Windows.UI.Color WithAlpha(byte alpha) => Microsoft.UI.ColorHelper.FromArgb(
+            alpha, background.R, background.G, background.B);
+
+        HeroBottomTransparent.Color = WithAlpha(0);
+        HeroBottomSoft.Color = WithAlpha(0x33);
+        HeroBottomMid.Color = WithAlpha(0x8C);
+        HeroBottomStrong.Color = WithAlpha(0xEB);
+        HeroBottomSolid.Color = WithAlpha(0xFF);
+        HeroLeftSolid.Color = WithAlpha(0xFF);
+        HeroLeftStrong.Color = WithAlpha(0xCC);
+        HeroLeftSoft.Color = WithAlpha(0x66);
+        HeroLeftTransparent.Color = WithAlpha(0);
+        HeroVignetteStrong.Color = WithAlpha(0x66);
+        HeroVignetteSoft.Color = WithAlpha(0x33);
+        HeroVignetteTransparent.Color = WithAlpha(0);
     }
 
     // Height is managed by UpdateHeightFromWindow, no SizeChanged needed
@@ -128,7 +196,7 @@ public sealed partial class HeroCarousel : UserControl
     private void StartAutoAdvance()
     {
         StopAutoAdvance();
-        if (_items == null || _items.Count <= 1 || IsAutoAdvancePaused)
+        if (!_animationsEnabled || _items == null || _items.Count <= 1 || IsAutoAdvancePaused)
             return;
         _autoAdvanceTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(8) };
         _autoAdvanceTimer.Tick += (_, _) => NavigateNext();
@@ -232,6 +300,13 @@ public sealed partial class HeroCarousel : UserControl
         Visibility = Visibility.Visible;
         var item = _items[_currentIndex];
 
+        var ambient = ThumbhashDecoder.GetAmbientColor(item.BackdropThumbhash);
+        if (ambient.HasValue)
+        {
+            AmbientGlowColor.Color = Microsoft.UI.ColorHelper.FromArgb(
+                0xFF, ambient.Value.R, ambient.Value.G, ambient.Value.B);
+        }
+
         HeroTitle.Text = item.Title;
         HeroTitleShadow.Text = item.Title;
         HeroOverview.Text = item.Overview ?? "";
@@ -260,6 +335,8 @@ public sealed partial class HeroCarousel : UserControl
             AddHeroMeta(runtime);
 
         SlideControlsPanel.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        PrevButton.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        NextButton.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
 
         UpdateDots();
 
@@ -485,9 +562,17 @@ public sealed partial class HeroCarousel : UserControl
         var incoming = _activeIsA ? BackdropImageB : BackdropImageA;
         var outgoing = _activeIsA ? BackdropImageA : BackdropImageB;
 
+        if (!_animationsEnabled)
+        {
+            incoming.Opacity = 1;
+            outgoing.Opacity = 0;
+            _activeIsA = !_activeIsA;
+            return;
+        }
+
         var sb = new Storyboard();
-        sb.Children.Add(BuildOpacity(incoming, 1, 800));
-        sb.Children.Add(BuildOpacity(outgoing, 0, 800));
+        sb.Children.Add(BuildOpacity(incoming, 1, 1000));
+        sb.Children.Add(BuildOpacity(outgoing, 0, 1000));
         sb.Begin();
 
         _activeIsA = !_activeIsA;
@@ -543,7 +628,7 @@ public sealed partial class HeroCarousel : UserControl
         _progressStoryboard?.Stop();
         ProgressRailFill.Width = 0;
 
-        if (_items == null || _items.Count <= 1 || IsAutoAdvancePaused)
+        if (!_animationsEnabled || _items == null || _items.Count <= 1 || IsAutoAdvancePaused)
             return;
 
         var anim = new DoubleAnimation
@@ -583,6 +668,7 @@ public sealed partial class HeroCarousel : UserControl
 
     private void RootGrid_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
+        _isPointerOver = true;
         AnimateArrows(1.0);
         SetCarouselPaused(true);
         StopAutoAdvance();
@@ -602,9 +688,62 @@ public sealed partial class HeroCarousel : UserControl
 
     private void RootGrid_PointerExited(object sender, PointerRoutedEventArgs e)
     {
-        AnimateArrows(0.0);
-        SetCarouselPaused(false);
-        ResumeCarouselCycleIfAllowed();
+        _isPointerOver = false;
+        AnimateArrows(_restingArrowOpacity);
+        if (!_isKeyboardFocusWithin)
+        {
+            SetCarouselPaused(false);
+            ResumeCarouselCycleIfAllowed();
+        }
+    }
+
+    private void OnHeroGotFocus(object sender, RoutedEventArgs e)
+    {
+        _isKeyboardFocusWithin = true;
+        AnimateArrows(1.0);
+        SetCarouselPaused(true);
+        StopAutoAdvance();
+        _progressStoryboard?.Pause();
+    }
+
+    private void OnHeroLostFocus(object sender, RoutedEventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var focused = XamlRoot == null ? null : FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
+            _isKeyboardFocusWithin = IsDescendantOf(focused, this);
+            if (_isKeyboardFocusWithin)
+                return;
+
+            AnimateArrows(_isPointerOver ? 1.0 : _restingArrowOpacity);
+            if (!_isPointerOver)
+            {
+                SetCarouselPaused(false);
+                ResumeCarouselCycleIfAllowed();
+            }
+        });
+    }
+
+    private static bool IsDescendantOf(DependencyObject? element, DependencyObject ancestor)
+    {
+        for (var current = element; current != null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (ReferenceEquals(current, ancestor))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool AreSystemAnimationsEnabled()
+    {
+        try
+        {
+            return new Windows.UI.ViewManagement.UISettings().AnimationsEnabled;
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     private void PauseCarouselButton_Click(object sender, RoutedEventArgs e)
@@ -626,7 +765,9 @@ public sealed partial class HeroCarousel : UserControl
     {
         _isPaused = paused;
         PauseCarouselIcon.Glyph = paused ? "\uE768" : "\uE769";
-        ToolTipService.SetToolTip(PauseCarouselButton, paused ? "Play slideshow" : "Pause slideshow");
+        var label = paused ? "Play slideshow" : "Pause slideshow";
+        ToolTipService.SetToolTip(PauseCarouselButton, label);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PauseCarouselButton, label);
     }
 
     private void ResumeCarouselCycleIfAllowed()

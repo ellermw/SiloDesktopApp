@@ -363,6 +363,7 @@ public sealed class MpvPlayer : IDisposable
         SetOption("interpolation", "no");
         SetOption("framedrop", "vo");
         SetOption("hr-seek-framedrop", "yes");
+        SetOption("deinterlace", "auto");
 
         // Adapt HDR10, HDR10+, HLG, and supported Dolby Vision sources to the
         // actual Windows display colorspace. Auto avoids forcing HDR metadata
@@ -527,8 +528,10 @@ public sealed class MpvPlayer : IDisposable
                         continue;
                 }
 
-                // Signal frame ready OUTSIDE the lock (subscribers copy the buffer)
-                FrameReady?.Invoke(buffer, w, h, (int)stride);
+                // Signal frame ready OUTSIDE the lock (subscribers copy the buffer).
+                // Isolate each subscriber so one failed renderer cannot suppress a
+                // diagnostic/secondary sink or terminate the render pump.
+                InvokeFrameReadySafely(buffer, w, h, (int)stride);
             }
         }
         finally
@@ -821,7 +824,7 @@ public sealed class MpvPlayer : IDisposable
             if (err < 0)
             {
                 string errMsg = GetErrorString(err);
-                Error?.Invoke($"mpv_command [{string.Join(" ", args.Select(RedactCommandArgument))}] failed: {errMsg}");
+                ReportErrorSafely($"mpv_command [{string.Join(" ", args.Select(RedactCommandArgument))}] failed: {errMsg}");
             }
         }
         finally
@@ -877,43 +880,57 @@ public sealed class MpvPlayer : IDisposable
 
             var ev = Marshal.PtrToStructure<MpvEvent>(evPtr);
 
-            switch (ev.EventId)
+            try
             {
-                case MPV_EVENT_NONE:
-                    // Timeout or wakeup, nothing to do
-                    break;
+                switch (ev.EventId)
+                {
+                    case MPV_EVENT_NONE:
+                        // Timeout or wakeup, nothing to do
+                        break;
 
-                case MPV_EVENT_PROPERTY_CHANGE:
-                    HandlePropertyChange(ev);
-                    break;
+                    case MPV_EVENT_PROPERTY_CHANGE:
+                        HandlePropertyChange(ev);
+                        break;
 
-                case MPV_EVENT_FILE_LOADED:
-                    FileLoaded?.Invoke();
-                    break;
+                    case MPV_EVENT_FILE_LOADED:
+                        InvokeSafely(FileLoaded, nameof(FileLoaded));
+                        break;
 
-                case MPV_EVENT_PLAYBACK_RESTART:
-                    PlaybackRestarted?.Invoke();
-                    break;
+                    case MPV_EVENT_PLAYBACK_RESTART:
+                        InvokeSafely(PlaybackRestarted, nameof(PlaybackRestarted));
+                        break;
 
-                case MPV_EVENT_END_FILE:
-                    if (ev.Data != IntPtr.Zero)
-                    {
-                        var endFile = Marshal.PtrToStructure<MpvEventEndFile>(ev.Data);
-                        if (endFile.Reason == MPV_END_FILE_REASON_ERROR)
+                    case MPV_EVENT_END_FILE:
+                        if (ev.Data != IntPtr.Zero)
                         {
-                            var errMsg = GetErrorString(endFile.Error);
-                            PlaybackError?.Invoke($"Playback failed: {errMsg}");
+                            var endFile = Marshal.PtrToStructure<MpvEventEndFile>(ev.Data);
+                            if (endFile.Reason == MPV_END_FILE_REASON_ERROR)
+                            {
+                                var errMsg = GetErrorString(endFile.Error);
+                                InvokeSafely(
+                                    PlaybackError,
+                                    $"Playback failed: {errMsg}",
+                                    nameof(PlaybackError));
+                            }
                         }
-                    }
-                    PlaybackEnded?.Invoke();
-                    break;
+                        // END_FILE remains authoritative even if an error
+                        // subscriber fails; both notifications are isolated.
+                        InvokeSafely(PlaybackEnded, nameof(PlaybackEnded));
+                        break;
 
-                case MPV_EVENT_CLIENT_MESSAGE:
-                    HandleClientMessage(ev);
-                    break;
+                    case MPV_EVENT_CLIENT_MESSAGE:
+                        HandleClientMessage(ev);
+                        break;
 
-                case MPV_EVENT_SHUTDOWN:
-                    return; // Exit the event loop
+                    case MPV_EVENT_SHUTDOWN:
+                        return; // Exit the event loop
+                }
+            }
+            catch (Exception ex)
+            {
+                // Never let malformed native event data or an unexpected
+                // application callback terminate mpv's only event pump.
+                ReportErrorSafely($"mpv event {ev.EventId} failed: {ex.Message}");
             }
         }
     }
@@ -932,7 +949,7 @@ public sealed class MpvPlayer : IDisposable
                 {
                     double pos = Marshal.PtrToStructure<double>(prop.Data);
                     Position = pos;
-                    PositionChanged?.Invoke(pos);
+                    InvokeSafely(PositionChanged, pos, nameof(PositionChanged));
                 }
                 break;
 
@@ -941,7 +958,7 @@ public sealed class MpvPlayer : IDisposable
                 {
                     double dur = Marshal.PtrToStructure<double>(prop.Data);
                     Duration = dur;
-                    DurationChanged?.Invoke(dur);
+                    InvokeSafely(DurationChanged, dur, nameof(DurationChanged));
                 }
                 break;
 
@@ -951,7 +968,7 @@ public sealed class MpvPlayer : IDisposable
                     int flag = Marshal.PtrToStructure<int>(prop.Data);
                     bool paused = flag != 0;
                     IsPaused = paused;
-                    PauseChanged?.Invoke(paused);
+                    InvokeSafely(PauseChanged, paused, nameof(PauseChanged));
                 }
                 break;
 
@@ -960,7 +977,7 @@ public sealed class MpvPlayer : IDisposable
                 {
                     int flag = Marshal.PtrToStructure<int>(prop.Data);
                     if (flag != 0)
-                        EofReached?.Invoke();
+                        InvokeSafely(EofReached, nameof(EofReached));
                 }
                 break;
 
@@ -972,7 +989,7 @@ public sealed class MpvPlayer : IDisposable
                     if (buffering != IsBufferingForCache)
                     {
                         IsBufferingForCache = buffering;
-                        BufferingChanged?.Invoke(buffering);
+                        InvokeSafely(BufferingChanged, buffering, nameof(BufferingChanged));
                     }
                 }
                 break;
@@ -1011,11 +1028,85 @@ public sealed class MpvPlayer : IDisposable
                 args[i] = Marshal.PtrToStringUTF8(strPtr) ?? "";
             }
 
-            ScriptMessageReceived?.Invoke(args);
+            InvokeSafely(ScriptMessageReceived, args, nameof(ScriptMessageReceived));
         }
         catch (Exception ex)
         {
-            Error?.Invoke($"HandleClientMessage failed: {ex.Message}");
+            ReportErrorSafely($"HandleClientMessage failed: {ex.Message}");
+        }
+    }
+
+    private void InvokeSafely(Action? handler, string eventName)
+    {
+        if (handler == null)
+            return;
+
+        foreach (var subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                ((Action)subscriber)();
+            }
+            catch (Exception ex)
+            {
+                ReportErrorSafely($"{eventName} callback failed: {ex.Message}");
+            }
+        }
+    }
+
+    private void InvokeSafely<T>(Action<T>? handler, T value, string eventName)
+    {
+        if (handler == null)
+            return;
+
+        foreach (var subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                ((Action<T>)subscriber)(value);
+            }
+            catch (Exception ex)
+            {
+                ReportErrorSafely($"{eventName} callback failed: {ex.Message}");
+            }
+        }
+    }
+
+    private void InvokeFrameReadySafely(byte[] buffer, int width, int height, int stride)
+    {
+        var handler = FrameReady;
+        if (handler == null)
+            return;
+
+        foreach (var subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                ((Action<byte[], int, int, int>)subscriber)(buffer, width, height, stride);
+            }
+            catch (Exception ex)
+            {
+                ReportErrorSafely($"FrameReady callback failed: {ex.Message}");
+            }
+        }
+    }
+
+    private void ReportErrorSafely(string message)
+    {
+        var handler = Error;
+        if (handler == null)
+            return;
+
+        foreach (var subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                ((Action<string>)subscriber)(message);
+            }
+            catch
+            {
+                // Error reporting must never tear down libmpv's event/render loop.
+            }
         }
     }
 
@@ -1027,7 +1118,7 @@ public sealed class MpvPlayer : IDisposable
         if (err < 0)
         {
             string errMsg = GetErrorString(err);
-            Error?.Invoke($"mpv_set_option_string({name}, {value}) failed: {errMsg}");
+            ReportErrorSafely($"mpv_set_option_string({name}, {value}) failed: {errMsg}");
         }
     }
 
@@ -1060,8 +1151,10 @@ public sealed class MpvPlayer : IDisposable
         PauseChanged = null;
         PlaybackEnded = null;
         PlaybackRestarted = null;
+        PlaybackError = null;
         EofReached = null;
         FileLoaded = null;
+        BufferingChanged = null;
         FrameReady = null;
         ScriptMessageReceived = null;
         Error = null;

@@ -20,6 +20,9 @@
         <DataTemplate x:Key="LandscapeCardTemplate" x:DataType="models:MediaItem">
             <controls:LandscapeCard MediaItem="{x:Bind}" />
         </DataTemplate>
+        <DataTemplate x:Key="ContinuePosterCardTemplate" x:DataType="models:MediaItem">
+            <controls:LandscapeCard MediaItem="{x:Bind}" UsePosterAspect="True" />
+        </DataTemplate>
         <DataTemplate x:Key="AudiobookCardTemplate" x:DataType="models:MediaItem">
             <controls:AudiobookSquareCard MediaItem="{x:Bind}" />
         </DataTemplate>
@@ -107,12 +110,20 @@
         <Grid Grid.Row="1">
             <ScrollViewer
                 x:Name="CardsScrollViewer"
+                IsTabStop="True"
+                TabFocusNavigation="Local"
                 HorizontalScrollBarVisibility="Hidden"
                 VerticalScrollBarVisibility="Disabled"
                 HorizontalScrollMode="Disabled"
                 VerticalScrollMode="Disabled"
                 ViewChanged="CardsScrollViewer_ViewChanged"
-                SizeChanged="CardsScrollViewer_SizeChanged">
+                SizeChanged="CardsScrollViewer_SizeChanged"
+                KeyDown="CardsScrollViewer_KeyDown"
+                PointerPressed="CardsScrollViewer_PointerPressed"
+                PointerMoved="CardsScrollViewer_PointerMoved"
+                PointerReleased="CardsScrollViewer_PointerReleased"
+                PointerCanceled="CardsScrollViewer_PointerCanceled"
+                PointerCaptureLost="CardsScrollViewer_PointerCaptureLost">
 
                 <ItemsRepeater
                     x:Name="CardsRepeater"
@@ -133,62 +144,60 @@
             <Border
                 x:Name="LeftFadeGradient"
                 HorizontalAlignment="Left"
-                Width="64"
+                Width="40"
                 IsHitTestVisible="False"
                 Opacity="0">
                 <Border.Background>
                     <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
-                        <GradientStop Color="#FF101722" Offset="0.0" />
-                        <GradientStop Color="#00101722" Offset="1.0" />
+                        <GradientStop x:Name="LeftFadeSolid" Color="#FF101722" Offset="0.0" />
+                        <GradientStop x:Name="LeftFadeClear" Color="#00101722" Offset="1.0" />
                     </LinearGradientBrush>
                 </Border.Background>
             </Border>
             <Border
                 x:Name="RightFadeGradient"
                 HorizontalAlignment="Right"
-                Width="64"
+                Width="40"
                 IsHitTestVisible="False"
                 Opacity="0">
                 <Border.Background>
                     <LinearGradientBrush StartPoint="1,0.5" EndPoint="0,0.5">
-                        <GradientStop Color="#FF101722" Offset="0.0" />
-                        <GradientStop Color="#00101722" Offset="1.0" />
+                        <GradientStop x:Name="RightFadeSolid" Color="#FF101722" Offset="0.0" />
+                        <GradientStop x:Name="RightFadeClear" Color="#00101722" Offset="1.0" />
                     </LinearGradientBrush>
                 </Border.Background>
             </Border>
 
             <!-- Current WebUI overlays carousel arrows at the left/right edges;
                  they are not part of the header action row. -->
-            <Grid x:Name="ArrowsPanel" Opacity="0">
+            <Grid x:Name="ArrowsPanel" Opacity="0" IsHitTestVisible="False">
                 <Button
                     x:Name="ScrollLeftBtn"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Center"
-                    Margin="20,0,0,0"
-                    Width="40" Height="40"
+                    Margin="0"
+                    Width="44"
                     Padding="0"
-                    CornerRadius="20"
-                    Background="#CC101722"
-                    BorderBrush="#33FFFFFF"
-                    BorderThickness="1"
+                    CornerRadius="0"
+                    Background="Transparent"
+                    BorderThickness="0"
                     IsEnabled="False"
                     Click="ScrollLeft_Click">
-                    <FontIcon Glyph="&#xE76B;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
+                    <FontIcon Glyph="&#xE76B;" FontSize="24" Foreground="{StaticResource PrimaryTextBrush}" />
                 </Button>
                 <Button
                     x:Name="ScrollRightBtn"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Center"
-                    Margin="0,0,20,0"
-                    Width="40" Height="40"
+                    Margin="0"
+                    Width="44"
                     Padding="0"
-                    CornerRadius="20"
-                    Background="#CC101722"
-                    BorderBrush="#33FFFFFF"
-                    BorderThickness="1"
+                    CornerRadius="0"
+                    Background="Transparent"
+                    BorderThickness="0"
                     IsEnabled="False"
                     Click="ScrollRight_Click">
-                    <FontIcon Glyph="&#xE76C;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
+                    <FontIcon Glyph="&#xE76C;" FontSize="24" Foreground="{StaticResource PrimaryTextBrush}" />
                 </Button>
             </Grid>
         </Grid>

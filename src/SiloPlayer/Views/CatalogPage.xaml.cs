@@ -29,6 +29,7 @@ public sealed partial class CatalogPage : Page,
     private readonly CatalogApi _api = App.Services.GetRequiredService<CatalogApi>();
     private readonly ObservableCollection<MediaItem> _items = [];
     private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _navigationCts;
     private DispatcherTimer? _debounce;
     private int _offset;
     private bool _hasMore;
@@ -67,11 +68,20 @@ public sealed partial class CatalogPage : Page,
         ("in the last", "in_last")
     ];
 
-    public CatalogPage() { InitializeComponent(); ItemsRepeater.ItemsSource = _items; }
+    public CatalogPage()
+    {
+        InitializeComponent();
+        ItemsRepeater.ItemsSource = _items;
+        CatalogLoadingRepeater.ItemsSource = Enumerable.Range(0, 24).ToArray();
+    }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _navigationCts?.Cancel();
+        _navigationCts?.Dispose();
+        _navigationCts = new CancellationTokenSource();
+        var navigationToken = _navigationCts.Token;
         RegisterMediaMessages();
         if (e.Parameter is CatalogNavigation navigation)
         {
@@ -103,15 +113,26 @@ public sealed partial class CatalogPage : Page,
             FilterPanel.Visibility = Visibility.Collapsed;
             LockedFiltersPanel.Visibility = Visibility.Visible;
         }
-        await InitializeFiltersAsync();
-        _initializing = false;
-        UpdateFilterCount();
-        await LoadAsync(true);
+        try
+        {
+            ShowInitialLoadingState();
+            await InitializeFiltersAsync(navigationToken);
+            navigationToken.ThrowIfCancellationRequested();
+            _initializing = false;
+            UpdateFilterCount();
+            await LoadAsync(true);
+        }
+        catch (OperationCanceledException) when (navigationToken.IsCancellationRequested)
+        {
+            // A newer route owns the frame. Do not paint stale filters or an
+            // error state over the page the user has already opened.
+        }
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         Interlocked.Increment(ref _loadGeneration);
+        _navigationCts?.Cancel();
         _loadCts?.Cancel();
         _debounce?.Stop();
         UnregisterMediaMessages();
@@ -195,15 +216,17 @@ public sealed partial class CatalogPage : Page,
         }
     }
 
-    private async Task InitializeFiltersAsync()
+    private async Task InitializeFiltersAsync(CancellationToken ct)
     {
-        var librariesTask = _api.GetLibrariesAsync();
+        var librariesTask = _api.GetLibrariesAsync(ct);
         var filtersTask = _api.GetFiltersAsync(
             libraryId: _fixedLibraryId,
+            ct: ct,
             source: _source == "library" ? null : _source,
             scope: _scope,
             sectionId: _sectionId);
         await Task.WhenAll(librariesTask, filtersTask);
+        ct.ThrowIfCancellationRequested();
         LibraryCombo.Items.Add(new ComboBoxItem { Content = "All libraries", Tag = (int?)null });
         foreach (var library in librariesTask.Result) LibraryCombo.Items.Add(new ComboBoxItem { Content = library.Name, Tag = (int?)library.Id });
         var fixedLibraryIndex = _fixedLibraryId is > 0
@@ -244,7 +267,12 @@ public sealed partial class CatalogPage : Page,
         }
         if (_loadCts == null) _loadCts = new CancellationTokenSource();
         var generation = Volatile.Read(ref _loadGeneration);
-        _loading = true; LoadingRing.IsActive = true; LoadingRing.Visibility = Visibility.Visible;
+        _loading = true;
+        var initialLoad = reset && _items.Count == 0;
+        CatalogLoadingRepeater.Visibility = initialLoad ? Visibility.Visible : Visibility.Collapsed;
+        ItemsRepeater.Visibility = initialLoad ? Visibility.Collapsed : Visibility.Visible;
+        LoadingRing.IsActive = !initialLoad;
+        LoadingRing.Visibility = !initialLoad ? Visibility.Visible : Visibility.Collapsed;
         ErrorText.Visibility = Visibility.Collapsed;
         try
         {
@@ -288,6 +316,8 @@ public sealed partial class CatalogPage : Page,
             ResultNounText.Text = response.Total == 1 ? "RESULT" : "RESULTS";
             CountPanel.Visibility = response.TotalExact ? Visibility.Visible : Visibility.Collapsed;
             EmptyText.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            ItemsRepeater.Visibility = Visibility.Visible;
+            CatalogLoadingRepeater.Visibility = Visibility.Collapsed;
             LoadMoreButton.Visibility = _hasMore ? Visibility.Visible : Visibility.Collapsed;
         }
         catch (OperationCanceledException) { }
@@ -306,8 +336,21 @@ public sealed partial class CatalogPage : Page,
                 _loading = false;
                 LoadingRing.IsActive = false;
                 LoadingRing.Visibility = Visibility.Collapsed;
+                CatalogLoadingRepeater.Visibility = Visibility.Collapsed;
+                ItemsRepeater.Visibility = Visibility.Visible;
             }
         }
+    }
+
+    private void ShowInitialLoadingState()
+    {
+        EmptyText.Visibility = Visibility.Collapsed;
+        ErrorText.Visibility = Visibility.Collapsed;
+        LoadMoreButton.Visibility = Visibility.Collapsed;
+        CatalogLoadingRepeater.Visibility = Visibility.Visible;
+        ItemsRepeater.Visibility = Visibility.Collapsed;
+        LoadingRing.IsActive = false;
+        LoadingRing.Visibility = Visibility.Collapsed;
     }
 
     private void Filter_Changed(object sender, object e)
@@ -344,6 +387,16 @@ public sealed partial class CatalogPage : Page,
         card.IsSelected = _selectedIds.Contains(item.ContentId);
         card.SetCatalogGridLayout(_catalogCardWidth);
         card.SelectionToggled += PosterCard_SelectionToggled;
+    }
+
+    private void CatalogLoadingRepeater_ElementPrepared(
+        ItemsRepeater sender,
+        ItemsRepeaterElementPreparedEventArgs args)
+    {
+        if (args.Element is not StackPanel card) return;
+        card.Width = _catalogCardWidth;
+        if (card.Children.FirstOrDefault() is FrameworkElement poster)
+            poster.Height = _catalogCardWidth * 1.5;
     }
 
     private void PosterCard_SelectionToggled(object? sender, EventArgs e)
@@ -733,8 +786,17 @@ public sealed partial class CatalogPage : Page,
         _catalogCardWidth = Math.Max(96, Math.Floor((width - gutter * 2 - (columns - 1) * 12) / columns));
         CatalogGridLayout.MinItemWidth = _catalogCardWidth;
         CatalogGridLayout.MinItemHeight = _catalogCardWidth * 1.5 + 56;
+        CatalogLoadingGridLayout.MinItemWidth = _catalogCardWidth;
+        CatalogLoadingGridLayout.MinItemHeight = _catalogCardWidth * 1.5 + 56;
         for (var i = 0; i < _items.Count; i++)
             if (ItemsRepeater.TryGetElement(i) is PosterCard card)
                 card.SetCatalogGridLayout(_catalogCardWidth);
+        for (var i = 0; i < 24; i++)
+        {
+            if (CatalogLoadingRepeater.TryGetElement(i) is not StackPanel skeleton) continue;
+            skeleton.Width = _catalogCardWidth;
+            if (skeleton.Children.FirstOrDefault() is FrameworkElement poster)
+                poster.Height = _catalogCardWidth * 1.5;
+        }
     }
 }

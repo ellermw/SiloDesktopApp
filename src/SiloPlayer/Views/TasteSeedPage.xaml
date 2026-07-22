@@ -12,6 +12,7 @@
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:InverseBoolConverter x:Key="InverseBool" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
+        <converters:UrlToImageSourceConverter x:Key="UrlToImage" />
     </Page.Resources>
     <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
@@ -55,7 +56,7 @@
                                 <Grid Width="147" Height="221" CornerRadius="12" Background="{StaticResource SurfaceBrush}">
                                     <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" TextAlignment="Center"
                                                VerticalAlignment="Center" Margin="12" Foreground="{StaticResource SecondaryTextBrush}"/>
-                                    <Image Source="{x:Bind Item.PosterUrl}" Stretch="UniformToFill"/>
+                                        <Image Source="{x:Bind Item.PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill"/>
                                     <Border Background="#300078D4" Visibility="{x:Bind IsSelected, Mode=OneWay, Converter={StaticResource BoolToVis}}" CornerRadius="12" />
                                     <Border Width="28" Height="28" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0" CornerRadius="14" BorderThickness="1" BorderBrush="White" Background="#70000000">
                                         <FontIcon Glyph="&#xE73E;" FontSize="14" Foreground="White" Visibility="{x:Bind IsSelected, Mode=OneWay, Converter={StaticResource BoolToVis}}" />

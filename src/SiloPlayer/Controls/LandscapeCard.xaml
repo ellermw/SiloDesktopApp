@@ -7,6 +7,11 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
     Width="315"
+    IsTabStop="True"
+    UseSystemFocusVisuals="True"
+    KeyDown="OnCardKeyDown"
+    GotFocus="OnCardGotFocus"
+    LostFocus="OnCardLostFocus"
     PointerEntered="OnPointerEntered"
     PointerExited="OnPointerExited">
 
@@ -53,16 +58,6 @@
                 </Image.RenderTransform>
             </Image>
 
-            <!-- Bottom gradient overlay -->
-            <Border VerticalAlignment="Bottom" Height="64" IsHitTestVisible="False">
-                <Border.Background>
-                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                        <GradientStop Color="Transparent" Offset="0.0" />
-                        <GradientStop Color="#99000000" Offset="1.0" />
-                    </LinearGradientBrush>
-                </Border.Background>
-            </Border>
-
             <!-- Progress bar at bottom -->
             <Grid
                 x:Name="ProgressContainer"
@@ -98,6 +93,37 @@
                     Foreground="White" />
             </Border>
 
+            <Border
+                x:Name="CurrentItemBadge"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Margin="10"
+                Background="{StaticResource AccentBrush}"
+                CornerRadius="12"
+                Padding="9,5"
+                Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Ellipse Width="6" Height="6" Fill="{StaticResource AccentForegroundBrush}"
+                             VerticalAlignment="Center" />
+                    <TextBlock Text="NOW VIEWING" FontSize="10" FontWeight="SemiBold"
+                               CharacterSpacing="80"
+                               Foreground="{StaticResource AccentForegroundBrush}" />
+                </StackPanel>
+            </Border>
+
+            <Border
+                x:Name="EpisodeWatchedBadge"
+                Width="28" Height="28"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Margin="8"
+                Background="#A6000000"
+                CornerRadius="14"
+                Visibility="Collapsed">
+                <FontIcon Glyph="&#xE73E;" FontSize="16" Foreground="#4ADE80"
+                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+
             <!-- Hover overlays — MUST be last so they paint on top of image/gradient/progress/badges.
                  Z-order: background → image → gradient → progress → remaining badge → dim → play → border. -->
             <StackPanel x:Name="OverlayTopLeft" Orientation="Vertical" Spacing="4" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="6" />
@@ -117,7 +143,7 @@
                 x:Name="HoverPlayButton"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"
-                Width="48" Height="48"
+                Width="44" Height="44"
                 Padding="0"
                 Background="Transparent"
                 BorderThickness="0"
@@ -127,7 +153,7 @@
                 <Button.RenderTransform>
                     <CompositeTransform x:Name="HoverPlayButtonTransform" ScaleX="0.7" ScaleY="0.7" />
                 </Button.RenderTransform>
-                <Grid Width="48" Height="48">
+                <Grid Width="44" Height="44">
                     <Ellipse Fill="{StaticResource AccentBrush}" />
                     <FontIcon
                         x:Name="HoverPlayIcon"
@@ -142,17 +168,19 @@
                  the top-right, revealed on hover. -->
             <Button
                 x:Name="DismissButton"
-                Width="28" Height="28"
-                CornerRadius="14"
+                Width="36" Height="36"
+                CornerRadius="6"
                 Padding="0"
                 Background="#AA000000"
                 BorderThickness="0"
                 HorizontalAlignment="Right"
-                VerticalAlignment="Top"
-                Margin="6"
+                VerticalAlignment="Bottom"
+                Margin="0,0,12,12"
                 Opacity="0"
                 IsHitTestVisible="True"
                 Click="DismissButton_Click"
+                Tapped="DismissButton_Tapped"
+                AutomationProperties.Name="More actions"
                 ToolTipService.ToolTip="More actions"
                 Visibility="Collapsed">
                 <FontIcon Glyph="&#xE712;" FontSize="14" Foreground="White" />
@@ -160,16 +188,16 @@
 
             <!-- Hover accent border — topmost layer -->
             <Border
-                x:Name="HoverBorder"
+                x:Name="CurrentItemBorder"
                 CornerRadius="12"
                 BorderBrush="{StaticResource AccentBrush}"
                 BorderThickness="2"
-                Opacity="0"
+                Visibility="Collapsed"
                 IsHitTestVisible="False" />
         </Grid>
 
         <!-- Text below image — B32: text click navigates to details -->
-        <StackPanel Grid.Row="1" Margin="2,10,2,0" Spacing="2" Tapped="OnTextTapped" Background="Transparent">
+        <StackPanel Grid.Row="1" Margin="2,10,2,0" Spacing="2" Background="Transparent">
             <!-- Title -->
             <TextBlock
                 x:Name="TitleText"
@@ -177,22 +205,25 @@
                 FontWeight="SemiBold"
                 Foreground="{StaticResource PrimaryTextBrush}"
                 TextTrimming="CharacterEllipsis"
-                MaxLines="1" />
+                MaxLines="1"
+                Tapped="OnHeadingTapped" />
             <!-- Episode context: "Series Title · S1 E3" -->
             <TextBlock
                 x:Name="SubtitleText"
-                FontSize="11"
+                FontSize="12"
                 Foreground="{StaticResource SecondaryTextBrush}"
                 TextTrimming="CharacterEllipsis"
                 MaxLines="1"
-                Visibility="Collapsed" />
+                Visibility="Collapsed"
+                Tapped="OnMetadataTapped" />
             <TextBlock
                 x:Name="TimeLeftText"
-                FontSize="11"
+                FontSize="12"
                 Foreground="{StaticResource SecondaryTextBrush}"
                 TextTrimming="CharacterEllipsis"
                 MaxLines="1"
-                Visibility="Collapsed" />
+                Visibility="Collapsed"
+                Tapped="OnMetadataTapped" />
             <!-- Badge row (e.g. "SEASON PREMIERE") — WebUI parity with ContinueWatchingCard.
                  Uses a rounded-full pill with emerald accent. Visible only when the server
                  attaches a badge string to the section item. -->

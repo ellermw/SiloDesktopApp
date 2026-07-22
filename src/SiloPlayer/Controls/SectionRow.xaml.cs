@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Animation;
 using SiloPlayer.Core.Models.Home;
+using Windows.System;
 
 namespace SiloPlayer.Controls;
 
@@ -29,6 +30,13 @@ public sealed partial class SectionRow : UserControl
     private int? _libraryId;
     private bool _useTitleViewLink;
     private double _posterWidth = 178;
+    private double _landscapeWidth = 315;
+    private uint? _dragPointerId;
+    private double _dragStartX;
+    private double _dragStartOffset;
+    private bool _isDragging;
+    private System.Collections.ObjectModel.ObservableCollection<MediaItem>? _observedItems;
+    private const double DragThreshold = 7;
 
     private static readonly HashSet<string> BrowseableSectionTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -91,14 +99,45 @@ public sealed partial class SectionRow : UserControl
     public SectionRow()
     {
         this.InitializeComponent();
+        UpdateThemeFadeColors();
+        Loaded += (_, _) => ObserveItems(Section?.Items);
+        Unloaded += (_, _) => ObserveItems(null);
     }
 
     private static void OnSectionChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
-        if (d is SectionRow row && e.NewValue is HomeSectionWithItems section)
+        if (d is not SectionRow row) return;
+
+        if (e.NewValue is HomeSectionWithItems section)
         {
+            row.ObserveItems(section.Items);
             row.UpdateSection(section);
         }
+        else
+        {
+            row.ObserveItems(null);
+        }
+    }
+
+    private void ObserveItems(System.Collections.ObjectModel.ObservableCollection<MediaItem>? items)
+    {
+        if (ReferenceEquals(_observedItems, items)) return;
+        if (_observedItems != null)
+            _observedItems.CollectionChanged -= OnSectionItemsChanged;
+        _observedItems = items;
+        if (_observedItems != null)
+            _observedItems.CollectionChanged += OnSectionItemsChanged;
+    }
+
+    private void OnSectionItemsChanged(
+        object? sender,
+        System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (Section == null) return;
+        // A removal can change Continue Watching from a mixed episode row to
+        // an all-cover row (or vice versa), so recompute both visibility and
+        // the WebUI card variant instead of only hiding an emptied row.
+        DispatcherQueue.TryEnqueue(() => UpdateSection(Section));
     }
 
     private void UpdateSection(HomeSectionWithItems section)
@@ -115,14 +154,24 @@ public sealed partial class SectionRow : UserControl
         // item is a movie, audiobook, or ebook. A pure audiobook row remains
         // square like its web counterpart.
         var isContinueWatching = section.SectionType == "continue_watching";
+        if (section.SectionType is "continue_watching" or "next_up")
+        {
+            // The row type is authoritative. Some section-item payloads omit
+            // item_source even though the full /home/sections response carries
+            // it; normalize both API paths so card menus and Next Up behavior
+            // do not silently lose their surface-specific actions.
+            foreach (var item in section.Items)
+                item.ItemSource = section.SectionType;
+        }
         var allCoverMedia = isContinueWatching && section.Items.Count > 0 &&
             section.Items.All(item => item.Type is "movie" or "audiobook" or "ebook");
-        var allAudiobooks = allCoverMedia && section.Items.All(item => item.Type == "audiobook");
         var useLandscape = section.SectionType == "next_up" ||
             (isContinueWatching && !allCoverMedia);
-        string templateKey = section.SectionType == "continue_listening" || allAudiobooks
+        string templateKey = section.SectionType == "continue_listening"
             ? "AudiobookCardTemplate"
-            : useLandscape ? "LandscapeCardTemplate" : "PosterCardTemplate";
+            : allCoverMedia ? "ContinuePosterCardTemplate"
+            : useLandscape ? "LandscapeCardTemplate"
+            : "PosterCardTemplate";
         CardsRepeater.ItemTemplate = (DataTemplate)this.Resources[templateKey];
         CardsRepeater.ItemsSource = section.Items;
 
@@ -130,18 +179,27 @@ public sealed partial class SectionRow : UserControl
         // during F12 per-section fetch). Replaced by the real cards as soon
         // as Items gets populated and UpdateSection is called again.
         bool hasItems = section.Items != null && section.Items.Count > 0;
+        var compactStatusHeader = section.LoadFailed || (!hasItems && !section.LoadCompleted);
+        SectionTitle.FontSize = compactStatusHeader ? 14 : 20;
+        TitleLinkTitle.FontSize = compactStatusHeader ? 14 : 20;
+        SectionHeader.Margin = new Thickness(
+            SectionHeader.Margin.Left,
+            SectionHeader.Margin.Top,
+            SectionHeader.Margin.Right,
+            compactStatusHeader ? 12 : 20);
+        UpdateSectionVisibility(section);
         if (section.LoadFailed)
         {
             SkeletonPanel.Visibility = Visibility.Collapsed;
             CardsScrollViewer.Visibility = Visibility.Collapsed;
             ErrorPanel.Visibility = Visibility.Visible;
         }
-        else if (hasItems)
+        else if (hasItems || section.LoadCompleted)
         {
             ErrorPanel.Visibility = Visibility.Collapsed;
             SkeletonPanel.Visibility = Visibility.Collapsed;
             SkeletonPanel.Children.Clear();
-            CardsScrollViewer.Visibility = Visibility.Visible;
+            CardsScrollViewer.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
         }
         else
         {
@@ -154,6 +212,14 @@ public sealed partial class SectionRow : UserControl
         // Reset scroll position on re-bind so the first item is always visible.
         CardsScrollViewer.ChangeView(0, null, null, disableAnimation: true);
         UpdateScrollBounds();
+    }
+
+    private void UpdateSectionVisibility(HomeSectionWithItems section)
+    {
+        var completedEmpty = section.LoadCompleted
+            && !section.LoadFailed
+            && section.Items.Count == 0;
+        Visibility = completedEmpty ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void UpdateNavigationPresentation()
@@ -178,7 +244,9 @@ public sealed partial class SectionRow : UserControl
         if (SkeletonPanel.Children.Count > 0) return;
         for (int i = 0; i < 7; i++)
         {
-            SkeletonPanel.Children.Add(new SkeletonPoster());
+            var skeleton = new SkeletonPoster();
+            skeleton.SetResponsiveWidth(GetSkeletonWidth(ActualWidth));
+            SkeletonPanel.Children.Add(skeleton);
         }
     }
 
@@ -192,6 +260,93 @@ public sealed partial class SectionRow : UserControl
     private void CardsScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         UpdateScrollBounds();
+    }
+
+    private void CardsScrollViewer_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case VirtualKey.Left:
+                ScrollByPage(-1);
+                e.Handled = true;
+                break;
+            case VirtualKey.Right:
+                ScrollByPage(1);
+                e.Handled = true;
+                break;
+            case VirtualKey.Home:
+                CardsScrollViewer.ChangeView(0, null, null);
+                e.Handled = true;
+                break;
+            case VirtualKey.End:
+                CardsScrollViewer.ChangeView(CardsScrollViewer.ScrollableWidth, null, null);
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private void CardsScrollViewer_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(CardsScrollViewer);
+        if (!point.Properties.IsLeftButtonPressed && !point.IsInContact)
+            return;
+
+        _dragPointerId = e.Pointer.PointerId;
+        _dragStartX = point.Position.X;
+        _dragStartOffset = CardsScrollViewer.HorizontalOffset;
+        _isDragging = false;
+    }
+
+    private void CardsScrollViewer_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (_dragPointerId != e.Pointer.PointerId)
+            return;
+
+        var point = e.GetCurrentPoint(CardsScrollViewer);
+        var delta = point.Position.X - _dragStartX;
+        if (!_isDragging)
+        {
+            if (Math.Abs(delta) < DragThreshold)
+                return;
+
+            _isDragging = CardsScrollViewer.CapturePointer(e.Pointer);
+            if (!_isDragging)
+            {
+                ResetDragState();
+                return;
+            }
+        }
+
+        var target = Math.Clamp(
+            _dragStartOffset - delta,
+            0,
+            CardsScrollViewer.ScrollableWidth);
+        CardsScrollViewer.ChangeView(target, null, null, disableAnimation: true);
+        e.Handled = true;
+    }
+
+    private void CardsScrollViewer_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (_dragPointerId != e.Pointer.PointerId)
+            return;
+
+        var handled = _isDragging;
+        if (_isDragging)
+            CardsScrollViewer.ReleasePointerCapture(e.Pointer);
+        ResetDragState();
+        e.Handled = handled;
+    }
+
+    private void CardsScrollViewer_PointerCanceled(object sender, PointerRoutedEventArgs e)
+        => ResetDragState();
+
+    private void CardsScrollViewer_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
+        => ResetDragState();
+
+    private void ResetDragState()
+    {
+        _dragPointerId = null;
+        _isDragging = false;
     }
 
     private void UpdateScrollBounds()
@@ -233,6 +388,7 @@ public sealed partial class SectionRow : UserControl
         // the carousel edge arrows.
         bool show = _isHovered && (_canScrollPrev || _canScrollNext);
         double target = show ? 1.0 : 0.0;
+        ArrowsPanel.IsHitTestVisible = show;
         if (PinSectionBtn.Visibility == Visibility.Visible)
             PinSectionBtn.Opacity = _isPinned || _isHovered ? 1.0 : 0.0;
         if (Math.Abs(ArrowsPanel.Opacity - target) < 0.01) return;
@@ -295,7 +451,9 @@ public sealed partial class SectionRow : UserControl
         if (PinSectionBtn == null) return;
         PinSectionIcon.Glyph = _isPinned ? "\uE841" : "\uE840";
         PinSectionBtn.Opacity = _isPinned || _isHovered ? 1.0 : 0.0;
-        ToolTipService.SetToolTip(PinSectionBtn, _isPinned ? "Unpin from sidebar" : "Pin to sidebar");
+        var label = _isPinned ? "Unpin from sidebar" : "Pin to sidebar";
+        ToolTipService.SetToolTip(PinSectionBtn, label);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PinSectionBtn, label);
     }
 
     // ─── Explore all ────────────────────────────────────────────────────
@@ -312,6 +470,7 @@ public sealed partial class SectionRow : UserControl
 
     private void SectionRow_SizeChanged(object sender, SizeChangedEventArgs e)
     {
+        UpdateThemeFadeColors();
         var width = e.NewSize.Width;
         if (width <= 0) return;
 
@@ -322,6 +481,7 @@ public sealed partial class SectionRow : UserControl
         var posterWidth = width < 640 ? 140d
             : width < 1024 ? 160d
             : 185d;
+        var landscapeWidth = width < 640 ? 260d : 315d;
 
         var edgeMargin = new Thickness(gutter, 0, gutter, 0);
         SectionHeader.Margin = new Thickness(gutter, 0, gutter, 20);
@@ -330,13 +490,21 @@ public sealed partial class SectionRow : UserControl
         ErrorPanel.Margin = edgeMargin;
         CardsLayout.Spacing = width < 1024 ? 16 : 20;
 
-        if (Math.Abs(_posterWidth - posterWidth) < 0.1) return;
+        foreach (var child in SkeletonPanel.Children.OfType<SkeletonPoster>())
+            child.SetResponsiveWidth(GetSkeletonWidth(width));
+
+        var posterChanged = Math.Abs(_posterWidth - posterWidth) >= 0.1;
+        var landscapeChanged = Math.Abs(_landscapeWidth - landscapeWidth) >= 0.1;
+        if (!posterChanged && !landscapeChanged) return;
         _posterWidth = posterWidth;
+        _landscapeWidth = landscapeWidth;
         if (Section == null) return;
         for (var i = 0; i < Section.Items.Count; i++)
         {
             if (CardsRepeater.TryGetElement(i) is PosterCard card)
                 card.SetCatalogGridLayout(_posterWidth);
+            else if (CardsRepeater.TryGetElement(i) is LandscapeCard landscape)
+                landscape.SetCardWidth(landscape.UsePosterAspect ? _posterWidth : _landscapeWidth);
         }
     }
 
@@ -344,6 +512,22 @@ public sealed partial class SectionRow : UserControl
     {
         if (args.Element is PosterCard card)
             card.SetCatalogGridLayout(_posterWidth);
+        else if (args.Element is LandscapeCard landscape)
+            landscape.SetCardWidth(landscape.UsePosterAspect ? _posterWidth : _landscapeWidth);
+    }
+
+    private static double GetSkeletonWidth(double width) => width < 640 ? 130d
+        : width < 1024 ? 150d
+        : 178d;
+
+    private void UpdateThemeFadeColors()
+    {
+        if (Application.Current.Resources["AppBackgroundColor"] is not Windows.UI.Color background)
+            return;
+        var solid = Microsoft.UI.ColorHelper.FromArgb(255, background.R, background.G, background.B);
+        var clear = Microsoft.UI.ColorHelper.FromArgb(0, background.R, background.G, background.B);
+        LeftFadeSolid.Color = RightFadeSolid.Color = solid;
+        LeftFadeClear.Color = RightFadeClear.Color = clear;
     }
 
     private void RetrySection_Click(object sender, RoutedEventArgs e)
@@ -357,13 +541,21 @@ public sealed partial class SectionRow : UserControl
 
     private void ScrollLeft_Click(object sender, RoutedEventArgs e)
     {
-        CardsScrollViewer.ChangeView(
-            Math.Max(0, CardsScrollViewer.HorizontalOffset - 500), null, null);
+        ScrollByPage(-1);
     }
 
     private void ScrollRight_Click(object sender, RoutedEventArgs e)
     {
-        CardsScrollViewer.ChangeView(
-            CardsScrollViewer.HorizontalOffset + 500, null, null);
+        ScrollByPage(1);
+    }
+
+    private void ScrollByPage(int direction)
+    {
+        var page = Math.Max(240, CardsScrollViewer.ViewportWidth * 0.82);
+        var target = Math.Clamp(
+            CardsScrollViewer.HorizontalOffset + (page * direction),
+            0,
+            CardsScrollViewer.ScrollableWidth);
+        CardsScrollViewer.ChangeView(target, null, null);
     }
 }

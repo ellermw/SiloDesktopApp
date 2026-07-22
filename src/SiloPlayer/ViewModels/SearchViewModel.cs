@@ -102,10 +102,11 @@ public partial class SearchViewModel : ObservableObject
     private async Task SearchAsync()
     {
         // Cancel previous search
-        _searchCts?.Cancel();
-        _searchCts?.Dispose();
-        _searchCts = new CancellationTokenSource();
-        var ct = _searchCts.Token;
+        CancelPendingSearch();
+        var searchCts = new CancellationTokenSource();
+        _searchCts = searchCts;
+        var ct = searchCts.Token;
+        var querySnapshot = Query.Trim();
         _snapshot = null;
         _hasMore = false;
 
@@ -120,32 +121,33 @@ public partial class SearchViewModel : ObservableObject
 
         IsLoading = true;
         ErrorMessage = null;
+        Results.Clear();
+        PeopleResults.Clear();
+        OutsideLibraryResults.Clear();
+        TotalCount = 0;
 
         try
         {
-            // Search catalog and people in parallel
-            var catalogTask = FetchCatalogPageAsync(0, null, ct);
+            // Local catalog results own the primary search surface. Optional
+            // request-provider discovery must never hold those results behind
+            // a slow plugin or network timeout.
+            var catalogTask = FetchCatalogPageAsync(0, null, ct, querySnapshot);
             var includeVideoDiscovery = MediaScope is "all" or "video";
             // The dedicated Catalog page does not render people; global search
             // owns that surface. Avoid an invisible extra network request.
             var peopleTask = Task.FromResult(new List<Person>());
-            var outsideTask = includeVideoDiscovery ? SearchOutsideLibraryAsync(Query, ct) : Task.FromResult(new List<RequestMediaResult>());
-
-            await Task.WhenAll(catalogTask, peopleTask, outsideTask);
-
-            if (ct.IsCancellationRequested) return;
+            var outsideTask = includeVideoDiscovery
+                ? SearchOutsideLibraryAsync(querySnapshot, ct)
+                : Task.FromResult(new List<RequestMediaResult>());
 
             var response = await catalogTask;
+            if (ct.IsCancellationRequested) return;
 
             // Update people results
             PeopleResults.Clear();
             var people = await peopleTask;
             foreach (var person in people)
                 PeopleResults.Add(person);
-
-            OutsideLibraryResults.Clear();
-            foreach (var item in await outsideTask)
-                OutsideLibraryResults.Add(item);
 
             // Use server results directly — server handles text search
             Results.Clear();
@@ -154,6 +156,11 @@ public partial class SearchViewModel : ObservableObject
             TotalCount = response.Total > 0 ? response.Total : response.Items.Count;
             _snapshot = response.Snapshot;
             _hasMore = response.HasMore || (response.Items.Count == 60 && (response.Total <= 0 || response.Items.Count < response.Total));
+
+            // Discovery publishes independently when it arrives. Ownership
+            // and query checks prevent a stale provider response from
+            // replacing results for a newer query.
+            _ = PublishOutsideLibraryResultsAsync(outsideTask, querySnapshot, searchCts, ct);
         }
         catch (OperationCanceledException)
         {
@@ -165,9 +172,23 @@ public partial class SearchViewModel : ObservableObject
         }
         finally
         {
-            if (!ct.IsCancellationRequested)
+            if (ReferenceEquals(_searchCts, searchCts))
                 IsLoading = false;
         }
+    }
+
+    public void CancelPendingSearch()
+    {
+        var cts = _searchCts;
+        _searchCts = null;
+        if (cts != null)
+        {
+            cts.Cancel();
+            cts.Dispose();
+        }
+
+        IsLoading = false;
+        IsLoadingMore = false;
     }
 
     public async Task LoadMoreAsync()
@@ -198,7 +219,11 @@ public partial class SearchViewModel : ObservableObject
         }
     }
 
-    private Task<CatalogResponse> FetchCatalogPageAsync(int offset, string? snapshot, CancellationToken ct)
+    private Task<CatalogResponse> FetchCatalogPageAsync(
+        int offset,
+        string? snapshot,
+        CancellationToken ct,
+        string? query = null)
         => _catalogApi.GetCatalogAsync(
             null,
             sort: SortField,
@@ -207,7 +232,7 @@ public partial class SearchViewModel : ObservableObject
             contentRating: ContentRating,
             resolution: Resolution,
             country: Country,
-            q: Query,
+            q: query ?? Query,
             type: MediaType,
             limit: 60,
             offset: offset,
@@ -218,14 +243,45 @@ public partial class SearchViewModel : ObservableObject
 
     private async Task<List<RequestMediaResult>> SearchOutsideLibraryAsync(string query, CancellationToken ct)
     {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(6));
         try
         {
-            var status = await _requestsApi.GetStatusAsync(ct);
+            var status = await _requestsApi.GetStatusAsync(timeout.Token);
             if (!status.RequestsEnabled) return [];
-            var response = await _requestsApi.SearchAsync("all", query, 1, ct);
+            var response = await _requestsApi.SearchAsync("all", query, 1, timeout.Token);
             return response.Results.Where(item => !string.Equals(item.Availability, "available", StringComparison.OrdinalIgnoreCase)).ToList();
         }
         catch { return []; }
+    }
+
+    private async Task PublishOutsideLibraryResultsAsync(
+        Task<List<RequestMediaResult>> outsideTask,
+        string querySnapshot,
+        CancellationTokenSource owner,
+        CancellationToken ct)
+    {
+        try
+        {
+            var outside = await outsideTask;
+            if (ct.IsCancellationRequested ||
+                !ReferenceEquals(_searchCts, owner) ||
+                !string.Equals(Query.Trim(), querySnapshot, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            OutsideLibraryResults.Clear();
+            foreach (var item in outside)
+                OutsideLibraryResults.Add(item);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+            // Discovery is optional and must not fail primary catalog search.
+        }
     }
 
     private async Task<List<Person>> SearchPeopleAsync(string query, CancellationToken ct)

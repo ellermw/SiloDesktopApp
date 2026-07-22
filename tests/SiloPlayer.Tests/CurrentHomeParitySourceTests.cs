@@ -3,6 +3,21 @@ namespace SiloPlayer.Tests;
 public sealed class CurrentHomeParitySourceTests
 {
     [Fact]
+    public void CachedHomeCardsRestoreArtworkAfterNavigationReload()
+    {
+        var landscape = ReadRepoFile("src", "SiloPlayer", "Controls", "LandscapeCard.xaml.cs");
+        var poster = ReadRepoFile("src", "SiloPlayer", "Controls", "PosterCard.xaml.cs");
+
+        Assert.Contains("this.Loaded +=", landscape);
+        Assert.Contains("BackdropImage.Source == null", landscape);
+        Assert.Contains("LoadImageAsync(item, _loadCts.Token)", landscape);
+        Assert.Contains("this.Loaded +=", poster);
+        Assert.Contains("PosterImage.Source == null", poster);
+        Assert.Contains("!DeferImageLoading", poster);
+        Assert.Contains("LoadPosterAsync(item, _loadCts.Token)", poster);
+    }
+
+    [Fact]
     public void CustomizeHomeOpensTheActualHomeScreenSettingsSurface()
     {
         var source = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml.cs");
@@ -36,15 +51,24 @@ public sealed class CurrentHomeParitySourceTests
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml");
         var code = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml.cs");
+        var web = ReadWebUiFile("web", "src", "components", "TasteSeedBanner.tsx");
 
         Assert.Contains("x:Name=\"HeroLoadingSkeleton\"", xaml);
         Assert.Contains("x:Name=\"HeroErrorPanel\"", xaml);
         Assert.Contains("Personalize your home", xaml);
         Assert.Contains("Pick a few titles you love and we'll tailor your recommendations.", xaml);
+        Assert.Contains("text-sm font-semibold sm:text-base", web);
+        Assert.Contains("text-xs sm:text-sm", web);
+        Assert.Contains("x:Name=\"TasteSeedTitle\"", xaml);
+        Assert.Contains("x:Name=\"TasteSeedDescription\"", xaml);
+        Assert.Contains("TasteSeedTitle.FontSize = isCompact ? 14 : 16", code);
+        Assert.Contains("TasteSeedDescription.FontSize = isCompact ? 12 : 14", code);
         Assert.Contains("Customize Home Screen", xaml);
         Assert.DoesNotContain("Watch Tonight", xaml);
         Assert.Contains("TasteSeedBannerDismissedProfileIds", code);
         Assert.Contains("RetrySectionAsync", code);
+        Assert.Contains("else if (!heroSection.LoadCompleted)", code);
+        Assert.Contains("var hasRenderableHero", code);
     }
 
     [Fact]
@@ -57,6 +81,7 @@ public sealed class CurrentHomeParitySourceTests
 
         Assert.Contains("FontSize=\"20\"", xaml);
         Assert.Contains("x:Name=\"PinSectionBtn\"", xaml);
+        Assert.Contains("AutomationProperties.SetName(PinSectionBtn, label)", code);
         Assert.Contains("This section could not be loaded right now.", xaml);
         Assert.DoesNotContain("RefreshSectionBtn", xaml);
         Assert.Contains("\"custom_filter\"", code);
@@ -66,6 +91,65 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("Scope: \"home\"", home);
         Assert.Contains("Scope: \"library\"", library);
         Assert.Contains("LibraryId = libraryId", library);
+    }
+
+    [Fact]
+    public void SectionRowsSupportWebStyleDragKeyboardAndResponsivePageScrolling()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Controls", "SectionRow.xaml");
+        var code = ReadRepoFile("src", "SiloPlayer", "Controls", "SectionRow.xaml.cs");
+
+        Assert.Contains("IsTabStop=\"True\"", xaml);
+        Assert.Contains("KeyDown=\"CardsScrollViewer_KeyDown\"", xaml);
+        Assert.Contains("PointerMoved=\"CardsScrollViewer_PointerMoved\"", xaml);
+        Assert.Contains("CardsScrollViewer.CapturePointer", code);
+        Assert.Contains("CardsScrollViewer.ViewportWidth * 0.82", code);
+        Assert.Contains("case VirtualKey.Left", code);
+        Assert.Contains("case VirtualKey.Right", code);
+    }
+
+    [Fact]
+    public void SectionRowsUseCurrentWebCarouselEdgeFades()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Controls", "SectionRow.xaml");
+        var web = ReadWebUiFile("web", "src", "components", "MediaCarousel.tsx");
+
+        Assert.Contains("w-10 bg-gradient-to-r", web);
+        Assert.Contains("w-11", web);
+        Assert.Contains("x:Name=\"LeftFadeGradient\"", xaml);
+        Assert.Contains("x:Name=\"RightFadeGradient\"", xaml);
+        Assert.Contains("Width=\"40\"", xaml);
+        Assert.Contains("Width=\"44\"", xaml);
+        Assert.Contains("Background=\"Transparent\"", xaml);
+        Assert.DoesNotContain("Width=\"64\"", xaml);
+    }
+
+    [Fact]
+    public void HomeLoadingSkeletonKeepsTheHeroFullBleedAndRowsResponsive()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml");
+        var code = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml.cs");
+
+        Assert.Contains("x:Name=\"LoadingSkeletonPanel\" Padding=\"0,16,0,24\"", xaml);
+        Assert.Contains("x:Name=\"LoadingSectionOne\" Padding=\"48,0\"", xaml);
+        Assert.Contains("x:Name=\"HeroLoadingSkeleton\" Height=\"380\" Margin=\"0,0,0,40\"", xaml);
+        Assert.Contains("x:Name=\"HeroCarouselControl\" Margin=\"0,0,0,40\"", xaml);
+        Assert.Contains("LoadingSectionOne.Padding = sectionPadding", code);
+        Assert.Contains("e.NewSize.Width >= 1280 ? 48d", code);
+        Assert.Contains("e.NewSize.Width >= 1024 ? 40d", code);
+        Assert.Contains("SetResponsiveWidth", code);
+    }
+
+    [Fact]
+    public void HomeHeroKeepsCurrentWebBorderAndStackRhythm()
+    {
+        var home = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml");
+        var hero = ReadRepoFile("src", "SiloPlayer", "Controls", "HeroCarousel.xaml");
+
+        Assert.Contains("x:Name=\"HeroCarouselControl\" Margin=\"0,0,0,40\"", home);
+        Assert.Contains("border-b border-border/60", hero, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Height=\"1\"", hero);
+        Assert.Contains("Opacity=\"0.6\"", hero);
     }
 
     [Fact]
@@ -90,8 +174,11 @@ public sealed class CurrentHomeParitySourceTests
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "HomeViewModel.cs");
 
         Assert.Contains("LoadFailed", model);
-        Assert.Contains("CloneSection(section, loadFailed: true)", viewModel);
+        Assert.Contains("CloneSection(section, loadFailed: true, loadCompleted: true)", viewModel);
         Assert.Contains("public async Task RetrySectionAsync", viewModel);
+        Assert.Contains("LoadCompleted", model);
+        Assert.Contains("completed.LoadCompleted = true", viewModel);
+        Assert.DoesNotContain("RemoveFromBoundCollection(sectionId)", viewModel);
     }
 
     [Fact]
@@ -130,11 +217,34 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("MediaSurfaceChangeKind.HomeDismissed", menu);
     }
 
+    [Fact]
+    public void AdminServerActivityUsesTheCurrentActiveScanAndBoundedFlyoutContract()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Controls", "ServerActivityButton.xaml");
+        var code = ReadRepoFile("src", "SiloPlayer", "Controls", "ServerActivityButton.xaml.cs");
+
+        Assert.Contains("MaxHeight=\"400\"", xaml);
+        Assert.Contains("MaxActivityScanRows = 25", code);
+        Assert.Contains("run.Status is \"accepted\" or \"running\"", code);
+        Assert.DoesNotContain("run.Status is \"accepted\" or \"queued\"", code);
+        Assert.Contains("_lastActiveScans.Take(MaxActivityScanRows)", code);
+    }
+
     private static string ReadRepoFile(params string[] parts)
     {
         var all = new string[parts.Length + 1];
         all[0] = FindRepositoryRoot();
         Array.Copy(parts, 0, all, 1, parts.Length);
+        return File.ReadAllText(Path.Combine(all));
+    }
+
+    private static string ReadWebUiFile(params string[] parts)
+    {
+        var all = new string[parts.Length + 3];
+        all[0] = FindRepositoryRoot();
+        all[1] = ".codex-tmp";
+        all[2] = "silo-server-current";
+        Array.Copy(parts, 0, all, 3, parts.Length);
         return File.ReadAllText(Path.Combine(all));
     }
 

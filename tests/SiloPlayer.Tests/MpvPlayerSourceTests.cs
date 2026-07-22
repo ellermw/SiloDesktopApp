@@ -3,6 +3,20 @@ namespace SiloPlayer.Tests;
 public sealed class MpvPlayerSourceTests
 {
     [Fact]
+    public void WindowedEscapeClosesOscMenusInsteadOfPlayback()
+    {
+        var window = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "MpvVideoWindow.cs"));
+
+        Assert.Contains("if (_isFullscreen)", window, StringComparison.Ordinal);
+        Assert.Contains("_mpv?.SendKeypress(\"ESC\")", window, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EofReachedPropertyRaisesDedicatedEventWithoutTreatingItAsNaturalEnd()
     {
         var source = File.ReadAllText(Path.Combine(
@@ -12,7 +26,7 @@ public sealed class MpvPlayerSourceTests
             "MpvPlayer.cs"));
 
         Assert.Contains("public event Action? EofReached;", source);
-        Assert.Contains("EofReached?.Invoke();", source);
+        Assert.Contains("InvokeSafely(EofReached, nameof(EofReached));", source);
 
         var caseStart = source.IndexOf("case UD_EOF_REACHED:", StringComparison.Ordinal);
         var caseEnd = source.IndexOf("case UD_PAUSED_FOR_CACHE:", StringComparison.Ordinal);
@@ -20,7 +34,7 @@ public sealed class MpvPlayerSourceTests
         Assert.True(caseEnd > caseStart);
 
         var eofCase = source[caseStart..caseEnd];
-        Assert.DoesNotContain("PlaybackEnded?.Invoke();", eofCase);
+        Assert.DoesNotContain("InvokeSafely(PlaybackEnded", eofCase);
     }
 
     [Fact]
@@ -33,7 +47,28 @@ public sealed class MpvPlayerSourceTests
         Assert.Contains("MPV_EVENT_PLAYBACK_RESTART  = 21", interop, StringComparison.Ordinal);
         Assert.Contains("public event Action? PlaybackRestarted;", source, StringComparison.Ordinal);
         Assert.Contains("case MPV_EVENT_PLAYBACK_RESTART:", source, StringComparison.Ordinal);
-        Assert.Contains("PlaybackRestarted?.Invoke();", source, StringComparison.Ordinal);
+        Assert.Contains("InvokeSafely(PlaybackRestarted, nameof(PlaybackRestarted));", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NativeEventAndRenderCallbacksCannotTerminateTheMpvPumps()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer.Player",
+            "MpvPlayer.cs"));
+
+        Assert.Contains("private void InvokeSafely(Action? handler, string eventName)", source);
+        Assert.Contains("private void ReportErrorSafely(string message)", source);
+        Assert.Contains("handler.GetInvocationList()", source);
+        Assert.Contains("InvokeFrameReadySafely(buffer, w, h, (int)stride);", source);
+        Assert.Contains("mpv event {ev.EventId} failed", source);
+        Assert.Contains("FrameReady callback failed", source);
+        Assert.Contains("nameof(PlaybackError));", source);
+        Assert.Contains("InvokeSafely(PlaybackEnded", source);
+        Assert.Contains("PlaybackError = null;", source);
+        Assert.Contains("BufferingChanged = null;", source);
     }
 
     [Fact]
@@ -63,6 +98,66 @@ public sealed class MpvPlayerSourceTests
         Assert.True(source.Split("SetOption(\"video-sync\", \"audio\")", StringSplitOptions.None).Length >= 3);
         Assert.DoesNotContain("SetOption(\"video-sync\", \"display-resample\")", source, StringComparison.Ordinal);
         Assert.Contains("late video frames are dropped", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NativeVideoWindowKeepsItsRegisteredCallbackAliveAcrossRecreation()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "MpvVideoWindow.cs"));
+
+        Assert.Contains("private static readonly WndProcDelegate s_wndProc = StaticWndProc;", source);
+        Assert.Contains("ConcurrentDictionary<IntPtr, MpvVideoWindow> s_windows", source);
+        Assert.Contains("s_windows[hwnd] = this;", source);
+        Assert.Contains("s_windows.TryRemove(hwnd, out _);", source);
+        Assert.Contains("lock (s_classRegistrationLock)", source);
+        Assert.Contains("Managed exceptions must never cross the native callback boundary.", source);
+        Assert.Contains("native_window_error.txt", source);
+        Assert.DoesNotContain("GCHandle _wndProcHandle", source);
+        Assert.DoesNotContain("GetFunctionPointerForDelegate(WndProcInstance)", source);
+    }
+
+    [Fact]
+    public void DelayedFullscreenCorrectionDoesNotStealFocusBackFromOtherApps()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Services",
+            "MpvVideoWindow.cs"));
+
+        var delayStart = source.IndexOf("Task.Delay(200)", StringComparison.Ordinal);
+        var nextMember = source.IndexOf("        });", delayStart, StringComparison.Ordinal);
+        Assert.True(delayStart >= 0);
+        Assert.True(nextMember > delayStart);
+
+        var delayedCorrection = source[delayStart..(nextMember + "        });".Length)];
+        Assert.Contains("PositionFullscreen(preserveZOrder: true);", delayedCorrection);
+        Assert.DoesNotContain("SetForegroundWindow", delayedCorrection);
+        Assert.DoesNotContain("HWND_TOP", delayedCorrection);
+    }
+
+    [Fact]
+    public void PopupFullscreenAndPictureInPictureTransitionsAreStableAcrossInputPaths()
+    {
+        var root = FindRepositoryRoot();
+        var window = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "MpvVideoWindow.cs"));
+        var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+
+        var fullscreenStart = window.IndexOf("public void EnterFullscreen()", StringComparison.Ordinal);
+        var fullscreenEnd = window.IndexOf("private RECT _fullscreenRect", fullscreenStart, StringComparison.Ordinal);
+        Assert.True(fullscreenStart >= 0 && fullscreenEnd > fullscreenStart);
+        Assert.Contains("ExitPictureInPicture();", window[fullscreenStart..fullscreenEnd], StringComparison.Ordinal);
+        Assert.Contains("GetDpiForWindow(_hwnd) / 96d", window, StringComparison.Ordinal);
+        Assert.Contains("bool isRepeat =", window, StringComparison.Ordinal);
+        Assert.Contains("double-click preserves play/pause", window, StringComparison.Ordinal);
+        Assert.Contains("PublishFullscreenVisualState(true);", service, StringComparison.Ordinal);
+        Assert.Contains("PublishFullscreenVisualState(false);", service, StringComparison.Ordinal);
     }
 
     [Fact]

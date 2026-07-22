@@ -16,6 +16,7 @@
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
+        <converters:UrlToImageSourceConverter x:Key="UrlToImage" />
     </Page.Resources>
 
     <ScrollViewer>
@@ -305,7 +306,7 @@
                                         </Grid.RowDefinitions>
                                         <Border CornerRadius="10" Background="{StaticResource SurfaceRaisedBrush}">
                                             <Grid>
-                                                <Image Source="{x:Bind PosterUrl}" Stretch="UniformToFill" />
+                                <Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" />
                                                 <Button Tag="{x:Bind Id}" Click="SuggestionVoteButton_Click"
                                                         HorizontalAlignment="Right" VerticalAlignment="Top"
                                                         Margin="0,8,8,0" Padding="8,4" CornerRadius="12"

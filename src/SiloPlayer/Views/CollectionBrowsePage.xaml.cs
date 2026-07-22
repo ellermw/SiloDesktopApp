@@ -250,14 +250,99 @@ public sealed partial class CollectionBrowsePage : Page
 
     private void UpdateActiveFilterBadge()
     {
-        var count = BuildExtraRules().Count;
-        if (!string.IsNullOrWhiteSpace(YearMinBox.Text) || !string.IsNullOrWhiteSpace(YearMaxBox.Text)) count++;
-        if (!string.IsNullOrWhiteSpace(ContentRatingBox.Text)) count++;
-        if (!string.IsNullOrWhiteSpace(StudioBox.Text)) count++;
-        if (!string.IsNullOrWhiteSpace(CountryBox.Text)) count++;
-        ActiveFilterCountText.Text = count.ToString();
-        ActiveFilterCountBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        var badges = BuildActiveFilterBadges();
+        ActiveFilterCountText.Text = badges.Count.ToString();
+        ActiveFilterCountBadge.Visibility = badges.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        ActiveFiltersPanel.Children.Clear();
+        foreach (var badge in badges)
+        {
+            var button = new Button
+            {
+                Tag = badge.Token,
+                Padding = new Thickness(10, 4, 8, 4),
+                MinHeight = 30,
+                CornerRadius = new CornerRadius(15),
+                Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"],
+                BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+            };
+            ToolTipService.SetToolTip(button, $"Clear {badge.Label}");
+            var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
+            content.Children.Add(new TextBlock
+            {
+                Text = badge.Label,
+                FontSize = 12,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            content.Children.Add(new FontIcon
+            {
+                Glyph = "\uE711",
+                FontSize = 10,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            button.Content = content;
+            button.Click += ActiveFilterBadge_Click;
+            ActiveFiltersPanel.Children.Add(button);
+        }
+        ActiveFiltersPanel.Visibility = badges.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    private List<FilterBadge> BuildActiveFilterBadges()
+    {
+        var badges = GenresBox.Text
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(genre => new FilterBadge($"Genre: {genre}", new FilterToken("genre", genre)))
+            .ToList();
+
+        AddText("Year from", "year_min", YearMinBox.Text);
+        AddText("Year to", "year_max", YearMaxBox.Text);
+        AddText("IMDb", "rating_imdb", MinimumRatingBox.Text);
+        AddText("Rating", "content_rating", ContentRatingBox.Text);
+        AddText("Language", "original_language", OriginalLanguageBox.Text);
+        AddText("Studio", "studio", StudioBox.Text);
+        AddText("Country", "country", CountryBox.Text);
+        if (FourKToggle.IsChecked == true) badges.Add(new FilterBadge("4K", new FilterToken("4k", null)));
+        if (HdrToggle.IsChecked == true) badges.Add(new FilterBadge("HDR", new FilterToken("hdr", null)));
+        if (DolbyVisionToggle.IsChecked == true) badges.Add(new FilterBadge("Dolby Vision", new FilterToken("dolby_vision", null)));
+        return badges;
+
+        void AddText(string label, string kind, string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                badges.Add(new FilterBadge($"{label}: {value.Trim()}", new FilterToken(kind, null)));
+        }
+    }
+
+    private async void ActiveFilterBadge_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: FilterToken token }) return;
+        switch (token.Kind)
+        {
+            case "genre":
+                GenresBox.Text = string.Join(", ", GenresBox.Text
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(value => !string.Equals(value, token.Value, StringComparison.OrdinalIgnoreCase)));
+                break;
+            case "year_min": YearMinBox.Text = ""; break;
+            case "year_max": YearMaxBox.Text = ""; break;
+            case "rating_imdb": MinimumRatingBox.Text = ""; break;
+            case "content_rating": ContentRatingBox.Text = ""; break;
+            case "original_language": OriginalLanguageBox.Text = ""; break;
+            case "studio": StudioBox.Text = ""; break;
+            case "country": CountryBox.Text = ""; break;
+            case "4k": FourKToggle.IsChecked = false; break;
+            case "hdr": HdrToggle.IsChecked = false; break;
+            case "dolby_vision": DolbyVisionToggle.IsChecked = false; break;
+        }
+        UpdateActiveFilterBadge();
+        await LoadFirstPageAsync();
+    }
+
+    private sealed record FilterToken(string Kind, string? Value);
+    private sealed record FilterBadge(string Label, FilterToken Token);
 
     private static string? EmptyToNull(string value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

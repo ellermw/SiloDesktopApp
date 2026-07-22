@@ -18,6 +18,7 @@ public static class PlaybackRecoveryPolicy
         if (transportKind != PlaybackTransportKind.DirectProgressive)
             return false;
 
-        return reason is "buffering-stalled" or "position-stalled" or "end-file";
+        return reason is "buffering-stalled" or "position-stalled" or "end-file" or
+            "progress-reporting-failed";
     }
 }

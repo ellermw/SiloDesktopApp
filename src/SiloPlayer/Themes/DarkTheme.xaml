@@ -182,7 +182,7 @@
     <CornerRadius x:Key="ProfileCardCornerRadius">28</CornerRadius>
     <CornerRadius x:Key="AuthCardCornerRadius">32</CornerRadius>
     <CornerRadius x:Key="CardCornerRadius">8</CornerRadius>
-    <CornerRadius x:Key="PosterCornerRadius">12</CornerRadius>
+    <CornerRadius x:Key="PosterCornerRadius">16</CornerRadius>
     <CornerRadius x:Key="BadgeCornerRadius">6</CornerRadius>
     <CornerRadius x:Key="NavItemCornerRadius">12</CornerRadius>
     <CornerRadius x:Key="RadiusPill">9999</CornerRadius>

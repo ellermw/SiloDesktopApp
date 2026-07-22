@@ -26,6 +26,7 @@ namespace SiloPlayer.Controls;
 /// </summary>
 public sealed partial class ServerActivityButton : UserControl
 {
+    private const int MaxActivityScanRows = 25;
     private readonly AdminApi _adminApi;
     private DispatcherTimer? _pollTimer;
     private readonly EventChannelClient _events;
@@ -195,7 +196,10 @@ public sealed partial class ServerActivityButton : UserControl
     }
 
     private static bool IsActiveScanStatus(AdminScanRun run) =>
-        run.Status is "accepted" or "queued" or "running";
+        // Match the current WebUI exactly. A queued scan is pending work, not
+        // active server activity; counting the entire queue can turn a real
+        // "2 active" badge into "99+" as soon as the realtime snapshot lands.
+        run.Status is "accepted" or "running";
 
     private static readonly System.Text.Json.JsonSerializerOptions JsonOpts = new()
     {
@@ -347,7 +351,7 @@ public sealed partial class ServerActivityButton : UserControl
             };
 
         var stack = new StackPanel { Spacing = 6 };
-        foreach (var scan in _lastActiveScans)
+        foreach (var scan in _lastActiveScans.Take(MaxActivityScanRows))
         {
             var row = new StackPanel { Spacing = 1 };
             var headerRow = new Grid();
@@ -403,6 +407,19 @@ public sealed partial class ServerActivityButton : UserControl
             }
 
             stack.Children.Add(row);
+        }
+
+        var hiddenCount = _lastActiveScans.Count - MaxActivityScanRows;
+        if (hiddenCount > 0)
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = $"+{hiddenCount} more scans queued",
+                FontSize = 10,
+                FontWeight = FontWeights.Medium,
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                Margin = new Thickness(24, 4, 0, 0),
+            });
         }
         return stack;
     }

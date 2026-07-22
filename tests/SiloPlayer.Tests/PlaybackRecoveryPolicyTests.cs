@@ -9,6 +9,7 @@ public sealed class PlaybackRecoveryPolicyTests
     [InlineData("buffering-stalled")]
     [InlineData("position-stalled")]
     [InlineData("end-file")]
+    [InlineData("progress-reporting-failed")]
     public void DirectProgressiveNetworkInterruptionsReloadInsideCurrentSession(string reason)
     {
         Assert.True(PlaybackRecoveryPolicy.CanReloadCurrentDirectSession(
@@ -18,7 +19,6 @@ public sealed class PlaybackRecoveryPolicyTests
 
     [Theory]
     [InlineData("file-load-timeout")]
-    [InlineData("progress-reporting-failed")]
     [InlineData("playback-error")]
     public void SessionOrDecoderFailuresUseReplacementSession(string reason)
     {

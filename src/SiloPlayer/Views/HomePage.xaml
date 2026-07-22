@@ -15,6 +15,7 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
+        <converters:NullToVisibilityConverter x:Key="InverseNullToVis" Invert="True" />
     </Page.Resources>
 
     <Grid>
@@ -55,25 +56,15 @@
             x:Name="LoadingSkeleton"
             VerticalScrollBarVisibility="Disabled"
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
-            <StackPanel Padding="40,24,40,24" Spacing="36">
+            <StackPanel x:Name="LoadingSkeletonPanel" Padding="0,16,0,24" Spacing="32">
                 <!-- Hero carousel skeleton (16:9 backdrop) -->
-                <controls:SkeletonBackdrop x:Name="InitialHeroSkeleton" Height="380" />
+                <controls:SkeletonBackdrop x:Name="InitialHeroSkeleton" Height="380" CornerRadius="30" />
 
                 <!-- Three section-row skeletons -->
-                <StackPanel Spacing="12">
-                    <controls:SkeletonText Width="180" Height="20" HorizontalAlignment="Left" />
-                    <StackPanel Orientation="Horizontal" Spacing="12">
+                <StackPanel x:Name="LoadingSectionOne" Padding="48,0" Spacing="12">
+                    <controls:SkeletonText Width="180" Height="24" HorizontalAlignment="Left" />
+                    <StackPanel Orientation="Horizontal" Spacing="16">
                         <controls:SkeletonPoster />
-                        <controls:SkeletonPoster />
-                        <controls:SkeletonPoster />
-                        <controls:SkeletonPoster />
-                        <controls:SkeletonPoster />
-                        <controls:SkeletonPoster />
-                    </StackPanel>
-                </StackPanel>
-                <StackPanel Spacing="12">
-                    <controls:SkeletonText Width="220" Height="20" HorizontalAlignment="Left" />
-                    <StackPanel Orientation="Horizontal" Spacing="12">
                         <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
@@ -82,9 +73,22 @@
                         <controls:SkeletonPoster />
                     </StackPanel>
                 </StackPanel>
-                <StackPanel Spacing="12">
-                    <controls:SkeletonText Width="160" Height="20" HorizontalAlignment="Left" />
-                    <StackPanel Orientation="Horizontal" Spacing="12">
+                <StackPanel x:Name="LoadingSectionTwo" Padding="48,0" Spacing="12">
+                    <controls:SkeletonText Width="220" Height="24" HorizontalAlignment="Left" />
+                    <StackPanel Orientation="Horizontal" Spacing="16">
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                        <controls:SkeletonPoster />
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel x:Name="LoadingSectionThree" Padding="48,0" Spacing="12">
+                    <controls:SkeletonText Width="160" Height="24" HorizontalAlignment="Left" />
+                    <StackPanel Orientation="Horizontal" Spacing="16">
+                        <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
                         <controls:SkeletonPoster />
@@ -96,25 +100,41 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Error message -->
-        <StackPanel
-            VerticalAlignment="Center"
-            HorizontalAlignment="Center"
-            Spacing="12"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-            <TextBlock
-                Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                Foreground="{StaticResource ErrorBrush}"
-                Style="{StaticResource BodyTextStyle}"
+        <!-- Initial layout failure. Matches the current WebUI surface rather
+             than exposing exception text as the page heading. -->
+        <Grid
+            Canvas.ZIndex="20"
+            Background="{StaticResource AppBackgroundBrush}"
+            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
+            ToolTipService.ToolTip="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}">
+            <Border
+                VerticalAlignment="Center"
                 HorizontalAlignment="Center"
-                TextWrapping="Wrap"
-                MaxWidth="400" />
-            <Button
-                Content="Retry"
-                Style="{StaticResource AccentButtonStyle}"
-                HorizontalAlignment="Center"
-                Command="{x:Bind ViewModel.LoadCommand}" />
-        </StackPanel>
+                MaxWidth="448"
+                Padding="24"
+                CornerRadius="30"
+                Background="{StaticResource SurfaceBrush}">
+                <StackPanel Spacing="8" HorizontalAlignment="Stretch">
+                    <TextBlock
+                        Text="Unable to load the homepage"
+                        FontSize="18"
+                        FontWeight="SemiBold"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        TextAlignment="Center" />
+                    <TextBlock
+                        Text="We couldn't load your section layout right now."
+                        FontSize="14"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        TextAlignment="Center"
+                        TextWrapping="Wrap" />
+                    <Button
+                        Content="Retry"
+                        Margin="0,8,0,0"
+                        HorizontalAlignment="Center"
+                        Command="{x:Bind ViewModel.LoadCommand}" />
+                </StackPanel>
+            </Border>
+        </Grid>
 
         <!-- Main content -->
         <ScrollViewer
@@ -127,11 +147,11 @@
             <StackPanel x:Name="ContentPanel" Padding="0,8,0,0">
                 <!-- Featured slot has distinct loading, error, ready, and empty
                      states just like renderHeroSlot() in the current WebUI. -->
-                <controls:SkeletonBackdrop x:Name="HeroLoadingSkeleton" Height="380" Margin="40,0,40,40" Visibility="Collapsed" />
+                <controls:SkeletonBackdrop x:Name="HeroLoadingSkeleton" Height="380" Margin="0,0,0,40" CornerRadius="30" Visibility="Collapsed" />
                 <Border
                     x:Name="HeroErrorPanel"
                     Height="380"
-                    Margin="40,0,40,40"
+                    Margin="0,0,0,40"
                     Padding="48"
                     CornerRadius="30"
                     Background="{StaticResource SurfaceBrush}"
@@ -154,20 +174,24 @@
                     CornerRadius="22"
                     Background="{StaticResource SurfaceBrush}"
                     Visibility="Collapsed">
-                    <Grid ColumnSpacing="16">
+                    <Grid x:Name="TasteSeedGrid" ColumnSpacing="16" RowSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <Border Width="40" Height="40" CornerRadius="20" Background="{StaticResource AccentBackgroundBrush}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Border x:Name="TasteSeedIcon" Width="40" Height="40" CornerRadius="20" Background="{StaticResource AccentBackgroundBrush}">
                             <FontIcon Glyph="&#xE735;" FontSize="20" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
-                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
-                            <TextBlock Text="Personalize your home" FontSize="16" FontWeight="SemiBold" />
-                            <TextBlock Text="Pick a few titles you love and we'll tailor your recommendations." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <StackPanel x:Name="TasteSeedCopy" Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                            <TextBlock x:Name="TasteSeedTitle" Text="Personalize your home" FontSize="16" FontWeight="SemiBold" />
+                            <TextBlock x:Name="TasteSeedDescription" Text="Pick a few titles you love and we'll tailor your recommendations." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <StackPanel x:Name="TasteSeedActions" Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <Button Content="Personalize" Style="{StaticResource AccentButtonStyle}" Click="PersonalizeHome_Click" />
                             <Button Style="{StaticResource GhostButtonStyle}" Width="32" Height="32" Padding="0" ToolTipService.ToolTip="Dismiss personalization prompt" Click="DismissTasteSeed_Click">
                                 <FontIcon Glyph="&#xE711;" FontSize="13" />
@@ -180,41 +204,39 @@
                 <StackPanel x:Name="SectionsPanel" />
 
                 <!-- Empty state when layout returns zero sections -->
-                <StackPanel
+                <Border
                     x:Name="EmptyHomeState"
-                    VerticalAlignment="Center"
-                    HorizontalAlignment="Center"
-                    Spacing="12"
-                    Padding="40,80"
+                    Height="256"
+                    Margin="48,0,48,40"
+                    Padding="24"
+                    CornerRadius="30"
+                    Background="{StaticResource SurfaceBrush}"
                     Visibility="Collapsed">
-                    <FontIcon
-                        Glyph="&#xE80F;"
-                        FontSize="40"
-                        Foreground="{StaticResource SecondaryTextBrush}"
+                    <StackPanel
+                        VerticalAlignment="Center"
                         HorizontalAlignment="Center"
-                        Visibility="Collapsed" />
-                    <TextBlock
-                        x:Name="EmptyHomeTitle"
-                        Text="No sections configured"
-                        FontSize="18"
-                        FontWeight="SemiBold"
-                        Foreground="{StaticResource PrimaryTextBrush}"
-                        HorizontalAlignment="Center" />
-                    <TextBlock
-                        x:Name="EmptyHomeDescription"
-                        Text="Your home screen is empty. Customize it by adding sections to display your media."
-                        FontSize="14"
-                        Foreground="{StaticResource SecondaryTextBrush}"
-                        HorizontalAlignment="Center"
-                        TextAlignment="Center"
-                        TextWrapping="Wrap"
-                        MaxWidth="400" />
-                    <Button
-                        Content="Customize Home Screen"
-                        Style="{StaticResource GhostButtonStyle}"
-                        Foreground="{StaticResource AccentBrush}"
-                        Click="CustomizeHome_Click" />
-                </StackPanel>
+                        Spacing="12">
+                        <FontIcon
+                            Glyph="&#xE80F;"
+                            FontSize="40"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            HorizontalAlignment="Center" />
+                        <TextBlock
+                            x:Name="EmptyHomeDescription"
+                            Text="Your home screen is empty. Customize it by adding sections to display your media."
+                            FontSize="14"
+                            Foreground="{StaticResource SecondaryTextBrush}"
+                            HorizontalAlignment="Center"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap"
+                            MaxWidth="400" />
+                        <Button
+                            Content="Customize Home Screen"
+                            Style="{StaticResource GhostButtonStyle}"
+                            Foreground="{StaticResource AccentBrush}"
+                            Click="CustomizeHome_Click" />
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </ScrollViewer>
     </Grid>

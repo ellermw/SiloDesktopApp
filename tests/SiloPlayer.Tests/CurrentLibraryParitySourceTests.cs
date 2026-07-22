@@ -186,6 +186,20 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.DoesNotContain("public void SuspendCatalogLoads()\n    {\n        CancelCatalogLoads();", viewModel.Replace("\r\n", "\n"));
     }
 
+    [Fact]
+    public void CompletedRecommendationAndCollectionSurfacesRemainSmoothAcrossTabChanges()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
+
+        Assert.Contains("if (!_recommendationsLoading)", page);
+        Assert.Contains("CancelIncompleteRecommendedContent();", page);
+        Assert.Contains("GetLibraryLayoutAsync(libraryId, cancellationToken)", page);
+        Assert.Contains("GetLibrarySectionItemsAsync(libraryId, layout.Id, cancellationToken)", page);
+        Assert.Contains("if (tag == _currentTab)", page);
+        Assert.Contains("_collectionsResizeTimer.Start();", page);
+        Assert.DoesNotContain("if (tag == \"Library\")\n            ReleaseRecommendedContent();", page.Replace("\r\n", "\n"));
+    }
+
     private static string ReadRepoFile(params string[] parts)
     {
         var all = new string[parts.Length + 1];

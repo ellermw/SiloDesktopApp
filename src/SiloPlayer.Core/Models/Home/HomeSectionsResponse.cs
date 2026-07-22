@@ -18,6 +18,13 @@ public class HomeSectionWithItems
     public bool Customized { get; set; }
     [JsonIgnore]
     public bool LoadFailed { get; set; }
+    /// <summary>
+    /// True once the section-items request completed, including a successful
+    /// empty response. This lets the client distinguish an empty configured
+    /// row from a row that is still loading without removing the layout slot.
+    /// </summary>
+    [JsonIgnore]
+    public bool LoadCompleted { get; set; }
     // ObservableCollection so in-place mutations (e.g. removing an item from
     // Continue Watching when it's marked watched) propagate to the UI without
     // requiring a section swap + full row rebuild.

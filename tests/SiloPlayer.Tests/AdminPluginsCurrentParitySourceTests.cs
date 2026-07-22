@@ -2,7 +2,7 @@ namespace SiloPlayer.Tests;
 
 public class AdminPluginsCurrentParitySourceTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".."));
+    private static readonly string RepoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
     private static string Markup => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminPluginsPage.xaml"));
     private static string CodeBehind => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminPluginsPage.xaml.cs"));
     private static string Api => File.ReadAllText(Path.Combine(RepoRoot, "src", "SiloPlayer.Core", "Api", "PluginsApi.cs"));

@@ -14,10 +14,12 @@ public partial class HomeViewModel : ObservableObject,
     IRecipient<PlaybackProgressUpdated>
 {
     private readonly HomeApi _homeApi;
+    private readonly AuthService _authService;
 
-    public HomeViewModel(HomeApi homeApi)
+    public HomeViewModel(HomeApi homeApi, AuthService authService)
     {
         _homeApi = homeApi;
+        _authService = authService;
         // F4: subscribe to media state changes + playback progress so the
         // home screen's Continue Watching / Next Up rows reflect activity
         // from anywhere in the app without a full reload.
@@ -45,6 +47,7 @@ public partial class HomeViewModel : ObservableObject,
             case MediaSurfaceChangeKind.WatchlistAdded:
             case MediaSurfaceChangeKind.WatchlistRemoved:
             case MediaSurfaceChangeKind.RatingChanged:
+            case MediaSurfaceChangeKind.HomeLayoutChanged:
                 InvalidateCache();
                 break;
             case MediaSurfaceChangeKind.HomeDismissed:
@@ -127,6 +130,10 @@ public partial class HomeViewModel : ObservableObject,
 
     private DateTime _lastLoadedAt = DateTime.MinValue;
     private bool _loadInProgress;
+    private bool _hasLoadedLayout;
+    private CancellationTokenSource? _sectionLoadCts;
+    private int _sectionLoadGeneration;
+    private string? _loadedProfileId;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     // F12: maximum number of concurrent per-section fetches. Matches the
@@ -134,13 +141,28 @@ public partial class HomeViewModel : ObservableObject,
     // the server with 15+ parallel section requests.
     private const int MaxConcurrentSectionRequests = 5;
 
+    [ObservableProperty]
+    private bool _hasConfiguredSections;
+
     [RelayCommand]
     private async Task LoadAsync()
     {
         if (_loadInProgress) return;
 
+        var profileId = _authService.SelectedProfileId;
+        if (!string.Equals(_loadedProfileId, profileId, StringComparison.Ordinal))
+        {
+            _sectionLoadCts?.Cancel();
+            FeaturedSections.Clear();
+            Sections.Clear();
+            HasConfiguredSections = false;
+            _hasLoadedLayout = false;
+            _lastLoadedAt = DateTime.MinValue;
+            _loadedProfileId = profileId;
+        }
+
         // Skip API call if data was loaded recently and we already have content
-        if (FeaturedSections.Count + Sections.Count > 0
+        if (_hasLoadedLayout
             && DateTime.UtcNow - _lastLoadedAt < CacheDuration)
         {
             return;
@@ -158,30 +180,40 @@ public partial class HomeViewModel : ObservableObject,
             // while items fetch in the background.
             var layout = await _homeApi.GetLayoutAsync();
 
-            FeaturedSections.Clear();
-            Sections.Clear();
+            var previous = FeaturedSections
+                .Concat(Sections)
+                .ToDictionary(section => section.Id, StringComparer.Ordinal);
+            var nextFeatured = new List<HomeSectionWithItems>();
+            var nextRows = new List<HomeSectionWithItems>();
 
-            // Seed empty HomeSectionWithItems placeholders so the UI can
-            // render loading rows with real titles. Items list stays empty
-            // until phase 2 fills it.
+            // Preserve populated slots when the recipe is unchanged. The
+            // current WebUI keeps cached rows mounted while refreshing; doing
+            // the same avoids a full blank/skeleton flash on every stale
+            // refresh or playback-state invalidation.
             foreach (var meta in layout.Sections)
             {
-                var placeholder = new HomeSectionWithItems
+                HomeSectionWithItems slot;
+                if (previous.TryGetValue(meta.Id, out var cached)
+                    && MetadataMatches(cached, meta)
+                    && !cached.LoadFailed)
                 {
-                    Id = meta.Id,
-                    SectionType = meta.SectionType,
-                    Title = meta.Title,
-                    Featured = meta.Featured,
-                    ItemLimit = meta.ItemLimit,
-                    IsCustom = meta.IsCustom,
-                    Customized = meta.Customized,
-                    Items = new ObservableCollection<MediaItem>(),
-                };
-                if (meta.Featured)
-                    FeaturedSections.Add(placeholder);
+                    slot = cached;
+                }
                 else
-                    Sections.Add(placeholder);
+                {
+                    slot = CreateLayoutSlot(meta, cached);
+                }
+
+                if (meta.Featured)
+                    nextFeatured.Add(slot);
+                else
+                    nextRows.Add(slot);
             }
+
+            ReconcileCollection(FeaturedSections, nextFeatured);
+            ReconcileCollection(Sections, nextRows);
+            HasConfiguredSections = layout.Sections.Count > 0;
+            _hasLoadedLayout = true;
 
             _lastLoadedAt = DateTime.UtcNow;
             IsLoading = false;  // Skeleton is showing; background fetch fills it in.
@@ -189,12 +221,16 @@ public partial class HomeViewModel : ObservableObject,
             // F12: phase 2 — fetch each section's items with a concurrency
             // cap so slow sections don't block fast ones. Each section is a
             // fire-and-forget task that patches its placeholder when done.
-            _ = FetchSectionItemsInBatchesAsync();
+            _sectionLoadCts?.Cancel();
+            _sectionLoadCts?.Dispose();
+            _sectionLoadCts = new CancellationTokenSource();
+            var generation = ++_sectionLoadGeneration;
+            _ = FetchSectionItemsInBatchesAsync(generation, _sectionLoadCts.Token);
         }
         catch (Exception ex)
         {
             if (!hadContent)
-                ErrorMessage = $"Failed to load home: {ex.Message}";
+                ErrorMessage = "Unable to load the homepage";
             else
                 LocalLog.AppendLine("home_error.txt", $"layout_refresh | {ex.GetType().Name}: {ex.Message}");
             IsLoading = false;
@@ -205,7 +241,7 @@ public partial class HomeViewModel : ObservableObject,
         }
     }
 
-    private async Task FetchSectionItemsInBatchesAsync()
+    private async Task FetchSectionItemsInBatchesAsync(int generation, CancellationToken ct)
     {
         // Gather all placeholder sections in display order (featured first).
         var targets = FeaturedSections.Concat(Sections).ToList();
@@ -214,30 +250,26 @@ public partial class HomeViewModel : ObservableObject,
         using var gate = new SemaphoreSlim(MaxConcurrentSectionRequests);
         var tasks = targets.Select(async section =>
         {
-            await gate.WaitAsync();
+            await gate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
                 var sectionId = section.Id;
-                var resp = await _homeApi.GetSectionItemsAsync(sectionId).ConfigureAwait(false);
+                var resp = await _homeApi.GetSectionItemsAsync(sectionId, ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
                 await RunOnUiThreadAsync(() =>
                 {
-                    if (resp.Section?.Items != null && resp.Section.Items.Count > 0)
-                    {
-                        // Replace the placeholder with the populated response
-                        // object. Mutating the placeholder and "replacing" it
-                        // with itself does not fire SectionRow.SectionChanged,
-                        // leaving the row bound to the original empty Items
-                        // collection and showing skeletons forever.
-                        ReplaceInBoundCollection(resp.Section);
-                    }
-                    else
-                    {
-                        // Section fetched but has no items (e.g. empty Next Up).
-                        // Remove the placeholder so the skeleton row disappears
-                        // instead of flashing indefinitely.
-                        RemoveFromBoundCollection(sectionId);
-                    }
+                    if (!IsCurrentSectionLoad(generation, ct, sectionId)) return;
+
+                    var completed = resp.Section ?? CloneSection(section, loadFailed: false);
+                    completed.LoadFailed = false;
+                    completed.LoadCompleted = true;
+                    completed.Items ??= new ObservableCollection<MediaItem>();
+                    ReplaceInBoundCollection(completed);
                 }).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // A newer layout generation owns the surface now.
             }
             catch (Exception ex)
             {
@@ -245,7 +277,10 @@ public partial class HomeViewModel : ObservableObject,
                 try
                 {
                     await RunOnUiThreadAsync(() =>
-                        ReplaceInBoundCollection(CloneSection(section, loadFailed: true))).ConfigureAwait(false);
+                    {
+                        if (!IsCurrentSectionLoad(generation, ct, section.Id)) return;
+                        ReplaceInBoundCollection(CloneSection(section, loadFailed: true, loadCompleted: true));
+                    }).ConfigureAwait(false);
                 }
                 catch (Exception uiEx)
                 {
@@ -255,7 +290,14 @@ public partial class HomeViewModel : ObservableObject,
             finally { gate.Release(); }
         }).ToList();
 
-        await Task.WhenAll(tasks);
+        try
+        {
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Expected when a newer layout refresh supersedes this batch.
+        }
     }
 
     public async Task RetrySectionAsync(string sectionId)
@@ -263,23 +305,27 @@ public partial class HomeViewModel : ObservableObject,
         var current = FeaturedSections.Concat(Sections).FirstOrDefault(s => s.Id == sectionId);
         if (current == null) return;
 
-        ReplaceInBoundCollection(CloneSection(current, loadFailed: false));
+        ReplaceInBoundCollection(CloneSection(current, loadFailed: false, loadCompleted: false));
         try
         {
             var response = await _homeApi.GetSectionItemsAsync(sectionId);
-            if (response.Section?.Items is { Count: > 0 })
-                ReplaceInBoundCollection(response.Section);
-            else
-                RemoveFromBoundCollection(sectionId);
+            var completed = response.Section ?? CloneSection(current, loadFailed: false);
+            completed.LoadFailed = false;
+            completed.LoadCompleted = true;
+            completed.Items ??= new ObservableCollection<MediaItem>();
+            ReplaceInBoundCollection(completed);
         }
         catch (Exception ex)
         {
             LogSectionFetchFailure(sectionId, ex);
-            ReplaceInBoundCollection(CloneSection(current, loadFailed: true));
+            ReplaceInBoundCollection(CloneSection(current, loadFailed: true, loadCompleted: true));
         }
     }
 
-    private static HomeSectionWithItems CloneSection(HomeSectionWithItems source, bool loadFailed) => new()
+    private static HomeSectionWithItems CloneSection(
+        HomeSectionWithItems source,
+        bool loadFailed,
+        bool? loadCompleted = null) => new()
     {
         Id = source.Id,
         SectionType = source.SectionType,
@@ -290,10 +336,64 @@ public partial class HomeViewModel : ObservableObject,
         IsCustom = source.IsCustom,
         Customized = source.Customized,
         LoadFailed = loadFailed,
+        LoadCompleted = loadCompleted ?? source.LoadCompleted,
         Items = loadFailed
             ? new ObservableCollection<MediaItem>()
             : new ObservableCollection<MediaItem>(source.Items),
     };
+
+    private static HomeSectionWithItems CreateLayoutSlot(
+        HomeSection meta,
+        HomeSectionWithItems? cached) => new()
+    {
+        Id = meta.Id,
+        SectionType = meta.SectionType,
+        Title = meta.Title,
+        Featured = meta.Featured,
+        ItemLimit = meta.ItemLimit,
+        TotalCount = cached?.TotalCount ?? 0,
+        IsCustom = meta.IsCustom,
+        Customized = meta.Customized,
+        LoadFailed = false,
+        LoadCompleted = cached?.LoadCompleted == true && cached.LoadFailed == false,
+        Items = cached?.LoadCompleted == true && cached.LoadFailed == false
+            ? new ObservableCollection<MediaItem>(cached.Items)
+            : new ObservableCollection<MediaItem>(),
+    };
+
+    private static bool MetadataMatches(HomeSectionWithItems current, HomeSection meta) =>
+        current.Id == meta.Id
+        && current.SectionType == meta.SectionType
+        && current.Title == meta.Title
+        && current.Featured == meta.Featured
+        && current.ItemLimit == meta.ItemLimit
+        && current.IsCustom == meta.IsCustom
+        && current.Customized == meta.Customized;
+
+    private static void ReconcileCollection(
+        ObservableCollection<HomeSectionWithItems> target,
+        IReadOnlyList<HomeSectionWithItems> desired)
+    {
+        if (target.Count == desired.Count
+            && target.Select(section => section.Id).SequenceEqual(desired.Select(section => section.Id), StringComparer.Ordinal))
+        {
+            for (var i = 0; i < desired.Count; i++)
+            {
+                if (!ReferenceEquals(target[i], desired[i]))
+                    target[i] = desired[i];
+            }
+            return;
+        }
+
+        target.Clear();
+        foreach (var section in desired)
+            target.Add(section);
+    }
+
+    private bool IsCurrentSectionLoad(int generation, CancellationToken ct, string sectionId) =>
+        !ct.IsCancellationRequested
+        && generation == _sectionLoadGeneration
+        && FeaturedSections.Concat(Sections).Any(section => section.Id == sectionId);
 
     private static Task RunOnUiThreadAsync(Action action)
     {
@@ -327,26 +427,6 @@ public partial class HomeViewModel : ObservableObject,
     private static void LogSectionFetchFailure(string sectionId, Exception ex)
     {
         LocalLog.AppendLine("home_error.txt", $"section={sectionId} | {ex.GetType().Name}: {ex.Message}");
-    }
-
-    private void RemoveFromBoundCollection(string sectionId)
-    {
-        for (int i = FeaturedSections.Count - 1; i >= 0; i--)
-        {
-            if (FeaturedSections[i].Id == sectionId)
-            {
-                FeaturedSections.RemoveAt(i);
-                return;
-            }
-        }
-        for (int i = Sections.Count - 1; i >= 0; i--)
-        {
-            if (Sections[i].Id == sectionId)
-            {
-                Sections.RemoveAt(i);
-                return;
-            }
-        }
     }
 
     private void ReplaceInBoundCollection(HomeSectionWithItems updated)
@@ -408,8 +488,11 @@ public partial class HomeViewModel : ObservableObject,
         try
         {
             var body = surface == "continue_watching"
-                ? new { progress_updated_at = DateTime.UtcNow.ToString("o") }
+                ? new { progress_updated_at = request.Item.ProgressUpdatedAt }
                 : (object)new { series_id = request.Item.SeriesId ?? request.Item.ContentId };
+
+            if (surface == "continue_watching" && string.IsNullOrWhiteSpace(request.Item.ProgressUpdatedAt))
+                throw new InvalidOperationException("Continue-watching item is missing its progress timestamp.");
 
             await _homeApi.DismissItemAsync(surface, request.Item.ContentId, body);
         }

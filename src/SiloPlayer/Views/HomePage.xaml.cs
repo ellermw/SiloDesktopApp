@@ -53,7 +53,8 @@ public sealed partial class HomePage : Page
         catch (Exception ex)
         {
             _isRefreshingLayout = false;
-            ViewModel.ErrorMessage = $"Error: {ex.Message}";
+            LocalLog.AppendLine("home_error.txt", $"page_load | {ex.GetType().Name}: {ex.Message}");
+            ViewModel.ErrorMessage = "Unable to load the homepage";
         }
     }
 
@@ -74,6 +75,46 @@ public sealed partial class HomePage : Page
         InitialHeroSkeleton.Height = heroHeight;
         HeroLoadingSkeleton.Height = heroHeight;
         HeroErrorPanel.Height = heroHeight;
+
+        var gutter = e.NewSize.Width >= 1280 ? 48d
+            : e.NewSize.Width >= 1024 ? 40d
+            : e.NewSize.Width >= 640 ? 24d
+            : 16d;
+        var sectionPadding = new Thickness(gutter, 0, gutter, 0);
+        LoadingSectionOne.Padding = sectionPadding;
+        LoadingSectionTwo.Padding = sectionPadding;
+        LoadingSectionThree.Padding = sectionPadding;
+        EmptyHomeState.Margin = new Thickness(gutter, 0, gutter, 40);
+        TasteSeedBanner.Margin = new Thickness(gutter, 0, gutter, 40);
+
+        var skeletonWidth = e.NewSize.Width < 640 ? 130d
+            : e.NewSize.Width < 1024 ? 150d
+            : 178d;
+        ResizeSkeletonPosters(LoadingSectionOne, skeletonWidth);
+        ResizeSkeletonPosters(LoadingSectionTwo, skeletonWidth);
+        ResizeSkeletonPosters(LoadingSectionThree, skeletonWidth);
+
+        var isCompact = e.NewSize.Width < 640;
+        TasteSeedBanner.Padding = isCompact
+            ? new Thickness(20, 16, 20, 16)
+            : new Thickness(24, 16, 24, 16);
+        Grid.SetRow(TasteSeedActions, isCompact ? 1 : 0);
+        Grid.SetColumn(TasteSeedActions, isCompact ? 0 : 2);
+        Grid.SetColumnSpan(TasteSeedActions, isCompact ? 3 : 1);
+        TasteSeedActions.HorizontalAlignment = isCompact
+            ? HorizontalAlignment.Left
+            : HorizontalAlignment.Right;
+        TasteSeedTitle.FontSize = isCompact ? 14 : 16;
+        TasteSeedDescription.FontSize = isCompact ? 12 : 14;
+
+        HeroErrorPanel.Padding = new Thickness(
+            e.NewSize.Width >= 1024 ? 48 : e.NewSize.Width >= 640 ? 24 : 16);
+    }
+
+    private static void ResizeSkeletonPosters(Panel panel, double width)
+    {
+        foreach (var poster in panel.Children.OfType<SkeletonPoster>())
+            poster.SetResponsiveWidth(width);
     }
 
     private void BuildContent()
@@ -113,8 +154,9 @@ public sealed partial class HomePage : Page
 
         // Empty state matches the current WebUI and links to the per-profile
         // Home Screen editor.
-        bool hasSections = ViewModel.FeaturedSections.Count > 0 || ViewModel.Sections.Count > 0;
-        EmptyHomeState.Visibility = hasSections ? Visibility.Collapsed : Visibility.Visible;
+        EmptyHomeState.Visibility = ViewModel.HasConfiguredSections
+            ? Visibility.Collapsed
+            : Visibility.Visible;
     }
 
     private void UpdateUndoBanner()
@@ -250,8 +292,9 @@ public sealed partial class HomePage : Page
             }
 
             // Empty-state visibility may need to flip on add/remove.
-            bool hasSections = ViewModel.FeaturedSections.Count > 0 || ViewModel.Sections.Count > 0;
-            EmptyHomeState.Visibility = hasSections ? Visibility.Collapsed : Visibility.Visible;
+            EmptyHomeState.Visibility = ViewModel.HasConfiguredSections
+                ? Visibility.Collapsed
+                : Visibility.Visible;
         });
     }
 
@@ -263,9 +306,11 @@ public sealed partial class HomePage : Page
         _failedHeroSectionId = null;
 
         var heroSection = ViewModel.FeaturedSections.FirstOrDefault();
-        ContentPanel.Padding = heroSection == null
-            ? new Thickness(0, 24, 0, 8)
-            : new Thickness(0, 8, 0, 8);
+        var hasRenderableHero = heroSection != null
+            && (!heroSection.LoadCompleted || heroSection.LoadFailed || heroSection.Items.Count > 0);
+        ContentPanel.Padding = hasRenderableHero
+            ? new Thickness(0, 8, 0, 8)
+            : new Thickness(0, 24, 0, 8);
         if (heroSection == null) return;
 
         if (heroSection.LoadFailed)
@@ -280,7 +325,7 @@ public sealed partial class HomePage : Page
             HeroCarouselControl.ItemsSource = heroSection.Items.Take(limit).ToList();
             HeroCarouselControl.Visibility = Visibility.Visible;
         }
-        else
+        else if (!heroSection.LoadCompleted)
         {
             HeroLoadingSkeleton.Visibility = Visibility.Visible;
         }
@@ -343,6 +388,13 @@ public sealed partial class HomePage : Page
         if (e.PropertyName == nameof(ViewModel.ShowUndoBanner))
         {
             DispatcherQueue.TryEnqueue(UpdateUndoBanner);
+        }
+        else if (e.PropertyName == nameof(ViewModel.HasConfiguredSections))
+        {
+            DispatcherQueue.TryEnqueue(() =>
+                EmptyHomeState.Visibility = ViewModel.HasConfiguredSections
+                    ? Visibility.Collapsed
+                    : Visibility.Visible);
         }
     }
 
