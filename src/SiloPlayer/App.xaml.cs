@@ -160,7 +160,7 @@ public partial class App : Application
                 "windows");
             client.SetClientMetadata(
                 SiloApiClient.DefaultClientName,
-                typeof(App).Assembly.GetName().Version?.ToString(3));
+                clientVersion: null);
 
             if (settings.Servers.Count > 0)
             {

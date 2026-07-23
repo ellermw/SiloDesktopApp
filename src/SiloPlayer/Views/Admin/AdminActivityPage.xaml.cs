@@ -670,17 +670,33 @@ public sealed partial class AdminActivityPage : Page
         }
         var clientMeta = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         var clientLabel = AdminActivityViewModel.GetSessionClientLabel(session);
+        if (session.IsJellyfinClient)
+        {
+            clientMeta.Children.Add(BuildClientProtocolPill(
+                "JF",
+                Color.FromArgb(255, 170, 92, 195),
+                "Jellyfin client"));
+        }
+        if (session.IsNativeSiloClient)
+        {
+            var accent = ((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color;
+            clientMeta.Children.Add(BuildClientProtocolPill(
+                "Silo",
+                accent,
+                "Native Silo client"));
+        }
         if (!string.IsNullOrWhiteSpace(clientLabel))
         {
             var label = new TextBlock { Text = clientLabel, FontSize = 10, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 128 };
             ToolTipService.SetToolTip(label, session.ClientUserAgent ?? clientLabel);
             clientMeta.Children.Add(label);
         }
-        if (!string.IsNullOrWhiteSpace(clientLabel) && !string.IsNullOrWhiteSpace(session.ClientIp))
+        var visibleClientIp = session.IsNativeSiloClient ? null : session.ClientIp;
+        if (!string.IsNullOrWhiteSpace(clientLabel) && !string.IsNullOrWhiteSpace(visibleClientIp))
             clientMeta.Children.Add(new TextBlock { Text = "·", FontSize = 10, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] });
-        if (!string.IsNullOrWhiteSpace(session.ClientIp))
+        if (!string.IsNullOrWhiteSpace(visibleClientIp))
         {
-            var capturedIp = session.ClientIp.Trim();
+            var capturedIp = visibleClientIp.Trim();
             var ipLink = new HyperlinkButton { Content = capturedIp, Padding = new Thickness(0), FontSize = 10, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] };
             ipLink.Click += async (_, _) => await RunIpLookupAsync(capturedIp);
             clientMeta.Children.Add(ipLink);
@@ -1366,6 +1382,30 @@ public sealed partial class AdminActivityPage : Page
         Grid.SetColumn(name, 0); Grid.SetColumn(text, 1);
         grid.Children.Add(name); grid.Children.Add(text);
         panel.Children.Add(grid);
+    }
+
+    private static Border BuildClientProtocolPill(string text, Color color, string tooltip)
+    {
+        var pill = new Border
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            BorderBrush = new SolidColorBrush(Color.FromArgb(76, color.R, color.G, color.B)),
+            Background = new SolidColorBrush(Color.FromArgb(38, color.R, color.G, color.B)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 2, 6, 2),
+            Child = new TextBlock
+            {
+                Text = text,
+                FontSize = 9,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(color),
+                LineHeight = 10,
+            },
+        };
+        ToolTipService.SetToolTip(pill, tooltip);
+        return pill;
     }
 
     private static Button MakeSmallIconButton(string glyph, string tooltip)

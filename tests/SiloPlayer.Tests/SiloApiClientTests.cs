@@ -136,7 +136,7 @@ public sealed class SiloApiClientTests
         });
 
         var client = CreateClient(handler);
-        client.SetClientMetadata(SiloApiClient.DefaultClientName, "1.2.3");
+        client.SetClientMetadata(SiloApiClient.DefaultClientName);
         var api = new PlaybackApi(client);
 
         await api.StartPlaybackAsync(new PlaybackStartRequest
@@ -147,7 +147,7 @@ public sealed class SiloApiClientTests
 
         Assert.Equal("/api/v1/playback/start", path);
         Assert.Equal("Silo for Windows", clientName);
-        Assert.Equal("1.2.3", clientVersion);
+        Assert.Null(clientVersion);
     }
 
     [Fact]

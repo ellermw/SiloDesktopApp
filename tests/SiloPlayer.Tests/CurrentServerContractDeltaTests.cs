@@ -155,12 +155,19 @@ public sealed class CurrentServerContractDeltaTests
         Assert.Contains("PositionSeconds", model);
         Assert.Contains("ClientLabel", model);
         Assert.Contains("ClientUserAgent", model);
+        Assert.Contains("IsJellyfinClient", model);
+        Assert.Contains("IsNativeSiloClient", model);
         Assert.Contains("TranscodeHwAccel", model);
         Assert.Contains("GetSessionClientLabel", viewModel);
         Assert.Contains("FormatPlaybackPosition", viewModel);
         Assert.Contains("FormatTranscodeMode", viewModel);
         Assert.Contains("BuildPlaybackDetailsPanel", page);
         Assert.Contains("RunIpLookupAsync", page);
+        Assert.Contains("\"JF\"", page);
+        Assert.Contains("Jellyfin client", page);
+        Assert.Contains("\"Silo\"", page);
+        Assert.Contains("Native Silo client", page);
+        Assert.Contains("session.IsNativeSiloClient ? null : session.ClientIp", page);
     }
 
     [Fact]

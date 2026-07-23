@@ -8,7 +8,7 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 [**Download Silo Desktop Player 1.1.64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.64/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `89F99DDFE18332D8185B22AE33BB2D133E567D1666E3F8012CF21411B49FE7D1`
+SHA-256: `CB2CC8B5C01CCAF140AE83334BB7140BC4ACA406F4573F7D07332D244C93B4BD`
 
 The installer is currently locally test-signed for QA, so Windows may still display a SmartScreen warning on machines that do not trust the local certificate. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -60,7 +60,8 @@ Status meanings:
 - Hardened large-library and catalog navigation with bounded realization, deferred artwork, cancellation, and incremental updates to keep very large libraries responsive.
 - Refined Home and item-detail behavior, including stable incremental Home rows, preserved carousel state, episode-detail metadata, and correct still artwork for the current episode carousel.
 - Corrected native video-window ownership and fullscreen/next-episode restoration so the mouse and OSC remain interactive after automatic episode transitions.
-- Improved direct/remux/transcode startup and recovery behavior, playback session metadata, realtime teardown, and the Windows client identity reported to Silo.
+- Improved direct/remux/transcode startup and recovery behavior, playback session metadata, and realtime teardown.
+- Reports the stable native identity `Silo for Windows` without a release number. The companion Silo Server/WebUI change classifies first-party native clients, displays a branded `Silo` badge, and omits their IP from Activity rows while retaining the purple `JF` badge for Jellyfin-compatible clients.
 - Kept the QA package as a signed multi-file installation and verified installation, saved-session restoration, Home startup, real playback, OSC interaction, and clean return from playback on Windows 11.
 - Current shared-shell/sidebar, activity-badge, hover-state, and navigation-transition parity work remains in progress and is not represented as complete.
 

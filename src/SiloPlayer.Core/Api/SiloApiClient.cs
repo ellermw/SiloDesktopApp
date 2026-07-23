@@ -40,7 +40,7 @@ public class SiloApiClient
     private string? _deviceName;
     private string? _devicePlatform;
     private string _clientName = DefaultClientName;
-    private string? _clientVersion = typeof(SiloApiClient).Assembly.GetName().Version?.ToString(3);
+    private string? _clientVersion;
     private string _baseUrl = "";
     private long _authenticationGeneration;
     private long _requestContextGeneration;

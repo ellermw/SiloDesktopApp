@@ -31,6 +31,8 @@ public class AdminSession
     public string? ClientVersion { get; set; }
     public string? ClientLabel { get; set; }
     public string? ClientUserAgent { get; set; }
+    public bool IsJellyfinClient { get; set; }
+    public bool IsNativeSiloClient { get; set; }
     public int AudioTrackIndex { get; set; }
     public bool TranscodeAudio { get; set; }
     public int? StreamBitrateKbps { get; set; }
