@@ -142,10 +142,39 @@ public sealed class UpgradeAuthenticationRegressionTests
         Assert.Contains("RunShellWorkAsync(\"theme_sync\"", mainWindow);
     }
 
+    [Fact]
+    public void AuthenticatedRouteChangesDoNotRehydrateTheEntireShell()
+    {
+        var mainWindow = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
+        var routeStart = mainWindow.IndexOf("public bool TryEnterAuthenticatedPage", StringComparison.Ordinal);
+        var routeEnd = mainWindow.IndexOf("private async Task SyncThemeAfterNavigationAsync", routeStart, StringComparison.Ordinal);
+        var routeTransition = mainWindow[routeStart..routeEnd];
+        var showStart = mainWindow.IndexOf("public void ShowMainNavigation()", StringComparison.Ordinal);
+        var showEnd = mainWindow.IndexOf("private async Task LoadShellNavigationAsync", showStart, StringComparison.Ordinal);
+        var showNavigation = mainWindow[showStart..showEnd];
+
+        Assert.Contains("ShowMainNavigation();", routeTransition);
+        Assert.DoesNotContain("LoadShellNavigationAsync", routeTransition);
+        Assert.DoesNotContain("RefreshPluginAppsAsync", routeTransition);
+        Assert.DoesNotContain("RefreshUserNavigationCapabilitiesAsync", routeTransition);
+        Assert.DoesNotContain("RunShellWorkAsync(\"theme_sync\"", routeTransition);
+        Assert.Contains("shouldHydrateShell", showNavigation);
+        Assert.Contains("if (shouldHydrateShell)", showNavigation);
+        Assert.Contains("_hydratedShellKey = null;", mainWindow);
+    }
+
     private static string ReadRepoFile(params string[] parts)
     {
-        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
-        return File.ReadAllText(Path.Combine([root, .. parts]));
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root != null &&
+               (!Directory.Exists(Path.Combine(root.FullName, "src")) ||
+                !Directory.Exists(Path.Combine(root.FullName, "installer"))))
+        {
+            root = root.Parent;
+        }
+
+        Assert.NotNull(root);
+        return File.ReadAllText(Path.Combine([root.FullName, .. parts]));
     }
 
     private sealed class MemoryCredentialStore : ICredentialStore

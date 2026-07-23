@@ -169,11 +169,14 @@ public sealed class CurrentSettingsParitySourceTests
         var transitionStart = window.IndexOf("public bool TryEnterAuthenticatedPage", StringComparison.Ordinal);
         var transitionEnd = window.IndexOf("public void UpdateLibraryNavItems", transitionStart, StringComparison.Ordinal);
         var transition = window[transitionStart..transitionEnd];
+        var shellStart = window.IndexOf("public void ShowMainNavigation()", StringComparison.Ordinal);
+        var shellEnd = window.IndexOf("private async Task LoadShellNavigationAsync", shellStart, StringComparison.Ordinal);
+        var shell = window[shellStart..shellEnd];
         Assert.Contains("ShowMainNavigation();", transition);
-        Assert.Contains("RunShellWorkAsync(\"theme_sync\"", transition);
-        Assert.True(
-            transition.IndexOf("ShowMainNavigation();", StringComparison.Ordinal) <
-            transition.IndexOf("RunShellWorkAsync(\"theme_sync\"", StringComparison.Ordinal));
+        Assert.DoesNotContain("RunShellWorkAsync(\"theme_sync\"", transition);
+        Assert.Contains("GetAuthenticatedShellKey()", shell);
+        Assert.Contains("shouldHydrateShell", shell);
+        Assert.Contains("RunShellWorkAsync(\"theme_sync\"", shell);
         Assert.DoesNotContain("SyncFromServerAsync", profiles);
     }
 

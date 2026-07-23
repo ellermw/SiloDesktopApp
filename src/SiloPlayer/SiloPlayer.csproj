@@ -28,9 +28,9 @@
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
         <!-- Version -->
-    <Version>1.1.55</Version>
-    <FileVersion>1.1.55.0</FileVersion>
-    <AssemblyVersion>1.1.55.0</AssemblyVersion>
+    <Version>1.1.64</Version>
+    <FileVersion>1.1.64.0</FileVersion>
+    <AssemblyVersion>1.1.64.0</AssemblyVersion>
 
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>
@@ -69,6 +69,8 @@
         <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
         <PackageReference Include="CommunityToolkit.WinUI.Controls.Primitives" Version="8.2.251219" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.5" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.5" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.5" />
         <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
         <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003" />
         <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7705" />
@@ -86,14 +88,26 @@
     <ItemGroup Condition="'$(DisableMsixProjectCapabilityAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
         <ProjectCapability Include="Msix" />
     </ItemGroup>
+
     <ItemGroup>
-      <ProjectReference Include="..\SiloPlayer.Core\SiloPlayer.Core.csproj" />
-      <ProjectReference Include="..\SiloPlayer.Player\SiloPlayer.Player.csproj" />
+      <Compile Include="..\SiloPlayer.Core\**\*.cs" Exclude="..\SiloPlayer.Core\bin\**;..\SiloPlayer.Core\obj\**" LinkBase="SiloPlayer.Core" />
+      <Compile Include="..\SiloPlayer.Player\**\*.cs" Exclude="..\SiloPlayer.Player\bin\**;..\SiloPlayer.Player\obj\**" LinkBase="SiloPlayer.Player" />
+      <None Include="..\..\libs\mpv\libmpv-2.dll">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <Link>libmpv-2.dll</Link>
+      </None>
+      <None Include="..\..\libs\mpv\scripts\silo-osc.lua">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <Link>libs\mpv\scripts\silo-osc.lua</Link>
+      </None>
+      <None Include="..\..\libs\mpv\fonts\material-design-iconic-font.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <Link>libs\mpv\fonts\material-design-iconic-font.ttf</Link>
+      </None>
     </ItemGroup>
 
     <!-- Prevent the ILC/trimmer from stripping assemblies needed at runtime -->
     <ItemGroup>
-      <TrimmerRootAssembly Include="SiloPlayer.Core" />
       <TrimmerRootAssembly Include="System.Net.WebSockets" />
       <TrimmerRootAssembly Include="System.Net.WebSockets.Client" />
     </ItemGroup>

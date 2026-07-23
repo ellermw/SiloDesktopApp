@@ -105,6 +105,7 @@ public class VersionVideoTrack
     public int? Bitrate { get; set; }
     public string? VideoRange { get; set; }
     public string? VideoRangeType { get; set; }
+    public string? ColorRange { get; set; }
     public string? ColorPrimaries { get; set; }
     public string? ColorSpace { get; set; }
     public string? ColorTransfer { get; set; }

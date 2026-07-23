@@ -2,7 +2,7 @@
 ; Inno Setup script for Silo Desktop Player
 
 #define MyAppName "Silo Desktop Player"
-#define MyAppVersion "1.1.55"
+#define MyAppVersion "1.1.64"
 #define MyAppPublisher "Silo"
 #define MyAppExeName "SiloPlayer.exe"
 #ifndef PublishSourceDir
@@ -36,6 +36,13 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional options:"; Flags: checkedonce
+
+[InstallDelete]
+; Upgrades must start from a clean application payload. Earlier QA builds
+; changed publish modes and left stale DLL/deps/runtime files beside the new
+; EXE, which can break playback and trigger Smart App Control on obsolete files.
+; User data lives in %LOCALAPPDATA%\SiloPlayer, not under {app}.
+Type: filesandordirs; Name: "{app}\*"
 
 [Files]
 ; Main application files from publish output

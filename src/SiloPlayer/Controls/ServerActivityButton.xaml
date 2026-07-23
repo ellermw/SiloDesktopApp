@@ -7,87 +7,95 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Button
-        x:Name="RootButton"
-        Background="Transparent"
-        BorderThickness="0"
-        Width="36"
-        Height="36"
-        Padding="0"
-        CornerRadius="12"
-        Click="RootButton_Click"
-        ToolTipService.ToolTip="Server Activity">
-        <Grid Width="36" Height="36">
+    <Grid Width="44" Height="44">
+        <Button
+            x:Name="RootButton"
+            Background="Transparent"
+            BorderThickness="0"
+            Width="36"
+            Height="36"
+            Padding="0"
+            CornerRadius="12"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Click="RootButton_Click"
+            ToolTipService.ToolTip="Server Activity">
+            <Grid Width="36" Height="36">
             <!-- Lucide Activity: the WebUI uses the pulse line, not a heart or
                  a platform font glyph whose shape varies by Windows version. -->
-            <Viewbox Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Canvas Width="24" Height="24">
-                    <Path x:Name="ActivityIcon"
-                          Data="M 22,12 L 18,12 L 15,21 L 9,3 L 6,12 L 2,12"
-                          Stroke="{StaticResource SecondaryTextBrush}"
-                          StrokeThickness="2"
-                          StrokeLineJoin="Round"
-                          StrokeStartLineCap="Round"
-                          StrokeEndLineCap="Round"
-                          Fill="Transparent" />
-                </Canvas>
-            </Viewbox>
-            <Border
-                x:Name="CountBadge"
-                Background="#EF4444"
-                CornerRadius="9"
-                Height="18"
-                MinWidth="18"
-                Padding="4,0,4,0"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Top"
-                Margin="0,-2,-2,0"
-                Visibility="Collapsed">
-                <TextBlock
-                    x:Name="CountBadgeText"
-                    Text="0"
-                    FontSize="10"
-                    FontWeight="Bold"
-                    Foreground="White"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center" />
-            </Border>
-            <!-- WebUI connection-problem marker: red, ringed, and distinct
-                 from the active-count badge. -->
-            <Border
-                x:Name="DisconnectedDot"
-                Width="10"
-                Height="10"
-                CornerRadius="5"
-                Background="#EF4444"
-                BorderBrush="{StaticResource AppBackgroundBrush}"
-                BorderThickness="2"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Bottom"
-                Margin="0,0,-2,-2"
-                Visibility="Collapsed" />
-        </Grid>
-        <Button.Flyout>
-            <Flyout x:Name="ActivityFlyout" Placement="BottomEdgeAlignedRight">
-                <Flyout.FlyoutPresenterStyle>
-                    <Style TargetType="FlyoutPresenter">
-                        <Setter Property="Padding" Value="0" />
-                        <Setter Property="MinWidth" Value="320" />
-                        <Setter Property="MaxWidth" Value="360" />
-                        <Setter Property="CornerRadius" Value="16" />
-                    </Style>
-                </Flyout.FlyoutPresenterStyle>
-                <!-- Current WebUI caps the activity body at 400px and scrolls
-                     it. Without this bound a large accepted-scan queue can
-                     grow the flyout to nearly the full window height. -->
-                <ScrollViewer
-                    Width="320"
-                    MaxHeight="400"
-                    VerticalScrollBarVisibility="Auto"
-                    HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel x:Name="PopoverRoot" Width="320" />
-                </ScrollViewer>
-            </Flyout>
-        </Button.Flyout>
-    </Button>
+                <Viewbox Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Canvas Width="24" Height="24">
+                        <Path x:Name="ActivityIcon"
+                              Data="M 22,12 L 18,12 L 15,21 L 9,3 L 6,12 L 2,12"
+                              Stroke="{StaticResource SecondaryTextBrush}"
+                              StrokeThickness="2"
+                              StrokeLineJoin="Round"
+                              StrokeStartLineCap="Round"
+                              StrokeEndLineCap="Round"
+                              Fill="Transparent" />
+                    </Canvas>
+                </Viewbox>
+            </Grid>
+            <Button.Flyout>
+                <Flyout x:Name="ActivityFlyout" Placement="BottomEdgeAlignedRight">
+                    <Flyout.FlyoutPresenterStyle>
+                        <Style TargetType="FlyoutPresenter">
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="MinWidth" Value="320" />
+                            <Setter Property="MaxWidth" Value="360" />
+                            <Setter Property="CornerRadius" Value="16" />
+                        </Style>
+                    </Flyout.FlyoutPresenterStyle>
+                    <!-- Current WebUI caps the activity body at 400px and scrolls
+                         it. Without this bound a large accepted-scan queue can
+                         grow the flyout to nearly the full window height. -->
+                    <ScrollViewer
+                        Width="320"
+                        MaxHeight="400"
+                        VerticalScrollBarVisibility="Auto"
+                        HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="PopoverRoot" Width="320" />
+                    </ScrollViewer>
+                </Flyout>
+            </Button.Flyout>
+        </Button>
+
+        <Border
+            x:Name="CountBadge"
+            Background="#EF4444"
+            CornerRadius="9"
+            Height="18"
+            MinWidth="18"
+            Padding="4,0,4,0"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Top"
+            Margin="0,2,2,0"
+            IsHitTestVisible="False"
+            Visibility="Collapsed">
+            <TextBlock
+                x:Name="CountBadgeText"
+                Text="0"
+                FontSize="10"
+                FontWeight="Bold"
+                Foreground="White"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                LineHeight="12" />
+        </Border>
+        <!-- WebUI connection-problem marker: red, ringed, and distinct
+             from the active-count badge. -->
+        <Border
+            x:Name="DisconnectedDot"
+            Width="10"
+            Height="10"
+            CornerRadius="5"
+            Background="#EF4444"
+            BorderBrush="{StaticResource AppBackgroundBrush}"
+            BorderThickness="2"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Bottom"
+            Margin="0,0,2,2"
+            IsHitTestVisible="False"
+            Visibility="Collapsed" />
+    </Grid>
 </UserControl>

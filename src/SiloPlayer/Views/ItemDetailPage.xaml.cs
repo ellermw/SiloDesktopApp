@@ -29,6 +29,12 @@ public sealed partial class ItemDetailPage : Page
     private string? _readerTargetContentId;
     private int? _readerTargetFileId;
     private FrameworkElement? _mangaResumeRow;
+    private uint? _siblingEpisodesDragPointerId;
+    private double _siblingEpisodesDragStartX;
+    private double _siblingEpisodesDragStartOffset;
+    private bool _siblingEpisodesDragging;
+    private int _pendingSiblingEpisodeIndex = -1;
+    private const double SiblingEpisodesDragThreshold = 7d;
     /// <summary>
     /// Pre-play audio track selection (Phase 2a). Null = auto (server picks based
     /// on effective_audio_track_index or default flag). Otherwise an explicit track
@@ -100,6 +106,151 @@ public sealed partial class ItemDetailPage : Page
         e.Handled = true;
     }
 
+    private void SiblingEpisodesScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+        => UpdateSiblingEpisodeScrollButtons();
+
+    private void SiblingEpisodesScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        TryAlignSiblingEpisodeToStart();
+        UpdateSiblingEpisodeScrollButtons();
+    }
+
+    private void SeasonsScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+        => UpdateSeasonScrollButtons();
+
+    private void SeasonsScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+        => UpdateSeasonScrollButtons();
+
+    private void SeasonsPrev_Click(object sender, RoutedEventArgs e)
+        => ScrollSeasons(-1);
+
+    private void SeasonsNext_Click(object sender, RoutedEventArgs e)
+        => ScrollSeasons(1);
+
+    private void ScrollSeasons(int direction)
+    {
+        var delta = Math.Max(186d, SeasonsScrollViewer.ViewportWidth * 0.82d) * direction;
+        var target = Math.Clamp(
+            SeasonsScrollViewer.HorizontalOffset + delta,
+            0,
+            Math.Max(0, SeasonsScrollViewer.ScrollableWidth));
+        SeasonsScrollViewer.ChangeView(target, null, null);
+        UpdateSeasonScrollButtons();
+    }
+
+    private void UpdateSeasonScrollButtons()
+    {
+        if (SeasonsPrevButton == null || SeasonsNextButton == null)
+            return;
+
+        var canScroll = SeasonsScrollViewer.ExtentWidth > SeasonsScrollViewer.ViewportWidth + 1;
+        SeasonsPrevButton.Visibility = canScroll && SeasonsScrollViewer.HorizontalOffset > 1
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        SeasonsNextButton.Visibility = canScroll &&
+            SeasonsScrollViewer.HorizontalOffset < SeasonsScrollViewer.ScrollableWidth - 1
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+    }
+
+    private void SiblingEpisodesPrev_Click(object sender, RoutedEventArgs e)
+        => ScrollSiblingEpisodes(-1);
+
+    private void SiblingEpisodesNext_Click(object sender, RoutedEventArgs e)
+        => ScrollSiblingEpisodes(1);
+
+    private void ScrollSiblingEpisodes(int direction)
+    {
+        var delta = Math.Max(252d, SiblingEpisodesScrollViewer.ViewportWidth * 0.82d) * direction;
+        var target = Math.Clamp(
+            SiblingEpisodesScrollViewer.HorizontalOffset + delta,
+            0,
+            Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
+        SiblingEpisodesScrollViewer.ChangeView(target, null, null);
+        UpdateSiblingEpisodeScrollButtons();
+    }
+
+    private void UpdateSiblingEpisodeScrollButtons()
+    {
+        if (SiblingEpisodesArrowPanel == null || SiblingEpisodesPrevButton == null || SiblingEpisodesNextButton == null)
+            return;
+
+        var canScroll = SiblingEpisodesScrollViewer.ExtentWidth > SiblingEpisodesScrollViewer.ViewportWidth + 1;
+        SiblingEpisodesArrowPanel.Visibility = canScroll ? Visibility.Visible : Visibility.Collapsed;
+        var canScrollPrev = canScroll && SiblingEpisodesScrollViewer.HorizontalOffset > 1;
+        var canScrollNext = canScroll &&
+            SiblingEpisodesScrollViewer.HorizontalOffset < SiblingEpisodesScrollViewer.ScrollableWidth - 1;
+        SiblingEpisodesPrevButton.Visibility = canScrollPrev ? Visibility.Visible : Visibility.Collapsed;
+        SiblingEpisodesNextButton.Visibility = canScrollNext ? Visibility.Visible : Visibility.Collapsed;
+        SiblingEpisodesPrevButton.IsEnabled = canScrollPrev;
+        SiblingEpisodesNextButton.IsEnabled = canScrollNext;
+    }
+
+    private void SiblingEpisodesScrollViewer_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(SiblingEpisodesScrollViewer);
+        if (!point.Properties.IsLeftButtonPressed && !point.IsInContact)
+            return;
+
+        _siblingEpisodesDragPointerId = e.Pointer.PointerId;
+        _siblingEpisodesDragStartX = point.Position.X;
+        _siblingEpisodesDragStartOffset = SiblingEpisodesScrollViewer.HorizontalOffset;
+        _siblingEpisodesDragging = false;
+    }
+
+    private void SiblingEpisodesScrollViewer_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_siblingEpisodesDragPointerId != e.Pointer.PointerId)
+            return;
+
+        var point = e.GetCurrentPoint(SiblingEpisodesScrollViewer);
+        var delta = point.Position.X - _siblingEpisodesDragStartX;
+        if (!_siblingEpisodesDragging)
+        {
+            if (Math.Abs(delta) < SiblingEpisodesDragThreshold)
+                return;
+
+            _siblingEpisodesDragging = SiblingEpisodesScrollViewer.CapturePointer(e.Pointer);
+            if (!_siblingEpisodesDragging)
+            {
+                ResetSiblingEpisodesDragState();
+                return;
+            }
+        }
+
+        var target = Math.Clamp(
+            _siblingEpisodesDragStartOffset - delta,
+            0,
+            Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
+        SiblingEpisodesScrollViewer.ChangeView(target, null, null, disableAnimation: true);
+        UpdateSiblingEpisodeScrollButtons();
+        e.Handled = true;
+    }
+
+    private void SiblingEpisodesScrollViewer_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_siblingEpisodesDragPointerId != e.Pointer.PointerId)
+            return;
+
+        var handled = _siblingEpisodesDragging;
+        if (_siblingEpisodesDragging)
+            SiblingEpisodesScrollViewer.ReleasePointerCapture(e.Pointer);
+        ResetSiblingEpisodesDragState();
+        e.Handled = handled;
+    }
+
+    private void SiblingEpisodesScrollViewer_PointerCanceled(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+        => ResetSiblingEpisodesDragState();
+
+    private void SiblingEpisodesScrollViewer_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+        => ResetSiblingEpisodesDragState();
+
+    private void ResetSiblingEpisodesDragState()
+    {
+        _siblingEpisodesDragPointerId = null;
+        _siblingEpisodesDragging = false;
+    }
+
     private void UpdateResponsiveLayout(double width)
     {
         if (width <= 0) return;
@@ -164,6 +315,9 @@ public sealed partial class ItemDetailPage : Page
         TitleText.FontSize = isSeason
             ? width >= 640 ? 36 : 30
             : width >= 1024 ? 72 : width >= 640 ? 48 : 36;
+        TitleText.CharacterSpacing = isSeason ? -25 : -50;
+        TitleText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        TitleText.LineHeight = TitleText.FontSize * (isSeason ? 1.1d : 0.98d);
         HeroLogoImage.MaxWidth = width >= 1024 ? 480 : 420;
 
         var seasonCardWidth = width >= 640 ? 170d : 160d;
@@ -489,11 +643,23 @@ public sealed partial class ItemDetailPage : Page
                     SeasonsScrollViewer.Visibility = Visibility.Collapsed;
                     SeasonsSection.Visibility = Visibility.Collapsed;
                 }
-                else if (ViewModel.Seasons.Count <= 1)
+                else if (ViewModel.Seasons.Count == 1)
+                {
+                    await ShowSingleSeasonEpisodesAsync(
+                        ViewModel.Seasons[0],
+                        contentId,
+                        navigationToken);
+                    if (_currentContentId != contentId || ViewModel.Item?.ContentId != contentId)
+                        return;
+                    if (navigationToken.IsCancellationRequested)
+                        return;
+                }
+                else if (ViewModel.Seasons.Count == 0)
                 {
                     SeasonsLoadingSkeleton.Visibility = Visibility.Collapsed;
+                    SeasonsScrollViewer.Visibility = Visibility.Collapsed;
                     SeasonsSection.Visibility = Visibility.Collapsed;
-                    BuildEpisodeRows();
+                    EpisodesSection.Visibility = Visibility.Collapsed;
                 }
                 else
                 {
@@ -1131,7 +1297,10 @@ public sealed partial class ItemDetailPage : Page
             MangaChaptersSection,
         ];
         foreach (var element in movable)
+        {
             parent.Children.Remove(element);
+            element.Margin = new Thickness(0);
+        }
 
         // These legacy detail rows are not standalone sections in the current
         // WebUI. Studio/network context and subtitle actions live in the hero.
@@ -1186,7 +1355,11 @@ public sealed partial class ItemDetailPage : Page
 
         var orderedElements = ordered.ToList();
         foreach (var element in orderedElements)
+        {
+            // DetailContentPanel.Spacing already mirrors the WebUI's
+            // space-y-12 / sm:space-y-14 rhythm. Do not add a second margin.
             parent.Children.Add(element);
+        }
         foreach (var element in movable.Except(orderedElements))
             parent.Children.Add(element);
     }
@@ -2055,11 +2228,12 @@ public sealed partial class ItemDetailPage : Page
         Button[] starButtons = [Star1, Star2, Star3, Star4, Star5];
         var tabbableStar = Math.Clamp(ViewModel.UserRating ?? 1, 1, 5);
 
-        // Dim-highlight when showing hover preview so users can tell it's
-        // not yet committed.
-        var highlightBrush = _starHoverValue.HasValue
-            ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentHoverBrush"]
-            : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
+        // The WebUI deliberately keeps rating stars yellow-400 regardless of
+        // the active server accent/theme. Using AccentBrush here made a white
+        // themed server render selected stars white instead of matching the
+        // WebUI's fixed rating color.
+        var highlightBrush = new SolidColorBrush(
+            Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xFA, 0xCC, 0x15));
 
         for (int i = 0; i < 5; i++)
         {
@@ -2175,6 +2349,7 @@ public sealed partial class ItemDetailPage : Page
         MoreFlyout.Items.Clear();
         var item = ViewModel.Item;
         if (item == null) return;
+        var hasOverflowActions = false;
 
         if (item.Type.Equals("manga", StringComparison.OrdinalIgnoreCase))
         {
@@ -2204,6 +2379,7 @@ public sealed partial class ItemDetailPage : Page
             };
             restart.Click += (_, _) => PlayFromStart_Click(restart, new RoutedEventArgs());
             MoreFlyout.Items.Add(restart);
+            hasOverflowActions = true;
         }
 
         if (item.Type is "movie" or "series")
@@ -2219,6 +2395,7 @@ public sealed partial class ItemDetailPage : Page
                 BuildMoreFlyout();
             };
             MoreFlyout.Items.Add(wlItem);
+            hasOverflowActions = true;
         }
 
         var addToCollection = new MenuFlyoutItem
@@ -2240,6 +2417,7 @@ public sealed partial class ItemDetailPage : Page
                 };
                 download.Click += DownloadButton_Click;
                 MoreFlyout.Items.Add(download);
+                hasOverflowActions = true;
             }
 
             var searchSubtitles = new MenuFlyoutItem
@@ -2249,6 +2427,7 @@ public sealed partial class ItemDetailPage : Page
             };
             searchSubtitles.Click += async (_, _) => await OpenSubtitleSearchDialogAsync();
             MoreFlyout.Items.Add(searchSubtitles);
+            hasOverflowActions = true;
         }
 
         var authService = App.Services.GetRequiredService<Core.Services.AuthService>();
@@ -2257,7 +2436,8 @@ public sealed partial class ItemDetailPage : Page
         var canEditMarkers = AuthorizationPolicy.CanEditMarkers(authService);
         if (isActingAdmin || canCurateMetadata || canEditMarkers)
         {
-            MoreFlyout.Items.Add(new MenuFlyoutSeparator());
+            if (hasOverflowActions)
+                MoreFlyout.Items.Add(new MenuFlyoutSeparator());
 
             if (canCurateMetadata && _selectedVersion != null)
             {
@@ -2564,6 +2744,7 @@ public sealed partial class ItemDetailPage : Page
                 ("Pixel Format", track.PixelFormat),
                 ("Chroma Subsampling", FormatChromaSubsampling(track.PixelFormat)),
                 ("Dynamic Range", FormatTrackDynamicRange(track)),
+                ("Color Range", FormatColorRange(track.ColorRange)),
                 ("Color Primaries", track.ColorPrimaries),
                 ("Color Transfer", track.ColorTransfer),
                 ("Color Space", track.ColorSpace),
@@ -2670,6 +2851,17 @@ public sealed partial class ItemDetailPage : Page
         if (value.Contains("411")) return "4:1:1";
         if (value.Contains("410")) return "4:1:0";
         return null;
+    }
+
+    private static string? FormatColorRange(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "tv" => "Limited (tv)",
+            "pc" => "Full (pc)",
+            "unknown" => "Unknown",
+            _ => null,
+        };
     }
 
     private static string? FormatVideoLevel(string? codec, int? level)
@@ -4149,10 +4341,18 @@ public sealed partial class ItemDetailPage : Page
         if (ViewModel.SeasonsLoadFailed) return;
         UpdateSeriesCountsFromLoadedSeasons();
 
-        if (ViewModel.Seasons.Count <= 1)
+        if (ViewModel.Seasons.Count == 1)
+        {
+            await ShowSingleSeasonEpisodesAsync(
+                ViewModel.Seasons[0],
+                ViewModel.Item.ContentId,
+                _navigationCts?.Token ?? CancellationToken.None);
+        }
+        else if (ViewModel.Seasons.Count == 0)
         {
             SeasonsSection.Visibility = Visibility.Collapsed;
-            BuildEpisodeRows();
+            SeasonsScrollViewer.Visibility = Visibility.Collapsed;
+            EpisodesSection.Visibility = Visibility.Collapsed;
         }
         else
         {
@@ -4231,16 +4431,14 @@ public sealed partial class ItemDetailPage : Page
             return;
         }
 
-        // Series and season pages resolve their collection action to a concrete
-        // episode. Movies and episode detail pages already point at themselves.
-        if (!string.IsNullOrEmpty(_playableContentId))
+        var contentId = await ResolvePlayableContentIdForPlaybackAsync();
+        if (!string.IsNullOrEmpty(contentId))
         {
-            NavigateToPlayer(_playableContentId, fileId: _selectedVersion?.FileId);
+            NavigateToPlayer(contentId, fileId: _selectedVersion?.FileId);
         }
         else
         {
-            // Leaf fallback for older servers that did not return watch detail.
-            NavigateToPlayer(ViewModel.Item.ContentId, fileId: _selectedVersion?.FileId);
+            ShowNoPlayableEpisodeToast(ViewModel.Item.Type);
         }
     }
 
@@ -4254,7 +4452,7 @@ public sealed partial class ItemDetailPage : Page
         }
     }
 
-    private void PlayFromStart_Click(object sender, RoutedEventArgs e)
+    private async void PlayFromStart_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.Item == null) return;
 
@@ -4266,16 +4464,102 @@ public sealed partial class ItemDetailPage : Page
             return;
         }
 
-        // For series, restart the current/next episode from position 0
-        // (same episode selection as the Play button)
-        if (!string.IsNullOrEmpty(_playableContentId))
+        var contentId = await ResolvePlayableContentIdForPlaybackAsync();
+        if (!string.IsNullOrEmpty(contentId))
         {
-            NavigateToPlayer(_playableContentId, fromStart: true, fileId: _selectedVersion?.FileId);
+            NavigateToPlayer(contentId, fromStart: true, fileId: _selectedVersion?.FileId);
         }
         else
         {
-            NavigateToPlayer(ViewModel.Item.ContentId, fromStart: true, fileId: _selectedVersion?.FileId);
+            ShowNoPlayableEpisodeToast(ViewModel.Item.Type);
         }
+    }
+
+    private async Task<string?> ResolvePlayableContentIdForPlaybackAsync()
+    {
+        var item = ViewModel.Item;
+        if (item == null) return null;
+
+        if (!string.IsNullOrWhiteSpace(_playableContentId))
+            return _playableContentId;
+
+        if (IsReaderItem(item))
+            return _readerTargetContentId ?? item.ContentId;
+
+        if (string.Equals(item.Type, "series", StringComparison.OrdinalIgnoreCase))
+        {
+            if (ViewModel.Seasons.Count == 0)
+            {
+                SeasonsSection.Visibility = Visibility.Visible;
+                SeasonsLoadingSkeleton.Visibility = Visibility.Visible;
+                SeasonsLoadError.Visibility = Visibility.Collapsed;
+                SeasonsScrollViewer.Visibility = Visibility.Collapsed;
+                await ViewModel.LoadSeasonsCommand.ExecuteAsync(null);
+                SeasonsLoadingSkeleton.Visibility = Visibility.Collapsed;
+                SeasonsLoadError.Visibility = ViewModel.SeasonsLoadFailed
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+                if (!ViewModel.SeasonsLoadFailed)
+                {
+                    UpdateSeriesCountsFromLoadedSeasons();
+                    if (ViewModel.Seasons.Count > 1)
+                    {
+                        SeasonsScrollViewer.Visibility = Visibility.Visible;
+                        BuildSeasonCards();
+                    }
+                }
+            }
+
+            if (ViewModel.SeasonsLoadFailed || ViewModel.Seasons.Count == 0)
+                return null;
+
+            var primaryAction = SeriesPrimaryActionResolver.Resolve(ViewModel.Seasons);
+            if (!string.IsNullOrWhiteSpace(primaryAction.TargetSeasonId))
+                await LoadSeriesPrimaryEpisodesAsync(primaryAction.TargetSeasonId);
+
+            var index = Math.Clamp(
+                (primaryAction.TargetEpisodeNumber ?? 1) - 1,
+                0,
+                Math.Max(ViewModel.Episodes.Count - 1, 0));
+            var episode = ViewModel.Episodes.Count > 0 ? ViewModel.Episodes[index] : null;
+            _playableContentId = episode?.ContentId;
+            SplitPlayButton.Visibility = episode == null ? Visibility.Collapsed : Visibility.Visible;
+            return _playableContentId;
+        }
+
+        if (string.Equals(item.Type, "season", StringComparison.OrdinalIgnoreCase))
+        {
+            if (ViewModel.Episodes.Count == 0)
+            {
+                EpisodesSection.Visibility = Visibility.Visible;
+                EpisodesLoadingSkeleton.Visibility = Visibility.Visible;
+                EpisodesLoadError.Visibility = Visibility.Collapsed;
+                EpisodesPanel.Visibility = Visibility.Collapsed;
+                var loaded = await LoadSeasonEpisodesAsync(
+                    item.ContentId,
+                    item.SeasonNumber ?? 0,
+                    _navigationCts?.Token ?? CancellationToken.None);
+                EpisodesLoadingSkeleton.Visibility = Visibility.Collapsed;
+                EpisodesLoadError.Visibility = loaded ? Visibility.Collapsed : Visibility.Visible;
+                EpisodesPanel.Visibility = loaded ? Visibility.Visible : Visibility.Collapsed;
+                if (loaded) BuildEpisodeRows();
+            }
+
+            var firstEpisode = ViewModel.Episodes.FirstOrDefault();
+            _playableContentId = firstEpisode?.ContentId;
+            SplitPlayButton.Visibility = firstEpisode == null ? Visibility.Collapsed : Visibility.Visible;
+            return _playableContentId;
+        }
+
+        return item.ContentId;
+    }
+
+    private static void ShowNoPlayableEpisodeToast(string? itemType)
+    {
+        var message = string.Equals(itemType, "season", StringComparison.OrdinalIgnoreCase)
+            ? "No playable episodes found for this season."
+            : "No playable episode could be resolved for this series.";
+        App.Services.GetRequiredService<Services.ToastService>().Error(message);
     }
 
     private void NavigateToPlayer(string contentId, bool fromStart = false, int? fileId = null)
@@ -4655,13 +4939,13 @@ public sealed partial class ItemDetailPage : Page
         await dialog.ShowAsync();
     }
 
-    private void StartResolvedPlayback(bool fromStart)
+    private async void StartResolvedPlayback(bool fromStart)
     {
-        var contentId = !string.IsNullOrEmpty(_playableContentId)
-            ? _playableContentId
-            : ViewModel.Item?.ContentId;
+        var contentId = await ResolvePlayableContentIdForPlaybackAsync();
         if (!string.IsNullOrEmpty(contentId))
             NavigateToPlayer(contentId, fromStart, _selectedVersion?.FileId);
+        else
+            ShowNoPlayableEpisodeToast(ViewModel.Item?.Type);
     }
 
     private static bool IsReaderItem(MediaItemDetail? item) =>
@@ -5695,6 +5979,43 @@ public sealed partial class ItemDetailPage : Page
 
     // ===== Season Episode Loading =====
 
+    private async Task<bool> ShowSingleSeasonEpisodesAsync(
+        Season singleSeason,
+        string seriesContentId,
+        CancellationToken ct = default)
+    {
+        SeasonsLoadingSkeleton.Visibility = Visibility.Collapsed;
+        SeasonsScrollViewer.Visibility = Visibility.Collapsed;
+        SeasonsSection.Visibility = Visibility.Collapsed;
+        EpisodesSection.Visibility = Visibility.Visible;
+        EpisodesLoadingSkeleton.Visibility = Visibility.Visible;
+        EpisodesLoadError.Visibility = Visibility.Collapsed;
+        EpisodesEmptyState.Visibility = Visibility.Collapsed;
+        EpisodesPanel.Visibility = Visibility.Collapsed;
+
+        // Match the current WebUI's single-season flow: once a series resolves to
+        // one season, the visible Episodes row is loaded through the canonical
+        // season item endpoint. That preserves specials (season 0) and any server
+        // semantics attached to the season content_id instead of relying on the
+        // legacy /series/{id}/seasons/{num}/episodes route.
+        var loaded = await LoadSeasonEpisodesAsync(
+            singleSeason.ContentId,
+            singleSeason.SeasonNumber,
+            ct);
+
+        if (_currentContentId != seriesContentId || ViewModel.Item?.ContentId != seriesContentId)
+            return false;
+        if (ct.IsCancellationRequested)
+            return false;
+
+        EpisodesLoadingSkeleton.Visibility = Visibility.Collapsed;
+        EpisodesLoadError.Visibility = loaded ? Visibility.Collapsed : Visibility.Visible;
+        EpisodesPanel.Visibility = loaded ? Visibility.Visible : Visibility.Collapsed;
+        if (loaded)
+            BuildEpisodeRows();
+        return loaded;
+    }
+
     private async Task<bool> LoadSeasonEpisodesAsync(
         string seasonContentId,
         int seasonNumber,
@@ -5823,6 +6144,7 @@ public sealed partial class ItemDetailPage : Page
             if (response?.Episodes == null || response.Episodes.Count <= 1)
             {
                 SiblingEpisodesSection.Visibility = Visibility.Collapsed;
+                SiblingEpisodesArrowPanel.Visibility = Visibility.Collapsed;
                 return;
             }
 
@@ -5869,9 +6191,15 @@ public sealed partial class ItemDetailPage : Page
             }
 
             if (SiblingEpisodesPanel.Children.Count == 0)
+            {
                 SiblingEpisodesSection.Visibility = Visibility.Collapsed;
+                SiblingEpisodesArrowPanel.Visibility = Visibility.Collapsed;
+            }
             else
-                CenterSiblingEpisode(currentEpisodeIndex);
+            {
+                UpdateSiblingEpisodeScrollButtons();
+                AlignSiblingEpisodeToStart(currentEpisodeIndex);
+            }
         }
         catch (Exception ex)
         {
@@ -5883,31 +6211,41 @@ public sealed partial class ItemDetailPage : Page
             SiblingEpisodesLoadingSkeleton.Visibility = Visibility.Collapsed;
             SiblingEpisodesScrollViewer.Visibility = Visibility.Collapsed;
             SiblingEpisodesLoadError.Visibility = Visibility.Collapsed;
+            SiblingEpisodesArrowPanel.Visibility = Visibility.Collapsed;
         }
     }
 
-    private void CenterSiblingEpisode(int episodeIndex)
+    private void AlignSiblingEpisodeToStart(int episodeIndex)
     {
         if (episodeIndex < 0) return;
+        _pendingSiblingEpisodeIndex = episodeIndex;
         DispatcherQueue.TryEnqueue(() =>
         {
-            // WebUI EpisodeCarousel calls embla.scrollTo(currentEpisodeIndex)
-            // on mount. Recreate that behavior by centering the 240px slide in
-            // the native horizontal ScrollViewer after layout has measured.
-            const double cardWidth = 240d;
-            const double gap = 12d;
-            var viewport = SiblingEpisodesScrollViewer.ViewportWidth > 0
-                ? SiblingEpisodesScrollViewer.ViewportWidth
-                : SiblingEpisodesScrollViewer.ActualWidth;
-            if (viewport <= 0) return;
-
-            var cardCenter = episodeIndex * (cardWidth + gap) + cardWidth / 2d;
-            var targetOffset = Math.Clamp(
-                cardCenter - viewport / 2d,
-                0,
-                Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
-            SiblingEpisodesScrollViewer.ChangeView(targetOffset, null, null, disableAnimation: true);
+            SiblingEpisodesScrollViewer.UpdateLayout();
+            TryAlignSiblingEpisodeToStart();
         });
+    }
+
+    private void TryAlignSiblingEpisodeToStart()
+    {
+        if (_pendingSiblingEpisodeIndex < 0 ||
+            SiblingEpisodesScrollViewer.ViewportWidth <= 0 ||
+            SiblingEpisodesScrollViewer.ExtentWidth <= 0)
+            return;
+
+        // The WebUI carousel uses Embla with align:"start", then calls
+        // scrollTo(currentEpisodeIndex) on mount. Wait until WinUI has measured
+        // the horizontal extent before applying the equivalent snap; clamping
+        // against an unmeasured ScrollableWidth silently left the row at item 1.
+        const double cardWidth = 240d;
+        const double gap = 12d;
+        var targetOffset = Math.Clamp(
+            _pendingSiblingEpisodeIndex * (cardWidth + gap),
+            0,
+            Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
+        _pendingSiblingEpisodeIndex = -1;
+        SiblingEpisodesScrollViewer.ChangeView(targetOffset, null, null, disableAnimation: true);
+        UpdateSiblingEpisodeScrollButtons();
     }
 
     // ===== Backdrop Image =====
@@ -6303,7 +6641,11 @@ public sealed partial class ItemDetailPage : Page
         SeasonsPanel.Children.Clear();
         _seasonCardWidth = ActualWidth >= 640 ? 170d : 160d;
 
-        if (ViewModel.Seasons.Count == 0) return;
+        if (ViewModel.Seasons.Count == 0)
+        {
+            UpdateSeasonScrollButtons();
+            return;
+        }
         SeasonsTotalText.Text = $"{ViewModel.Seasons.Count} total";
 
         foreach (var season in ViewModel.Seasons.OrderBy(season => season.SeasonNumber))
@@ -6311,6 +6653,8 @@ public sealed partial class ItemDetailPage : Page
             var card = CreateSeasonCard(season);
             SeasonsPanel.Children.Add(card);
         }
+
+        DispatcherQueue.TryEnqueue(UpdateSeasonScrollButtons);
     }
 
     private Button CreateSeasonCard(Season season)
@@ -6800,7 +7144,7 @@ public sealed partial class ItemDetailPage : Page
             UserState = new UserState { Played = episode.UserData?.Played == true },
             PositionSeconds = episode.UserData?.PositionSeconds,
             DurationSeconds = episode.UserData?.DurationSeconds,
-        }, MediaItemMenu.Surface.Default);
+        }, MediaItemMenu.Surface.Default, showCollectionActions: false);
 
         return button;
     }

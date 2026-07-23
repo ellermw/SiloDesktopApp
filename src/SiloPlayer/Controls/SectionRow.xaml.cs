@@ -20,10 +20,11 @@ public sealed partial class SectionRow : UserControl
         set => SetValue(SectionProperty, value);
     }
 
-    // B45: hover-reveal arrows. Arrows fade in only when the pointer is over
-    // the row AND the content is wider than the viewport. Each arrow is
-    // independently enabled based on scroll position (can-scroll-prev / next).
+    // B45: hover/focus-reveal arrows. The WebUI exposes carousel arrows on
+    // pointer hover and focus-visible, and each arrow is independently enabled
+    // based on scroll position (can-scroll-prev / next).
     private bool _isHovered;
+    private bool _hasKeyboardFocus;
     private bool _canScrollPrev;
     private bool _canScrollNext;
     private bool _isPinned;
@@ -293,6 +294,18 @@ public sealed partial class SectionRow : UserControl
         UpdateScrollBounds();
     }
 
+    private void CardsScrollViewer_GotFocus(object sender, RoutedEventArgs e)
+    {
+        _hasKeyboardFocus = true;
+        UpdateArrowsOpacity();
+    }
+
+    private void CardsScrollViewer_LostFocus(object sender, RoutedEventArgs e)
+    {
+        _hasKeyboardFocus = false;
+        UpdateArrowsOpacity();
+    }
+
     private void CardsScrollViewer_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         switch (e.Key)
@@ -415,9 +428,10 @@ public sealed partial class SectionRow : UserControl
 
     private void UpdateArrowsOpacity()
     {
-        // WebUI keeps Explore all visible in the header and hover-reveals only
-        // the carousel edge arrows.
-        bool show = _isHovered && (_canScrollPrev || _canScrollNext);
+        // WebUI reveals carousel edge arrows on hover/focus-visible. The
+        // optional Explore all header action is controlled separately by the
+        // page that owns the section.
+        bool show = (_isHovered || _hasKeyboardFocus) && (_canScrollPrev || _canScrollNext);
         double target = show ? 1.0 : 0.0;
         ArrowsPanel.IsHitTestVisible = show;
         if (PinSectionBtn.Visibility == Visibility.Visible)

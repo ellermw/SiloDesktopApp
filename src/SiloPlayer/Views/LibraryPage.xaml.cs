@@ -155,6 +155,7 @@ public sealed partial class LibraryPage : Page,
     private const int MaxRealizedLibraryCards = 40;
     private const int LibraryOverscanRows = 1;
     private const double LibraryHeaderGlassThreshold = 160;
+    private const int MaxVisibleMultiSelectOptions = 80;
 
     public LibraryPage()
     {
@@ -883,35 +884,118 @@ public sealed partial class LibraryPage : Page,
         HashSet<string> selected,
         Func<Task> applyAsync)
     {
-        var flyout = new MenuFlyout();
-        foreach (var value in values.Where(value => !string.IsNullOrWhiteSpace(value))
-                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        var allOptions = values
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var flyout = new Flyout { Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft };
+        var root = new StackPanel { Width = 340, Spacing = 10, Padding = new Thickness(12) };
+        var searchBox = new TextBox
         {
-            var option = new ToggleMenuFlyoutItem
+            PlaceholderText = "Filter options...",
+        };
+        var statusText = new TextBlock
+        {
+            FontSize = 12,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var optionsHost = new StackPanel { Spacing = 2 };
+        var optionsScroll = new ScrollViewer
+        {
+            MaxHeight = 360,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = optionsHost,
+        };
+        var footer = new Grid
+        {
+            ColumnDefinitions =
             {
-                Text = value,
-                IsChecked = selected.Contains(value),
-            };
-            option.Click += async (_, _) =>
-            {
-                if (option.IsChecked) selected.Add(value);
-                else selected.Remove(value);
-                await applyAsync();
-            };
-            flyout.Items.Add(option);
+                new ColumnDefinition(),
+                new ColumnDefinition { Width = GridLength.Auto },
+            },
+            ColumnSpacing = 8,
+        };
+        var clearButton = new Button
+        {
+            Content = "Clear",
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        var doneButton = new Button
+        {
+            Content = "Done",
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        Grid.SetColumn(doneButton, 1);
+        footer.Children.Add(clearButton);
+        footer.Children.Add(doneButton);
+
+        root.Children.Add(searchBox);
+        root.Children.Add(statusText);
+        root.Children.Add(optionsScroll);
+        root.Children.Add(footer);
+        flyout.Content = root;
+
+        async Task ToggleValueAsync(string value, bool isChecked)
+        {
+            if (isChecked) selected.Add(value);
+            else selected.Remove(value);
+            UpdateMultiSelectLabels();
+            await applyAsync();
         }
 
-        if (selected.Count > 0)
+        void RenderOptions()
         {
-            flyout.Items.Add(new MenuFlyoutSeparator());
-            var clear = new MenuFlyoutItem { Text = "Clear All" };
-            clear.Click += async (_, _) =>
+            optionsHost.Children.Clear();
+            var query = searchBox.Text.Trim();
+            var matches = string.IsNullOrWhiteSpace(query)
+                ? allOptions
+                : allOptions
+                    .Where(value => value.Contains(query, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+            var visible = matches.Take(MaxVisibleMultiSelectOptions).ToList();
+            statusText.Text = matches.Count == 0
+                ? "No matching options."
+                : matches.Count > MaxVisibleMultiSelectOptions
+                    ? $"Showing {MaxVisibleMultiSelectOptions:N0} of {matches.Count:N0}. Type to narrow the list."
+                    : $"{matches.Count:N0} option{(matches.Count == 1 ? "" : "s")}";
+
+            foreach (var value in visible)
             {
-                selected.Clear();
-                await applyAsync();
-            };
-            flyout.Items.Add(clear);
+                var checkBox = new CheckBox
+                {
+                    Content = value,
+                    IsChecked = selected.Contains(value),
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    MinHeight = 32,
+                };
+                checkBox.Checked += async (_, _) => await ToggleValueAsync(value, true);
+                checkBox.Unchecked += async (_, _) => await ToggleValueAsync(value, false);
+                optionsHost.Children.Add(checkBox);
+            }
         }
+
+        searchBox.TextChanged += (_, _) => RenderOptions();
+        clearButton.Click += async (_, _) =>
+        {
+            if (selected.Count == 0) return;
+            selected.Clear();
+            UpdateMultiSelectLabels();
+            RenderOptions();
+            await applyAsync();
+        };
+        doneButton.Click += (_, _) => flyout.Hide();
+        flyout.Opened += (_, _) =>
+        {
+            RenderOptions();
+            searchBox.Focus(FocusState.Programmatic);
+        };
 
         flyout.ShowAt(anchor);
     }
@@ -2392,7 +2476,14 @@ public sealed partial class LibraryPage : Page,
             return;
 
         if (tag == _currentTab)
+        {
+            if (tag == "Library" && !_libraryCatalogLoaded)
+            {
+                await EnsureLibraryCatalogLoadedAsync();
+                await FillViewportAsync();
+            }
             return;
+        }
 
         ShowTab(tag);
 
@@ -2412,7 +2503,6 @@ public sealed partial class LibraryPage : Page,
     private async Task EnsureLibraryCatalogLoadedAsync()
     {
         if (_libraryCatalogLoaded) return;
-        _libraryCatalogLoaded = true;
 
         BuildLibrarySkeletons();
         LibrarySkeletonScroll.Visibility = Visibility.Visible;
@@ -2421,6 +2511,7 @@ public sealed partial class LibraryPage : Page,
         {
             await ViewModel.LoadCommand.ExecuteAsync(null);
             try { await overlayWarmup; } catch { }
+            _libraryCatalogLoaded = _isNavigated && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
         }
         finally
         {
@@ -2763,8 +2854,8 @@ public sealed partial class LibraryPage : Page,
         _collectionsLoaded = true;
         CollectionsHeader.Visibility = Visibility.Collapsed;
         CollectionsEmptyCard.Visibility = Visibility.Collapsed;
-        CollectionsRepeater.Visibility = Visibility.Collapsed;
-        RemoveDynamicCollectionPanels();
+        CollectionSectionsHost.Visibility = Visibility.Collapsed;
+        CollectionSectionsHost.Children.Clear();
         BuildCollectionSkeletons();
         CollectionsSkeletonHost.Visibility = Visibility.Visible;
 
@@ -2785,29 +2876,18 @@ public sealed partial class LibraryPage : Page,
         {
             CollectionsHeader.Visibility = Visibility.Collapsed;
             CollectionsEmptyCard.Visibility = Visibility.Visible;
-            CollectionsRepeater.Visibility = Visibility.Collapsed;
-            RemoveDynamicCollectionPanels();
+            CollectionSectionsHost.Visibility = Visibility.Collapsed;
+            CollectionSectionsHost.Children.Clear();
             return;
         }
 
         CollectionsHeader.Visibility = Visibility.Visible;
         CollectionsEmptyCard.Visibility = Visibility.Collapsed;
-        CollectionsRepeater.Visibility = Visibility.Visible;
-        CollectionsRepeater.ItemsSource = null;
+        CollectionSectionsHost.Visibility = Visibility.Visible;
+        CollectionSectionsHost.Children.Clear();
 
-        var sectionsPanel = new StackPanel { Spacing = 28 };
         foreach (var section in sections)
-            sectionsPanel.Children.Add(BuildCollectionSection(section));
-
-        // Replace the empty card with our content
-        var parent = (StackPanel)CollectionsRepeater.Parent!;
-        int idx = parent.Children.IndexOf(CollectionsRepeater);
-        if (idx >= 0)
-        {
-            RemoveDynamicCollectionPanels();
-            sectionsPanel.Tag = "CollectionGrid";
-            parent.Children.Insert(idx + 1, sectionsPanel);
-        }
+            CollectionSectionsHost.Children.Add(BuildCollectionSection(section));
     }
 
     private FrameworkElement BuildCollectionSection(LibraryTabSection section)
@@ -2832,17 +2912,6 @@ public sealed partial class LibraryPage : Page,
 
         sectionPanel.Children.Add(wrapPanel);
         return sectionPanel;
-    }
-
-    private void RemoveDynamicCollectionPanels()
-    {
-        if (CollectionsRepeater.Parent is not StackPanel parent) return;
-
-        for (int i = parent.Children.Count - 1; i >= 0; i--)
-        {
-            if (parent.Children[i] is StackPanel sp && sp.Name == null && sp != parent && sp.Tag is "CollectionGrid")
-                parent.Children.RemoveAt(i);
-        }
     }
 
     private FrameworkElement CreateCollectionCard(LibraryTabCollectionDisplay collection, double cardWidth)

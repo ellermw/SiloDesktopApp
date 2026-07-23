@@ -144,12 +144,26 @@
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"
                 Width="44" Height="44"
+                CornerRadius="22"
                 Padding="0"
                 Background="Transparent"
                 BorderThickness="0"
                 Opacity="0"
                 Tapped="OnPlayTapped"
                 RenderTransformOrigin="0.5,0.5">
+                <Button.Resources>
+                    <!-- The accent circle below owns every visible hover/press
+                         state. Suppress the stock WinUI Button template's
+                         rectangular state layer so it cannot appear behind
+                         the circle when the pointer enters the play action. -->
+                    <SolidColorBrush x:Key="ButtonBackground" Color="Transparent" />
+                    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="Transparent" />
+                    <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="Transparent" />
+                    <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="Transparent" />
+                    <SolidColorBrush x:Key="ButtonBorderBrush" Color="Transparent" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent" />
+                </Button.Resources>
                 <Button.RenderTransform>
                     <CompositeTransform x:Name="HoverPlayButtonTransform" ScaleX="0.7" ScaleY="0.7" />
                 </Button.RenderTransform>

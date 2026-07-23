@@ -16,6 +16,7 @@ public partial class SearchViewModel : ObservableObject
     private readonly SettingsApi _settingsApi;
     private CancellationTokenSource? _searchCts;
     private string? _snapshot;
+    private string? _lastAppliedSearchKey;
     private bool _hasMore;
 
     public SearchViewModel(CatalogApi catalogApi, PeopleApi peopleApi, RequestsApi requestsApi, SettingsApi settingsApi)
@@ -49,7 +50,7 @@ public partial class SearchViewModel : ObservableObject
     private string _mediaScope = "video";
 
     [ObservableProperty]
-    private string? _mediaType = "video";
+    private string? _mediaType;
 
     [ObservableProperty] private string _sortField = "added_at";
     [ObservableProperty] private string _sortOrder = "desc";
@@ -81,32 +82,43 @@ public partial class SearchViewModel : ObservableObject
     {
         MediaScope = scope is "all" or "video" or "audiobook" ? scope : "video";
         MediaType = MediaScope == "all" ? null : MediaScope;
-        try { await _settingsApi.PutSettingAsync("search.media_scope", MediaScope); } catch { }
+        _ = SaveMediaScopePreferenceAsync(MediaScope);
         if (!string.IsNullOrWhiteSpace(Query)) await SearchAsync();
     }
 
     public async Task SetMediaTypeAsync(string? type)
     {
-        MediaType = type is "video" or "movie" or "series" or "episode" or "audiobook" or "ebook" or "manga" ? type : null;
-        MediaScope = MediaType switch
+        var normalized = type is "video" or "movie" or "series" or "episode" or "audiobook" or "ebook" or "manga"
+            ? type
+            : null;
+        MediaType = normalized;
+        MediaScope = type switch
         {
+            "video" => "video",
+            "all" => "all",
+            "movie" or "series" or "episode" => "video",
             "audiobook" => "audiobook",
-            "video" or "movie" or "series" or "episode" or "ebook" or "manga" => "video",
+            "ebook" or "manga" => "all",
             _ => "all"
         };
-        try { await _settingsApi.PutSettingAsync("search.media_scope", MediaScope); } catch { }
+        _ = SaveMediaScopePreferenceAsync(MediaScope);
         if (!string.IsNullOrWhiteSpace(Query)) await SearchAsync();
     }
 
-    [RelayCommand]
+    private async Task SaveMediaScopePreferenceAsync(string mediaScope)
+    {
+        try { await _settingsApi.PutSettingAsync("search.media_scope", mediaScope); } catch { }
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task SearchAsync()
     {
-        // Cancel previous search
         CancelPendingSearch();
         var searchCts = new CancellationTokenSource();
         _searchCts = searchCts;
         var ct = searchCts.Token;
         var querySnapshot = Query.Trim();
+        var searchKey = BuildSearchKey(querySnapshot);
         _snapshot = null;
         _hasMore = false;
 
@@ -116,15 +128,34 @@ public partial class SearchViewModel : ObservableObject
             PeopleResults.Clear();
             OutsideLibraryResults.Clear();
             TotalCount = 0;
+            _lastAppliedSearchKey = null;
+            return;
+        }
+
+        // Exact duplicate searches can arrive after the empty/results search
+        // box handoff. If the visible grid already belongs to the same
+        // query/filter/sort key, ignore the duplicate instead of clearing and
+        // rebuilding the same cards seconds later.
+        if (string.Equals(_lastAppliedSearchKey, searchKey, StringComparison.Ordinal) &&
+            Results.Count > 0 &&
+            PeopleResults.Count == 0 &&
+            ErrorMessage == null &&
+            !IsLoading &&
+            !IsLoadingMore)
+        {
             return;
         }
 
         IsLoading = true;
         ErrorMessage = null;
-        Results.Clear();
-        PeopleResults.Clear();
-        OutsideLibraryResults.Clear();
-        TotalCount = 0;
+        var shouldResetVisibleResults = !string.Equals(_lastAppliedSearchKey, searchKey, StringComparison.Ordinal);
+        if (shouldResetVisibleResults)
+        {
+            Results.Clear();
+            PeopleResults.Clear();
+            OutsideLibraryResults.Clear();
+            TotalCount = 0;
+        }
 
         try
         {
@@ -141,21 +172,19 @@ public partial class SearchViewModel : ObservableObject
                 : Task.FromResult(new List<RequestMediaResult>());
 
             var response = await catalogTask;
-            if (ct.IsCancellationRequested) return;
+            if (!IsCurrentSearchOwner(searchCts, querySnapshot)) return;
 
             // Update people results
-            PeopleResults.Clear();
             var people = await peopleTask;
-            foreach (var person in people)
-                PeopleResults.Add(person);
+            if (!IsCurrentSearchOwner(searchCts, querySnapshot)) return;
+            ReplacePeopleResults(people);
 
             // Use server results directly — server handles text search
-            Results.Clear();
-            foreach (var item in response.Items)
-                Results.Add(item);
+            ReplaceMediaResults(response.Items);
             TotalCount = response.Total > 0 ? response.Total : response.Items.Count;
             _snapshot = response.Snapshot;
             _hasMore = response.HasMore || (response.Items.Count == 60 && (response.Total <= 0 || response.Items.Count < response.Total));
+            _lastAppliedSearchKey = searchKey;
 
             // Discovery publishes independently when it arrives. Ownership
             // and query checks prevent a stale provider response from
@@ -172,7 +201,7 @@ public partial class SearchViewModel : ObservableObject
         }
         finally
         {
-            if (ReferenceEquals(_searchCts, searchCts))
+            if (IsCurrentSearchOwner(searchCts, querySnapshot))
                 IsLoading = false;
         }
     }
@@ -196,9 +225,11 @@ public partial class SearchViewModel : ObservableObject
         if (IsLoading || IsLoadingMore || !_hasMore || string.IsNullOrWhiteSpace(Query)) return;
         IsLoadingMore = true;
         var ct = _searchCts?.Token ?? CancellationToken.None;
+        var querySnapshot = Query.Trim();
         try
         {
             var response = await FetchCatalogPageAsync(Results.Count, _snapshot, ct);
+            if (ct.IsCancellationRequested || !IsCurrentSearchQuery(querySnapshot)) return;
             var existingIds = Results.Select(item => item.ContentId).ToHashSet(StringComparer.Ordinal);
             foreach (var item in response.Items)
                 if (existingIds.Add(item.ContentId)) Results.Add(item);
@@ -217,6 +248,53 @@ public partial class SearchViewModel : ObservableObject
         {
             IsLoadingMore = false;
         }
+    }
+
+    private bool IsCurrentSearchQuery(string querySnapshot)
+        => string.Equals(Query.Trim(), querySnapshot, StringComparison.Ordinal);
+
+    private bool IsCurrentSearchOwner(CancellationTokenSource owner, string querySnapshot)
+        => !owner.IsCancellationRequested &&
+           ReferenceEquals(_searchCts, owner) &&
+           IsCurrentSearchQuery(querySnapshot);
+
+    private string BuildSearchKey(string query)
+        => string.Join(
+            "\u001F",
+            query,
+            MediaScope,
+            MediaType ?? "",
+            SortField,
+            SortOrder,
+            Genre ?? "",
+            ContentRating ?? "",
+            Resolution ?? "",
+            Country ?? "");
+
+    private void ReplaceMediaResults(IReadOnlyList<MediaItem> items)
+    {
+        if (Results.Count == items.Count &&
+            Results.Select(item => item.ContentId).SequenceEqual(items.Select(item => item.ContentId)))
+        {
+            return;
+        }
+
+        Results.Clear();
+        foreach (var item in items)
+            Results.Add(item);
+    }
+
+    private void ReplacePeopleResults(IReadOnlyList<Person> people)
+    {
+        if (PeopleResults.Count == people.Count &&
+            PeopleResults.Select(person => person.Id).SequenceEqual(people.Select(person => person.Id)))
+        {
+            return;
+        }
+
+        PeopleResults.Clear();
+        foreach (var person in people)
+            PeopleResults.Add(person);
     }
 
     private Task<CatalogResponse> FetchCatalogPageAsync(
@@ -271,6 +349,12 @@ public partial class SearchViewModel : ObservableObject
                 return;
             }
 
+            if (OutsideLibraryResults.Select(StableRequestResultKey).SequenceEqual(outside.Select(StableRequestResultKey)))
+                return;
+
+            if (outside.Count == 0 && OutsideLibraryResults.Count == 0)
+                return;
+
             OutsideLibraryResults.Clear();
             foreach (var item in outside)
                 OutsideLibraryResults.Add(item);
@@ -283,6 +367,9 @@ public partial class SearchViewModel : ObservableObject
             // Discovery is optional and must not fail primary catalog search.
         }
     }
+
+    private static string StableRequestResultKey(RequestMediaResult item)
+        => $"{item.MediaType}:{item.TmdbId}:{item.Title}:{item.YearText}";
 
     private async Task<List<Person>> SearchPeopleAsync(string query, CancellationToken ct)
     {

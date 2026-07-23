@@ -150,6 +150,26 @@
             </StackPanel>
         </ScrollViewer>
 
+        <!-- WebUI parity: floating affordance for long virtual catalog grids. -->
+        <Button x:Name="CatalogScrollToTopButton"
+                Grid.RowSpan="5"
+                Canvas.ZIndex="20"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Margin="0,0,24,24"
+                Width="40"
+                Height="40"
+                CornerRadius="20"
+                Background="{StaticResource SurfaceRaisedBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1"
+                Visibility="Collapsed"
+                Click="CatalogScrollToTop_Click"
+                ToolTipService.ToolTip="Back to top"
+                AutomationProperties.Name="Back to top">
+            <FontIcon Glyph="&#xE74A;" FontSize="14" />
+        </Button>
+
         <controls:SlideSheet x:Name="FiltersSheet" Title="Filters">
             <controls:SlideSheet.SheetContent>
                 <Grid RowDefinitions="Auto,*,Auto" RowSpacing="12">

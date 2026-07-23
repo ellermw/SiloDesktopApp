@@ -15,7 +15,8 @@ public static class DateTimeDisplay
             "DD/MM/YYYY" => local.ToString("d MMM yyyy", CultureInfo.CurrentCulture),
             "MM/DD/YYYY" => local.ToString("MMM d, yyyy", CultureInfo.CurrentCulture),
             "YYYY-MM-DD" => local.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            _ => local.ToString("D", CultureInfo.CurrentCulture)
+            // Match the WebUI's medium date contract: abbreviated month, numeric day, and year.
+            _ => local.ToString("MMM d, yyyy", CultureInfo.CurrentCulture)
         };
         return preference switch
         {

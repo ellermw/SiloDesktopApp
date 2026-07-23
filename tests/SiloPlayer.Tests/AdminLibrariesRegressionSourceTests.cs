@@ -2,8 +2,7 @@ namespace SiloPlayer.Tests;
 
 public class AdminLibrariesRegressionSourceTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+    private static readonly string RepoRoot = FindRepositoryRoot();
 
     [Fact]
     public void StaleIdRoutesMatchCurrentLibrariesContract()
@@ -40,8 +39,8 @@ public class AdminLibrariesRegressionSourceTests
         Assert.Contains("HideWhenEmpty=\"True\"", windowMarkup, StringComparison.Ordinal);
         Assert.Contains("SetHostVisibility(bool allowed)", control, StringComparison.Ordinal);
         Assert.Contains("_hostVisibilityAllowed && (!HideWhenEmpty || total > 0)", control, StringComparison.Ordinal);
-        Assert.Contains("Width=\"36\"", controlMarkup, StringComparison.Ordinal);
-        Assert.Contains("Margin=\"0,-2,-2,0\"", controlMarkup, StringComparison.Ordinal);
+        Assert.Contains("Grid Width=\"44\" Height=\"44\"", controlMarkup, StringComparison.Ordinal);
+        Assert.Contains("Margin=\"0,2,2,0\"", controlMarkup, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -220,5 +219,22 @@ public class AdminLibrariesRegressionSourceTests
         Assert.Contains("public async Task<bool> UpdateLibraryForEditorAsync", viewModel, StringComparison.Ordinal);
         Assert.Contains("Configure how \\u201c{library.Name}\\u201d is scanned and matched.", page, StringComparison.Ordinal);
         Assert.Contains("Changing the type of an existing library may require a full rescan", page, StringComparison.Ordinal);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            if (Directory.Exists(Path.Combine(dir.FullName, ".git"))
+                && Directory.Exists(Path.Combine(dir.FullName, "src")))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate repository root.");
     }
 }

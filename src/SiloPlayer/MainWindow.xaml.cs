@@ -907,6 +907,8 @@ public sealed partial class MainWindow : Window
     }
 
     private bool _navInitialized;
+    private string? _hydratedShellKey;
+    private bool _playerPrewarmed;
 
     private sealed record PluginAppNavTag(int InstallationId, string RoutePath, string Label);
 
@@ -921,6 +923,11 @@ public sealed partial class MainWindow : Window
             HideMainNavigation();
             return;
         }
+
+        var shellKey = GetAuthenticatedShellKey();
+        var shouldHydrateShell = !string.Equals(_hydratedShellKey, shellKey, StringComparison.Ordinal);
+        if (shouldHydrateShell)
+            _hydratedShellKey = shellKey;
 
         // None of the shell decoration below is allowed to invalidate a
         // successful profile selection or page navigation. Themes, plugin
@@ -953,19 +960,28 @@ public sealed partial class MainWindow : Window
             UpdateSidebarPanePresentation(NavView.IsPaneOpen);
             MainServerActivityButton.SetHostVisibility(isAdmin);
         });
-        _ = RunShellWorkAsync("profile_display", UpdateProfileDisplayAsync);
-        _ = RunShellWorkAsync("user_navigation_capabilities", RefreshUserNavigationCapabilitiesAsync);
-        TryShellAction("theme_switcher", BuildThemeDots);
-        _ = RunShellWorkAsync("plugin_navigation", RefreshPluginAppsAsync);
 
-        // Build the hidden native video host only after authentication and
-        // profile selection, at low dispatcher priority. This keeps the first
-        // page paint responsive while removing libmpv cold-start work from the
-        // user's first Play click.
-        TryShellAction("player_prewarm_queue", () =>
-            DispatcherQueue.TryEnqueue(
-                Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
-                () => TryShellAction("player_prewarm", () => _playerService.Prewarm())));
+        if (shouldHydrateShell)
+        {
+            _ = RunShellWorkAsync("profile_display", UpdateProfileDisplayAsync);
+            _ = RunShellWorkAsync("user_navigation_capabilities", RefreshUserNavigationCapabilitiesAsync);
+            _ = RunShellWorkAsync("theme_sync", SyncThemeAfterNavigationAsync);
+            TryShellAction("theme_switcher", BuildThemeDots);
+            _ = RunShellWorkAsync("plugin_navigation", RefreshPluginAppsAsync);
+
+            // Build the hidden native video host only after authentication and
+            // profile selection, at low dispatcher priority. This keeps the first
+            // page paint responsive while removing libmpv cold-start work from the
+            // user's first Play click.
+            if (!_playerPrewarmed)
+            {
+                _playerPrewarmed = true;
+                TryShellAction("player_prewarm_queue", () =>
+                    DispatcherQueue.TryEnqueue(
+                        Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                        () => TryShellAction("player_prewarm", () => _playerService.Prewarm())));
+            }
+        }
 
         if (!_navInitialized)
         {
@@ -978,10 +994,27 @@ public sealed partial class MainWindow : Window
             };
         }
 
-        // Start on the UI context so ObservableCollection changes remain on
-        // the owning dispatcher after awaited network requests. Task.Run here
-        // previously let sidebar loading race the profile transition.
-        _ = RunShellWorkAsync("library_navigation_load", LoadShellNavigationAsync);
+        if (shouldHydrateShell)
+        {
+            // Start on the UI context so ObservableCollection changes remain on
+            // the owning dispatcher after awaited network requests. Task.Run here
+            // previously let sidebar loading race the profile transition.
+            _ = RunShellWorkAsync("library_navigation_load", LoadShellNavigationAsync);
+        }
+    }
+
+    private string GetAuthenticatedShellKey()
+    {
+        var userId = _authService.CurrentUser?.Id.ToString() ?? "";
+        var username = _authService.CurrentUser?.Username ?? "";
+        var role = _authService.CurrentUser?.Role ?? "";
+        var profileId = _authService.SelectedProfileId ?? "";
+        var profileName = _authService.SelectedProfile?.Name ?? "";
+        var profileFlags = _authService.SelectedProfile is { } profile
+            ? $"{profile.IsPrimary}:{profile.IsChild}:{profile.MaxContentRating}:{profile.MaxPlaybackQuality}"
+            : "";
+        var server = _authService.ConfiguredServerUrl ?? "";
+        return string.Join("|", server, userId, username, role, profileId, profileName, profileFlags);
     }
 
     private async Task LoadShellNavigationAsync()
@@ -1047,6 +1080,7 @@ public sealed partial class MainWindow : Window
             : HorizontalAlignment.Center;
 
         ProfileNameText.Visibility = isOpen ? Visibility.Visible : Visibility.Collapsed;
+        ProfileFooterContent.Spacing = isOpen ? 10 : 0;
         ProfileFooterButton.HorizontalAlignment = isOpen ? HorizontalAlignment.Stretch : HorizontalAlignment.Center;
         ProfileFooterButton.Width = isOpen ? double.NaN : 40;
         ProfileFooterButton.Height = isOpen ? double.NaN : 40;
@@ -1246,6 +1280,7 @@ public sealed partial class MainWindow : Window
         RemoveDynamicLibraryNavItems();
         BuildPluginApps([]);
         _sidebarPins = [];
+        _hydratedShellKey = null;
         // Keep the Server Activity button in sync with the rest of the shell —
         // while the nav is hidden (login / profile select / setup), no admin
         // chrome should be visible.
@@ -1320,6 +1355,7 @@ public sealed partial class MainWindow : Window
                 MiniPlayerBarControl.ResetSleepTimer();
                 NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
                 NavView.Margin = new Thickness(0);
+                ApplyResponsiveShellLayout();
                 LogState($"  -> Idle: NavView.IsPaneVisible={NavView.IsPaneVisible} _navInitialized={_navInitialized}");
                 break;
 
@@ -1353,6 +1389,7 @@ public sealed partial class MainWindow : Window
                 MiniPlayerBarControl.Visibility = Visibility.Collapsed;
                 NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
                 NavView.Margin = new Thickness(0);
+                ApplyResponsiveShellLayout();
                 break;
 
             case PlayerState.Minimized:
@@ -1362,6 +1399,7 @@ public sealed partial class MainWindow : Window
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
                 NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
                 NavView.Margin = new Thickness(0, 0, 0, _playerService.IsAudiobook ? 108 : 132);
+                ApplyResponsiveShellLayout();
                 MiniPlayerBarControl.Visibility = Visibility.Visible;
                 MiniPlayerBarControl.Activate();
                 break;
@@ -1444,7 +1482,6 @@ public sealed partial class MainWindow : Window
             // alive. Supplemental shell failures are isolated and logged by
             // ShowMainNavigation and cannot undo this navigation.
             ShowMainNavigation();
-            _ = RunShellWorkAsync("theme_sync", SyncThemeAfterNavigationAsync);
             return true;
         }
         catch (Exception ex)

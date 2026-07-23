@@ -104,6 +104,9 @@ dotnet publish $ProjectPath `
     -r $Runtime `
     --self-contained `
     -p:Platform=x64 `
+    -p:PublishSingleFile=false `
+    -p:PublishTrimmed=false `
+    -p:PublishReadyToRun=false `
     -o $PublishDir
 
 if ($LASTEXITCODE -ne 0) {
@@ -144,6 +147,17 @@ if ($SigningCertificate) {
             Write-Host "Signed $($binary.Name)"
         }
     }
+
+    $unsignedPublishedBinaries = Get-ChildItem $PublishDir -Recurse -File -Include *.exe,*.dll |
+        Where-Object {
+            (Get-AuthenticodeSignature -LiteralPath $_.FullName).Status -ne
+                [System.Management.Automation.SignatureStatus]::Valid
+        }
+    if ($unsignedPublishedBinaries) {
+        $names = ($unsignedPublishedBinaries | Select-Object -ExpandProperty FullName) -join "`n"
+        throw "One or more packaged application binaries are not validly signed:`n$names"
+    }
+    Write-Host "Verified all packaged application EXE/DLL files are signed."
 }
 
 # Prove the native loader can resolve the bundled library and its dependencies.

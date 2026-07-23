@@ -91,6 +91,7 @@ public partial class HomeViewModel : ObservableObject,
 
     private void RemoveFromProgressRows(string contentId, string? seriesId)
     {
+        var removedAny = false;
         foreach (var section in FeaturedSections.Concat(Sections))
         {
             if (section.SectionType is not ("continue_watching" or "next_up")) continue;
@@ -101,9 +102,12 @@ public partial class HomeViewModel : ObservableObject,
                     || (seriesId != null && item.SeriesId == seriesId))
                 {
                     section.Items.RemoveAt(i);
+                    removedAny = true;
                 }
             }
         }
+        if (removedAny)
+            BumpRenderRevision();
     }
 
     public ObservableCollection<HomeSectionWithItems> FeaturedSections { get; } = [];
@@ -143,6 +147,11 @@ public partial class HomeViewModel : ObservableObject,
 
     [ObservableProperty]
     private bool _hasConfiguredSections;
+
+    [ObservableProperty]
+    private int _renderRevision;
+
+    private void BumpRenderRevision() => RenderRevision++;
 
     [RelayCommand]
     private async Task LoadAsync()
@@ -190,6 +199,7 @@ public partial class HomeViewModel : ObservableObject,
             // current WebUI keeps cached rows mounted while refreshing; doing
             // the same avoids a full blank/skeleton flash on every stale
             // refresh or playback-state invalidation.
+            var heroSectionId = layout.Sections.FirstOrDefault(section => section.Featured)?.Id;
             foreach (var meta in layout.Sections)
             {
                 HomeSectionWithItems slot;
@@ -204,14 +214,19 @@ public partial class HomeViewModel : ObservableObject,
                     slot = CreateLayoutSlot(meta, cached);
                 }
 
-                if (meta.Featured)
+                // Match WebUI homeSectionState: the first featured section is
+                // the hero slot; every other layout section, including any
+                // additional featured section, remains visible as a normal row.
+                if (string.Equals(meta.Id, heroSectionId, StringComparison.Ordinal))
                     nextFeatured.Add(slot);
                 else
                     nextRows.Add(slot);
             }
 
-            ReconcileCollection(FeaturedSections, nextFeatured);
-            ReconcileCollection(Sections, nextRows);
+            var featuredChanged = ReconcileCollection(FeaturedSections, nextFeatured);
+            var rowsChanged = ReconcileCollection(Sections, nextRows);
+            if (featuredChanged || rowsChanged)
+                BumpRenderRevision();
             HasConfiguredSections = layout.Sections.Count > 0;
             _hasLoadedLayout = true;
 
@@ -305,10 +320,16 @@ public partial class HomeViewModel : ObservableObject,
         var current = FeaturedSections.Concat(Sections).FirstOrDefault(s => s.Id == sectionId);
         if (current == null) return;
 
+        var retryGeneration = _sectionLoadGeneration;
+        var retryProfileId = _loadedProfileId;
+        var retryToken = _sectionLoadCts?.Token ?? CancellationToken.None;
         ReplaceInBoundCollection(CloneSection(current, loadFailed: false, loadCompleted: false));
         try
         {
             var response = await _homeApi.GetSectionItemsAsync(sectionId);
+            if (!IsCurrentSectionRetry(retryGeneration, retryToken, retryProfileId, sectionId))
+                return;
+
             var completed = response.Section ?? CloneSection(current, loadFailed: false);
             completed.LoadFailed = false;
             completed.LoadCompleted = true;
@@ -317,6 +338,9 @@ public partial class HomeViewModel : ObservableObject,
         }
         catch (Exception ex)
         {
+            if (!IsCurrentSectionRetry(retryGeneration, retryToken, retryProfileId, sectionId))
+                return;
+
             LogSectionFetchFailure(sectionId, ex);
             ReplaceInBoundCollection(CloneSection(current, loadFailed: true, loadCompleted: true));
         }
@@ -370,30 +394,43 @@ public partial class HomeViewModel : ObservableObject,
         && current.IsCustom == meta.IsCustom
         && current.Customized == meta.Customized;
 
-    private static void ReconcileCollection(
+    private static bool ReconcileCollection(
         ObservableCollection<HomeSectionWithItems> target,
         IReadOnlyList<HomeSectionWithItems> desired)
     {
         if (target.Count == desired.Count
             && target.Select(section => section.Id).SequenceEqual(desired.Select(section => section.Id), StringComparer.Ordinal))
         {
+            var changed = false;
             for (var i = 0; i < desired.Count; i++)
             {
                 if (!ReferenceEquals(target[i], desired[i]))
+                {
                     target[i] = desired[i];
+                    changed = true;
+                }
             }
-            return;
+            return changed;
         }
 
         target.Clear();
         foreach (var section in desired)
             target.Add(section);
+        return true;
     }
 
     private bool IsCurrentSectionLoad(int generation, CancellationToken ct, string sectionId) =>
         !ct.IsCancellationRequested
         && generation == _sectionLoadGeneration
         && FeaturedSections.Concat(Sections).Any(section => section.Id == sectionId);
+
+    private bool IsCurrentSectionRetry(
+        int generation,
+        CancellationToken ct,
+        string? profileId,
+        string sectionId) =>
+        string.Equals(_loadedProfileId, profileId, StringComparison.Ordinal)
+        && IsCurrentSectionLoad(generation, ct, sectionId);
 
     private static Task RunOnUiThreadAsync(Action action)
     {
@@ -440,6 +477,7 @@ public partial class HomeViewModel : ObservableObject,
             if (FeaturedSections[i].Id == updated.Id)
             {
                 FeaturedSections[i] = updated;
+                BumpRenderRevision();
                 return;
             }
         }
@@ -448,6 +486,7 @@ public partial class HomeViewModel : ObservableObject,
             if (Sections[i].Id == updated.Id)
             {
                 Sections[i] = updated;
+                BumpRenderRevision();
                 return;
             }
         }
@@ -480,6 +519,7 @@ public partial class HomeViewModel : ObservableObject,
 
         // Remove from UI immediately
         request.Section.Items.Remove(request.Item);
+        BumpRenderRevision();
 
         // Show undo banner
         UndoMessage = $"\"{request.Item.Title}\" dismissed";
@@ -532,6 +572,7 @@ public partial class HomeViewModel : ObservableObject,
         {
             var idx = Math.Min(_lastDismissedIndex, _lastDismissedSection.Items.Count);
             _lastDismissedSection.Items.Insert(idx, _lastDismissedItem);
+            BumpRenderRevision();
         }
     }
 

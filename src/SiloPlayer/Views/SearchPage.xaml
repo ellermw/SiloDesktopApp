@@ -115,7 +115,7 @@
                            FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
 
                 <!-- Inline result count (web style: "N results" next to header) -->
-                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
+                <StackPanel x:Name="ResultCountPanel" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
                     <TextBlock
                         x:Name="ResultCountText"
                         FontSize="{StaticResource FontSizeTitle}"
@@ -309,7 +309,7 @@
                     <!-- Skeleton while search results load (inline rows) -->
                     <ItemsRepeater x:Name="SearchLoadingRepeater"
                                    ElementPrepared="SearchLoadingRepeater_ElementPrepared"
-                                   Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                                   Visibility="Collapsed">
                         <ItemsRepeater.Layout>
                             <UniformGridLayout x:Name="SearchLoadingGridLayout" MinItemWidth="178" MinItemHeight="310"
                                                MinColumnSpacing="12" MinRowSpacing="16" ItemsStretch="None" />
@@ -346,6 +346,26 @@
                         Visibility="Collapsed" />
                 </StackPanel>
             </ScrollViewer>
+
+            <!-- WebUI parity: long result grids expose a floating scroll-to-top affordance. -->
+            <Button x:Name="SearchScrollToTopButton"
+                    Grid.RowSpan="5"
+                    Canvas.ZIndex="20"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,24,24"
+                    Width="40"
+                    Height="40"
+                    CornerRadius="20"
+                    Background="{StaticResource SurfaceRaisedBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    Visibility="Collapsed"
+                    Click="SearchScrollToTop_Click"
+                    ToolTipService.ToolTip="Back to top"
+                    AutomationProperties.Name="Back to top">
+                <FontIcon Glyph="&#xE74A;" FontSize="14" />
+            </Button>
         </Grid>
 
         <controls:SlideSheet x:Name="ResultFiltersSheet" Title="Filters">

@@ -318,7 +318,11 @@ public sealed partial class CatalogPage : Page,
             EmptyText.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             ItemsRepeater.Visibility = Visibility.Visible;
             CatalogLoadingRepeater.Visibility = Visibility.Collapsed;
-            LoadMoreButton.Visibility = _hasMore ? Visibility.Visible : Visibility.Collapsed;
+            // Current WebUI ItemGrid does not expose a manual "Load more"
+            // control; it fetches additional windows as the user scrolls.
+            // Keep the native scroll loader active, but do not show a
+            // desktop-only button at the bottom of catalog surfaces.
+            LoadMoreButton.Visibility = Visibility.Collapsed;
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -377,7 +381,24 @@ public sealed partial class CatalogPage : Page,
     }
 
     private async void LoadMore_Click(object sender, RoutedEventArgs e) { if (_hasMore) await LoadAsync(false); }
-    private async void CatalogScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e) { if (sender is ScrollViewer scroll && !e.IsIntermediate && _hasMore && scroll.ScrollableHeight - scroll.VerticalOffset < 900) await LoadAsync(false); }
+
+    private async void CatalogScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (sender is not ScrollViewer scroll) return;
+
+        CatalogScrollToTopButton.Visibility = scroll.VerticalOffset > 720
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        if (!e.IsIntermediate && _hasMore && scroll.ScrollableHeight - scroll.VerticalOffset < 900)
+            await LoadAsync(false);
+    }
+
+    private void CatalogScrollToTop_Click(object sender, RoutedEventArgs e)
+    {
+        CatalogScrollViewer.ChangeView(null, 0, null);
+        CatalogScrollToTopButton.Visibility = Visibility.Collapsed;
+    }
 
     private void ItemsRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
     {

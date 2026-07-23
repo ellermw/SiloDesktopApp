@@ -89,6 +89,15 @@ public sealed class CurrentHomeParitySourceTests
         Assert.DoesNotContain("\"popular\"", code);
         Assert.Contains("OnRetry", code);
         Assert.Contains("Scope: \"home\"", home);
+        Assert.Contains("ConfigureSectionNavigation(row, updated)", home);
+        Assert.Contains("ConfigureSectionNavigation(row, section)", home);
+        Assert.Contains("row.OnViewAll = null", home);
+        Assert.Contains("ApplySectionRowWidth(row, ActualWidth)", home);
+        Assert.Contains("UpdateSectionRowWidths(e.NewSize.Width)", home);
+        Assert.Contains("row.Width = width", home);
+        Assert.Contains("var hasKnownOverflow = itemLimit > 0 && section.TotalCount > itemLimit;", home);
+        Assert.Contains("&& hasKnownOverflow", home);
+        Assert.DoesNotContain("hasInferredOverflow", home);
         Assert.Contains("Scope: \"library\"", library);
         Assert.Contains("LibraryId = libraryId", library);
     }
@@ -101,7 +110,11 @@ public sealed class CurrentHomeParitySourceTests
 
         Assert.Contains("IsTabStop=\"True\"", xaml);
         Assert.Contains("KeyDown=\"CardsScrollViewer_KeyDown\"", xaml);
+        Assert.Contains("GotFocus=\"CardsScrollViewer_GotFocus\"", xaml);
+        Assert.Contains("LostFocus=\"CardsScrollViewer_LostFocus\"", xaml);
         Assert.Contains("PointerMoved=\"CardsScrollViewer_PointerMoved\"", xaml);
+        Assert.Contains("private bool _hasKeyboardFocus;", code);
+        Assert.Contains("(_isHovered || _hasKeyboardFocus)", code);
         Assert.Contains("CardsScrollViewer.CapturePointer", code);
         Assert.Contains("CardsScrollViewer.ViewportWidth * 0.82", code);
         Assert.Contains("case VirtualKey.Left", code);
@@ -201,6 +214,17 @@ public sealed class CurrentHomeParitySourceTests
     }
 
     [Fact]
+    public void HomeSectionRetryCannotPatchAStaleProfileOrLayoutGeneration()
+    {
+        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "HomeViewModel.cs");
+
+        Assert.Contains("var retryGeneration = _sectionLoadGeneration;", viewModel);
+        Assert.Contains("var retryProfileId = _loadedProfileId;", viewModel);
+        Assert.Contains("IsCurrentSectionRetry(retryGeneration, retryToken, retryProfileId, sectionId)", viewModel);
+        Assert.Contains("string.Equals(_loadedProfileId, profileId, StringComparison.Ordinal)", viewModel);
+    }
+
+    [Fact]
     public void HomeRetainsItsVisualTreeAndCoalescesLayoutRefreshes()
     {
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml.cs");
@@ -209,10 +233,17 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("NavigationCacheMode = NavigationCacheMode.Required", page);
         Assert.Contains("AttachViewModelEvents();", page);
         Assert.Contains("_layoutChangedWhileRefreshing", page);
+        Assert.Contains("_lastRenderedRevision", page);
+        Assert.Contains("ViewModel.RenderRevision", page);
         Assert.Contains("if (_isRefreshingLayout)", page);
         Assert.Contains("Math.Clamp(e.NewSize.Height * ratio, 350, 700)", page);
         Assert.Contains("if (_loadInProgress) return;", viewModel);
         Assert.Contains("IsLoading = !hadContent;", viewModel);
+        Assert.Contains("private int _renderRevision", viewModel);
+        Assert.Contains("BumpRenderRevision", viewModel);
+        Assert.Contains("var featuredChanged = ReconcileCollection", viewModel);
+        Assert.Contains("var heroSectionId = layout.Sections.FirstOrDefault(section => section.Featured)?.Id", viewModel);
+        Assert.Contains("string.Equals(meta.Id, heroSectionId, StringComparison.Ordinal)", viewModel);
     }
 
     [Fact]
@@ -227,11 +258,19 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("x:Name=\"OverlayTopLeft\"", xaml);
         Assert.Contains("x:Name=\"TimeLeftText\"", xaml);
         Assert.Contains("Tapped=\"OnPlayTapped\"", xaml);
+        Assert.Contains("CornerRadius=\"22\"", xaml);
+        Assert.Contains("x:Key=\"ButtonBackgroundPointerOver\" Color=\"Transparent\"", xaml);
+        Assert.Contains("x:Key=\"ButtonBackgroundPressed\" Color=\"Transparent\"", xaml);
         Assert.Contains("Navigate<ItemDetailPage>(MediaItem.ContentId)", code);
         Assert.Contains("Navigate<EbookReaderPage>", code);
         Assert.Contains("ToggleAudiobookPlayback", code);
         Assert.Contains("item.BackdropUrl", code);
         Assert.Contains("PosterCard.BuildBadge", code);
+        Assert.Contains("x:Name=\"BadgePill\"", xaml);
+        Assert.Contains("GetBadgeLabel(item)", code);
+        Assert.Contains("case \"season_premiere\": return \"SEASON PREMIERE\";", code);
+        Assert.Contains("TimeLeftText.Text = badgeLabel == null ? \"Next Episode\" : \"\"", code);
+        Assert.Contains("TimeLeftText.Visibility = badgeLabel == null ? Visibility.Visible : Visibility.Collapsed", code);
         Assert.Contains("item.ProgressUpdatedAt", menu);
         Assert.Contains("MediaSurfaceChangeKind.HomeDismissed", menu);
     }
@@ -241,8 +280,20 @@ public sealed class CurrentHomeParitySourceTests
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Controls", "ServerActivityButton.xaml");
         var code = ReadRepoFile("src", "SiloPlayer", "Controls", "ServerActivityButton.xaml.cs");
+        var web = ReadWebUiFile("web", "src", "components", "ServerActivity.tsx");
 
+        Assert.Contains("relative flex h-9 w-9", web);
+        Assert.Contains("absolute -top-0.5 -right-0.5", web);
         Assert.Contains("MaxHeight=\"400\"", xaml);
+        Assert.Contains("Grid Width=\"44\" Height=\"44\"", xaml);
+        Assert.Contains("Width=\"36\"", xaml);
+        Assert.Contains("Height=\"36\"", xaml);
+        Assert.Contains("Padding=\"0\"", xaml);
+        Assert.Contains("Margin=\"0,2,2,0\"", xaml);
+        Assert.Contains("IsHitTestVisible=\"False\"", xaml);
+        Assert.Contains("LineHeight=\"12\"", xaml);
+        Assert.DoesNotContain("Margin=\"0,-2,-2,0\"", xaml);
+        Assert.DoesNotContain("Margin=\"0,0,-2,-2\"", xaml);
         Assert.Contains("MaxActivityScanRows = 25", code);
         Assert.Contains("run.Status is \"accepted\" or \"running\"", code);
         Assert.DoesNotContain("run.Status is \"accepted\" or \"queued\"", code);

@@ -212,7 +212,7 @@
                         Padding="16,10"
                         Margin="4,0"
                         CornerRadius="12">
-                        <StackPanel Orientation="Horizontal" Spacing="10">
+                        <StackPanel x:Name="ProfileFooterContent" Orientation="Horizontal" Spacing="10">
                             <!-- Avatar -->
                             <Border
                                 Width="28" Height="28"

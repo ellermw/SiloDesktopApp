@@ -60,6 +60,10 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("x:Name=\"HeroInfoPanel\"", xaml);
         Assert.Contains("x:Name=\"HeroActionsRow\"", xaml);
         Assert.Contains("x:Name=\"PlaybackOptionsRow\"", xaml);
+        var titleStart = xaml.IndexOf("x:Name=\"TitleText\"", StringComparison.Ordinal);
+        var titleEnd = xaml.IndexOf("/>", titleStart, StringComparison.Ordinal);
+        Assert.True(titleStart >= 0 && titleEnd > titleStart);
+        Assert.DoesNotContain("MaxLines", xaml[titleStart..titleEnd], StringComparison.Ordinal);
     }
 
     [Fact]
@@ -79,9 +83,18 @@ public sealed class ItemDetailCurrentParityTests
         Assert.DoesNotContain("x:Name=\"SimilarScrollViewer\"", xaml);
         Assert.Contains("HorizontalScrollMode=\"Enabled\"", xaml);
         Assert.Contains("TitleText.FontSize = isSeason", code);
+        Assert.Contains("TitleText.CharacterSpacing = isSeason ? -25 : -50", code);
+        Assert.Contains("TitleText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight", code);
+        Assert.Contains("TitleText.LineHeight = TitleText.FontSize * (isSeason ? 1.1d : 0.98d)", code);
+        Assert.Contains("FontWeight=\"ExtraBold\"", xaml);
         Assert.Contains("width >= 1280 ? 6", code);
         Assert.Contains("card.SetCatalogGridLayout(cardWidth)", code);
         Assert.Contains("response.Items.Take(12)", viewModel);
+        Assert.Contains("x:Name=\"SeasonsPrevButton\"", xaml);
+        Assert.Contains("x:Name=\"SeasonsNextButton\"", xaml);
+        Assert.Contains("Click=\"SeasonsPrev_Click\"", xaml);
+        Assert.Contains("Click=\"SeasonsNext_Click\"", xaml);
+        Assert.Contains("UpdateSeasonScrollButtons", code);
     }
 
     [Fact]
@@ -155,7 +168,6 @@ public sealed class ItemDetailCurrentParityTests
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var xaml = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml");
-
         Assert.Contains("Trailers &amp; More", xaml);
         Assert.Contains("www.youtube-nocookie.com/embed", page);
         Assert.Contains("video.Site.Equals(\"youtube\"", page);
@@ -163,8 +175,14 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("await playerService.PlayAsync(contentId)", page);
         Assert.Contains("ArrangeCurrentWebUiContentOrder", page);
         Assert.Contains("var parent = DetailContentPanel", page);
+        Assert.Contains("DetailContentPanel.Spacing = width >= 640 ? 56 : 48", page);
+        Assert.DoesNotContain("new Thickness(0, 32, 0, 0)", page);
         Assert.Contains("MediaLocationsSection, TrailersSection, ExtrasSection", page);
         Assert.Contains("SeasonsSection, EpisodesSection, TrailersSection, ExtrasSection", page);
+        Assert.True(
+            xaml.IndexOf("x:Name=\"MediaLocationsSection\"", StringComparison.Ordinal)
+            < xaml.IndexOf("x:Name=\"TrailersSection\"", StringComparison.Ordinal),
+            "Default XAML order should match the current WebUI leaf detail order: media locations before trailers.");
     }
 
     [Fact]
@@ -189,6 +207,8 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("/split", api);
         Assert.Contains("GetItemMarkersAsync", playback);
         Assert.Contains("SetItemMarkersAsync", playback);
+        Assert.Contains("var hasOverflowActions = false;", page);
+        Assert.Contains("if (hasOverflowActions)\n                MoreFlyout.Items.Add(new MenuFlyoutSeparator());", page.Replace("\r\n", "\n"));
     }
 
     [Fact]
@@ -202,6 +222,10 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("new Expander", page);
         Assert.Contains("(\"Profile\", track.Profile)", page);
         Assert.Contains("(\"Chroma Subsampling\"", page);
+        Assert.Contains("(\"Color Range\", FormatColorRange(track.ColorRange))", page);
+        Assert.Contains("\"tv\" => \"Limited (tv)\"", page);
+        Assert.Contains("\"pc\" => \"Full (pc)\"", page);
+        Assert.Contains("public string? ColorRange { get; set; }", models);
         Assert.Contains("(\"Hearing Impaired\"", page);
         Assert.Contains("DOVIWithHDR10", web);
         Assert.Contains("Dolby Vision (HDR10 compatible)", page);
@@ -331,7 +355,9 @@ public sealed class ItemDetailCurrentParityTests
 
         Assert.Contains("x:Name=\"EditionButton\"", xaml);
         Assert.Contains("ConfigureVersionSelectors", page);
-        Assert.Contains("NavigateToPlayer(ViewModel.Item.ContentId, fileId: _selectedVersion?.FileId)", page);
+        Assert.Contains("ResolvePlayableContentIdForPlaybackAsync", page);
+        Assert.Contains("NavigateToPlayer(contentId, fileId: _selectedVersion?.FileId)", page);
+        Assert.DoesNotContain("NavigateToPlayer(ViewModel.Item.ContentId, fileId: _selectedVersion?.FileId)", page);
         Assert.DoesNotContain("_ = playerService.SwitchVersionAsync(fileVersion)", page);
     }
 
@@ -405,11 +431,31 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("GetItemEpisodesAsync(seasonContentId)", page);
         Assert.Contains("PlayButtonText.Text = \"Play First Episode\"", page);
         Assert.Contains("_playableContentId = firstEpisode?.ContentId", page);
+        Assert.Contains("No playable episodes found for this season.", page);
+        Assert.DoesNotContain("NavigateToPlayer(ViewModel.Item.ContentId, fromStart: true", page);
         Assert.Contains("BuildSeasonBreadcrumb(item, seasonLabel)", page);
         Assert.Contains("EpisodesHeader.Text = \"Episodes\"", page);
         Assert.Contains("x:Name=\"EpisodesTotalText\"", Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml"));
         Assert.Contains("/api/v1/catalog/items/{Uri.EscapeDataString(seasonContentId)}/episodes", api);
         Assert.DoesNotContain("LoadSeasonEpisodesAsync(ViewModel.Item.SeriesId", page);
+    }
+
+    [Fact]
+    public void SingleSeasonSeriesLoadsEpisodesThroughTheCanonicalSeasonItemEndpoint()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var webSeries = Read(".codex-tmp", "silo-server-current", "web", "src", "pages", "ItemDetail", "SeriesContent.tsx");
+
+        Assert.Contains("useItemEpisodes(singleSeason?.content_id)", webSeries);
+        Assert.Contains("ShowSingleSeasonEpisodesAsync(", page);
+        Assert.Contains("ViewModel.Seasons.Count == 1", page);
+        Assert.Contains("ViewModel.Seasons[0]", page);
+        Assert.Contains("singleSeason.ContentId", page);
+        Assert.Contains("singleSeason.SeasonNumber", page);
+        Assert.Contains("GetItemEpisodesAsync(seasonContentId)", page);
+        Assert.Contains("SeasonNumber == 0", page);
+        Assert.Contains("EpisodesHeader.Text = ViewModel.SelectedSeasonNumber == 0", page);
+        Assert.DoesNotContain("ViewModel.Seasons.Count <= 1", page);
     }
 
     [Fact]
@@ -424,6 +470,11 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("GetItemDetailAsync(contentId, ct)", viewModel);
         Assert.Contains("ReferenceEquals(_loadCts, loadCts)", viewModel);
         Assert.Contains("catch (OperationCanceledException)", viewModel);
+        Assert.Contains("var contentId = Item?.ContentId;", viewModel);
+        Assert.Contains("if (Item?.ContentId != contentId) return;", viewModel);
+        Assert.Contains("Publish(MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating)", viewModel);
+        Assert.Contains("Publish(\n                wasWatched ? MediaSurfaceChangeKind.WatchedCleared : MediaSurfaceChangeKind.WatchedMarked,\n                contentId,\n                seriesId)", viewModel.Replace("\r\n", "\n"));
+        Assert.Contains("if (Item?.ContentId == contentId)\n                IsWatched = wasWatched;", viewModel.Replace("\r\n", "\n"));
     }
 
     [Fact]
@@ -474,14 +525,39 @@ public sealed class ItemDetailCurrentParityTests
     }
 
     [Fact]
-    public void EpisodeMoreEpisodesCarouselCentersTheCurrentEpisode()
+    public void EpisodeMoreEpisodesCarouselAlignsTheCurrentEpisodeToTheWebUiStartSnap()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var xaml = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml");
+        var landscapeCard = Read("src", "SiloPlayer", "Controls", "LandscapeCard.xaml.cs");
 
         Assert.Contains("currentEpisodeIndex", page);
-        Assert.Contains("CenterSiblingEpisode(currentEpisodeIndex)", page);
+        Assert.Contains("AlignSiblingEpisodeToStart(currentEpisodeIndex)", page);
+        Assert.Contains("_pendingSiblingEpisodeIndex = episodeIndex", page);
+        Assert.Contains("SiblingEpisodesScrollViewer.UpdateLayout()", page);
+        Assert.Contains("TryAlignSiblingEpisodeToStart()", page);
         Assert.Contains("SiblingEpisodesScrollViewer.ChangeView(targetOffset", page);
-        Assert.Contains("embla.scrollTo(currentEpisodeIndex)", page);
+        Assert.Contains("scrollTo(currentEpisodeIndex)", page);
+        Assert.Contains("_pendingSiblingEpisodeIndex * (cardWidth + gap)", page);
+        Assert.DoesNotContain("cardCenter - viewport / 2d", page);
+        Assert.Contains("x:Name=\"SiblingEpisodesPanel\"", xaml);
+        Assert.Contains("Margin=\"16,0,0,0\"", xaml);
+        Assert.Contains("Text=\"More Episodes\" Style=\"{StaticResource TitleTextStyle}\" FontSize=\"20\"", xaml);
+        Assert.Contains("x:Name=\"SiblingEpisodesPrevButton\"", xaml);
+        Assert.Contains("x:Name=\"SiblingEpisodesNextButton\"", xaml);
+        Assert.Contains("Click=\"SiblingEpisodesPrev_Click\"", xaml);
+        Assert.Contains("Click=\"SiblingEpisodesNext_Click\"", xaml);
+        Assert.Contains("PointerPressed=\"SiblingEpisodesScrollViewer_PointerPressed\"", xaml);
+        Assert.Contains("PointerMoved=\"SiblingEpisodesScrollViewer_PointerMoved\"", xaml);
+        Assert.Contains("HorizontalScrollMode=\"Disabled\"", xaml);
+        Assert.Contains("ScrollSiblingEpisodes(-1)", page);
+        Assert.Contains("ScrollSiblingEpisodes(1)", page);
+        Assert.Contains("SiblingEpisodesScrollViewer.CapturePointer", page);
+        Assert.Contains("UpdateSiblingEpisodeScrollButtons", page);
+        Assert.Contains("SiblingEpisodesPrevButton.Visibility = canScrollPrev", page);
+        Assert.Contains("SiblingEpisodesNextButton.Visibility = canScrollNext", page);
+        Assert.Contains("item.ItemSource == \"episode_carousel\"", landscapeCard);
+        Assert.Contains("? \"still\"", landscapeCard);
     }
 
     [Fact]
@@ -530,6 +606,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("UnderlineStyle = UnderlineStyle.None", page);
         Assert.Contains("Navigate<PersonDetailPage>(personId)", page);
         Assert.Contains("nav.Navigate<HomePage>();", page);
+        Assert.Contains("showCollectionActions: false", page);
         Assert.DoesNotContain("Resources[\"SurfaceBorderBrush\"]", page);
         Assert.DoesNotContain("Executive Producer\", StringComparison.OrdinalIgnoreCase", page);
         Assert.Contains("var episodeAirDate = FormatDetailDate(episode.AirDate)", page);
@@ -561,6 +638,7 @@ public sealed class ItemDetailCurrentParityTests
         var xaml = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml");
 
         Assert.Contains("x:Name=\"PrimaryPlayButton\"", xaml);
+        Assert.Contains("Padding=\"12,10\" CornerRadius=\"22\"", xaml);
         Assert.Contains("AutomationProperties.Name=\"{Binding Text, ElementName=PlayButtonText}\"", xaml);
         Assert.Contains("AutomationProperties.Name=\"{Binding Text, ElementName=WatchedText}\"", xaml);
         Assert.Contains("AutomationProperties.Name=\"Favorite\"", xaml);
@@ -571,6 +649,8 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("AutomationProperties.SetName(FavoriteButton", page);
         Assert.Contains("KeyDown=\"Star_KeyDown\"", xaml);
         Assert.Contains("starButtons[i].IsTabStop = i + 1 == tabbableStar", page);
+        Assert.Contains("Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xFA, 0xCC, 0x15)", page);
+        Assert.DoesNotContain("Application.Current.Resources[\"AccentHoverBrush\"]", page);
         Assert.Contains("Windows.System.VirtualKey.Home", page);
         Assert.Contains("Windows.System.VirtualKey.End", page);
         Assert.Contains("AutomationProperties.SetItemStatus", page);

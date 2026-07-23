@@ -504,20 +504,29 @@ This section is the current working memory for the next Codex session. Read it b
 
 ### Local Paths
 
-- Desktop app repo: `F:\ContinuumPlayer`
-- Extra docs created during Claude Code work: `F:\ContinuumPlayerDocs`
-- Continuum server/WebUI reference source: `F:\continuum-server`
-- Published test build path: `F:\ContinuumPlayer\publish-test\ContinuumPlayer.exe`
-- Runtime app data/logs: `%LOCALAPPDATA%\ContinuumPlayer`
+- Desktop app repo: `D:\SiloPlayer`
+- Extra legacy docs: `D:\SiloPlayerDocs`
+- Current Silo server/WebUI reference worktree: `D:\SiloPlayer\.codex-tmp\silo-server-current`
+- Published test build path: `D:\SiloPlayer\publish-test\SiloPlayer.exe`
+- Runtime app data/logs: `%LOCALAPPDATA%\SiloPlayer`
 - Claude project memories: `C:\Users\Mike\.claude\projects\F--ContinuumPlayer\memory`
 - Claude project transcripts: `C:\Users\Mike\.claude\projects\F--ContinuumPlayer`
-- Codex state: `C:\Users\Mike\.codex`
+- Codex state: `C:\Users\Michael\.codex`
+
+### Source-of-Truth and Parity Rules (Critical)
+
+- The only authoritative Silo server/WebUI source is the public GitHub repository: `https://github.com/Silo-Server/silo-server`.
+- Never fetch, inspect, compare against, cite, or use the legacy private GitLab Continuum repository for Silo desktop parity work.
+- Before each parity pass, fetch the current GitHub `main` branch directly and record the exact commit used.
+- "Implemented" or "functional" does not mean parity is complete.
+- A page is complete only after side-by-side verification confirms visual layout, spacing, typography, colors, responsive behavior, states, interactions, data, and functionality match the current WebUI as closely as native WinUI permits.
+- Admin Dashboard, Admin Libraries, and Admin Activity currently have substantial functional coverage but are **not** visually 1:1 and must remain marked visual-parity-incomplete.
 
 Do not copy live access tokens, refresh tokens, API keys, or credential JSON values into repo files. Use the existing local app config/state when needed. Known secret-bearing locations include Claude/Codex auth files, Claude local settings, Git remotes/credentials, and `%LOCALAPPDATA%\ContinuumPlayer\settings.json`. Inspect/redact carefully.
 
 ### Product Goals
 
-The desktop app should match the Continuum WebUI visually and functionally as closely as possible, while using native Windows/libmpv playback for broad direct-play codec support. Core priorities are:
+The desktop app should match the current Silo WebUI visually and functionally as closely as possible, while using native Windows/libmpv playback for broad direct-play codec support. Core priorities are:
 
 - WebUI parity for browse/home/library/player behavior.
 - Direct play whenever possible for HEVC, HDR, Dolby Vision where mpv supports it, Atmos/TrueHD/DTS, VC-1, etc.
@@ -685,7 +694,7 @@ Especially relevant files:
 - `feedback_no_close_running_app.md`
 - `feedback_no_skipping.md`
 - `reference_web_player.md`
-- `reference_gitlab.md`
+- `reference_gitlab.md` (historical only; never use as a current Silo source)
 - `reference_continuum_sync.md`
 - `reference_parity_docs.md`
 - `reference_audit_workflow.md`
@@ -700,13 +709,31 @@ Codex is taking over Claude Code responsibilities over time. Do not delete Claud
 Code memories, transcripts, worktrees, or artifacts; keep using them as read-only
 reference if context seems missing.
 
-Codex-side production memory is also recorded at:
+Codex-side production memory is organized under:
 
 ```text
-C:\Users\Mike\.codex\memories\production-infra-handoff.md
+C:\Users\Mike\.codex\memories\
 ```
 
-Important items captured there:
+For production infrastructure tasks, new Codex chats must read this first:
+
+```text
+C:\Users\Mike\.codex\memories\00-read-me-first.md
+```
+
+Then open the focused runbook for the task:
+
+- Silo updates: `silo-update-runbook.md`
+- Production access/PVE/VMIDs: `access-runbook.md`
+- Discord changelogs: `discord-changelog-runbook.md`
+- LibraryManager: `librarymanager-runbook.md`
+- ORM/CDN: `orm-cdn-runbook.md`
+- Emby/Jellyfin: `emby-jellyfin-runbook.md`
+
+The old `production-infra-handoff.md` is now historical archive/context, not the
+primary procedure file.
+
+Important items captured in the current runbooks:
 
 - Production rule: announce intent before actions; no code/config/DB/service/log/data
   changes without explicit approval.

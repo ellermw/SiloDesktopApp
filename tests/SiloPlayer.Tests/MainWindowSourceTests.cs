@@ -110,6 +110,9 @@ public sealed class MainWindowSourceTests
         Assert.Contains("NavView.IsPaneToggleButtonVisible = isNarrow", code);
         Assert.Contains("var shouldOpen = !isNarrow && !_routeWantsCompactPane", code);
         Assert.Contains("CanExposeAuthenticatedNavigation && !_routeWantsCompactPane", code);
+        Assert.Contains("x:Name=\"ProfileFooterContent\"", xaml);
+        Assert.Contains("ProfileFooterContent.Spacing = isOpen ? 10 : 0", code);
+        Assert.Contains("ApplyResponsiveShellLayout();", code);
         Assert.Contains("ContentFrame.Content is Views.Admin.AdminShellPage", code);
         Assert.Contains("AdminShell owns both its sidebar and ServerActivity button", code);
     }

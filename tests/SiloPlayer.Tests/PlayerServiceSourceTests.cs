@@ -263,7 +263,7 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
-    public void ActivePlaybackOwnsAndReleasesAWindowsDisplayWakeRequest()
+    public void ActivePlaybackOwnsAndReleasesANativeWindowsDisplayWakeRequestOnTheUiThread()
     {
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
@@ -272,9 +272,11 @@ public sealed class PlayerServiceSourceTests
             "Services",
             "PlayerService.cs"));
 
-        Assert.Contains("private DisplayRequest? _displayRequest;", source);
-        Assert.Contains("_displayRequest.RequestActive();", source);
-        Assert.Contains("_displayRequest.RequestRelease();", source);
+        Assert.DoesNotContain("DisplayRequest", source);
+        Assert.Contains("SetThreadExecutionState(EsContinuous | EsSystemRequired | EsDisplayRequired)", source);
+        Assert.Contains("SetThreadExecutionState(EsContinuous)", source);
+        Assert.Contains("if (!dispatcher.HasThreadAccess)", source);
+        Assert.Contains("dispatcher.TryEnqueue(() => UpdateDisplayWakeLock(active))", source);
         Assert.Contains("UpdateDisplayWakeLock(!paused", source);
         Assert.Contains("if (newState == PlayerState.Idle)", source);
         Assert.Contains("UpdateDisplayWakeLock(false);", source);

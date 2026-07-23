@@ -360,7 +360,13 @@ public sealed partial class LandscapeCard : UserControl
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
-            var imageType = usesBackdrop ? "backdrop" : "poster";
+            // Episode-carousel backdrops are episode stills. Use the same cache
+            // identity as season episode cards so the detail carousel reuses
+            // artwork already fetched by the season page instead of forcing a
+            // second presigned-URL download under a generic backdrop key.
+            var imageType = item.ItemSource == "episode_carousel"
+                ? "still"
+                : usesBackdrop ? "backdrop" : "poster";
 
             var diskPath = await imageService.GetImageDiskPathAsync(
                 item.ContentId, imageType, imageUrl, httpClient, ct);
@@ -397,7 +403,13 @@ public sealed partial class LandscapeCard : UserControl
             sb.Begin();
         }
         catch (OperationCanceledException) { }
-        catch { }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine(
+                "item_detail_images.txt",
+                $"landscape_image_failed content={item.ContentId} source={item.ItemSource} " +
+                $"error={ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     // B32: image click → play, text click → details. Mirrors the webui

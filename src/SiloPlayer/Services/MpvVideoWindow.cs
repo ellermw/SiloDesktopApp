@@ -269,7 +269,7 @@ public sealed class MpvVideoWindow : IDisposable
         ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
     }
 
-    public void EnterFullscreen()
+    public void EnterFullscreen(bool activate = true)
     {
         if (_hwnd == IntPtr.Zero) return;
         // Fullscreen can be requested directly from the popup while it is in
@@ -288,12 +288,16 @@ public sealed class MpvVideoWindow : IDisposable
         // than the webui (a normal browser tab). HWND_TOP moves the window
         // to the front of non-topmost windows, same Z-order as any focused
         // window, so clicking away lets other windows cover it naturally.
+        var fullscreenFlags = activate
+            ? SWP_SHOWWINDOW
+            : SWP_SHOWWINDOW | SWP_NOACTIVATE;
         SetWindowPos(_hwnd, HWND_TOP,
             mi.rcMonitor.Left, mi.rcMonitor.Top,
             mi.rcMonitor.Right - mi.rcMonitor.Left,
             mi.rcMonitor.Bottom - mi.rcMonitor.Top,
-            SWP_SHOWWINDOW);
-        SetForegroundWindow(_hwnd);
+            fullscreenFlags);
+        if (activate)
+            SetForegroundWindow(_hwnd);
         // Re-assert position after 200ms — mpv's internal fullscreen handling
         // may reposition the window after our call.
         System.Threading.Tasks.Task.Delay(200).ContinueWith(_ =>

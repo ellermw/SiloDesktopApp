@@ -483,20 +483,13 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Collections grid (populated dynamically) -->
+                <!-- Collections sections (web: grouped sections rendered in sort order) -->
                 <controls:WrapPanel x:Name="CollectionsSkeletonHost"
                                     HorizontalSpacing="12" VerticalSpacing="16"
                                     Visibility="Collapsed" />
-                <ItemsRepeater x:Name="CollectionsRepeater" Visibility="Collapsed">
-                    <ItemsRepeater.Layout>
-                        <UniformGridLayout
-                            MinItemWidth="{StaticResource PosterCardWidth}"
-                            MinItemHeight="{StaticResource PosterCardTotalHeight}"
-                            MinColumnSpacing="12"
-                            MinRowSpacing="16"
-                            ItemsStretch="None" />
-                    </ItemsRepeater.Layout>
-                </ItemsRepeater>
+                <StackPanel x:Name="CollectionSectionsHost"
+                            Spacing="28"
+                            Visibility="Collapsed" />
 
                 <!-- Collections loading -->
                 <ProgressRing

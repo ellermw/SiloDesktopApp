@@ -13,7 +13,6 @@ using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
 using SiloPlayer.Player;
-using Windows.System.Display;
 
 namespace SiloPlayer.Services;
 
@@ -78,7 +77,6 @@ public class PlayerService : IDisposable
         silentPlaybackTimeout: TimeSpan.FromSeconds(45));
     private Timer? _stallWatchdogTimer;
     private long _stallRecoveryLastAttemptMs;
-    private DisplayRequest? _displayRequest;
     private bool _displayRequestActive;
     private string _activeQualityTier = "original";
     private HlsProxy? _hlsProxy;
@@ -1989,9 +1987,16 @@ public class PlayerService : IDisposable
     private void UpdateDisplayWakeLock(bool active)
     {
         var dispatcher = App.MainWindowInstance?.DispatcherQueue;
-        if (dispatcher != null && !dispatcher.HasThreadAccess)
+        if (dispatcher == null)
         {
-            dispatcher.TryEnqueue(() => UpdateDisplayWakeLock(active));
+            LogToFile("state_trace.txt", $"Display wake lock skipped (no UI dispatcher), requested={active}");
+            return;
+        }
+
+        if (!dispatcher.HasThreadAccess)
+        {
+            if (!dispatcher.TryEnqueue(() => UpdateDisplayWakeLock(active)))
+                LogToFile("state_trace.txt", $"Display wake lock dispatch failed, requested={active}");
             return;
         }
 
@@ -1999,14 +2004,15 @@ public class PlayerService : IDisposable
         {
             if (active && !_displayRequestActive)
             {
-                _displayRequest ??= new DisplayRequest();
-                _displayRequest.RequestActive();
+                if (SetThreadExecutionState(EsContinuous | EsSystemRequired | EsDisplayRequired) == 0)
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
                 _displayRequestActive = true;
                 LogToFile("state_trace.txt", "Display wake lock acquired");
             }
-            else if (!active && _displayRequestActive && _displayRequest != null)
+            else if (!active && _displayRequestActive)
             {
-                _displayRequest.RequestRelease();
+                if (SetThreadExecutionState(EsContinuous) == 0)
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
                 _displayRequestActive = false;
                 LogToFile("state_trace.txt", "Display wake lock released");
             }
@@ -2017,6 +2023,13 @@ public class PlayerService : IDisposable
             LogToFile("state_trace.txt", $"Display wake lock update failed: {ex.Message}");
         }
     }
+
+    private const uint EsSystemRequired = 0x00000001;
+    private const uint EsDisplayRequired = 0x00000002;
+    private const uint EsContinuous = 0x80000000;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint SetThreadExecutionState(uint executionState);
 
     private async Task MonitorFileLoadAsync(
         long generation,
@@ -2811,7 +2824,7 @@ public class PlayerService : IDisposable
                 return;
 
             _videoWindow.SetCursorVisible(true);
-            _videoWindow.EnterFullscreen();
+            _videoWindow.EnterFullscreen(activate: false);
             SetState(PlayerState.Fullscreen);
             PublishFullscreenVisualState(true);
             LogToFile("state_trace.txt", "Restored fullscreen after Playing Next transition");

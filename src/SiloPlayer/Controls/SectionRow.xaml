@@ -119,6 +119,8 @@
                 ViewChanged="CardsScrollViewer_ViewChanged"
                 SizeChanged="CardsScrollViewer_SizeChanged"
                 KeyDown="CardsScrollViewer_KeyDown"
+                GotFocus="CardsScrollViewer_GotFocus"
+                LostFocus="CardsScrollViewer_LostFocus"
                 PointerPressed="CardsScrollViewer_PointerPressed"
                 PointerMoved="CardsScrollViewer_PointerMoved"
                 PointerReleased="CardsScrollViewer_PointerReleased"

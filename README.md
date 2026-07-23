@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.55**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.55/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.64/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `A49C3060F1D0AE79BD39DC136E610CE0CF4A1B5B13B80CDFD3D3F05F2DC58FC0`
+SHA-256: `89F99DDFE18332D8185B22AE33BB2D133E567D1666E3F8012CF21411B49FE7D1`
 
 The installer is currently locally test-signed for QA, so Windows may still display a SmartScreen warning on machines that do not trust the local certificate. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -52,6 +52,17 @@ Status meanings:
 | Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
 
 ## Recent release work
+
+### 1.1.64 (test build)
+
+- Re-audited the active end-user surfaces against the public Silo Server GitHub `main` branch at commit `a0507c78eb5a6caf8d91fb23836ee0376ccdddda` from July 22, 2026.
+- Fixed Search so typing retains keyboard focus, stale or optional discovery work cannot replace the active query, and late background completion no longer causes a delayed whole-page refresh.
+- Hardened large-library and catalog navigation with bounded realization, deferred artwork, cancellation, and incremental updates to keep very large libraries responsive.
+- Refined Home and item-detail behavior, including stable incremental Home rows, preserved carousel state, episode-detail metadata, and correct still artwork for the current episode carousel.
+- Corrected native video-window ownership and fullscreen/next-episode restoration so the mouse and OSC remain interactive after automatic episode transitions.
+- Improved direct/remux/transcode startup and recovery behavior, playback session metadata, realtime teardown, and the Windows client identity reported to Silo.
+- Kept the QA package as a signed multi-file installation and verified installation, saved-session restoration, Home startup, real playback, OSC interaction, and clean return from playback on Windows 11.
+- Current shared-shell/sidebar, activity-badge, hover-state, and navigation-transition parity work remains in progress and is not represented as complete.
 
 ### 1.1.55 (test build)
 
@@ -339,4 +350,4 @@ powershell -ExecutionPolicy Bypass -File installer/build.ps1
 
 ## Reference source
 
-Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Test build 1.1.52 was compared against Silo Server commit `b96e359b4ebe3e6aea68ce327d180578bf0b04d0` from July 16, 2026.
+Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Test build 1.1.64 was compared against Silo Server commit `a0507c78eb5a6caf8d91fb23836ee0376ccdddda` from July 22, 2026.

@@ -149,15 +149,41 @@ public sealed class MpvPlayerSourceTests
         var window = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "MpvVideoWindow.cs"));
         var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
 
-        var fullscreenStart = window.IndexOf("public void EnterFullscreen()", StringComparison.Ordinal);
+        var fullscreenStart = window.IndexOf("public void EnterFullscreen(bool activate = true)", StringComparison.Ordinal);
         var fullscreenEnd = window.IndexOf("private RECT _fullscreenRect", fullscreenStart, StringComparison.Ordinal);
         Assert.True(fullscreenStart >= 0 && fullscreenEnd > fullscreenStart);
-        Assert.Contains("ExitPictureInPicture();", window[fullscreenStart..fullscreenEnd], StringComparison.Ordinal);
+        var fullscreenMethod = window[fullscreenStart..fullscreenEnd];
+        Assert.Contains("ExitPictureInPicture();", fullscreenMethod, StringComparison.Ordinal);
+        Assert.Contains("var fullscreenFlags = activate", fullscreenMethod, StringComparison.Ordinal);
+        Assert.Contains("SWP_SHOWWINDOW | SWP_NOACTIVATE", fullscreenMethod, StringComparison.Ordinal);
+        Assert.Contains("if (activate)", fullscreenMethod, StringComparison.Ordinal);
+        Assert.Contains("SetForegroundWindow(_hwnd);", fullscreenMethod, StringComparison.Ordinal);
         Assert.Contains("GetDpiForWindow(_hwnd) / 96d", window, StringComparison.Ordinal);
         Assert.Contains("bool isRepeat =", window, StringComparison.Ordinal);
         Assert.Contains("double-click preserves play/pause", window, StringComparison.Ordinal);
         Assert.Contains("PublishFullscreenVisualState(true);", service, StringComparison.Ordinal);
         Assert.Contains("PublishFullscreenVisualState(false);", service, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PlayingNextFullscreenRestoreDoesNotRequestForegroundActivation()
+    {
+        var root = FindRepositoryRoot();
+        var window = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "MpvVideoWindow.cs"));
+        var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+
+        Assert.Contains("public void EnterFullscreen(bool activate = true)", window, StringComparison.Ordinal);
+        Assert.Contains("var fullscreenFlags = activate", window, StringComparison.Ordinal);
+        Assert.Contains("SWP_SHOWWINDOW | SWP_NOACTIVATE", window, StringComparison.Ordinal);
+        Assert.Contains("if (activate)", window, StringComparison.Ordinal);
+        Assert.Contains("SetForegroundWindow(_hwnd);", window, StringComparison.Ordinal);
+
+        var restoreStart = service.IndexOf("private void RestoreFullscreenAfterPostRollContinue()", StringComparison.Ordinal);
+        var restoreEnd = service.IndexOf("private void ReturnFromPostRollPreview()", restoreStart, StringComparison.Ordinal);
+        Assert.True(restoreStart >= 0 && restoreEnd > restoreStart);
+        var restore = service[restoreStart..restoreEnd];
+        Assert.Contains("_videoWindow.EnterFullscreen(activate: false);", restore, StringComparison.Ordinal);
+        Assert.DoesNotContain("_videoWindow.EnterFullscreen();", restore, StringComparison.Ordinal);
     }
 
     [Fact]

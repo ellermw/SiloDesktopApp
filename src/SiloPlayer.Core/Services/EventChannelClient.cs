@@ -335,7 +335,10 @@ public sealed class EventChannelClient : IDisposable
         }
     }
 
-    private async Task ReceiveLoop(ClientWebSocket ws, string[] channelsToSubscribe, CancellationToken ct)
+    private async Task ReceiveLoop(
+        ClientWebSocket ws,
+        string[] channelsToSubscribe,
+        CancellationToken ct)
     {
         var buffer = new byte[16 * 1024];
         var messageBuffer = new StringBuilder();
@@ -373,7 +376,11 @@ public sealed class EventChannelClient : IDisposable
         }
     }
 
-    private async Task DispatchFrame(ClientWebSocket ws, string json, string[] channelsToSubscribe, CancellationToken ct)
+    private async Task DispatchFrame(
+        ClientWebSocket ws,
+        string json,
+        string[] channelsToSubscribe,
+        CancellationToken ct)
     {
         JsonDocument? doc = null;
         try
@@ -464,7 +471,9 @@ public sealed class EventChannelClient : IDisposable
         }
     }
 
-    private void ApplyEventToCachedSnapshot(string channel, JsonElement eventData)
+    private void ApplyEventToCachedSnapshot(
+        string channel,
+        JsonElement eventData)
     {
         // Scans have no REST list endpoint. The WebUI therefore keeps the
         // websocket snapshot as its source of truth and folds subsequent scan

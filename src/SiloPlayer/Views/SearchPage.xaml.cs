@@ -18,6 +18,7 @@ public sealed partial class SearchPage : Page
     private bool _syncingSearchText;
     private bool _pendingResultsSearchFocus;
     private FocusState _pendingResultsSearchFocusState = FocusState.Programmatic;
+    private bool _resultsScrollUserScrolled;
 
     public SearchPage()
     {
@@ -39,12 +40,21 @@ public sealed partial class SearchPage : Page
         {
             DispatcherQueue.TryEnqueue(UpdatePeopleSection);
         };
-        ViewModel.OutsideLibraryResults.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(UpdateRequestResults);
+        ViewModel.OutsideLibraryResults.CollectionChanged += (_, _) =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                UpdateRequestResults();
+                if (ViewModel.Results.Count == 0 && ViewModel.PeopleResults.Count == 0)
+                    UpdateResultsState();
+            });
+        };
 
         ViewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(ViewModel.TotalCount) ||
-                args.PropertyName == nameof(ViewModel.IsLoading))
+                args.PropertyName == nameof(ViewModel.IsLoading) ||
+                args.PropertyName == nameof(ViewModel.ErrorMessage))
             {
                 DispatcherQueue.TryEnqueue(UpdateResultsState);
             }
@@ -110,14 +120,30 @@ public sealed partial class SearchPage : Page
             ResultsTitle.Text = $"Results for \"{ViewModel.Query}\"";
             var mediaCount = ViewModel.TotalCount;
             var peopleCount = ViewModel.PeopleResults.Count;
-            var totalDisplay = mediaCount + peopleCount + ViewModel.OutsideLibraryResults.Count;
-            ResultCountText.Text = $"{totalDisplay:N0} {(totalDisplay == 1 ? "result" : "results")}";
+            // Match the catalog surface: the visible count describes in-library
+            // media results. Optional request/discovery suggestions render in
+            // their own section and should not make the header count jump a few
+            // seconds after the media grid has settled.
+            var totalDisplay = mediaCount + peopleCount;
+            ResultCountText.Text = $"{totalDisplay:N0} in library";
+            // Current WebUI Catalog.tsx deliberately hides the header count
+            // while source=query. It avoids a misleading exact-total read while
+            // the virtualized query window and request/discovery section settle.
+            ResultCountPanel.Visibility = Visibility.Collapsed;
 
             NoResultsText.Visibility = mediaCount == 0 && peopleCount == 0 && ViewModel.OutsideLibraryResults.Count == 0 && !ViewModel.IsLoading
                 ? Visibility.Visible : Visibility.Collapsed;
         }
 
+        SearchLoadingRepeater.Visibility = hasQuery &&
+            ViewModel.IsLoading &&
+            ViewModel.Results.Count == 0 &&
+            ViewModel.PeopleResults.Count == 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
         UpdatePeopleSection();
+        UpdateRequestResults();
     }
 
     private void UpdatePeopleSection()
@@ -146,11 +172,22 @@ public sealed partial class SearchPage : Page
         SearchBox.PlaceholderText = placeholder;
         ResultsSearchBox.PlaceholderText = placeholder;
         _filterInitializing = true;
-        SelectComboTag(ResultTypeCombo, ViewModel.MediaType ?? "all");
+        var typeSelection = ViewModel.MediaType
+            ?? (ViewModel.MediaScope is "video" or "audiobook" ? ViewModel.MediaScope : "all");
+        SelectComboTag(ResultTypeCombo, typeSelection);
         _filterInitializing = false;
     }
 
-    private void UpdateRequestResults() => RequestResultsSection.Visibility = ViewModel.OutsideLibraryResults.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    private void UpdateRequestResults()
+    {
+        // Optional request-provider discovery can arrive several seconds after
+        // the in-library catalog grid. Keep the primary count/grid visually
+        // stable, but still match the WebUI by rendering Request to Add below
+        // local hits when discovery is enabled and returns suggestions.
+        RequestResultsSection.Visibility = ViewModel.OutsideLibraryResults.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
 
     private void RequestResult_Click(object sender, RoutedEventArgs e)
     {
@@ -213,6 +250,7 @@ public sealed partial class SearchPage : Page
             EmptyState.Visibility = Visibility.Visible;
             ResultsState.Visibility = Visibility.Collapsed;
             _pendingResultsSearchFocus = false;
+            _resultsScrollUserScrolled = false;
             return;
         }
 
@@ -226,6 +264,9 @@ public sealed partial class SearchPage : Page
             var querySnapshot = ViewModel.Query.Trim();
             if (!_isNavigated || !string.Equals(querySnapshot, ViewModel.Query.Trim(), StringComparison.Ordinal))
                 return;
+
+            _resultsScrollUserScrolled = false;
+            ResultsScroll.ChangeView(null, 0, null, disableAnimation: true);
 
             var transferSearchFocus = _pendingResultsSearchFocus || SearchBox.FocusState != FocusState.Unfocused;
             var priorFocusState = SearchBox.FocusState;
@@ -288,8 +329,34 @@ public sealed partial class SearchPage : Page
 
     private async void ResultsScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
+        SearchScrollToTopButton.Visibility = ResultsScroll.VerticalOffset > 720
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        if (ResultsScroll.VerticalOffset > 24)
+            _resultsScrollUserScrolled = true;
+
+        // Avoid firing an automatic "load more" while the initial result grid
+        // is settling. On wide displays the first layout pass can report
+        // "near bottom" before the user has moved, which looks like a random
+        // late page refresh even though the query/results are unchanged.
+        if (!_resultsScrollUserScrolled ||
+            ResultsScroll.ScrollableHeight <= 0 ||
+            ViewModel.IsLoading ||
+            ViewModel.Results.Count == 0)
+        {
+            return;
+        }
+
         if (ResultsScroll.ScrollableHeight - ResultsScroll.VerticalOffset < 900)
             await ViewModel.LoadMoreAsync();
+    }
+
+    private void SearchScrollToTop_Click(object sender, RoutedEventArgs e)
+    {
+        ResultsScroll.ChangeView(null, 0, null);
+        SearchScrollToTopButton.Visibility = Visibility.Collapsed;
+        ResultsSearchBox.Focus(FocusState.Programmatic);
     }
 
     private void SearchPage_SizeChanged(object sender, SizeChangedEventArgs e)

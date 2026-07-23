@@ -334,8 +334,8 @@
                                 x:Name="TitleText"
                                 Style="{StaticResource DisplayTextStyle}"
                                 FontSize="36"
-                                TextWrapping="Wrap"
-                                MaxLines="2" />
+                                FontWeight="ExtraBold"
+                                TextWrapping="Wrap" />
 
                             <TextBlock
                                 x:Name="TaglineText"
@@ -460,7 +460,7 @@
                             <!-- Main play/resume button -->
                             <Button x:Name="PrimaryPlayButton" Grid.Column="0" Click="PlayButton_Click"
                                 Background="Transparent" BorderThickness="0"
-                                Padding="32,10" CornerRadius="22"
+                                Padding="12,10" CornerRadius="22"
                                 AutomationProperties.Name="{Binding Text, ElementName=PlayButtonText}">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
                                     <FontIcon x:Name="PlayButtonIcon" Glyph="&#xE768;" FontSize="18" Foreground="{StaticResource AccentForegroundBrush}" />
@@ -570,7 +570,7 @@
                             Style="{StaticResource SecondaryButtonStyle}"
                             Click="WatchedButton_Click"
                             Height="44"
-                            Padding="20,10"
+                            Padding="12,10"
                             CornerRadius="22"
                             AutomationProperties.Name="{Binding Text, ElementName=WatchedText}">
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -738,6 +738,15 @@
                             CornerRadius="16"
                             Visibility="Collapsed" />
 
+                    <!-- Media locations (admin-only) — current WebUI renders this
+                         immediately after the hero/action/overview block on leaf
+                         items, before trailers, extras, cast, and recommendations. -->
+                    <StackPanel x:Name="MediaLocationsSection" Visibility="Collapsed" Spacing="12">
+                        <!-- WebUI MediaLocations.tsx: space-y-3 + text-base font-semibold tracking-tight. -->
+                        <TextBlock x:Name="MediaLocationsTitle" Text="Media locations" Style="{StaticResource TitleTextStyle}" FontSize="16" />
+                        <StackPanel x:Name="MediaLocationsPanel" Spacing="8" />
+                    </StackPanel>
+
                     <!-- Remote provider videos. The current WebUI exposes only
                          YouTube entries and opens them in a privacy-enhanced embed. -->
                     <StackPanel x:Name="TrailersSection" Visibility="Collapsed" Spacing="20">
@@ -895,15 +904,53 @@
                                         Style="{StaticResource SecondaryButtonStyle}" Padding="12,6" />
                             </StackPanel>
                         </Border>
-                        <ScrollViewer x:Name="SeasonsScrollViewer"
-                            IsTabStop="True"
-                            KeyDown="HorizontalCarousel_KeyDown"
-                            HorizontalScrollBarVisibility="Hidden"
-                            VerticalScrollBarVisibility="Disabled"
-                            HorizontalScrollMode="Enabled"
-                            VerticalScrollMode="Disabled">
-                            <StackPanel x:Name="SeasonsPanel" Orientation="Horizontal" Spacing="16" />
-                        </ScrollViewer>
+                        <Grid>
+                            <ScrollViewer x:Name="SeasonsScrollViewer"
+                                IsTabStop="True"
+                                KeyDown="HorizontalCarousel_KeyDown"
+                                ViewChanged="SeasonsScrollViewer_ViewChanged"
+                                SizeChanged="SeasonsScrollViewer_SizeChanged"
+                                HorizontalScrollBarVisibility="Hidden"
+                                VerticalScrollBarVisibility="Disabled"
+                                HorizontalScrollMode="Enabled"
+                                VerticalScrollMode="Disabled">
+                                <StackPanel x:Name="SeasonsPanel" Orientation="Horizontal" Spacing="16" />
+                            </ScrollViewer>
+                            <Button
+                                x:Name="SeasonsPrevButton"
+                                Width="44"
+                                Height="44"
+                                Padding="0"
+                                CornerRadius="22"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Center"
+                                Background="{StaticResource SurfaceBrush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                Visibility="Collapsed"
+                                Click="SeasonsPrev_Click"
+                                AutomationProperties.Name="Scroll seasons left"
+                                ToolTipService.ToolTip="Scroll left">
+                                <FontIcon Glyph="&#xE76B;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
+                            </Button>
+                            <Button
+                                x:Name="SeasonsNextButton"
+                                Width="44"
+                                Height="44"
+                                Padding="0"
+                                CornerRadius="22"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"
+                                Background="{StaticResource SurfaceBrush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                Visibility="Collapsed"
+                                Click="SeasonsNext_Click"
+                                AutomationProperties.Name="Scroll seasons right"
+                                ToolTipService.ToolTip="Scroll right">
+                                <FontIcon Glyph="&#xE76C;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
+                            </Button>
+                        </Grid>
                     </StackPanel>
 
                     <!-- Episodes (shown when a season is selected) -->
@@ -956,7 +1003,43 @@
 
                     <!-- Sibling Episodes (shown when viewing an episode — other episodes in same season) -->
                     <StackPanel x:Name="SiblingEpisodesSection" Visibility="Collapsed" Spacing="20">
-                        <TextBlock x:Name="SiblingEpisodesTitle" Text="More Episodes" Style="{StaticResource TitleTextStyle}" FontSize="18" />
+                        <Grid>
+                            <TextBlock x:Name="SiblingEpisodesTitle" Text="More Episodes" Style="{StaticResource TitleTextStyle}" FontSize="20" />
+                            <StackPanel
+                                x:Name="SiblingEpisodesArrowPanel"
+                                Orientation="Horizontal"
+                                Spacing="8"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"
+                                Visibility="Collapsed">
+                                <Button
+                                    x:Name="SiblingEpisodesPrevButton"
+                                    Width="36"
+                                    Height="36"
+                                    Padding="0"
+                                    CornerRadius="18"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1"
+                                    Click="SiblingEpisodesPrev_Click"
+                                    ToolTipService.ToolTip="Previous episodes">
+                                    <FontIcon Glyph="&#xE76B;" FontSize="18" Foreground="{StaticResource PrimaryTextBrush}" />
+                                </Button>
+                                <Button
+                                    x:Name="SiblingEpisodesNextButton"
+                                    Width="36"
+                                    Height="36"
+                                    Padding="0"
+                                    CornerRadius="18"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1"
+                                    Click="SiblingEpisodesNext_Click"
+                                    ToolTipService.ToolTip="Next episodes">
+                                    <FontIcon Glyph="&#xE76C;" FontSize="18" Foreground="{StaticResource PrimaryTextBrush}" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
                         <StackPanel x:Name="SiblingEpisodesLoadingSkeleton" Orientation="Horizontal" Spacing="12" Visibility="Collapsed">
                             <StackPanel Width="240" Spacing="8"><controls:SkeletonBackdrop Width="240" Height="135"/><controls:SkeletonText Width="180" Height="16"/></StackPanel>
                             <StackPanel Width="240" Spacing="8"><controls:SkeletonBackdrop Width="240" Height="135"/><controls:SkeletonText Width="200" Height="16"/></StackPanel>
@@ -977,11 +1060,22 @@
                             x:Name="SiblingEpisodesScrollViewer"
                             IsTabStop="True"
                             KeyDown="HorizontalCarousel_KeyDown"
+                            ViewChanged="SiblingEpisodesScrollViewer_ViewChanged"
+                            SizeChanged="SiblingEpisodesScrollViewer_SizeChanged"
+                            PointerPressed="SiblingEpisodesScrollViewer_PointerPressed"
+                            PointerMoved="SiblingEpisodesScrollViewer_PointerMoved"
+                            PointerReleased="SiblingEpisodesScrollViewer_PointerReleased"
+                            PointerCanceled="SiblingEpisodesScrollViewer_PointerCanceled"
+                            PointerCaptureLost="SiblingEpisodesScrollViewer_PointerCaptureLost"
                             HorizontalScrollBarVisibility="Hidden"
                             VerticalScrollBarVisibility="Disabled"
-                            HorizontalScrollMode="Enabled"
+                            HorizontalScrollMode="Disabled"
                             VerticalScrollMode="Disabled">
-                            <StackPanel x:Name="SiblingEpisodesPanel" Orientation="Horizontal" Spacing="12" />
+                            <StackPanel
+                                x:Name="SiblingEpisodesPanel"
+                                Orientation="Horizontal"
+                                Spacing="12"
+                                Margin="16,0,0,0" />
                         </ScrollViewer>
                     </StackPanel>
 
@@ -1008,14 +1102,6 @@
                         <controls:WrapPanel x:Name="SimilarPanel" HorizontalSpacing="12" VerticalSpacing="12" />
                     </StackPanel>
 
-                    <!-- Media locations (admin-only) — webui parity component.
-                         Shows folder/filename for each version with a copy-path
-                         action. Rendered below cast + more-like-this. -->
-                    <StackPanel x:Name="MediaLocationsSection" Visibility="Collapsed" Spacing="12">
-                        <!-- WebUI MediaLocations.tsx: space-y-3 + text-base font-semibold tracking-tight. -->
-                        <TextBlock x:Name="MediaLocationsTitle" Text="Media locations" Style="{StaticResource TitleTextStyle}" FontSize="16" />
-                        <StackPanel x:Name="MediaLocationsPanel" Spacing="8" />
-                    </StackPanel>
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>

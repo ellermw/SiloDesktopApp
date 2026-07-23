@@ -250,10 +250,14 @@ public partial class ItemDetailViewModel : ObservableObject,
     [RelayCommand]
     private async Task LoadRatingAsync()
     {
-        if (Item == null) return;
+        var contentId = Item?.ContentId;
+        if (string.IsNullOrWhiteSpace(contentId)) return;
+
         try
         {
-            UserRating = await _catalogApi.GetRatingAsync(Item.ContentId);
+            var rating = await _catalogApi.GetRatingAsync(contentId);
+            if (Item?.ContentId != contentId) return;
+            UserRating = rating;
         }
         catch
         {
@@ -264,7 +268,9 @@ public partial class ItemDetailViewModel : ObservableObject,
     [RelayCommand]
     private async Task SetRatingAsync(int rating)
     {
-        if (Item == null) return;
+        var contentId = Item?.ContentId;
+        var seriesId = Item?.SeriesId;
+        if (string.IsNullOrWhiteSpace(contentId)) return;
 
         // B13 + F4: optimistic rating swap. Clicking an already-selected star
         // clears the rating (matches webui toggle-off). Revert on failure.
@@ -274,22 +280,26 @@ public partial class ItemDetailViewModel : ObservableObject,
         try
         {
             if (nextRating == null)
-                await _catalogApi.DeleteRatingAsync(Item.ContentId);
+                await _catalogApi.DeleteRatingAsync(contentId);
             else
-                await _catalogApi.SetRatingAsync(Item.ContentId, nextRating.Value);
+                await _catalogApi.SetRatingAsync(contentId, nextRating.Value);
 
-            Publish(MediaSurfaceChangeKind.RatingChanged, Item.ContentId, Item.SeriesId, nextRating);
+            if (Item?.ContentId != contentId) return;
+            Publish(MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating);
         }
         catch
         {
-            UserRating = priorRating;
+            if (Item?.ContentId == contentId)
+                UserRating = priorRating;
         }
     }
 
     [RelayCommand]
     private async Task ToggleWatchedAsync()
     {
-        if (Item == null) return;
+        var contentId = Item?.ContentId;
+        var seriesId = Item?.SeriesId;
+        if (string.IsNullOrWhiteSpace(contentId)) return;
 
         // B13 + F4: optimistic update — flip the flag immediately so the UI
         // responds instantly, then call the API. If it fails, revert. Publish
@@ -300,18 +310,20 @@ public partial class ItemDetailViewModel : ObservableObject,
         try
         {
             if (wasWatched)
-                await _catalogApi.MarkUnwatchedAsync(Item.ContentId);
+                await _catalogApi.MarkUnwatchedAsync(contentId);
             else
-                await _catalogApi.MarkWatchedAsync(Item.ContentId);
+                await _catalogApi.MarkWatchedAsync(contentId);
 
+            if (Item?.ContentId != contentId) return;
             Publish(
                 wasWatched ? MediaSurfaceChangeKind.WatchedCleared : MediaSurfaceChangeKind.WatchedMarked,
-                Item.ContentId,
-                Item.SeriesId);
+                contentId,
+                seriesId);
         }
         catch
         {
-            IsWatched = wasWatched;
+            if (Item?.ContentId == contentId)
+                IsWatched = wasWatched;
         }
     }
 

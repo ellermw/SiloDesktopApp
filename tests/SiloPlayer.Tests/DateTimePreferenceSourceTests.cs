@@ -41,4 +41,24 @@ public sealed class DateTimePreferenceSourceTests
 
         Assert.Contains("DateTimeDisplay.", source, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void MediumDateFallbackMatchesTheWebUiAbbreviatedMonthContract()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepoRoot,
+            "src",
+            "SiloPlayer",
+            "Helpers",
+            "DateTimeDisplay.cs"));
+
+        Assert.Contains(
+            """_ => local.ToString("MMM d, yyyy", CultureInfo.CurrentCulture)""",
+            source,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            """_ => local.ToString("D", CultureInfo.CurrentCulture)""",
+            source,
+            StringComparison.Ordinal);
+    }
 }

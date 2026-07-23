@@ -19,6 +19,8 @@ public readonly record struct ProfileVerificationContext(
 
 public class SiloApiClient
 {
+    public const string DefaultClientName = "Silo for Windows";
+
     private static readonly HttpRequestOptionsKey<long> AuthenticationGenerationOption =
         new("SiloPlayer.AuthenticationGeneration");
     private static readonly HttpRequestOptionsKey<long> RequestContextGenerationOption =
@@ -37,6 +39,8 @@ public class SiloApiClient
     private string? _deviceId;
     private string? _deviceName;
     private string? _devicePlatform;
+    private string _clientName = DefaultClientName;
+    private string? _clientVersion = typeof(SiloApiClient).Assembly.GetName().Version?.ToString(3);
     private string _baseUrl = "";
     private long _authenticationGeneration;
     private long _requestContextGeneration;
@@ -144,6 +148,14 @@ public class SiloApiClient
             _deviceId = deviceId;
             _deviceName = deviceName;
             _devicePlatform = devicePlatform;
+        }
+    }
+    public void SetClientMetadata(string clientName, string? clientVersion = null)
+    {
+        lock (_authStateGate)
+        {
+            _clientName = string.IsNullOrWhiteSpace(clientName) ? DefaultClientName : clientName.Trim();
+            _clientVersion = string.IsNullOrWhiteSpace(clientVersion) ? null : clientVersion.Trim();
         }
     }
     public void ClearAuth()
@@ -517,6 +529,9 @@ public class SiloApiClient
 
     private void AddDeviceHeadersUnsafe(HttpRequestMessage request)
     {
+        request.Headers.TryAddWithoutValidation("X-Silo-Client", _clientName);
+        if (!string.IsNullOrWhiteSpace(_clientVersion))
+            request.Headers.TryAddWithoutValidation("X-Silo-Client-Version", _clientVersion);
         if (!string.IsNullOrWhiteSpace(_deviceId)) request.Headers.Add("X-Silo-Device-Id", _deviceId);
         if (!string.IsNullOrWhiteSpace(_deviceName)) request.Headers.Add("X-Silo-Device-Name", _deviceName);
         if (!string.IsNullOrWhiteSpace(_devicePlatform)) request.Headers.Add("X-Silo-Device-Platform", _devicePlatform);

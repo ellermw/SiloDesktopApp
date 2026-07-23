@@ -20,6 +20,7 @@ public sealed partial class HomePage : Page
     private bool _isRefreshingLayout;
     private bool _layoutChangedWhileRefreshing;
     private string? _failedHeroSectionId;
+    private int _lastRenderedRevision = -1;
 
     public HomePage()
     {
@@ -42,10 +43,13 @@ public sealed partial class HomePage : Page
             await ViewModel.LoadCommand.ExecuteAsync(null);
             _isRefreshingLayout = false;
 
-            if (!_contentBuilt || _layoutChangedWhileRefreshing)
+            if (!_contentBuilt ||
+                _layoutChangedWhileRefreshing ||
+                _lastRenderedRevision != ViewModel.RenderRevision)
             {
                 BuildContent();
                 _contentBuilt = true;
+                _lastRenderedRevision = ViewModel.RenderRevision;
             }
 
             await UpdateTasteSeedBannerAsync();
@@ -70,6 +74,8 @@ public sealed partial class HomePage : Page
 
     private void HomePage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
+        UpdateSectionRowWidths(e.NewSize.Width);
+
         var ratio = e.NewSize.Width >= 1024 ? 0.60 : 0.50;
         var heroHeight = Math.Clamp(e.NewSize.Height * ratio, 350, 700);
         InitialHeroSkeleton.Height = heroHeight;
@@ -276,6 +282,7 @@ public sealed partial class HomePage : Page
                     // Reset / Move: fall back to a full rebuild.
                     BuildContent();
                     _contentBuilt = true;
+                    _lastRenderedRevision = ViewModel.RenderRevision;
                     return;
             }
 
@@ -283,6 +290,7 @@ public sealed partial class HomePage : Page
             EmptyHomeState.Visibility = ViewModel.HasConfiguredSections
                 ? Visibility.Collapsed
                 : Visibility.Visible;
+            _lastRenderedRevision = ViewModel.RenderRevision;
         });
     }
 
@@ -332,6 +340,7 @@ public sealed partial class HomePage : Page
             if (child is SectionRow row && row.Section?.Id == updated.Id)
             {
                 row.Section = updated;
+                ConfigureSectionNavigation(row, updated);
                 return;
             }
         }
@@ -341,10 +350,24 @@ public sealed partial class HomePage : Page
 
     private SectionRow CreateSectionRow(HomeSectionWithItems section)
     {
-        var row = new SectionRow { Section = section };
+        var row = new SectionRow
+        {
+            Section = section,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        ApplySectionRowWidth(row, ActualWidth);
         row.OnRetry = failed => _ = ViewModel.RetrySectionAsync(failed.Id);
+        ConfigureSectionNavigation(row, section);
+        return row;
+    }
+
+    private void ConfigureSectionNavigation(SectionRow row, HomeSectionWithItems section)
+    {
+        var itemLimit = section.ItemLimit > 0 ? section.ItemLimit : section.Items.Count;
+        var hasKnownOverflow = itemLimit > 0 && section.TotalCount > itemLimit;
+
         if (SectionRow.IsBrowseSupported(section.SectionType)
-            && section.TotalCount > section.ItemLimit)
+            && hasKnownOverflow)
         {
             row.OnViewAll = () =>
             {
@@ -356,7 +379,10 @@ public sealed partial class HomePage : Page
                     SectionId: section.Id));
             };
         }
-        return row;
+        else
+        {
+            row.OnViewAll = null;
+        }
     }
 
     private void AddSectionRow(HomeSectionWithItems section, int? preferredIndex = null)
@@ -366,6 +392,25 @@ public sealed partial class HomePage : Page
             ? Math.Min(preferredIndex.Value, SectionsPanel.Children.Count)
             : SectionsPanel.Children.Count;
         SectionsPanel.Children.Insert(index, row);
+    }
+
+    private void UpdateSectionRowWidths(double width)
+    {
+        foreach (var child in SectionsPanel.Children)
+            if (child is SectionRow row)
+                ApplySectionRowWidth(row, width);
+    }
+
+    private static void ApplySectionRowWidth(SectionRow row, double width)
+    {
+        if (double.IsNaN(width) || width <= 0)
+            return;
+
+        // SectionRow contains an internal horizontal carousel that can measure
+        // wider than the viewport. In a vertical StackPanel that lets the row
+        // become as wide as its cards. Pin the row to the visible page width;
+        // the cards still overflow inside their own ScrollViewer.
+        row.Width = width;
     }
 
     private void RemoveSectionRow(string sectionId)

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Models.Playback;
 
 namespace SiloPlayer.Tests;
 
@@ -113,6 +114,40 @@ public sealed class SiloApiClientTests
         Assert.Contains("name=poster", multipart!);
         Assert.Contains("filename=poster.png", multipart!);
         Assert.Equal("updated", result.Name);
+    }
+
+    [Fact]
+    public async Task PlaybackStart_SendsFriendlyWindowsClientIdentityHeaders()
+    {
+        string? clientName = null;
+        string? clientVersion = null;
+        string? path = null;
+        var handler = new DelegateHandler((request, _) =>
+        {
+            path = request.RequestUri!.AbsolutePath;
+            clientName = request.Headers.TryGetValues("X-Silo-Client", out var names)
+                ? names.SingleOrDefault()
+                : null;
+            clientVersion = request.Headers.TryGetValues("X-Silo-Client-Version", out var versions)
+                ? versions.SingleOrDefault()
+                : null;
+            return Task.FromResult<HttpResponseMessage>(JsonResponse(HttpStatusCode.Created,
+                """{"session_id":"session-1","media_file_id":7,"play_method":"direct","position":0,"is_paused":false,"stream_url":"/stream/session-1","audio_track_index":0,"duration_seconds":120,"subtitle_urls":[]}"""));
+        });
+
+        var client = CreateClient(handler);
+        client.SetClientMetadata(SiloApiClient.DefaultClientName, "1.2.3");
+        var api = new PlaybackApi(client);
+
+        await api.StartPlaybackAsync(new PlaybackStartRequest
+        {
+            FileId = 7,
+            ProfileId = "profile-1",
+        });
+
+        Assert.Equal("/api/v1/playback/start", path);
+        Assert.Equal("Silo for Windows", clientName);
+        Assert.Equal("1.2.3", clientVersion);
     }
 
     [Fact]
