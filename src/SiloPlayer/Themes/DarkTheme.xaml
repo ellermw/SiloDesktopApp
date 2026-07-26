@@ -343,7 +343,7 @@
     <!-- ── NavigationView ── -->
     <SolidColorBrush x:Key="NavigationViewItemForeground" Color="{StaticResource PrimaryTextColor}" />
     <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="{StaticResource PrimaryTextColor}" />
-    <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="{StaticResource PrimaryTextColor}" />
     <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="{StaticResource SurfaceHoverColor}" />
     <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="{StaticResource AccentBackgroundColor}" />
     <SolidColorBrush x:Key="NavigationViewContentBackground" Color="{StaticResource AppBackgroundColor}" />

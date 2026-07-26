@@ -21,9 +21,10 @@ public class AdminLibrariesRegressionSourceTests
             RepoRoot, "src", "SiloPlayer", "MainWindow.xaml.cs"));
         var adminClick = source[source.IndexOf("private void Admin_Click", StringComparison.Ordinal)..];
 
-        Assert.Contains("MainServerActivityButton.SetHostVisibility(false)", adminClick, StringComparison.Ordinal);
+        Assert.Contains("HideSharedServerActivity()", adminClick, StringComparison.Ordinal);
+        Assert.Contains("MobileServerActivityButton.SetHostVisibility(false)", source, StringComparison.Ordinal);
         Assert.Contains("OnNavigated_SynchronizeShellChrome", source, StringComparison.Ordinal);
-        Assert.Contains("e.SourcePageType != typeof(Views.Admin.AdminShellPage)", source, StringComparison.Ordinal);
+        Assert.Contains("e.SourcePageType == typeof(Views.Admin.AdminShellPage)", source, StringComparison.Ordinal);
     }
 
     [Fact]

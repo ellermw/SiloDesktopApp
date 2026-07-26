@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.64/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.72**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.72/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `CB2CC8B5C01CCAF140AE83334BB7140BC4ACA406F4573F7D07332D244C93B4BD`
+SHA-256: `7B1FED010892D8313D6BA9099D2F3824313416074F1445A97982926FA24A9585`
 
 The installer is currently locally test-signed for QA, so Windows may still display a SmartScreen warning on machines that do not trust the local certificate. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -28,6 +28,7 @@ Status meanings:
 | Area | Status | Current state |
 |---|---|---|
 | Authentication and profiles | Substantial | Login, refresh tokens, profile selection, PINs, profile management, signup, setup, public server branding, QR/device login, and the complete administrator impersonation lifecycle with restart/stale-session recovery are implemented. Final installed visual comparison remains. |
+| Shared shell and navigation | Substantial | The 260 px desktop sidebar, 64 px detail immersion rail with 150 ms hover expansion, current mobile header/drawer, active-route synchronization, dynamic libraries/pins/apps, profile avatar/fallback behavior, notification/activity chrome, Alt+Left/mouse/controller Back, cached route transitions, and playback-to-shell restoration are implemented. Installed comparison and the Playing Next close regression still require QA confirmation. |
 | Catalog and library browsing | Substantial | Virtualized browsing, filters, sorting, search, collections, favorites, watchlist, history, calendar, recommendations, and requests are implemented. Exact layout details and literary-media browsing still need work. |
 | Home screen | Substantial | Server-defined sections, hero content, continue watching, next up, recommendations, customization, incremental refresh, current card variants, and audiobook rows are implemented. Installed-build visual comparison and remaining responsive edge cases are still required. |
 | Item and person details | Substantial | Movie, series, season, episode, cast/crew, versions, watched/favorite/watchlist/rating, trailers, extras, edition selection, current multi-version Media Info spec sheets, automatic split previews, marker workflows, and current More actions are implemented. Installed-build comparison and remaining edge cases are still required. |
@@ -52,6 +53,74 @@ Status meanings:
 | Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
 
 ## Recent release work
+
+### 1.1.72 (startup regression QA fix)
+
+- Fixed the WinUI startup crash introduced by declaring the controller B button as a XAML `KeyboardAccelerator`; WinUI could not parse `GamepadB` while constructing the main window.
+- Preserved controller Back behavior through a runtime routed-key handler, while keeping the XAML startup surface limited to values the WinUI loader can construct.
+- Added a source regression guard that rejects another `GamepadB` XAML accelerator.
+
+### 1.1.71 (player reliability and WebUI parity QA build)
+
+- Re-audited the player against public Silo Server GitHub `main` commit `02203d9e408c8f53ecbf8adf672d84d434180389` and the live WebUI player.
+- Matched the current WebUI OSC hierarchy, labels, utility order, episode-navigation slots, subtitle tools, playback information, keyboard/controller focus, and Playing Next behavior.
+- Fixed chapter thumbnails so each asynchronously decoded image repaints the already-open Chapters menu instead of leaving a permanent placeholder.
+- Kept Search Online, Translate with AI, subtitle Appearance, and marker editing over the active playback surface while preserving stream, position, pause state, tracks, fullscreen state, and pointer isolation.
+- Made subtitle, audio, and quality changes preserve the user’s playing/paused state and honor the server’s authoritative stream origin, timeline offset, and transport-local start.
+- Reworked incomplete copy-HLS seeking so every manual seek reanchors the server transport; this prevents replaying the initial keyframe segment before playback continues.
+- Hardened the Playing Next close button against the owned native video HWND by moving/hiding the video surface before exposing WinUI controls and accepting close on pointer-down, Escape, or controller Back.
+- Preserved actual fullscreen state across dialogs, post-roll, automatic episode changes, and repeated fullscreen/windowed transitions without taskbar activation or stale button state.
+- Confirmed native session identity requests report `Silo for Windows`, omit a version suffix, and remain outside the server’s Jellyfin/JF client classification.
+- Passed 695 automated regressions and a zero-warning x64 Release build before packaging.
+
+### 1.1.70 (local QA build)
+
+- Made video fullscreen/windowed transitions snap as one compositor update instead of visibly resizing the native video and WinUI shell on separate timelines.
+- Unified keyboard, XAML, and native OSC fullscreen commands on the mpv playback popup; the main application window now retains its existing geometry behind playback.
+- Prevented owner-window resize events from pulling a fullscreen video surface through intermediate window sizes.
+- Disabled DWM owned-window transition animation for the dedicated playback surface and discarded stale pre-resize client pixels.
+
+### 1.1.69 (local QA build)
+
+- Completed the shared shell/navigation milestone against public Silo Server GitHub `main` commit `02203d9e408c8f53ecbf8adf672d84d434180389`.
+- Fixed the Playing Next close button by placing it above the overlay scroller's hit-test surface and routing close/Back behavior through one cancellation path.
+- Synchronized the selected sidebar route after direct navigation, Back, dynamic library/pin rebuilds, plugin routes, and returns from Admin or playback.
+- Added the current WebUI's narrow-window header and drawer behavior, including Silo branding, Search, admin activity, playback-settings access, and Calendar scroll-direction auto-hide.
+- Added server profile artwork to the desktop sidebar with initial fallback and suppressed duplicate username text exactly as the current WebUI does.
+- Matched selected navigation foregrounds and notification badge theme colors, and delayed realtime connection warnings for four seconds to avoid transient reconnect flicker.
+- Added Alt+Left, mouse Back, and controller Back navigation without stealing input from expanded/fullscreen playback.
+- Kept the package multi-file and clean-upgrade compatible. This build has not been published.
+
+### 1.1.68 (local QA build)
+
+- Matched the live WebUI's `bg-black/90` player-menu surfaces so subtitle and quality labels remain readable over bright or visually busy video.
+- Kept Subtitle, Audio, and Chapters menus above the seek timeline's complete pointer target at windowed and fullscreen sizes.
+- Added the current WebUI's 150 ms hover expansion to the compact 64 px detail-page sidebar, including keeping it expanded while the profile flyout is open and restoring the normal 260 px sidebar on browse routes.
+- Retained the 1.1.67 WebP chapter-thumbnail decoder correction and added regression coverage for the expanded menu/shell behavior. This build has not been published.
+
+### 1.1.67 (local QA build)
+
+- Kept the subtitle selector completely above the seek timeline's interactive region, including in shorter windowed playback layouts, so the menu cannot obscure or click through to the seek control.
+- Restored chapter-menu preview images for the server's current WebP artwork by decoding cached image bytes independently of the cache's generic `.img` filename extension.
+- Added regression coverage for both subtitle-menu geometry and the chapter-thumbnail decode/overlay path. This build has not been published.
+
+### 1.1.66 (local QA build)
+
+- Re-verified the native player controls directly against the signed-in live WebUI and public Silo Server GitHub `main` commit `02203d9e408c8f53ecbf8adf672d84d434180389`.
+- Kept Search Online, Translate with AI, and subtitle Appearance inside the active playback surface, preserving the session, timestamp, selected tracks, fullscreen state, and prior playing/paused state.
+- Hardened subtitle search/download cancellation, prevented concurrent subtitle downloads, and restored keyboard/controller focus to the subtitle button after nested dialogs close.
+- Fixed bitmap-subtitle transport replacement so text/bitmap track switches wait for the replacement stream's real load boundary and do not spuriously pause, seek, or expose stale frames.
+- Corrected Playback Info source/video/audio bitrate units, sample-rate formatting, and Color range to match the current WebUI contract.
+- Retained the recent fullscreen, picture-in-picture, auto-next focus, rapid-seek, direct-stream reconnect, quality-switch, and playback-error recovery work in the locally signed multi-file QA package. This build has not been published.
+
+### 1.1.65 (local QA build)
+
+- Re-audited Home, Search, Library, and movie/series/season/episode detail surfaces against public Silo Server GitHub `main` commit `02203d9e408c8f53ecbf8adf672d84d434180389` from July 26, 2026.
+- Matched the current Search empty state, 56 px prominent field, responsive 32–56 px results title, 1400 px page shell, vertical rhythm, and unified Media/Audiobooks/All scope control.
+- Preserved the active query and search-field focus while changing the query or scope.
+- Added WebUI-style removable active-filter badges and an active count on the Filters action, including visible restoration of retained Genre, Content Rating, Resolution, and Country state.
+- Kept “Explore all” conditional: it appears only for browse-supported sections whose server `total_count` exceeds `item_limit`, exactly like the current WebUI.
+- Built as the existing locally signed, multi-file QA package. This build has not been published.
 
 ### 1.1.64 (test build)
 
@@ -339,7 +408,7 @@ Visual Studio 2022 with Windows App SDK tooling or a compatible .NET 8 SDK is re
 
 ```powershell
 dotnet build SiloPlayer.sln -c Release -p:Platform=x64
-dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -p:Platform=x64
+dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release
 powershell -ExecutionPolicy Bypass -File installer/build.ps1
 ```
 
@@ -351,4 +420,4 @@ powershell -ExecutionPolicy Bypass -File installer/build.ps1
 
 ## Reference source
 
-Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Test build 1.1.64 was compared against Silo Server commit `a0507c78eb5a6caf8d91fb23836ee0376ccdddda` from July 22, 2026.
+Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). The player milestone carried into local QA build 1.1.72 was compared against Silo Server commit `02203d9e408c8f53ecbf8adf672d84d434180389` from July 26, 2026.

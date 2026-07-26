@@ -36,6 +36,21 @@ public sealed class CalendarCurrentParitySourceTests
         Assert.DoesNotContain("Task.Run(async ()", page);
     }
 
+    [Fact]
+    public void NarrowCalendarScrollMatchesCurrentWebUiHeaderAutoHideContract()
+    {
+        var markup = ReadRepoFile("src", "SiloPlayer", "Views", "CalendarPage.xaml");
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "CalendarPage.xaml.cs");
+        var shell = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
+
+        Assert.Contains("ViewChanged=\"ContentScrollViewer_ViewChanged\"", markup);
+        Assert.Contains("Math.Abs(delta) <= 4", page);
+        Assert.Contains("delta > 0 && y > 80", page);
+        Assert.Contains("SetMobileHeaderHidden(true)", page);
+        Assert.Contains("SetMobileHeaderHidden(false)", page);
+        Assert.Contains("new System.Numerics.Vector3(0, -96, 0)", shell);
+    }
+
     private static string ReadRepoFile(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

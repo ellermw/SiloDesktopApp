@@ -151,6 +151,39 @@ public sealed class SiloApiClientTests
     }
 
     [Fact]
+    public async Task AudioChange_DeserializesAuthoritativeRestartTimeline()
+    {
+        var handler = new DelegateHandler((request, _) =>
+        {
+            Assert.Equal(HttpMethod.Patch, request.Method);
+            Assert.Equal("/api/v1/playback/session-1/audio", request.RequestUri!.AbsolutePath);
+            return Task.FromResult<HttpResponseMessage>(JsonResponse(HttpStatusCode.OK,
+                """
+                {
+                  "audio_track_index": 2,
+                  "play_method": "remux",
+                  "stream_url": "/api/v1/stream/session-1",
+                  "switch_mode": "reload",
+                  "player_start_seconds": 1.75,
+                  "stream_origin_seconds": 418.25,
+                  "timeline_offset_seconds": 418.25,
+                  "can_seek_anywhere": false
+                }
+                """));
+        });
+        var api = new PlaybackApi(CreateClient(handler));
+
+        var response = await api.ChangeAudioTrackAsync("session-1", 2, 420);
+
+        Assert.Equal(2, response.AudioTrackIndex);
+        Assert.Equal("remux", response.PlayMethod);
+        Assert.Equal(1.75, response.PlayerStartSeconds);
+        Assert.Equal(418.25, response.StreamOriginSeconds);
+        Assert.Equal(418.25, response.TimelineOffsetSeconds);
+        Assert.False(response.CanSeekAnywhere);
+    }
+
+    [Fact]
     public async Task AccessGroupUpdatePreservesExplicitNullMasks()
     {
         string? sentJson = null;

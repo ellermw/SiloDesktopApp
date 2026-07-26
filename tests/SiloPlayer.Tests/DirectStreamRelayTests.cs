@@ -51,14 +51,17 @@ public sealed class DirectStreamRelayTests
             calls++;
             if (calls == 1)
             {
-                return CreateResponse(
+                var initial = CreateResponse(
                     HttpStatusCode.OK,
                     new ThrowAfterStream(bytes, throwAfterBytes: 256),
                     bytes.Length,
                     contentRange: null);
+                initial.Headers.ETag = new EntityTagHeaderValue("\"revision-a\"");
+                return initial;
             }
 
             Assert.Equal(256, request.Headers.Range?.Ranges.Single().From);
+            Assert.Equal("\"revision-a\"", request.Headers.GetValues("If-Range").Single());
             return CreateResponse(
                 HttpStatusCode.PartialContent,
                 new MemoryStream(bytes[256..]),
@@ -84,6 +87,54 @@ public sealed class DirectStreamRelayTests
             Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
             Assert.Equal("access-token", request.Headers.Authorization?.Parameter);
         });
+    }
+
+    [Fact]
+    public async Task RelayAsync_RejectsAChangedEntityInsteadOfSplicingReplacementBytes()
+    {
+        var original = Enumerable.Range(0, 512).Select(i => (byte)(i % 251)).ToArray();
+        var replacement = Enumerable.Range(0, 512).Select(i => (byte)(250 - (i % 251))).ToArray();
+        var calls = 0;
+        var handler = new SequenceHandler(request =>
+        {
+            calls++;
+            if (calls == 1)
+            {
+                var initial = CreateResponse(
+                    HttpStatusCode.OK,
+                    new ThrowAfterStream(original, throwAfterBytes: 128),
+                    original.Length,
+                    contentRange: null);
+                initial.Headers.ETag = new EntityTagHeaderValue("\"revision-a\"");
+                return initial;
+            }
+
+            Assert.Equal(128, request.Headers.Range?.Ranges.Single().From);
+            Assert.Equal("\"revision-a\"", request.Headers.GetValues("If-Range").Single());
+            var changed = CreateResponse(
+                HttpStatusCode.OK,
+                new MemoryStream(replacement),
+                replacement.Length,
+                contentRange: null);
+            changed.Headers.ETag = new EntityTagHeaderValue("\"revision-b\"");
+            return changed;
+        });
+        var relay = new DirectStreamRelay(
+            new HttpClient(handler),
+            new Uri("https://example.test/api/v1/stream/session"),
+            () => null,
+            maxRetries: 5);
+        using var output = new MemoryStream();
+
+        var error = await Assert.ThrowsAnyAsync<IOException>(() => relay.RelayAsync(
+            output,
+            rangeHeader: null,
+            writeHeadersAsync: null,
+            CancellationToken.None));
+
+        Assert.Contains("source changed", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(original[..128], output.ToArray());
+        Assert.Equal(2, handler.Requests.Count);
     }
 
     [Fact]

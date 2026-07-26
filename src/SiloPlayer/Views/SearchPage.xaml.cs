@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Core.Models.Requests;
@@ -166,7 +168,50 @@ public sealed partial class SearchPage : Page
         foreach (var button in new[] { EmptyVideoScope, EmptyAudiobookScope, EmptyAllScope, ResultsVideoScope, ResultsAudiobookScope, ResultsAllScope })
         {
             var active = string.Equals(button.Tag?.ToString(), ViewModel.MediaScope, StringComparison.Ordinal);
-            button.Style = (Style)Application.Current.Resources[active ? "AccentButtonStyle" : "OutlineButtonStyle"];
+            // SearchScopeChips in the WebUI is a rounded radiogroup rather
+            // than three independent outline buttons. Keep the empty-search
+            // controls compatible, but paint the visible results chips as a
+            // single pill group and expose their selected state to assistive
+            // technology.
+            if (ReferenceEquals(button, ResultsVideoScope)
+                || ReferenceEquals(button, ResultsAudiobookScope)
+                || ReferenceEquals(button, ResultsAllScope))
+            {
+                button.Style = null;
+                var background = active
+                    ? (Brush)Application.Current.Resources["AccentBrush"]
+                    : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+                var foreground = (Brush)Application.Current.Resources[
+                    active ? "AccentForegroundBrush" : "SecondaryTextBrush"];
+                // Upstream only transitions the label color for an inactive
+                // chip; it does not paint a second raised pill on hover.
+                // Keep the selected accent fill equally stable on hover.
+                var pointerBackground = background;
+                var pointerForeground = (Brush)Application.Current.Resources[
+                    active ? "AccentForegroundBrush" : "PrimaryTextBrush"];
+                button.Background = background;
+                button.Foreground = foreground;
+                button.Resources["ButtonBackground"] = background;
+                button.Resources["ButtonBackgroundPointerOver"] = pointerBackground;
+                button.Resources["ButtonBackgroundPressed"] = pointerBackground;
+                button.Resources["ButtonForeground"] = foreground;
+                button.Resources["ButtonForegroundPointerOver"] = pointerForeground;
+                button.Resources["ButtonForegroundPressed"] = pointerForeground;
+                button.BorderThickness = new Thickness(0);
+                button.CornerRadius = new CornerRadius(999);
+                button.Padding = new Thickness(16, 6, 16, 6);
+                AutomationProperties.SetHelpText(
+                    button,
+                    active ? "Selected search scope" : "Select search scope");
+                AutomationProperties.SetItemStatus(
+                    button,
+                    active ? "Selected" : "Not selected");
+            }
+            else
+            {
+                button.Style = (Style)Application.Current.Resources[
+                    active ? "AccentButtonStyle" : "OutlineButtonStyle"];
+            }
         }
         var placeholder = ViewModel.MediaScope == "audiobook" ? "Search audiobooks..." : ViewModel.MediaScope == "all" ? "Search all media..." : "Search movies, series...";
         SearchBox.PlaceholderText = placeholder;
@@ -363,12 +408,30 @@ public sealed partial class SearchPage : Page
     {
         var gutter = e.NewSize.Width < 640 ? 16
             : e.NewSize.Width < 1024 ? 24
-            : e.NewSize.Width < 1280 ? 40
-            : 48;
-        ResultsHeader.Margin = new Thickness(gutter, 24, gutter, 20);
-        ResultsSearchSurface.Margin = new Thickness(gutter, 0, gutter, 20);
-        ResultsToolbar.Margin = new Thickness(gutter, 0, gutter, 16);
+            : 40;
+        ResultsHeader.Margin = new Thickness(gutter, e.NewSize.Width < 640 ? 16 : 24, gutter, 24);
+        var titleSize = Math.Clamp(e.NewSize.Width * 0.05, 32, 56);
+        ResultsTitle.FontSize = titleSize;
+        ResultsTitle.LineHeight = titleSize * 0.95;
+        var emptyTitleSize = Math.Clamp(e.NewSize.Width * 0.04, 32, 60);
+        EmptySearchTitle.FontSize = emptyTitleSize;
+        EmptySearchTitle.LineHeight = emptyTitleSize * 0.95;
+        ResultsSearchSurface.Margin = new Thickness(gutter, 0, gutter, 12);
+        ResultsToolbar.Margin = new Thickness(gutter, 0, gutter, 24);
+        ActiveResultFiltersPanel.Margin = new Thickness(gutter, 0, gutter, 24);
         ResultsScroll.Padding = new Thickness(gutter, 0, gutter, 24);
+        // page-shell's 1400px maximum includes its responsive inline
+        // padding. XAML margins/padding are outside these children, so reduce
+        // their maxima to preserve the same outer shell width on ultrawide
+        // displays instead of letting search stretch 96px wider than WebUI.
+        var shellContentWidth = Math.Max(0, 1400 - (gutter * 2));
+        ResultsHeader.MaxWidth = shellContentWidth;
+        ResultsToolbar.MaxWidth = shellContentWidth;
+        ActiveResultFiltersPanel.MaxWidth = shellContentWidth;
+        ResultsContent.MaxWidth = shellContentWidth;
+        var searchWidth = Math.Max(280, Math.Min(576, e.NewSize.Width - (gutter * 2)));
+        EmptySearchSurface.Width = searchWidth;
+        ResultsSearchSurface.Width = searchWidth;
         UpdateCatalogGridLayout(e.NewSize.Width, gutter);
     }
 
@@ -379,7 +442,9 @@ public sealed partial class SearchPage : Page
             : viewportWidth >= 768 ? 5
             : viewportWidth >= 640 ? 4
             : 3;
-        var contentWidth = Math.Max(320, Math.Min(1400, viewportWidth - (gutter * 2)));
+        var contentWidth = Math.Max(
+            320,
+            Math.Min(1400 - (gutter * 2), viewportWidth - (gutter * 2)));
         _catalogCardWidth = Math.Max(96, (contentWidth - (12 * (columns - 1))) / columns);
         ResultsGridLayout.MaximumRowsOrColumns = columns;
         ResultsGridLayout.MinItemWidth = _catalogCardWidth;
@@ -433,6 +498,15 @@ public sealed partial class SearchPage : Page
         FillResultCombo(ResultRatingCombo, "All Ratings", ViewModel.AvailableFilters?.ContentRatings ?? []);
         FillResultCombo(ResultResolutionCombo, "All Resolutions", ViewModel.AvailableFilters?.Resolutions ?? []);
         FillResultCombo(ResultCountryCombo, "All Countries", ViewModel.AvailableFilters?.Countries ?? []);
+        if (!string.IsNullOrWhiteSpace(ViewModel.Genre))
+            SelectComboTag(ResultGenreCombo, ViewModel.Genre);
+        if (!string.IsNullOrWhiteSpace(ViewModel.ContentRating))
+            SelectComboTag(ResultRatingCombo, ViewModel.ContentRating);
+        if (!string.IsNullOrWhiteSpace(ViewModel.Resolution))
+            SelectComboTag(ResultResolutionCombo, ViewModel.Resolution);
+        if (!string.IsNullOrWhiteSpace(ViewModel.Country))
+            SelectComboTag(ResultCountryCombo, ViewModel.Country);
+        UpdateActiveResultFilters();
     }
 
     private static void FillResultCombo(ComboBox combo, string allLabel, IEnumerable<string> values)
@@ -459,6 +533,7 @@ public sealed partial class SearchPage : Page
         ViewModel.ContentRating = SelectedTag(ResultRatingCombo);
         ViewModel.Resolution = SelectedTag(ResultResolutionCombo);
         ViewModel.Country = SelectedTag(ResultCountryCombo);
+        UpdateActiveResultFilters();
         await ViewModel.SearchCommand.ExecuteAsync(null);
     }
 
@@ -476,6 +551,104 @@ public sealed partial class SearchPage : Page
     private void OpenResultFilters_Click(object sender, RoutedEventArgs e) => ResultFiltersSheet.IsOpen = true;
     private void CloseResultFilters_Click(object sender, RoutedEventArgs e) => ResultFiltersSheet.IsOpen = false;
 
+    private void UpdateActiveResultFilters()
+    {
+        ActiveResultFiltersPanel.Children.Clear();
+        AddActiveResultFilter("genre", ViewModel.Genre, value => $"Genre: {value}");
+        AddActiveResultFilter("rating", ViewModel.ContentRating, value => $"Rated: {value}");
+        AddActiveResultFilter("resolution", ViewModel.Resolution, value => $"Resolution: {value}");
+        AddActiveResultFilter("country", ViewModel.Country, value => $"Country: {value}");
+
+        var count = ActiveResultFiltersPanel.Children.Count;
+        ActiveResultFiltersPanel.Visibility = count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ResultFiltersButtonCountBadge.Visibility = count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ResultFiltersButtonCount.Text = count.ToString();
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            ResultFiltersButton,
+            count > 0 ? $"Filters, {count} active" : "Filters");
+    }
+
+    private void AddActiveResultFilter(string key, string? value, Func<string, string> label)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        var text = label(value);
+        var content = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 5,
+        };
+        content.Children.Add(new TextBlock
+        {
+            Text = text,
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        content.Children.Add(new FontIcon
+        {
+            Glyph = "\uE711",
+            FontSize = 10,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        var button = new Button
+        {
+            Tag = key,
+            Content = content,
+            Padding = new Thickness(8, 4, 6, 4),
+            CornerRadius = new CornerRadius(6),
+            BorderThickness = new Thickness(0),
+            Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, $"Remove {text}");
+        button.Click += ActiveResultFilter_Click;
+        ActiveResultFiltersPanel.Children.Add(button);
+    }
+
+    private async void ActiveResultFilter_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string key })
+            return;
+
+        _filterInitializing = true;
+        try
+        {
+            switch (key)
+            {
+                case "genre":
+                    ResultGenreCombo.SelectedIndex = 0;
+                    ViewModel.Genre = null;
+                    break;
+                case "rating":
+                    ResultRatingCombo.SelectedIndex = 0;
+                    ViewModel.ContentRating = null;
+                    break;
+                case "resolution":
+                    ResultResolutionCombo.SelectedIndex = 0;
+                    ViewModel.Resolution = null;
+                    break;
+                case "country":
+                    ResultCountryCombo.SelectedIndex = 0;
+                    ViewModel.Country = null;
+                    break;
+            }
+        }
+        finally
+        {
+            _filterInitializing = false;
+        }
+
+        UpdateActiveResultFilters();
+        if (!string.IsNullOrWhiteSpace(ViewModel.Query))
+            await ViewModel.SearchCommand.ExecuteAsync(null);
+    }
+
     private async void ClearResultFilters_Click(object sender, RoutedEventArgs e)
     {
         _filterInitializing = true;
@@ -488,6 +661,7 @@ public sealed partial class SearchPage : Page
         ViewModel.ContentRating = null;
         ViewModel.Resolution = null;
         ViewModel.Country = null;
+        UpdateActiveResultFilters();
         if (!string.IsNullOrWhiteSpace(ViewModel.Query)) await ViewModel.SearchCommand.ExecuteAsync(null);
     }
 

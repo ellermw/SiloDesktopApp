@@ -5274,7 +5274,7 @@ public sealed partial class ItemDetailPage : Page
         {
             XamlRoot = this.XamlRoot,
         };
-        dialog.SubtitleDownloaded += async () =>
+        dialog.SubtitleDownloaded += async _ =>
         {
             // Refresh the watch-detail so the new subtitle appears in
             // SubtitleTracks and the popover can reflect it next open.

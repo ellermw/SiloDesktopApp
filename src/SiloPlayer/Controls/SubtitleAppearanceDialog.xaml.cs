@@ -104,7 +104,6 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         BuildPills(BgStylePillsHost, BackgroundStyleOptions, v => _state.BackgroundStyle = v, () => _state.BackgroundStyle);
         BuildPills(PositionPillsHost, PositionOptions, v => _state.Position = v, () => _state.Position);
         BuildColorSwatches(FontColorSwatchHost, FontColorPalette, hex => _state.FontColor = hex, () => _state.FontColor);
-        BuildColorSwatches(OutlineColorSwatchHost, FontColorPalette, hex => _state.TextOutlineColor = hex, () => _state.TextOutlineColor);
         BuildColorSwatches(BgColorSwatchHost, BgColorPalette, hex => _state.BackgroundColor = hex, () => _state.BackgroundColor);
 
         this.Opened += async (_, _) =>
@@ -209,7 +208,6 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
                 if (ReferenceEquals(host, BgStylePillsHost))
                 {
                     UpdateBgRowsVisibility();
-                    UpdateOutlineColorVisibility();
                 }
                 ScheduleSave();
             };
@@ -281,11 +279,9 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         SyncPillGroup(BgStylePillsHost, () => _state.BackgroundStyle);
         SyncPillGroup(PositionPillsHost, () => _state.Position);
         SyncSwatches(FontColorSwatchHost, () => _state.FontColor);
-        SyncSwatches(OutlineColorSwatchHost, () => _state.TextOutlineColor);
         SyncSwatches(BgColorSwatchHost, () => _state.BackgroundColor);
 
         OutlineToggle.IsOn = _state.TextOutline;
-        UpdateOutlineColorVisibility();
         OpacitySlider.Value = _state.BackgroundOpacity;
         OpacityValueLabel.Text = $"{_state.BackgroundOpacity}%";
 
@@ -367,7 +363,6 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     {
         if (_loading) return;
         _state.TextOutline = OutlineToggle.IsOn;
-        UpdateOutlineColorVisibility();
         ScheduleSave();
     }
 
@@ -401,11 +396,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         catch { }
     }
 
-    private void UpdateOutlineColorVisibility()
-    {
-        OutlineColorRow.Opacity = _state.TextOutline || _state.BackgroundStyle == "outline" ? 1 : 0.4;
-        OutlineColorSwatchHost.IsHitTestVisible = _state.TextOutline || _state.BackgroundStyle == "outline";
-    }
+    private void Close_Click(object sender, RoutedEventArgs e) => Hide();
 
     // ── Helpers ──────────────────────────────────────────────────────────
 

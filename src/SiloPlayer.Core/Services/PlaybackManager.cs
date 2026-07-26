@@ -118,6 +118,9 @@ public class PlaybackManager : IDisposable
         // shipped in this build. Advertising less forces needless transcodes;
         // advertising more can make the server choose an unplayable stream.
         MpvNativePlaybackCapabilities.ApplyTo(request, _audioPassthrough);
+        request.MaxResolution = TranscodeQualityPolicy.ResolveMaximumResolution(
+            request.MaxResolution,
+            _authService.SelectedProfile?.QualityPreference);
 
         LogToStateTrace($"StartSession: fileId={fileId}, pos={startPosition}, force={forceStartPosition}, codecs_video=[{string.Join(",", request.CodecsVideo)}], codecs_audio=[{string.Join(",", request.CodecsAudio)}], containers=[{string.Join(",", request.Containers)}], max_res={request.MaxResolution}, hdr={request.Hdr}");
 

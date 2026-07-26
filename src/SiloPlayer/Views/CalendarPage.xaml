@@ -152,6 +152,7 @@
         <ScrollViewer
             x:Name="ContentScrollViewer"
             IsScrollInertiaEnabled="True"
+            ViewChanged="ContentScrollViewer_ViewChanged"
             VerticalScrollBarVisibility="Auto"
             HorizontalScrollBarVisibility="Disabled">
 

@@ -6,26 +6,53 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="Add Subtitles"
-    CloseButtonText="Close"
-    DefaultButton="Primary">
+    Title=""
+    Background="#FF171717"
+    Foreground="White">
 
-    <Grid MinWidth="680" MinHeight="560" RowSpacing="12">
+    <Grid MinWidth="320" MaxWidth="480" MaxHeight="680" RowSpacing="0">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
+        <!-- WebUI modal header -->
+        <Grid Grid.Row="0" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock
+                Grid.Column="0"
+                Text="Add Subtitles"
+                FontSize="14"
+                FontWeight="SemiBold"
+                VerticalAlignment="Center"
+                Foreground="White" />
+            <Button
+                Grid.Column="1"
+                Width="32"
+                Height="32"
+                Padding="0"
+                Background="Transparent"
+                BorderThickness="0"
+                ToolTipService.ToolTip="Close"
+                AutomationProperties.Name="Close"
+                Click="Close_Click">
+                <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="#99FFFFFF" />
+            </Button>
+        </Grid>
+
         <!-- Upload subtitle -->
         <Border
-            Grid.Row="0"
-            Padding="14"
-            CornerRadius="12"
-            BorderBrush="{StaticResource BorderBrush}"
-            BorderThickness="1"
-            Background="{StaticResource CardBackgroundBrush}">
+            Grid.Row="1"
+            Padding="0,0,0,12"
+            BorderBrush="#1AFFFFFF"
+            BorderThickness="0,0,0,1">
             <StackPanel Spacing="10">
                 <StackPanel Spacing="2">
                     <TextBlock
@@ -34,72 +61,106 @@
                         FontWeight="SemiBold"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock
-                        Text="Browse for SRT, VTT, ASS, SSA, or SUB files up to 5 MB. Language is detected automatically when possible."
+                        Text="Drag and drop or browse for SRT, VTT, ASS, SSA, or SUB files up to 5 MB. Language is detected automatically when possible."
                         FontSize="12"
                         TextWrapping="Wrap"
                         Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
 
+                <Button
+                    x:Name="BrowseUploadButton"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Padding="16,18"
+                    Background="#0DFFFFFF"
+                    BorderBrush="#33FFFFFF"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    AllowDrop="True"
+                    DragOver="UploadDropTarget_DragOver"
+                    Drop="UploadDropTarget_Drop"
+                    Click="BrowseUploadButton_Click">
+                    <StackPanel Spacing="3" HorizontalAlignment="Center">
+                        <FontIcon Glyph="&#xE898;" FontSize="18" Foreground="#B3FFFFFF" />
+                        <TextBlock Text="Drag and drop a subtitle file" FontSize="13" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" />
+                        <TextBlock Text="or click to browse · SRT, VTT, ASS, SSA, or SUB" FontSize="11"
+                                   Foreground="#80FFFFFF" HorizontalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
                 <Grid ColumnSpacing="8">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="170" />
-                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
-                    <Button
-                        x:Name="BrowseUploadButton"
-                        Grid.Column="0"
-                        Content="Browse..."
-                        Click="BrowseUploadButton_Click" />
-
                     <ComboBox
                         x:Name="UploadLanguageComboBox"
-                        Grid.Column="1"
+                        Grid.Column="0"
                         HorizontalAlignment="Stretch"
                         PlaceholderText="Language">
+                        <ComboBoxItem Content="Arabic" Tag="ar" />
+                        <ComboBoxItem Content="Bengali" Tag="bn" />
+                        <ComboBoxItem Content="Bulgarian" Tag="bg" />
+                        <ComboBoxItem Content="Chinese" Tag="zh" />
+                        <ComboBoxItem Content="Croatian" Tag="hr" />
+                        <ComboBoxItem Content="Czech" Tag="cs" />
+                        <ComboBoxItem Content="Danish" Tag="da" />
+                        <ComboBoxItem Content="Dutch" Tag="nl" />
                         <ComboBoxItem Content="English" Tag="en" IsSelected="True" />
-                        <ComboBoxItem Content="Spanish" Tag="es" />
+                        <ComboBoxItem Content="Finnish" Tag="fi" />
                         <ComboBoxItem Content="French" Tag="fr" />
                         <ComboBoxItem Content="German" Tag="de" />
+                        <ComboBoxItem Content="Greek" Tag="el" />
+                        <ComboBoxItem Content="Hebrew" Tag="he" />
+                        <ComboBoxItem Content="Hindi" Tag="hi" />
+                        <ComboBoxItem Content="Hungarian" Tag="hu" />
+                        <ComboBoxItem Content="Indonesian" Tag="id" />
                         <ComboBoxItem Content="Italian" Tag="it" />
-                        <ComboBoxItem Content="Portuguese" Tag="pt" />
-                        <ComboBoxItem Content="Dutch" Tag="nl" />
-                        <ComboBoxItem Content="Polish" Tag="pl" />
-                        <ComboBoxItem Content="Swedish" Tag="sv" />
-                        <ComboBoxItem Content="Russian" Tag="ru" />
                         <ComboBoxItem Content="Japanese" Tag="ja" />
                         <ComboBoxItem Content="Korean" Tag="ko" />
-                        <ComboBoxItem Content="Chinese (Simplified)" Tag="zh" />
-                        <ComboBoxItem Content="Arabic" Tag="ar" />
+                        <ComboBoxItem Content="Malay" Tag="ms" />
+                        <ComboBoxItem Content="Norwegian" Tag="no" />
+                        <ComboBoxItem Content="Persian" Tag="fa" />
+                        <ComboBoxItem Content="Polish" Tag="pl" />
+                        <ComboBoxItem Content="Portuguese" Tag="pt" />
+                        <ComboBoxItem Content="Romanian" Tag="ro" />
+                        <ComboBoxItem Content="Russian" Tag="ru" />
+                        <ComboBoxItem Content="Slovak" Tag="sk" />
+                        <ComboBoxItem Content="Slovenian" Tag="sl" />
+                        <ComboBoxItem Content="Spanish" Tag="es" />
+                        <ComboBoxItem Content="Swedish" Tag="sv" />
+                        <ComboBoxItem Content="Tamil" Tag="ta" />
+                        <ComboBoxItem Content="Telugu" Tag="te" />
+                        <ComboBoxItem Content="Thai" Tag="th" />
                         <ComboBoxItem Content="Turkish" Tag="tr" />
+                        <ComboBoxItem Content="Ukrainian" Tag="uk" />
+                        <ComboBoxItem Content="Vietnamese" Tag="vi" />
                     </ComboBox>
 
                     <ToggleSwitch
                         x:Name="UploadHearingImpairedToggle"
-                        Grid.Column="2"
-                        Header="HI"
-                        OffContent=""
-                        OnContent="" />
-
-                    <TextBlock
-                        x:Name="UploadFileText"
-                        Grid.Column="3"
-                        Text="No file selected"
-                        FontSize="12"
-                        Foreground="{StaticResource SecondaryTextBrush}"
-                        VerticalAlignment="Center"
-                        TextTrimming="CharacterEllipsis" />
+                        Grid.Column="1"
+                        OffContent="HI"
+                        OnContent="HI"
+                        VerticalAlignment="Center" />
 
                     <Button
                         x:Name="UploadButton"
-                        Grid.Column="4"
+                        Grid.Column="2"
                         Content="Upload"
                         IsEnabled="False"
                         Click="UploadButton_Click" />
                 </Grid>
+
+                <TextBlock
+                    x:Name="UploadFileText"
+                    Text="No file selected"
+                    FontSize="11"
+                    Foreground="#99FFFFFF"
+                    TextTrimming="CharacterEllipsis" />
 
                 <TextBlock
                     x:Name="UploadStatusText"
@@ -109,8 +170,16 @@
             </StackPanel>
         </Border>
 
+        <TextBlock
+            Grid.Row="2"
+            Text="Search online"
+            Margin="0,10,0,8"
+            FontSize="12"
+            FontWeight="SemiBold"
+            Foreground="#99FFFFFF" />
+
         <!-- Language picker + Search -->
-        <Grid Grid.Row="1" ColumnSpacing="8">
+        <Grid Grid.Row="3" ColumnSpacing="8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
@@ -121,21 +190,43 @@
                 Grid.Column="0"
                 HorizontalAlignment="Stretch"
                 PlaceholderText="Language">
+                <ComboBoxItem Content="Arabic" Tag="ar" />
+                <ComboBoxItem Content="Bengali" Tag="bn" />
+                <ComboBoxItem Content="Bulgarian" Tag="bg" />
+                <ComboBoxItem Content="Chinese" Tag="zh" />
+                <ComboBoxItem Content="Croatian" Tag="hr" />
+                <ComboBoxItem Content="Czech" Tag="cs" />
+                <ComboBoxItem Content="Danish" Tag="da" />
+                <ComboBoxItem Content="Dutch" Tag="nl" />
                 <ComboBoxItem Content="English" Tag="en" IsSelected="True" />
-                <ComboBoxItem Content="Spanish" Tag="es" />
+                <ComboBoxItem Content="Finnish" Tag="fi" />
                 <ComboBoxItem Content="French" Tag="fr" />
                 <ComboBoxItem Content="German" Tag="de" />
+                <ComboBoxItem Content="Greek" Tag="el" />
+                <ComboBoxItem Content="Hebrew" Tag="he" />
+                <ComboBoxItem Content="Hindi" Tag="hi" />
+                <ComboBoxItem Content="Hungarian" Tag="hu" />
+                <ComboBoxItem Content="Indonesian" Tag="id" />
                 <ComboBoxItem Content="Italian" Tag="it" />
-                <ComboBoxItem Content="Portuguese" Tag="pt" />
-                <ComboBoxItem Content="Dutch" Tag="nl" />
-                <ComboBoxItem Content="Polish" Tag="pl" />
-                <ComboBoxItem Content="Swedish" Tag="sv" />
-                <ComboBoxItem Content="Russian" Tag="ru" />
                 <ComboBoxItem Content="Japanese" Tag="ja" />
                 <ComboBoxItem Content="Korean" Tag="ko" />
-                <ComboBoxItem Content="Chinese (Simplified)" Tag="zh" />
-                <ComboBoxItem Content="Arabic" Tag="ar" />
+                <ComboBoxItem Content="Malay" Tag="ms" />
+                <ComboBoxItem Content="Norwegian" Tag="no" />
+                <ComboBoxItem Content="Persian" Tag="fa" />
+                <ComboBoxItem Content="Polish" Tag="pl" />
+                <ComboBoxItem Content="Portuguese" Tag="pt" />
+                <ComboBoxItem Content="Romanian" Tag="ro" />
+                <ComboBoxItem Content="Russian" Tag="ru" />
+                <ComboBoxItem Content="Slovak" Tag="sk" />
+                <ComboBoxItem Content="Slovenian" Tag="sl" />
+                <ComboBoxItem Content="Spanish" Tag="es" />
+                <ComboBoxItem Content="Swedish" Tag="sv" />
+                <ComboBoxItem Content="Tamil" Tag="ta" />
+                <ComboBoxItem Content="Telugu" Tag="te" />
+                <ComboBoxItem Content="Thai" Tag="th" />
                 <ComboBoxItem Content="Turkish" Tag="tr" />
+                <ComboBoxItem Content="Ukrainian" Tag="uk" />
+                <ComboBoxItem Content="Vietnamese" Tag="vi" />
             </ComboBox>
             <Button
                 x:Name="SearchButton"
@@ -150,16 +241,18 @@
         </Grid>
 
         <!-- Results list -->
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="4" Margin="0,8,0,0">
             <TextBlock
                 x:Name="EmptyStateText"
-                Text="Pick a language and tap Search."
+                Text="Select a language and press Search."
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"
                 FontSize="13"
                 Opacity="0.7" />
             <ListView
                 x:Name="ResultsList"
+                MinHeight="96"
+                MaxHeight="360"
                 SelectionMode="None"
                 IsItemClickEnabled="False" />
         </Grid>
@@ -167,7 +260,7 @@
         <!-- Status line -->
         <TextBlock
             x:Name="StatusText"
-            Grid.Row="3"
+            Grid.Row="5"
             FontSize="11"
             Opacity="0.75" />
     </Grid>

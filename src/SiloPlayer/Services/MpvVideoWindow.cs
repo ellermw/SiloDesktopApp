@@ -31,9 +31,12 @@ public sealed class MpvVideoWindow : IDisposable
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint SWP_NOZORDER = 0x0004;
     private const uint SWP_SHOWWINDOW = 0x0040;
+    private const uint SWP_NOCOPYBITS = 0x0100;
+    private const uint SWP_NOSENDCHANGING = 0x0400;
     private const int SW_HIDE = 0;
     private const int SW_SHOWNOACTIVATE = 4;
     private const int GWL_STYLE = -16;
+    private const int DWMWA_TRANSITIONS_FORCEDISABLED = 3;
 
     public event Action? EscapeRequested;
     public event Action? MinimizeRequested;
@@ -62,6 +65,16 @@ public sealed class MpvVideoWindow : IDisposable
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
         int x, int y, int cx, int cy, uint uFlags);
 
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(
+        IntPtr hwnd,
+        int dwAttribute,
+        ref int pvAttribute,
+        int cbAttribute);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmFlush();
+
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
@@ -82,6 +95,9 @@ public sealed class MpvVideoWindow : IDisposable
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
 
     [DllImport("user32.dll")]
     private static extern IntPtr SetCapture(IntPtr hWnd);
@@ -254,6 +270,17 @@ public sealed class MpvVideoWindow : IDisposable
 
         _hwnd = hwnd;
         s_windows[hwnd] = this;
+
+        // DWM normally animates owned-window geometry changes. That makes the
+        // popup frame visibly travel through intermediate sizes after mpv has
+        // already resized its swap chain. This surface should commit its frame
+        // and video together as one fullscreen/windowed snap.
+        var disableTransitions = 1;
+        _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TRANSITIONS_FORCEDISABLED,
+            ref disableTransitions,
+            Marshal.SizeOf<int>());
     }
 
     public void Show()
@@ -272,6 +299,10 @@ public sealed class MpvVideoWindow : IDisposable
     public void EnterFullscreen(bool activate = true)
     {
         if (_hwnd == IntPtr.Zero) return;
+        // Fullscreen is a real playback surface, never the post-roll/mini
+        // preview. Leaving this stale makes the next mouse-down invoke
+        // ExpandRequested instead of forwarding the click to the OSC.
+        _isMiniBar = false;
         // Fullscreen can be requested directly from the popup while it is in
         // picture-in-picture. Drop the topmost PiP contract first so the
         // fullscreen window cannot remain above unrelated applications.
@@ -291,13 +322,14 @@ public sealed class MpvVideoWindow : IDisposable
         var fullscreenFlags = activate
             ? SWP_SHOWWINDOW
             : SWP_SHOWWINDOW | SWP_NOACTIVATE;
-        SetWindowPos(_hwnd, HWND_TOP,
-            mi.rcMonitor.Left, mi.rcMonitor.Top,
-            mi.rcMonitor.Right - mi.rcMonitor.Left,
-            mi.rcMonitor.Bottom - mi.rcMonitor.Top,
-            fullscreenFlags);
+        ApplyWindowRect(
+            HWND_TOP,
+            mi.rcMonitor,
+            fullscreenFlags,
+            preserveOldClientBits: false);
         if (activate)
             SetForegroundWindow(_hwnd);
+        _ = DwmFlush();
         // Re-assert position after 200ms — mpv's internal fullscreen handling
         // may reposition the window after our call.
         System.Threading.Tasks.Task.Delay(200).ContinueWith(_ =>
@@ -315,11 +347,11 @@ public sealed class MpvVideoWindow : IDisposable
         var flags = SWP_NOACTIVATE | SWP_SHOWWINDOW;
         if (preserveZOrder)
             flags |= SWP_NOZORDER;
-        SetWindowPos(_hwnd, preserveZOrder ? IntPtr.Zero : HWND_TOP,
-            _fullscreenRect.Left, _fullscreenRect.Top,
-            _fullscreenRect.Right - _fullscreenRect.Left,
-            _fullscreenRect.Bottom - _fullscreenRect.Top,
-            flags);
+        ApplyWindowRect(
+            preserveZOrder ? IntPtr.Zero : HWND_TOP,
+            _fullscreenRect,
+            flags,
+            preserveOldClientBits: false);
     }
 
     private RECT _fullscreenRect;
@@ -334,9 +366,47 @@ public sealed class MpvVideoWindow : IDisposable
         _isFullscreen = false;
         // Owned window — just reposition to client area, z-order is automatic.
         MatchParentPosition();
+        _ = DwmFlush();
     }
 
-    public bool IsFullscreen => _isFullscreen;
+    /// <summary>
+    /// Returns fullscreen only when this popup entered its native fullscreen
+    /// path and its real window rectangle still matches the monitor. The
+    /// one-way guard is intentional: the popup can also cover the monitor
+    /// because its owner entered main-window fullscreen, which must not be
+    /// mistaken for popup fullscreen.
+    /// </summary>
+    public bool IsFullscreen => SynchronizeFullscreenState();
+
+    public bool SynchronizeFullscreenState()
+    {
+        if (!_isFullscreen || _hwnd == IntPtr.Zero)
+            return false;
+
+        if (!GetWindowRect(_hwnd, out var windowRect))
+        {
+            _isFullscreen = false;
+            return false;
+        }
+
+        var monitor = MonitorFromWindow(_hwnd, 2 /* MONITOR_DEFAULTTONEAREST */);
+        var monitorInfo = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+        if (monitor == IntPtr.Zero || !GetMonitorInfoW(monitor, ref monitorInfo))
+        {
+            _isFullscreen = false;
+            return false;
+        }
+
+        const int tolerance = 2;
+        var actual = Math.Abs(windowRect.Left - monitorInfo.rcMonitor.Left) <= tolerance &&
+                     Math.Abs(windowRect.Top - monitorInfo.rcMonitor.Top) <= tolerance &&
+                     Math.Abs(windowRect.Right - monitorInfo.rcMonitor.Right) <= tolerance &&
+                     Math.Abs(windowRect.Bottom - monitorInfo.rcMonitor.Bottom) <= tolerance;
+        if (!actual)
+            _isFullscreen = false;
+        return actual;
+    }
+    public bool IsForeground => _hwnd != IntPtr.Zero && GetForegroundWindow() == _hwnd;
     private bool _isFullscreen;
     private bool _isMiniBar;
     private RECT _savedRect;
@@ -423,16 +493,69 @@ public sealed class MpvVideoWindow : IDisposable
     public void MatchParentPosition()
     {
         if (_hwnd == IntPtr.Zero || _parentHwnd == IntPtr.Zero) return;
+        _isMiniBar = false;
         ExitPictureInPicture();
         // Use client area (excludes title bar) so the title bar stays visible
         GetClientRect(_parentHwnd, out var client);
         var topLeft = new POINT { X = client.Left, Y = client.Top };
         ClientToScreen(_parentHwnd, ref topLeft);
         // Owned window stays above owner automatically — just reposition
-        SetWindowPos(_hwnd, IntPtr.Zero,
-            topLeft.X, topLeft.Y,
-            client.Right - client.Left, client.Bottom - client.Top,
-            SWP_NOZORDER | SWP_NOACTIVATE);
+        var target = new RECT
+        {
+            Left = topLeft.X,
+            Top = topLeft.Y,
+            Right = topLeft.X + client.Right - client.Left,
+            Bottom = topLeft.Y + client.Bottom - client.Top,
+        };
+        ApplyWindowRect(
+            IntPtr.Zero,
+            target,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+            preserveOldClientBits: false);
+    }
+
+    /// <summary>
+    /// Repositions the playback surface for its current mode. A WinUI owner
+    /// SizeChanged event can arrive during a fullscreen transition; matching
+    /// the owner unconditionally in that callback momentarily shrinks the
+    /// already-fullscreen popup through the owner's intermediate bounds.
+    /// </summary>
+    public void SynchronizePosition()
+    {
+        if (_hwnd == IntPtr.Zero)
+            return;
+
+        if (_isFullscreen)
+            PositionFullscreen(preserveZOrder: true);
+        else if (_isPictureInPicture)
+            EnterPictureInPicture();
+        else
+            MatchParentPosition();
+    }
+
+    private void ApplyWindowRect(
+        IntPtr insertAfter,
+        RECT rect,
+        uint flags,
+        bool preserveOldClientBits)
+    {
+        if (_hwnd == IntPtr.Zero)
+            return;
+
+        if (!preserveOldClientBits)
+            flags |= SWP_NOCOPYBITS;
+
+        // Skip WINDOWPOSCHANGING negotiation and send mpv only the committed
+        // rectangle through WINDOWPOSCHANGED.
+        flags |= SWP_NOSENDCHANGING;
+        SetWindowPos(
+            _hwnd,
+            insertAfter,
+            rect.Left,
+            rect.Top,
+            Math.Max(1, rect.Right - rect.Left),
+            Math.Max(1, rect.Bottom - rect.Top),
+            flags);
     }
 
     private bool _isPictureInPicture;
@@ -554,18 +677,42 @@ public sealed class MpvVideoWindow : IDisposable
         {
             int vk = (int)wParam & 0xFF;
             bool isRepeat = (lParam.ToInt64() & (1L << 30)) != 0;
-            // Browser parity: Escape exits fullscreen, but in windowed mode it
-            // belongs to the OSC so an open audio/subtitle/quality/chapter menu
-            // closes without terminating playback.
-            if (vk == 0x1B)
+            // Escape and controller B belong to the OSC first. The Lua layer
+            // closes any active menu/panel and reports an unhandled escape back
+            // to the host only when normal fullscreen/back behavior should run.
+            // This prevents Escape in fullscreen from leaving a menu stranded
+            // while the native window exits fullscreen underneath it.
+            const int VK_ESCAPE = 0x1B;
+            const int VK_GAMEPAD_B = 0xC4;
+            if (vk == VK_ESCAPE || vk == VK_GAMEPAD_B)
             {
                 if (!isRepeat)
                 {
-                    if (_isFullscreen)
-                        EscapeRequested?.Invoke();
+                    if (_mpv != null)
+                        _mpv.SendKeypress("ESC");
                     else
-                        _mpv?.SendKeypress("ESC");
+                        EscapeRequested?.Invoke();
                 }
+                return IntPtr.Zero;
+            }
+            const int VK_GAMEPAD_A = 0xC3;
+            if (vk == VK_GAMEPAD_A)
+            {
+                if (!isRepeat)
+                    _mpv?.SendScriptMessage("osc-controller-activate");
+                return IntPtr.Zero;
+            }
+            var controllerDirection = vk switch
+            {
+                0xCB or 0xD3 => "up",    // D-pad / left stick up
+                0xCC or 0xD4 => "down",  // D-pad / left stick down
+                0xCD or 0xD6 => "left",  // D-pad / left stick left
+                0xCE or 0xD5 => "right", // D-pad / left stick right
+                _ => null,
+            };
+            if (controllerDirection != null)
+            {
+                _mpv?.SendScriptMessage("osc-controller-nav", controllerDirection);
                 return IntPtr.Zero;
             }
             // N — minimize

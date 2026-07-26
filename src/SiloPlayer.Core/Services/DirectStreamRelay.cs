@@ -31,6 +31,7 @@ public sealed class DirectStreamRelay
     private readonly int _maxRetries;
     private readonly bool _supportsRanges;
     private readonly TimeSpan _upstreamIdleTimeout;
+    private string? _strongEntityTag;
 
     public DirectStreamRelay(
         HttpClient httpClient,
@@ -78,11 +79,13 @@ public sealed class DirectStreamRelay
 
             try
             {
+                var resumeEntityTag = Volatile.Read(ref _strongEntityTag);
                 using var request = CreateRequest(
                     nextOffset,
                     endOffset,
                     requestedRange is not null,
-                    headOnly);
+                    headOnly,
+                    resumeEntityTag);
                 using var response = await _httpClient.SendAsync(
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
@@ -101,6 +104,25 @@ public sealed class DirectStreamRelay
                     await DelayBeforeRetryAsync(attempts, cancellationToken);
                     continue;
                 }
+
+                // A strong If-Range validator returning 200 means the source
+                // entity changed. Never splice bytes from the replacement into
+                // mpv's active representation; close this relay so the player
+                // can perform its normal full-session recovery.
+                var responseEntityTag = response.Headers.ETag is { IsWeak: false } strongTag
+                    ? strongTag.ToString()
+                    : null;
+                if (_supportsRanges &&
+                    !string.IsNullOrWhiteSpace(resumeEntityTag) &&
+                    (nextOffset > 0 || requestedRange is not null) &&
+                    (response.StatusCode == HttpStatusCode.OK ||
+                     (!string.IsNullOrWhiteSpace(responseEntityTag) &&
+                      !string.Equals(responseEntityTag, resumeEntityTag, StringComparison.Ordinal))))
+                {
+                    throw new DirectStreamEntityChangedException();
+                }
+                if (!string.IsNullOrWhiteSpace(responseEntityTag))
+                    Volatile.Write(ref _strongEntityTag, responseEntityTag);
 
                 // An origin is allowed to ignore a client's initial Range request and
                 // return the complete representation with 200. It is not safe to accept
@@ -198,7 +220,12 @@ public sealed class DirectStreamRelay
         return Task.Delay(delayMs, cancellationToken);
     }
 
-    private HttpRequestMessage CreateRequest(long from, long? to, bool rangeWasRequested, bool headOnly)
+    private HttpRequestMessage CreateRequest(
+        long from,
+        long? to,
+        bool rangeWasRequested,
+        bool headOnly,
+        string? resumeEntityTag)
     {
         var request = new HttpRequestMessage(headOnly ? HttpMethod.Head : HttpMethod.Get, _remoteUri);
         var token = _accessTokenProvider();
@@ -207,7 +234,11 @@ public sealed class DirectStreamRelay
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         if (_supportsRanges && (from > 0 || rangeWasRequested))
+        {
             request.Headers.Range = new RangeHeaderValue(from, to);
+            if (!string.IsNullOrWhiteSpace(resumeEntityTag))
+                request.Headers.TryAddWithoutValidation("If-Range", resumeEntityTag);
+        }
 
         return request;
     }
@@ -308,6 +339,7 @@ public sealed class DirectStreamRelay
     private static bool IsTransient(Exception ex)
     {
         return ex is not DirectStreamWriteException &&
+               ex is not DirectStreamEntityChangedException &&
                (ex is HttpRequestException or IOException or TaskCanceledException or
                    OperationCanceledException or TimeoutException);
     }
@@ -337,6 +369,14 @@ public sealed class DirectStreamRelay
     {
         public DirectStreamWriteException(Exception innerException)
             : base("The downstream stream failed while writing.", innerException)
+        {
+        }
+    }
+
+    private sealed class DirectStreamEntityChangedException : IOException
+    {
+        public DirectStreamEntityChangedException()
+            : base("The direct-play source changed while playback was active.")
         {
         }
     }

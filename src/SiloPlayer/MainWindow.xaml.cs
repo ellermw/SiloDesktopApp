@@ -40,7 +40,15 @@ public sealed partial class MainWindow : Window
     private int _notificationUnreadCount;
     private bool _routeWantsCompactPane;
     private bool _isNarrowShell;
+    private bool _sidebarHoverExpanded;
+    private bool _pointerInsideSidebar;
+    private bool _profileFooterFlyoutOpen;
+    private bool _mobileHeaderHidden;
+    private DispatcherTimer? _sidebarHoverTimer;
+    private bool _isWindowActive;
     private double _currentWindowWidth = 1280;
+    private Type? _lastShellPageType;
+    private object? _lastShellParameter;
 
     public MainWindow()
     {
@@ -77,6 +85,12 @@ public sealed partial class MainWindow : Window
 
         NavView.PaneOpened += (_, _) => UpdateSidebarPanePresentation(isOpen: true);
         NavView.PaneClosed += (_, _) => UpdateSidebarPanePresentation(isOpen: false);
+        NavView.PointerMoved += NavView_PointerMoved;
+        NavView.PointerExited += NavView_PointerExited;
+        RootGrid.AddHandler(
+            UIElement.KeyDownEvent,
+            new Microsoft.UI.Xaml.Input.KeyEventHandler(RootGrid_KeyDown),
+            handledEventsToo: true);
         UpdateSidebarPanePresentation(NavView.IsPaneOpen);
 
         _navigationService.Frame = ContentFrame;
@@ -98,6 +112,7 @@ public sealed partial class MainWindow : Window
         // stays hidden until ShowMainNavigation() fires post-login.
         NavView.IsPaneVisible = false;
         MainServerActivityButton.SetHostVisibility(false);
+        MobileServerActivityButton.SetHostVisibility(false);
 
         // Wire Server Activity "View all" callbacks. Routes navigate through
         // AdminShellPage so the admin sidebar stays present — passing the target
@@ -114,21 +129,25 @@ public sealed partial class MainWindow : Window
             // otherwise the user sees two navigation panes side-by-side
             // (main nav + AdminShellPage's own admin nav).
             NavView.IsPaneVisible = false;
-        MainServerActivityButton.SetHostVisibility(false);
+            HideSharedServerActivity();
             _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminActivityPage));
         };
         MainServerActivityButton.OnViewTasks = () =>
         {
             NavView.IsPaneVisible = false;
-        MainServerActivityButton.SetHostVisibility(false);
+            HideSharedServerActivity();
             _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminTasksPage));
         };
         MainServerActivityButton.OnViewScans = () =>
         {
             NavView.IsPaneVisible = false;
-        MainServerActivityButton.SetHostVisibility(false);
+            HideSharedServerActivity();
             _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminLibrariesPage));
         };
+        MobileServerActivityButton.HideWhenEmpty = true;
+        MobileServerActivityButton.OnViewStreams = () => MainServerActivityButton.OnViewStreams?.Invoke();
+        MobileServerActivityButton.OnViewTasks = () => MainServerActivityButton.OnViewTasks?.Invoke();
+        MobileServerActivityButton.OnViewScans = () => MainServerActivityButton.OnViewScans?.Invoke();
 
         // Listen for player state changes
         _playerService = App.Services.GetRequiredService<PlayerService>();
@@ -146,6 +165,7 @@ public sealed partial class MainWindow : Window
 
         // Keep native video window matched to main window size
         this.SizeChanged += OnWindowSizeChanged;
+        this.Activated += OnWindowActivated;
 
         // Hide/show player popup when main window is minimized/restored
         if (AppWindow != null)
@@ -165,10 +185,25 @@ public sealed partial class MainWindow : Window
         UpdatePlayingNextLayout(e.Size.Width, e.Size.Height);
     }
 
+    private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
+    {
+        _isWindowActive = args.WindowActivationState != WindowActivationState.Deactivated;
+    }
+
     private void ApplyResponsiveShellLayout()
     {
         var isNarrow = _currentWindowWidth < 1024;
         _isNarrowShell = isNarrow;
+        if (isNarrow)
+        {
+            _sidebarHoverExpanded = false;
+            _pointerInsideSidebar = false;
+            StopSidebarHoverTimer();
+        }
+        else
+        {
+            SetMobileHeaderHidden(false);
+        }
 
         // Layout.tsx hides the fixed desktop sidebar below Tailwind's lg
         // breakpoint and exposes navigation through a mobile menu. WinUI's
@@ -177,14 +212,195 @@ public sealed partial class MainWindow : Window
         NavView.PaneDisplayMode = isNarrow
             ? NavigationViewPaneDisplayMode.LeftMinimal
             : NavigationViewPaneDisplayMode.Left;
-        NavView.IsPaneToggleButtonVisible = isNarrow;
+        // The current WebUI supplies a complete mobile header instead of a
+        // lone stock hamburger row.
+        NavView.IsPaneToggleButtonVisible = false;
+        MobileShellHeader.Visibility =
+            isNarrow &&
+            NavView.IsPaneVisible &&
+            CanExposeAuthenticatedNavigation &&
+            ContentFrame.Content is not Views.Admin.AdminShellPage
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
         if (!NavView.IsPaneVisible)
+        {
+            UpdateServerActivityHostVisibility();
             return;
+        }
 
-        var shouldOpen = !isNarrow && !_routeWantsCompactPane;
+        var shouldOpen = !isNarrow &&
+            (!_routeWantsCompactPane || _sidebarHoverExpanded || _profileFooterFlyoutOpen);
         NavView.IsPaneOpen = shouldOpen;
         UpdateSidebarPanePresentation(shouldOpen);
+        UpdateServerActivityHostVisibility();
+    }
+
+    public void SetMobileHeaderHidden(bool hidden)
+    {
+        hidden &= _isNarrowShell;
+        if (_mobileHeaderHidden == hidden)
+            return;
+
+        _mobileHeaderHidden = hidden;
+        MobileShellHeader.Translation = hidden
+            ? new System.Numerics.Vector3(0, -96, 0)
+            : System.Numerics.Vector3.Zero;
+        MobileShellHeader.Opacity = hidden ? 0 : 1;
+        MobileShellHeader.IsHitTestVisible = !hidden;
+    }
+
+    private void UpdateServerActivityHostVisibility()
+    {
+        var shellActive =
+            NavView.IsPaneVisible &&
+            CanExposeAuthenticatedNavigation &&
+            ContentFrame.Content is not Views.Admin.AdminShellPage;
+        var canShow = shellActive && AuthorizationPolicy.IsActingAdmin(_authService);
+        MainServerActivityButton.SetHostVisibility(canShow && !_isNarrowShell);
+        MobileServerActivityButton.SetHostVisibility(canShow && _isNarrowShell);
+    }
+
+    private void HideSharedServerActivity()
+    {
+        MainServerActivityButton.SetHostVisibility(false);
+        MobileServerActivityButton.SetHostVisibility(false);
+    }
+
+    private void MobileMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (!CanExposeAuthenticatedNavigation)
+            return;
+
+        NavView.IsPaneOpen = true;
+        UpdateSidebarPanePresentation(isOpen: true);
+    }
+
+    private void MobileHome_Click(object sender, RoutedEventArgs e)
+    {
+        _navigationService.Navigate<HomePage>();
+        CloseMobileNavigationPane();
+    }
+
+    private void MobileSearch_Click(object sender, RoutedEventArgs e)
+    {
+        _navigationService.Navigate<SearchPage>();
+        CloseMobileNavigationPane();
+    }
+
+    private void MobileProfile_Click(object sender, RoutedEventArgs e)
+    {
+        // Layout.tsx links the compact-header avatar directly to playback
+        // settings; the full account menu remains in the sidebar drawer.
+        _navigationService.Navigate<SettingsPage>();
+        CloseMobileNavigationPane();
+    }
+
+    private void CloseMobileNavigationPane()
+    {
+        if (!_isNarrowShell)
+            return;
+
+        NavView.IsPaneOpen = false;
+        UpdateSidebarPanePresentation(isOpen: false);
+    }
+
+    private void NavView_PointerMoved(
+        object sender,
+        Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_routeWantsCompactPane || _isNarrowShell || !NavView.IsPaneVisible)
+            return;
+
+        var pointerX = e.GetCurrentPoint(NavView).Position.X;
+        var paneWidth = NavView.IsPaneOpen
+            ? NavView.OpenPaneLength
+            : NavView.CompactPaneLength;
+        var isInsidePane = pointerX >= 0 && pointerX <= paneWidth;
+        if (isInsidePane == _pointerInsideSidebar)
+            return;
+
+        _pointerInsideSidebar = isInsidePane;
+        if (isInsidePane)
+        {
+            if (NavView.IsPaneOpen)
+                return;
+
+            StopSidebarHoverTimer();
+            _sidebarHoverTimer = new DispatcherTimer
+            {
+                // AppSidebar.tsx deliberately waits 150ms so merely crossing
+                // the compact rail does not expand it accidentally.
+                Interval = TimeSpan.FromMilliseconds(150),
+            };
+            _sidebarHoverTimer.Tick += SidebarHoverTimer_Tick;
+            _sidebarHoverTimer.Start();
+        }
+        else
+        {
+            StopSidebarHoverTimer();
+            CollapseImmersiveSidebarAfterPointerExit();
+        }
+    }
+
+    private void NavView_PointerExited(
+        object sender,
+        Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        _pointerInsideSidebar = false;
+        StopSidebarHoverTimer();
+        CollapseImmersiveSidebarAfterPointerExit();
+    }
+
+    private void SidebarHoverTimer_Tick(object? sender, object e)
+    {
+        StopSidebarHoverTimer();
+        if (!_pointerInsideSidebar ||
+            !_routeWantsCompactPane ||
+            _isNarrowShell ||
+            !NavView.IsPaneVisible)
+        {
+            return;
+        }
+
+        _sidebarHoverExpanded = true;
+        ApplyResponsiveShellLayout();
+    }
+
+    private void StopSidebarHoverTimer()
+    {
+        if (_sidebarHoverTimer == null)
+            return;
+
+        _sidebarHoverTimer.Stop();
+        _sidebarHoverTimer.Tick -= SidebarHoverTimer_Tick;
+        _sidebarHoverTimer = null;
+    }
+
+    private void CollapseImmersiveSidebarAfterPointerExit()
+    {
+        if (!_routeWantsCompactPane || _isNarrowShell || _profileFooterFlyoutOpen)
+            return;
+
+        _sidebarHoverExpanded = false;
+        ApplyResponsiveShellLayout();
+    }
+
+    private void ProfileFooterFlyout_Opened(object sender, object e)
+    {
+        _profileFooterFlyoutOpen = true;
+        if (_routeWantsCompactPane && !_isNarrowShell)
+        {
+            _sidebarHoverExpanded = true;
+            ApplyResponsiveShellLayout();
+        }
+    }
+
+    private void ProfileFooterFlyout_Closed(object sender, object e)
+    {
+        _profileFooterFlyoutOpen = false;
+        if (!_pointerInsideSidebar)
+            CollapseImmersiveSidebarAfterPointerExit();
     }
 
     private void OnAppWindowChanged(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args)
@@ -213,6 +429,9 @@ public sealed partial class MainWindow : Window
         _navigationService.Navigated -= OnNavigated_UpdateWindowTitle;
         _navigationService.Navigated -= OnNavigated_ApplyAccessibility;
         _navigationService.Navigated -= OnNavigated_SynchronizeShellChrome;
+        NavView.PointerMoved -= NavView_PointerMoved;
+        NavView.PointerExited -= NavView_PointerExited;
+        StopSidebarHoverTimer();
         StopPlayingNextCountdown();
     }
 
@@ -229,6 +448,8 @@ public sealed partial class MainWindow : Window
     {
         DispatcherQueue.TryEnqueue(() =>
         {
+            var shouldFocusOverlay = _isWindowActive || _playerService.IsPlaybackSurfaceForeground;
+
             // The early post-roll surface can already be visible when true EOF
             // arrives. In that case only transition the preview/countdown state;
             // do not rebuild the artwork and On Deck data.
@@ -282,22 +503,34 @@ public sealed partial class MainWindow : Window
             PlayingNextCountdownRing.Value = _playingNextRemaining;
             PlayingNextPlayNowText.Text = "Play Now";
             UpdatePlayingNextAutoPlayVisuals();
-            PlayingNextOverlay.Visibility = Visibility.Visible;
 
+            // The native mpv popup is an owned HWND above the WinUI content.
+            // Move or hide it before exposing the overlay so it cannot consume
+            // the first pointer interaction intended for Playing Next.
             if (playbackHasEnded)
                 _playerService.FinishPostRollPreview();
             else
                 _playerService.EnterPostRollPreview();
+
+            PlayingNextOverlay.Visibility = Visibility.Visible;
 
             // Match the current WebUI: entering post-roll early does not start
             // autoplay while the episode is still visibly playing.
             if (playbackHasEnded && hasNextEpisode && _playingNextAutoPlay)
                 StartPlayingNextCountdown();
 
-            if (hasNextEpisode)
-                PlayingNextPlayNowButton.Focus(FocusState.Programmatic);
-            else
-                PlayingNextCloseButton.Focus(FocusState.Programmatic);
+            // Never request focus from the background. Windows can translate a
+            // focus request on an inactive app into a flashing taskbar button,
+            // which was especially visible when auto-next advanced while the
+            // user was working in another application. Active playback still
+            // receives the expected keyboard/controller focus.
+            if (shouldFocusOverlay)
+            {
+                if (hasNextEpisode)
+                    PlayingNextPlayNowButton.Focus(FocusState.Programmatic);
+                else
+                    PlayingNextCloseButton.Focus(FocusState.Programmatic);
+            }
 
             // The effective-setting request must never hold the entire
             // post-roll surface behind network latency. Early post-roll gives
@@ -458,7 +691,26 @@ public sealed partial class MainWindow : Window
     }
 
     private void PlayingNextCancel_Click(object sender, RoutedEventArgs e)
+        => DismissPlayingNext();
+
+    private void PlayingNextClose_PointerPressed(
+        object sender,
+        Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        if (!e.GetCurrentPoint((UIElement)sender).Properties.IsLeftButtonPressed)
+            return;
+
+        // Dismiss on pointer-down so the owned native video HWND cannot regain
+        // the gesture before Button.Click is raised during a post-roll resize.
+        e.Handled = true;
+        DismissPlayingNext();
+    }
+
+    private void DismissPlayingNext()
+    {
+        if (PlayingNextOverlay.Visibility != Visibility.Visible)
+            return;
+
         Interlocked.Increment(ref _playingNextPresentationGeneration);
         StopPlayingNextCountdown();
         PlayingNextOverlay.Visibility = Visibility.Collapsed;
@@ -644,6 +896,12 @@ public sealed partial class MainWindow : Window
         // Only applies in Idle / Minimized states where the pane is
         // visible at all.
         _routeWantsCompactPane = IsDetailPage(pageType);
+        if (!_routeWantsCompactPane)
+        {
+            _sidebarHoverExpanded = false;
+            _pointerInsideSidebar = false;
+            StopSidebarHoverTimer();
+        }
         ApplyResponsiveShellLayout();
     }
 
@@ -945,7 +1203,7 @@ public sealed partial class MainWindow : Window
                 // authenticated navigation, so it must not re-layer the main
                 // shell controls after the Navigated handler hid them.
                 NavView.IsPaneVisible = false;
-                MainServerActivityButton.SetHostVisibility(false);
+                HideSharedServerActivity();
                 return;
             }
 
@@ -958,7 +1216,7 @@ public sealed partial class MainWindow : Window
             NavView.IsPaneOpen = true;
             ApplyResponsiveShellLayout();
             UpdateSidebarPanePresentation(NavView.IsPaneOpen);
-            MainServerActivityButton.SetHostVisibility(isAdmin);
+            UpdateServerActivityHostVisibility();
         });
 
         if (shouldHydrateShell)
@@ -1001,6 +1259,58 @@ public sealed partial class MainWindow : Window
             // previously let sidebar loading race the profile transition.
             _ = RunShellWorkAsync("library_navigation_load", LoadShellNavigationAsync);
         }
+    }
+
+    private void NavigationBackAccelerator_Invoked(
+        Microsoft.UI.Xaml.Input.KeyboardAccelerator sender,
+        Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = TryHandleShellBack();
+    }
+
+    private void RootGrid_PointerPressed(
+        object sender,
+        Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(RootGrid);
+        if (!point.Properties.IsXButton1Pressed)
+            return;
+
+        e.Handled = TryHandleShellBack();
+    }
+
+    private void RootGrid_KeyDown(
+        object sender,
+        Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.GamepadB)
+            return;
+
+        e.Handled = TryHandleShellBack();
+    }
+
+    private bool TryHandleShellBack()
+    {
+        if (PlayingNextOverlay.Visibility == Visibility.Visible)
+        {
+            DismissPlayingNext();
+            return true;
+        }
+
+        if (_isNarrowShell && NavView.IsPaneOpen)
+        {
+            CloseMobileNavigationPane();
+            return true;
+        }
+
+        if (_playerService.State is PlayerState.Expanded or PlayerState.Fullscreen)
+            return false;
+
+        if (!_navigationService.CanGoBack)
+            return false;
+
+        _navigationService.GoBack();
+        return true;
     }
 
     private string GetAuthenticatedShellKey()
@@ -1229,10 +1539,153 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void OnNavigated_SynchronizeShellChrome(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
-        if (e.SourcePageType != typeof(Views.Admin.AdminShellPage)) return;
+        _lastShellPageType = e.SourcePageType;
+        _lastShellParameter = e.Parameter;
 
-        NavView.IsPaneVisible = false;
-        MainServerActivityButton.SetHostVisibility(false);
+        if (e.SourcePageType == typeof(Views.Admin.AdminShellPage))
+        {
+            NavView.SelectedItem = null;
+            NavView.IsPaneVisible = false;
+            HideSharedServerActivity();
+            return;
+        }
+
+        if (!CanExposeAuthenticatedNavigation)
+        {
+            NavView.SelectedItem = null;
+            return;
+        }
+
+        // A Back operation or deep link can leave Admin without passing through
+        // its explicit exit button. Restore the shared shell at the frame
+        // boundary so it never remains hidden after returning to user pages.
+        NavView.IsPaneVisible = true;
+        ApplyResponsiveShellLayout();
+        SynchronizeSelectedNavigationItem(e.SourcePageType, e.Parameter);
+    }
+
+    private void ResynchronizeSelectedNavigationItem()
+    {
+        if (_lastShellPageType != null)
+            SynchronizeSelectedNavigationItem(_lastShellPageType, _lastShellParameter);
+    }
+
+    private void SynchronizeSelectedNavigationItem(Type pageType, object? parameter)
+    {
+        NavigationViewItem? selected = pageType switch
+        {
+            var type when type == typeof(HomePage) => FindNavigationItemByStringTag("Home"),
+            var type when type == typeof(SearchPage) => FindNavigationItemByStringTag("Search"),
+            var type when type == typeof(RecommendationsPage) => FindNavigationItemByStringTag("Recommendations"),
+            var type when type == typeof(RequestsPage) => FindNavigationItemByStringTag("Requests"),
+            var type when type == typeof(CalendarPage) => FindNavigationItemByStringTag("Calendar"),
+            var type when type == typeof(NotificationsPage) => FindNavigationItemByStringTag("Notifications"),
+            var type when type == typeof(WatchTogetherJoinPage) => FindNavigationItemByStringTag("WatchParty"),
+            var type when type == typeof(CollectionsPage) => FindNavigationItemByStringTag("Collections"),
+            var type when type == typeof(DownloadsPage) => FindNavigationItemByStringTag("Downloads"),
+            var type when type == typeof(LibraryPage) => FindLibraryNavigationItem(parameter),
+            var type when type == typeof(CollectionBrowsePage) => FindCollectionNavigationItem(parameter),
+            var type when type == typeof(PluginRoutePage) => FindPluginNavigationItem(parameter),
+            var type when type == typeof(CatalogPage) => FindCatalogNavigationItem(parameter),
+            _ => null,
+        };
+
+        NavView.SelectedItem = selected;
+    }
+
+    private NavigationViewItem? FindNavigationItemByStringTag(string tag) =>
+        FindNavigationItem(item =>
+            item.Tag is string itemTag &&
+            string.Equals(itemTag, tag, StringComparison.Ordinal));
+
+    private NavigationViewItem? FindLibraryNavigationItem(object? parameter)
+    {
+        var library = parameter switch
+        {
+            Library value => value,
+            LibraryPage.NavigationArgs args => args.Library,
+            _ => null,
+        };
+        return library == null
+            ? null
+            : FindNavigationItem(item => item.Tag is Library candidate && candidate.Id == library.Id);
+    }
+
+    private NavigationViewItem? FindCatalogNavigationItem(object? parameter)
+    {
+        if (parameter is not CatalogNavigation navigation)
+            return null;
+
+        var topLevelTag = navigation.Source.ToLowerInvariant() switch
+        {
+            "favorites" => "Favorites",
+            "watchlist" => "Watchlist",
+            "history" => "History",
+            _ => null,
+        };
+        if (topLevelTag != null)
+            return FindNavigationItemByStringTag(topLevelTag);
+
+        if (!string.Equals(navigation.Source, "section", StringComparison.OrdinalIgnoreCase) ||
+            navigation.LibraryId is not int libraryId ||
+            string.IsNullOrWhiteSpace(navigation.SectionId))
+        {
+            return null;
+        }
+
+        return FindNavigationItem(item =>
+            item.Tag is SidebarPinNavTag pin &&
+            pin.LibraryId == libraryId &&
+            string.Equals(pin.PinType, "section", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(pin.PinId, navigation.SectionId, StringComparison.Ordinal));
+    }
+
+    private NavigationViewItem? FindCollectionNavigationItem(object? parameter)
+    {
+        if (parameter is not CollectionBrowsePage.NavArgs navigation ||
+            navigation.LibraryId is not int libraryId)
+        {
+            return null;
+        }
+
+        return FindNavigationItem(item =>
+            item.Tag is SidebarPinNavTag pin &&
+            pin.LibraryId == libraryId &&
+            string.Equals(pin.PinType, "collection", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(pin.PinId, navigation.CollectionId, StringComparison.Ordinal));
+    }
+
+    private NavigationViewItem? FindPluginNavigationItem(object? parameter)
+    {
+        if (parameter is not PluginRoutePage.NavigationArgs navigation)
+            return null;
+
+        return FindNavigationItem(item =>
+            item.Tag is PluginAppNavTag plugin &&
+            plugin.InstallationId == navigation.InstallationId &&
+            string.Equals(plugin.RoutePath, navigation.RoutePath, StringComparison.Ordinal));
+    }
+
+    private NavigationViewItem? FindNavigationItem(Func<NavigationViewItem, bool> predicate)
+    {
+        NavigationViewItem? Search(IEnumerable<object> items)
+        {
+            foreach (var candidate in items)
+            {
+                if (candidate is not NavigationViewItem item)
+                    continue;
+                if (predicate(item))
+                    return item;
+
+                var nested = Search(item.MenuItems);
+                if (nested != null)
+                    return nested;
+            }
+
+            return null;
+        }
+
+        return Search(NavView.MenuItems);
     }
 
     private Task UpdateProfileDisplayAsync()
@@ -1258,10 +1711,18 @@ public sealed partial class MainWindow : Window
                     ProfileInitialText.Text = !string.IsNullOrEmpty(profile.Name)
                         ? profile.Name[0].ToString().ToUpperInvariant()
                         : "?";
+                    MobileProfileInitialText.Text = ProfileInitialText.Text;
                     // Populate dropdown header
                     ProfileDropdownInitial.Text = ProfileInitialText.Text;
                     ProfileDropdownName.Text = profile.Name;
-                    ProfileDropdownUsername.Text = _authService.CurrentUser?.Username ?? "";
+                    var username = _authService.CurrentUser?.Username ?? "";
+                    ProfileDropdownUsername.Text = username;
+                    ProfileDropdownUsername.Visibility =
+                        string.IsNullOrWhiteSpace(username) ||
+                        string.Equals(username, profile.Name, StringComparison.Ordinal)
+                            ? Visibility.Collapsed
+                            : Visibility.Visible;
+                    ApplyProfileAvatar(profile.AvatarUrl);
                 });
             }
         }
@@ -1269,6 +1730,36 @@ public sealed partial class MainWindow : Window
         {
             // Non-critical, leave default text
         }
+    }
+
+    private void ApplyProfileAvatar(string? avatarUrl)
+    {
+        if (!Uri.TryCreate(avatarUrl, UriKind.Absolute, out var avatarUri))
+        {
+            ProfileAvatarBrush.ImageSource = null;
+            ProfileDropdownAvatarBrush.ImageSource = null;
+            ProfileAvatarImage.Visibility = Visibility.Collapsed;
+            ProfileDropdownAvatarImage.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
+        bitmap.ImageFailed += (_, _) =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (ReferenceEquals(ProfileAvatarBrush.ImageSource, bitmap))
+                {
+                    ProfileAvatarImage.Visibility = Visibility.Collapsed;
+                    ProfileDropdownAvatarImage.Visibility = Visibility.Collapsed;
+                }
+            });
+        };
+        ProfileAvatarBrush.ImageSource = bitmap;
+        ProfileDropdownAvatarBrush.ImageSource = bitmap;
+        ProfileAvatarImage.Visibility = Visibility.Visible;
+        ProfileDropdownAvatarImage.Visibility = Visibility.Visible;
+        bitmap.UriSource = avatarUri;
     }
 
     public void HideMainNavigation()
@@ -1284,7 +1775,7 @@ public sealed partial class MainWindow : Window
         // Keep the Server Activity button in sync with the rest of the shell —
         // while the nav is hidden (login / profile select / setup), no admin
         // chrome should be visible.
-        MainServerActivityButton.SetHostVisibility(false);
+        HideSharedServerActivity();
     }
 
     private void NavView_PaneClosing(
@@ -1300,7 +1791,9 @@ public sealed partial class MainWindow : Window
         {
             UpdateSidebarPanePresentation(isOpen: false);
         }
-        else if (sender.IsPaneVisible && CanExposeAuthenticatedNavigation && !_routeWantsCompactPane)
+        else if (sender.IsPaneVisible &&
+                 CanExposeAuthenticatedNavigation &&
+                 (!_routeWantsCompactPane || _sidebarHoverExpanded || _profileFooterFlyoutOpen))
         {
             args.Cancel = true;
             UpdateSidebarPanePresentation(isOpen: true);
@@ -1323,7 +1816,7 @@ public sealed partial class MainWindow : Window
         NavView.IsPaneVisible = true;
         NavView.IsPaneOpen = true;
         ApplyResponsiveShellLayout();
-        MainServerActivityButton.SetHostVisibility(AuthorizationPolicy.IsActingAdmin(_authService));
+        UpdateServerActivityHostVisibility();
     }
 
     private void OnPlayerStateChanged(PlayerState state)
@@ -1446,11 +1939,11 @@ public sealed partial class MainWindow : Window
         LocalLog.AppendLine("state_trace.txt", msg);
     }
 
-    public Task ShowSubtitleAiDialogAsync()
-        => PlayerOverlayControl.ShowSubtitleAiDialogAsync();
+    public Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null)
+        => PlayerOverlayControl.ShowSubtitleAiDialogAsync(dialogXamlRoot);
 
-    public Task ShowMarkerEditDialogAsync()
-        => PlayerOverlayControl.ShowMarkerEditDialogAsync();
+    public Task ShowMarkerEditDialogAsync(XamlRoot? dialogXamlRoot = null)
+        => PlayerOverlayControl.ShowMarkerEditDialogAsync(dialogXamlRoot);
 
     public void NavigateToHome()
     {
@@ -1568,6 +2061,8 @@ public sealed partial class MainWindow : Window
 
             NavView.MenuItems.Insert(insertIndex++, navItem);
         }
+
+        ResynchronizeSelectedNavigationItem();
     }
 
     private void RemoveDynamicLibraryNavItems()
@@ -1686,6 +2181,8 @@ public sealed partial class MainWindow : Window
                 });
             }
         }
+
+        ResynchronizeSelectedNavigationItem();
     }
 
     public IReadOnlyList<(string Id, string Label)> GetSidebarPins(int libraryId, string pinType)
@@ -1915,7 +2412,7 @@ public sealed partial class MainWindow : Window
     private void Admin_Click(object sender, RoutedEventArgs e)
     {
         NavView.IsPaneVisible = false;
-        MainServerActivityButton.SetHostVisibility(false);
+        HideSharedServerActivity();
         _navigationService.Navigate<Views.Admin.AdminShellPage>();
     }
 
@@ -2011,6 +2508,8 @@ public sealed partial class MainWindow : Window
                     pluginTag.RoutePath,
                     pluginTag.Label));
             }
+
+            CloseMobileNavigationPane();
         }
         catch (Exception ex)
         {
@@ -2142,7 +2641,7 @@ public sealed partial class MainWindow : Window
             HideImpersonationBanner();
 
             NavView.IsPaneVisible = false;
-        MainServerActivityButton.SetHostVisibility(false);
+            HideSharedServerActivity();
 
             const string userPrefix = "/admin/users/";
             if (returnPath.StartsWith(userPrefix, StringComparison.OrdinalIgnoreCase) &&

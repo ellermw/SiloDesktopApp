@@ -171,6 +171,7 @@ local state = {
     subtitle_menu_items = {},
     subtitle_menu_offset = 1,
     subtitle_ai_available = false,
+    restore_subtitle_focus_after_dialog = false,
 
     -- Audio track menu
     audio_tracks = {},
@@ -213,6 +214,7 @@ local state = {
     quality_menu_items  = {},
     keyboard_menu_kind = nil,
     keyboard_menu_index = -1,
+    controller_focus_name = nil,
 
     -- Skip markers (intro/credits)
     intro_start     = 0,
@@ -2200,6 +2202,29 @@ local function render_osc()
     draw_fullscreen_icon(ass, bf.cx, bf.cy, bf.w * 0.68,
         config.text_color, "20", ma, state.fullscreen)
 
+    -- Native keyboard/controller focus. ASS controls are not real DOM
+    -- elements, so provide the same visible focus affordance the WebUI gets
+    -- from browser focus rings.
+    if state.controller_focus_name
+        and not state.subtitle_menu_visible
+        and not state.quality_menu_visible
+        and not state.audio_menu_visible
+        and not state.chapter_menu_visible then
+        local focus_rect = L[state.controller_focus_name]
+        if focus_rect then
+            local inset = math.max(1, math.floor(2 * sc))
+            local thickness = math.max(1, math.floor(2 * sc))
+            local x1 = focus_rect.x - inset
+            local y1 = focus_rect.y - inset
+            local x2 = focus_rect.x + focus_rect.w + inset
+            local y2 = focus_rect.y + focus_rect.h + inset
+            draw_rect(ass, x1, y1, x2, y1 + thickness, config.accent_color, "10", ma)
+            draw_rect(ass, x1, y2 - thickness, x2, y2, config.accent_color, "10", ma)
+            draw_rect(ass, x1, y1, x1 + thickness, y2, config.accent_color, "10", ma)
+            draw_rect(ass, x2 - thickness, y1, x2, y2, config.accent_color, "10", ma)
+        end
+    end
+
     render_marker_editor_panel(ass, W, H, ma, sc)
 
     -- Watch Party panel mirrors WatchTogetherPanel.tsx: top-right glass card,
@@ -2353,12 +2378,37 @@ local function format_file_size(bytes)
     return string.format("%d B", bytes)
 end
 
--- Format bitrate
-local function format_bitrate(bps)
-    if not bps or bps <= 0 then return "" end
-    if bps >= 1000000 then return string.format("%.1f Mbps", bps / 1000000) end
-    if bps >= 1000 then return string.format("%.0f kbps", bps / 1000) end
-    return string.format("%d bps", bps)
+-- The Silo API reports source bitrates in kbps. Keep the two WebUI
+-- presentation styles distinct: aggregate/video bitrates are Mbps with one
+-- decimal, while the selected audio-track bitrate stays in whole kbps.
+local function format_mbps_from_kbps(kbps)
+    if not kbps or kbps <= 0 then return "" end
+    return string.format("%.1f Mbps", kbps / 1000)
+end
+
+local function format_kbps(kbps)
+    if not kbps or kbps <= 0 then return "" end
+    return string.format("%.0f kbps", kbps)
+end
+
+local function format_sample_rate(hz)
+    if not hz or hz <= 0 then return "" end
+    local digits = tostring(math.floor(hz + 0.5))
+    local formatted = digits
+    while true do
+        local replaced, count = formatted:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+        formatted = replaced
+        if count == 0 then break end
+    end
+    return formatted .. " Hz"
+end
+
+local function format_color_range(value)
+    local normalized = string.lower(tostring(value or ""))
+    if normalized == "tv" then return "Limited (tv)" end
+    if normalized == "pc" then return "Full (pc)" end
+    if normalized == "unknown" then return "Unknown" end
+    return ""
 end
 
 local function render_stats()
@@ -2435,31 +2485,32 @@ local function render_stats()
         table.insert(s4.rows, { label = "Size", value = mi.file_size and mi.file_size > 0 and
             format_file_size(mi.file_size) or fallback })
         table.insert(s4.rows, { label = "Bitrate", value = mi.bitrate and mi.bitrate > 0 and
-            format_bitrate(mi.bitrate * 1000) or fallback })
+            format_mbps_from_kbps(mi.bitrate) or fallback })
         local video_codec = mi.codec_video and string.upper(mi.codec_video) or ""
         if video_codec ~= "" and mi.video_profile and mi.video_profile ~= "" then
             video_codec = video_codec .. " " .. mi.video_profile
         end
         table.insert(s4.rows, { label = "Video codec", value = shown(video_codec) })
         table.insert(s4.rows, { label = "Video bitrate", value = mi.video_bitrate and mi.video_bitrate > 0 and
-            format_bitrate(mi.video_bitrate) or fallback })
+            format_mbps_from_kbps(mi.video_bitrate) or fallback })
         table.insert(s4.rows, { label = "Video range type", value = shown(mi.video_range) })
+        table.insert(s4.rows, { label = "Color range", value = shown(format_color_range(mi.color_range)) })
         local audio_codec = mi.audio_title and mi.audio_title ~= "" and mi.audio_title or
             (mi.codec_audio and string.upper(mi.codec_audio) or "")
         table.insert(s4.rows, { label = "Audio codec", value = shown(audio_codec) })
         table.insert(s4.rows, { label = "Audio bitrate", value = mi.audio_bitrate and mi.audio_bitrate > 0 and
-            format_bitrate(mi.audio_bitrate) or fallback })
+            format_kbps(mi.audio_bitrate) or fallback })
         table.insert(s4.rows, { label = "Audio channels", value = mi.audio_channels and mi.audio_channels > 0 and
             tostring(mi.audio_channels) or fallback })
         local sample_rate = fallback
         if mi.audio_sample_rate and mi.audio_sample_rate > 0 then
-            sample_rate = string.format(mi.audio_sample_rate % 1000 == 0 and "%.0f kHz" or "%.1f kHz",
-                mi.audio_sample_rate / 1000)
+            sample_rate = format_sample_rate(mi.audio_sample_rate)
         end
         table.insert(s4.rows, { label = "Audio sample rate", value = sample_rate })
     else
         for _, label in ipairs({ "Container", "Size", "Bitrate", "Video codec", "Video bitrate",
-            "Video range type", "Audio codec", "Audio bitrate", "Audio channels", "Audio sample rate" }) do
+            "Video range type", "Color range", "Audio codec", "Audio bitrate",
+            "Audio channels", "Audio sample rate" }) do
             table.insert(s4.rows, { label = label, value = fallback })
         end
     end
@@ -2594,10 +2645,36 @@ show_osc = function()
     state.hide_timer = mp.add_timeout(config.hide_timeout, check_hide)
 end
 
+local function dismiss_transport_menus_for_fade()
+    state.subtitle_menu_visible = false
+    state.quality_menu_visible = false
+    state.audio_menu_visible = false
+    state.chapter_menu_visible = false
+    state.keyboard_menu_kind = nil
+    state.keyboard_menu_index = -1
+    state.controller_focus_name = nil
+
+    for _, overlay in ipairs({
+        state.subtitle_menu_overlay,
+        state.quality_menu_overlay,
+        state.audio_menu_overlay,
+        state.chapter_menu_overlay,
+    }) do
+        if overlay then
+            overlay.data = ""
+            overlay:update()
+        end
+    end
+end
+
 hide_osc = function()
     if state.dragging_seek or state.dragging_volume or state.dragging_marker_edge then return end
     if state.marker_editor_visible then return end
     if state.pause then return end  -- Stay visible when paused
+    -- A transport menu is part of the OSC lifecycle, not an independent
+    -- always-on surface. Closing it here prevents a subtitle/audio/quality
+    -- popup from remaining interactive after the controls have faded.
+    dismiss_transport_menus_for_fade()
     state.visible = false
     state.target_alpha = 0
     if state.hide_timer then
@@ -2723,6 +2800,7 @@ local function handle_mouse_move()
 
     state.mouse_x = mx
     state.mouse_y = my
+    state.controller_focus_name = nil
 
     -- Show OSC on any mouse movement
     show_osc()
@@ -2778,6 +2856,8 @@ end
 -- Map language codes to display names
 local function lang_name(code)
     if not code or code == "" then return "Unknown" end
+    local normalized = tostring(code):lower()
+    local base = normalized:match("^([^%-_]+)") or normalized
     local map = {
         en = "English", eng = "English", es = "Spanish", spa = "Spanish",
         fr = "French", fre = "French", fra = "French", de = "German", ger = "German", deu = "German",
@@ -2792,11 +2872,16 @@ local function lang_name(code)
         cs = "Czech", cze = "Czech", ces = "Czech", hu = "Hungarian", hun = "Hungarian",
         ro = "Romanian", rum = "Romanian", ron = "Romanian",
         bg = "Bulgarian", bul = "Bulgarian", hr = "Croatian", hrv = "Croatian",
+        sk = "Slovak", slo = "Slovak", slk = "Slovak",
+        sl = "Slovenian", slv = "Slovenian",
         el = "Greek", gre = "Greek", ell = "Greek", he = "Hebrew", heb = "Hebrew",
         th = "Thai", tha = "Thai", vi = "Vietnamese", vie = "Vietnamese",
         id = "Indonesian", ind = "Indonesian", uk = "Ukrainian", ukr = "Ukrainian",
+        ms = "Malay", may = "Malay", msa = "Malay",
+        ta = "Tamil", tam = "Tamil", te = "Telugu", tel = "Telugu",
+        bn = "Bengali", ben = "Bengali", fa = "Persian", per = "Persian", fas = "Persian",
     }
-    return map[code:lower()] or code:upper()
+    return map[normalized] or map[base] or (tostring(code):sub(1,1):upper() .. tostring(code):sub(2))
 end
 
 -- Source badge sort priority
@@ -2833,7 +2918,10 @@ local function render_subtitle_menu()
     local padding = math.floor(config.stats_padding * sc)
     local item_h = math.floor((config.stats_line_height + 4) * sc)
     local track_item_h = math.floor((config.stats_line_height + 16) * sc)
-    local menu_w = math.floor(340 * sc)
+    local menu_w = math.min(math.floor(340 * sc), math.max(120, W - 20))
+
+    compute_layout()
+    local L = state.layout
 
     -- Sort tracks by source priority
     local sorted = {}
@@ -2849,9 +2937,16 @@ local function render_subtitle_menu()
     -- fixed actions remain reachable at the bottom.
     local action_count = state.subtitle_ai_available and 4 or 3
     local fixed_rows = 1 + action_count -- Off + delay/search/appearance/optional AI
+    -- Keep the entire popup above the seek bar's pointer target. Deriving the
+    -- track window from the screen height alone can make a clamped popup cover
+    -- the timeline on shorter/windowed playback surfaces.
+    local menu_bottom = (L.seek_bar and L.seek_bar.y or
+        (L.btn_cc and L.btn_cc.y or H - math.floor(config.hud_height * sc)))
+        - math.floor(8 * sc)
+    local fixed_height = padding * 2 + item_h + 4 + 8
+        + action_count * item_h + 8
     local max_visible_tracks = math.max(1,
-        math.floor((H - math.floor(config.hud_height * sc) - 40 * sc
-            - padding * 2 - fixed_rows * item_h - 20) / track_item_h))
+        math.floor((menu_bottom - math.floor(10 * sc) - fixed_height) / track_item_h))
     max_visible_tracks = math.min(max_visible_tracks, 8)
     local max_first = math.max(1, #sorted - max_visible_tracks + 1)
     local first = clamp(state.subtitle_menu_offset or 1, 1, max_first)
@@ -2861,22 +2956,21 @@ local function render_subtitle_menu()
     local menu_h = padding * 2 + item_h + 4 + (visible_tracks * track_item_h)
         + 8 + (action_count * item_h) + 8
 
-    -- Position: above the CC button (bottom-right area)
-    compute_layout()
-    local L = state.layout
+    -- Position: above the seek bar, horizontally anchored to the CC button.
     local menu_x = W - padding - menu_w - 40
-    local menu_y = H - math.floor(config.hud_height * sc) - menu_h - math.floor(10 * sc)
+    local menu_y = menu_bottom - menu_h
     if L.btn_cc then
         menu_x = L.btn_cc.x - menu_w / 2
-        menu_y = L.btn_cc.y - menu_h - 10
     end
     -- Clamp to screen
     if menu_x < 10 then menu_x = 10 end
+    if menu_x + menu_w > W - 10 then menu_x = W - menu_w - 10 end
     if menu_y < 10 then menu_y = 10 end
 
-    -- Background
+    -- WebUI uses bg-black/90 for this popup. ASS alpha is inverse opacity,
+    -- so 1A is approximately 90% opaque and keeps labels readable over video.
     draw_rounded_rect(ass, menu_x, menu_y, menu_x + menu_w, menu_y + menu_h,
-        8, config.bar_bg_color, config.stats_bg_alpha, 1.0)
+        8, "000000", "1A", 1.0)
 
     local cy = menu_y + padding
     state.subtitle_menu_items = {}
@@ -2919,10 +3013,15 @@ local function render_subtitle_menu()
 
         -- Language name and WebUI-style codec/source badges.
         local display = lang_name(track.language or "")
-        if track.forced then display = display .. " (Forced)" end
         local text_y = cy + track_item_h / 2
         local detail = track.label or ""
-        local has_detail = detail ~= "" and detail ~= track.language and detail ~= display
+        local detail_lower = detail:lower()
+        local codec_lower = tostring(track.codec or ""):lower()
+        local has_detail = detail ~= ""
+            and detail ~= track.language
+            and detail ~= display
+            and detail_lower ~= codec_lower
+            and detail_lower ~= ("." .. codec_lower)
         if has_detail then text_y = text_y - math.floor(7 * sc) end
         draw_text(ass, menu_x + padding + math.floor(24 * sc), text_y, display,
             fs, text_color, "00", 1.0, 4)
@@ -2970,16 +3069,38 @@ local function render_subtitle_menu()
     draw_text(ass, plus_x, cy + item_h / 2, "+", fs, config.text_color, delay_alpha, 1.0, 5)
     draw_text(ass, reset_x, cy + item_h / 2, "Reset", fs_small,
         config.dim_text_color, delay_ms ~= 0 and delay_alpha or "A0", 1.0, 5)
+    local keyboard_row = 1 + visible_tracks
     if state.active_subtitle >= 0 then
+        keyboard_row = keyboard_row + 1
+        if state.keyboard_menu_kind == "subtitles"
+            and state.keyboard_menu_index == keyboard_row then
+            draw_rounded_rect(ass, minus_x - math.floor(16 * sc), cy,
+                minus_x + math.floor(16 * sc), cy + item_h,
+                4, config.text_color, "E6", 1.0)
+        end
         table.insert(state.subtitle_menu_items, {
             x = minus_x - math.floor(16 * sc), y = cy, w = math.floor(32 * sc), h = item_h,
             action = "delay", delta = -0.1
         })
+        keyboard_row = keyboard_row + 1
+        if state.keyboard_menu_kind == "subtitles"
+            and state.keyboard_menu_index == keyboard_row then
+            draw_rounded_rect(ass, plus_x - math.floor(16 * sc), cy,
+                plus_x + math.floor(16 * sc), cy + item_h,
+                4, config.text_color, "E6", 1.0)
+        end
         table.insert(state.subtitle_menu_items, {
             x = plus_x - math.floor(16 * sc), y = cy, w = math.floor(32 * sc), h = item_h,
             action = "delay", delta = 0.1
         })
         if delay_ms ~= 0 then
+            keyboard_row = keyboard_row + 1
+            if state.keyboard_menu_kind == "subtitles"
+                and state.keyboard_menu_index == keyboard_row then
+                draw_rounded_rect(ass, reset_x - math.floor(28 * sc), cy,
+                    reset_x + math.floor(28 * sc), cy + item_h,
+                    4, config.text_color, "E6", 1.0)
+            end
             table.insert(state.subtitle_menu_items, {
                 x = reset_x - math.floor(28 * sc), y = cy, w = math.floor(56 * sc), h = item_h,
                 action = "delay_reset"
@@ -2988,6 +3109,12 @@ local function render_subtitle_menu()
     end
     cy = cy + item_h + 4
 
+    keyboard_row = keyboard_row + 1
+    if state.keyboard_menu_kind == "subtitles"
+        and state.keyboard_menu_index == keyboard_row then
+        draw_rounded_rect(ass, menu_x + 2, cy, menu_x + menu_w - 2,
+            cy + item_h, 4, config.text_color, "E6", 1.0)
+    end
     draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, "Search Online…",
         fs, config.dim_text_color, "00", 1.0, 4)
     table.insert(state.subtitle_menu_items, {
@@ -2996,6 +3123,12 @@ local function render_subtitle_menu()
     cy = cy + item_h
 
     if state.subtitle_ai_available then
+        keyboard_row = keyboard_row + 1
+        if state.keyboard_menu_kind == "subtitles"
+            and state.keyboard_menu_index == keyboard_row then
+            draw_rounded_rect(ass, menu_x + 2, cy, menu_x + menu_w - 2,
+                cy + item_h, 4, config.text_color, "E6", 1.0)
+        end
         draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2,
             "Translate with AI…", fs, config.dim_text_color, "00", 1.0, 4)
         table.insert(state.subtitle_menu_items, {
@@ -3004,6 +3137,12 @@ local function render_subtitle_menu()
         cy = cy + item_h
     end
 
+    keyboard_row = keyboard_row + 1
+    if state.keyboard_menu_kind == "subtitles"
+        and state.keyboard_menu_index == keyboard_row then
+        draw_rounded_rect(ass, menu_x + 2, cy, menu_x + menu_w - 2,
+            cy + item_h, 4, config.text_color, "E6", 1.0)
+    end
     draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, "Appearance…",
         fs, config.dim_text_color, "00", 1.0, 4)
     table.insert(state.subtitle_menu_items, {
@@ -3045,7 +3184,7 @@ local function render_quality_menu()
     local fs_small = math.max(math.floor((config.stats_font_size - 2) * sc), 10)
     local padding = math.floor(config.stats_padding * sc)
     local item_h = math.floor((config.stats_line_height + 4) * sc)
-    local menu_w = math.floor(280 * sc)
+    local menu_w = math.min(math.floor(280 * sc), math.max(120, W - 20))
 
     local qi = state.quality_info
     local versions = (qi and qi.versions) or {}
@@ -3073,9 +3212,10 @@ local function render_quality_menu()
     if menu_x + menu_w > W - 10 then menu_x = W - menu_w - 10 end
     if menu_y < 10 then menu_y = 10 end
 
-    -- Background
+    -- QualityMenu.tsx uses the same bg-black/90 surface as the other
+    -- transport menus. ASS alpha is inverse opacity.
     draw_rounded_rect(ass, menu_x, menu_y, menu_x + menu_w, menu_y + menu_h,
-        8, config.bar_bg_color, config.stats_bg_alpha, 1.0)
+        8, "000000", "1A", 1.0)
 
     local cy = menu_y + padding
     state.quality_menu_items = {}
@@ -3312,8 +3452,12 @@ local function render_audio_menu()
     local padding = math.floor(12 * sc)
     local header_h = math.floor(30 * sc)
     local item_h = math.floor(56 * sc)
-    local menu_w = math.floor(360 * sc)
-    local max_visible = math.max(3, math.floor((H - math.floor(config.hud_height * sc) - 50 * sc - header_h) / item_h))
+    local menu_w = math.min(math.floor(360 * sc), math.max(120, W - 20))
+    local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y or
+        state.layout.btn_audio.y) - math.floor(8 * sc)
+    local available_items_height = menu_bottom - math.floor(10 * sc)
+        - header_h - padding * 2
+    local max_visible = math.max(1, math.floor(available_items_height / item_h))
     max_visible = math.min(max_visible, 9)
     local first, last = menu_window(#state.audio_tracks, state.audio_menu_offset, max_visible)
     state.audio_menu_offset = first
@@ -3321,7 +3465,7 @@ local function render_audio_menu()
     local menu_h = padding * 2 + header_h + visible_count * item_h
     local anchor = state.layout.btn_audio
     local menu_x = clamp(anchor.x + anchor.w - menu_w, 10, W - menu_w - 10)
-    local menu_y = math.max(10, anchor.y - menu_h - math.floor(8 * sc))
+    local menu_y = math.max(10, menu_bottom - menu_h)
 
     draw_rounded_rect(ass, menu_x, menu_y, menu_x + menu_w, menu_y + menu_h,
         math.floor(8 * sc), "101010", "1A", 1.0)
@@ -3451,8 +3595,12 @@ local function render_chapter_menu()
     local padding = math.floor(12 * sc)
     local header_h = math.floor(30 * sc)
     local item_h = math.floor(64 * sc)
-    local menu_w = math.floor(300 * sc)
-    local max_visible = math.max(3, math.floor((H * 0.60 - header_h - padding * 2) / item_h))
+    local menu_w = math.min(math.floor(300 * sc), math.max(120, W - 20))
+    local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y or
+        state.layout.btn_chapters.y) - math.floor(8 * sc)
+    local available_items_height = menu_bottom - math.floor(10 * sc)
+        - header_h - padding * 2
+    local max_visible = math.max(1, math.floor(available_items_height / item_h))
     max_visible = math.min(max_visible, 12)
     local first, last = menu_window(#state.chapters, state.chapter_menu_offset, max_visible)
     state.chapter_menu_offset = first
@@ -3460,7 +3608,7 @@ local function render_chapter_menu()
     local menu_h = padding * 2 + header_h + visible_count * item_h
     local anchor = state.layout.btn_chapters
     local menu_x = clamp(anchor.x + anchor.w - menu_w, 10, W - menu_w - 10)
-    local menu_y = math.max(10, anchor.y - menu_h - math.floor(8 * sc))
+    local menu_y = math.max(10, menu_bottom - menu_h)
 
     draw_rounded_rect(ass, menu_x, menu_y, menu_x + menu_w, menu_y + menu_h,
         math.floor(8 * sc), "101010", "1A", 1.0)
@@ -4070,6 +4218,7 @@ local function keyboard_menu_items(kind, source)
         local include = kind == "audio" or kind == "chapters"
             or (kind == "quality" and (item.action == "version" or item.action == "quality"))
             or (kind == "subtitles" and (item.action == "off" or item.action == "select"
+                or item.action == "delay" or item.action == "delay_reset"
                 or item.action == "search" or item.action == "appearance" or item.action == "ai"))
         if include then table.insert(result, item) end
     end
@@ -4090,12 +4239,80 @@ local function move_keyboard_menu_focus(direction)
     local items = keyboard_menu_items(kind, raw_items)
     if #items == 0 then return true end
     state.keyboard_menu_kind = kind
+
+    -- Long lists are rendered through a bounded window. Shift that window at
+    -- its focused edge so keyboard and controller users can reach every item,
+    -- just as they can in the WebUI's scrollable menus.
+    if direction == "next" then
+        if kind == "subtitles" then
+            local visible_tracks = 0
+            for _, item in ipairs(raw_items) do
+                if item.action == "select" then visible_tracks = visible_tracks + 1 end
+            end
+            local last_track_row = 1 + visible_tracks
+            if state.keyboard_menu_index == last_track_row
+                and state.subtitle_menu_offset + visible_tracks - 1 < #state.subtitle_tracks then
+                state.subtitle_menu_offset = state.subtitle_menu_offset + 1
+                render_subtitle_menu()
+                return true
+            end
+        elseif kind == "audio" and state.keyboard_menu_index == #items then
+            if state.audio_menu_offset + #items - 1 < #state.audio_tracks then
+                state.audio_menu_offset = state.audio_menu_offset + 1
+            else
+                state.audio_menu_offset = 1
+                state.keyboard_menu_index = 1
+            end
+            render_audio_menu()
+            return true
+        elseif kind == "chapters" and state.keyboard_menu_index == #items then
+            if state.chapter_menu_offset + #items - 1 < #state.chapters then
+                state.chapter_menu_offset = state.chapter_menu_offset + 1
+            else
+                state.chapter_menu_offset = 1
+                state.keyboard_menu_index = 1
+            end
+            render_chapter_menu()
+            return true
+        end
+    elseif direction == "previous" then
+        if kind == "subtitles" and state.keyboard_menu_index == 2
+            and state.subtitle_menu_offset > 1 then
+            state.subtitle_menu_offset = state.subtitle_menu_offset - 1
+            render_subtitle_menu()
+            return true
+        elseif kind == "audio" and state.keyboard_menu_index == 1 then
+            if state.audio_menu_offset > 1 then
+                state.audio_menu_offset = state.audio_menu_offset - 1
+            else
+                state.audio_menu_offset = #state.audio_tracks
+                state.keyboard_menu_index = #items
+            end
+            render_audio_menu()
+            return true
+        elseif kind == "chapters" and state.keyboard_menu_index == 1 then
+            if state.chapter_menu_offset > 1 then
+                state.chapter_menu_offset = state.chapter_menu_offset - 1
+            else
+                state.chapter_menu_offset = #state.chapters
+                state.keyboard_menu_index = #items
+            end
+            render_chapter_menu()
+            return true
+        end
+    end
+
     if direction == "home" then
+        if kind == "audio" then state.audio_menu_offset = 1 end
+        if kind == "chapters" then state.chapter_menu_offset = 1 end
         state.keyboard_menu_index = 1
     elseif direction == "end" then
+        if kind == "audio" then state.audio_menu_offset = #state.audio_tracks end
+        if kind == "chapters" then state.chapter_menu_offset = #state.chapters end
         state.keyboard_menu_index = #items
     elseif direction == "next" then
-        state.keyboard_menu_index = state.keyboard_menu_index < #items
+        state.keyboard_menu_index = state.keyboard_menu_index < 1 and 1
+            or state.keyboard_menu_index < #items
             and state.keyboard_menu_index + 1 or 1
     else
         state.keyboard_menu_index = state.keyboard_menu_index > 1
@@ -4117,11 +4334,23 @@ local function activate_keyboard_menu_item()
         elseif item.action == "select" then
             mp.commandv("script-message", "silo-subtitle-select", tostring(item.index))
         elseif item.action == "search" then
+            state.restore_subtitle_focus_after_dialog = state.controller_focus_name == "btn_cc"
             mp.commandv("script-message", "silo-subtitle-search")
         elseif item.action == "appearance" then
+            state.restore_subtitle_focus_after_dialog = state.controller_focus_name == "btn_cc"
             mp.commandv("script-message", "silo-subtitle-appearance")
         elseif item.action == "ai" then
+            state.restore_subtitle_focus_after_dialog = state.controller_focus_name == "btn_cc"
             mp.commandv("script-message", "silo-subtitle-ai")
+        elseif item.action == "delay" then
+            local current = mp.get_property_number("sub-delay") or 0
+            mp.set_property_number("sub-delay", clamp(current + item.delta, -10, 10))
+            render_subtitle_menu()
+            return true
+        elseif item.action == "delay_reset" then
+            mp.set_property_number("sub-delay", 0)
+            render_subtitle_menu()
+            return true
         end
         state.subtitle_menu_visible = false
         render_subtitle_menu()
@@ -4158,6 +4387,11 @@ local function close_keyboard_surface()
     end
     if state.marker_editor_visible then
         close_marker_editor()
+        return true
+    end
+    if state.stats_visible then
+        state.stats_visible = false
+        render_stats()
         return true
     end
     return false
@@ -4209,6 +4443,134 @@ local function toggle_transport_menu_from_button(mx, my)
     end
 
     return false
+end
+
+local function focusable_transport_controls()
+    compute_layout()
+    local L = state.layout
+    local result = {}
+    local function add(name)
+        if L[name] then table.insert(result, name) end
+    end
+
+    -- Match the visual left-to-right order of the WebUI player HUD.
+    add("btn_prev_ep")
+    add("btn_skip_back")
+    add("btn_play")
+    add("btn_skip_fwd")
+    add("btn_next_ep")
+    add("btn_volume")
+    add("btn_audio")
+    add("btn_chapters")
+    add("btn_cc")
+    add("btn_quality")
+    add("btn_marker_edit")
+    add("btn_stats")
+    add("btn_pip")
+    add("btn_fullscreen")
+    return result
+end
+
+local function move_controller_focus(direction)
+    if current_keyboard_menu() then
+        if direction == "up" or direction == "left" then
+            return move_keyboard_menu_focus("previous")
+        end
+        return move_keyboard_menu_focus("next")
+    end
+
+    local controls = focusable_transport_controls()
+    if #controls == 0 then return false end
+    local current = 0
+    for index, name in ipairs(controls) do
+        if name == state.controller_focus_name then
+            current = index
+            break
+        end
+    end
+    if current == 0 then
+        for index, name in ipairs(controls) do
+            if name == "btn_play" then current = index break end
+        end
+        if current == 0 then current = 1 end
+    elseif direction == "left" or direction == "up" then
+        current = current > 1 and current - 1 or #controls
+    else
+        current = current < #controls and current + 1 or 1
+    end
+    state.controller_focus_name = controls[current]
+    show_osc()
+    request_tick()
+    return true
+end
+
+local function open_transport_menu_from_controller(kind)
+    close_transport_menus(kind)
+    if kind == "audio" then
+        state.audio_menu_visible = not state.audio_menu_visible
+        set_keyboard_transport_menu(kind, state.audio_menu_visible)
+        render_audio_menu()
+    elseif kind == "chapters" then
+        state.chapter_menu_visible = not state.chapter_menu_visible
+        set_keyboard_transport_menu(kind, state.chapter_menu_visible)
+        render_chapter_menu()
+    elseif kind == "subtitles" then
+        state.subtitle_menu_visible = not state.subtitle_menu_visible
+        set_keyboard_transport_menu(kind, state.subtitle_menu_visible)
+        render_subtitle_menu()
+    elseif kind == "quality" then
+        state.quality_menu_visible = not state.quality_menu_visible
+        set_keyboard_transport_menu(kind, state.quality_menu_visible)
+        render_quality_menu()
+    end
+    if current_keyboard_menu() then
+        move_keyboard_menu_focus("next")
+    end
+end
+
+local function activate_controller_focus()
+    local name = state.controller_focus_name
+    if not name then
+        move_controller_focus("next")
+        return true
+    end
+
+    if name == "btn_prev_ep" then
+        state.prev_ep_available = false
+        mp.commandv("script-message", "silo-prev-episode")
+    elseif name == "btn_skip_back" then
+        seek_relative_and_resume(-10)
+    elseif name == "btn_play" then
+        mp.commandv("cycle", "pause")
+    elseif name == "btn_skip_fwd" then
+        seek_relative_and_resume(30)
+    elseif name == "btn_next_ep" then
+        state.next_ep_visible = false
+        state.next_ep_available = false
+        render_next_episode_button()
+        mp.commandv("script-message", "silo-next-episode")
+    elseif name == "btn_volume" then
+        mp.commandv("cycle", "mute")
+    elseif name == "btn_audio" then
+        open_transport_menu_from_controller("audio")
+    elseif name == "btn_chapters" then
+        open_transport_menu_from_controller("chapters")
+    elseif name == "btn_cc" then
+        open_transport_menu_from_controller("subtitles")
+    elseif name == "btn_quality" then
+        open_transport_menu_from_controller("quality")
+    elseif name == "btn_marker_edit" then
+        if state.marker_editor_visible then close_marker_editor() else open_marker_editor() end
+    elseif name == "btn_stats" then
+        toggle_stats()
+    elseif name == "btn_pip" then
+        mp.commandv("script-message", "silo-pip-toggle")
+    elseif name == "btn_fullscreen" then
+        mp.commandv("script-message", "silo-fullscreen-toggle")
+    end
+    show_osc()
+    request_tick()
+    return true
 end
 
 local function handle_mouse_down()
@@ -4423,10 +4785,13 @@ local function handle_mouse_down()
                 elseif item.action == "select" then
                     mp.commandv("script-message", "silo-subtitle-select", tostring(item.index))
                 elseif item.action == "search" then
+                    state.restore_subtitle_focus_after_dialog = state.controller_focus_name == "btn_cc"
                     mp.commandv("script-message", "silo-subtitle-search")
                 elseif item.action == "appearance" then
+                    state.restore_subtitle_focus_after_dialog = state.controller_focus_name == "btn_cc"
                     mp.commandv("script-message", "silo-subtitle-appearance")
                 elseif item.action == "ai" then
+                    state.restore_subtitle_focus_after_dialog = state.controller_focus_name == "btn_cc"
                     mp.commandv("script-message", "silo-subtitle-ai")
                 elseif item.action == "delay" then
                     local current = mp.get_property_number("sub-delay") or 0
@@ -4774,8 +5139,27 @@ local function observe_properties()
         end
     end)
 
+    mp.register_script_message("osc-set-theme", function(rgb)
+        local value = tostring(rgb or ""):gsub("#", "")
+        if value:match("^[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$") then
+            -- WinUI sends RRGGBB; ASS colors are BGR.
+            config.accent_color = value:sub(5, 6) .. value:sub(3, 4) .. value:sub(1, 2)
+            request_tick()
+        end
+    end)
+
     mp.register_script_message("osc-set-subtitle-ai-available", function(val)
         state.subtitle_ai_available = (val == "true" or val == "1")
+    end)
+
+    mp.register_script_message("osc-subtitle-dialog-closed", function()
+        local restore_focus = state.restore_subtitle_focus_after_dialog
+        state.restore_subtitle_focus_after_dialog = false
+        if restore_focus then
+            state.controller_focus_name = "btn_cc"
+            show_osc()
+            request_tick()
+        end
     end)
 
     mp.register_script_message("osc-set-marker-edit-available", function(val)
@@ -5066,6 +5450,15 @@ local function observe_properties()
             stride = tonumber(stride) or 0,
         }
         state.chapter_thumbnail_requested[chapter_index] = true
+        -- The normal tick repaints only the base OSC. Chapter menus live in a
+        -- separate ASS overlay, so a thumbnail that arrives while that menu is
+        -- open must explicitly repaint it. Without this, every request and
+        -- BGRA conversion succeeds but the menu keeps the placeholder it drew
+        -- before the image was available; overlay-add is never issued until
+        -- some unrelated input happens to rerender the menu.
+        if state.chapter_menu_visible then
+            render_chapter_menu()
+        end
         request_tick()
     end)
 
@@ -5236,16 +5629,31 @@ local function setup_key_bindings()
         mp.commandv("add", "volume", "-5")
     end)
     mp.add_forced_key_binding("HOME", "silo-menu-home", function()
-        move_keyboard_menu_focus("home")
+        if not move_keyboard_menu_focus("home") then
+            state.controller_focus_name = "btn_skip_back"
+            show_osc()
+            request_tick()
+        end
     end)
     mp.add_forced_key_binding("END", "silo-menu-end", function()
-        move_keyboard_menu_focus("end")
+        if not move_keyboard_menu_focus("end") then
+            state.controller_focus_name = "btn_fullscreen"
+            show_osc()
+            request_tick()
+        end
     end)
     mp.add_forced_key_binding("ENTER", "silo-menu-activate", function()
-        activate_keyboard_menu_item()
+        if not activate_keyboard_menu_item() then
+            activate_controller_focus()
+        end
     end)
-    mp.add_key_binding("ESC", "silo-menu-escape", function()
-        close_keyboard_surface()
+    mp.add_forced_key_binding("TAB", "silo-control-focus-next", function()
+        move_controller_focus("right")
+    end)
+    mp.add_forced_key_binding("ESC", "silo-menu-escape", function()
+        if not close_keyboard_surface() then
+            mp.commandv("script-message", "silo-escape-unhandled")
+        end
     end)
     -- M = mute toggle
     mp.add_forced_key_binding("m", "silo-mute-toggle", function()
@@ -5454,6 +5862,18 @@ local function setup_script_messages()
         -- Click on the video body — toggle pause.
         mp.commandv("cycle", "pause")
     end)
+
+    mp.register_script_message("osc-controller-nav", function(direction)
+        local normalized = (direction == "left" or direction == "up"
+            or direction == "down" or direction == "right") and direction or "right"
+        move_controller_focus(normalized)
+    end)
+
+    mp.register_script_message("osc-controller-activate", function()
+        if not activate_keyboard_menu_item() then
+            activate_controller_focus()
+        end
+    end)
 end
 
 --------------------------------------------------------------------------------
@@ -5496,6 +5916,7 @@ local function init()
         state.dragging_seek = false
         state.dragging_volume = false
         state.seek_drag_pos = 0
+        state.restore_subtitle_focus_after_dialog = false
         state.next_ep_countdown_active = false
         state.next_ep_countdown_cancelled = false
         state.next_ep_countdown_started_at = 0

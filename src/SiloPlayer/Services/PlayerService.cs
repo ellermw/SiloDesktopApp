@@ -6,13 +6,14 @@ using System.Text;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Graphics.Canvas;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
 using SiloPlayer.Player;
+using Windows.Graphics.Imaging;
+using Windows.Storage;
 
 namespace SiloPlayer.Services;
 
@@ -42,6 +43,7 @@ public class PlayerService : IDisposable
     private static readonly TimeSpan WatchDetailPrefetchLifetime = TimeSpan.FromMinutes(2);
     private const int MaxWatchDetailPrefetches = 8;
     private readonly SemaphoreSlim _subtitleAppearanceLoadGate = new(1, 1);
+    private readonly SemaphoreSlim _playbackDialogGate = new(1, 1);
     private string? _subtitleAppearanceProfileId;
 
     private sealed record WatchDetailPrefetchEntry(
@@ -74,7 +76,11 @@ public class PlayerService : IDisposable
     private int _prematureEofStreak;
     private readonly PlaybackStallDetector _stallDetector = new(
         bufferingTimeout: TimeSpan.FromSeconds(20),
-        silentPlaybackTimeout: TimeSpan.FromSeconds(45));
+        // The direct relay gets one full 20-second rolling idle window to
+        // reconnect first. If mpv still claims to be playing five seconds
+        // later without advancing, restart the transport instead of leaving
+        // a black/frozen player on screen for nearly a minute.
+        silentPlaybackTimeout: TimeSpan.FromSeconds(25));
     private Timer? _stallWatchdogTimer;
     private long _stallRecoveryLastAttemptMs;
     private bool _displayRequestActive;
@@ -408,7 +414,14 @@ public class PlayerService : IDisposable
     {
         var mpv = _mpv;
         var plan = _activeTransportPlan;
-        if (mpv == null || plan == null || _switchingContent || _closing)
+        // A remux/HLS seek restart sets _switchingContent while it prepares
+        // the new transport. Continue accepting seeks during that one kind of
+        // switch so the cancellation generation below can make the latest
+        // scrub position win. Real content/version/audio switches stay gated.
+        var seekRestartInProgress = Volatile.Read(ref _seekRestartCts) != null;
+        if (mpv == null || plan == null ||
+            (_switchingContent && !seekRestartInProgress) ||
+            _closing)
             return;
 
         var duration = CurrentMediaDuration;
@@ -432,14 +445,8 @@ public class PlayerService : IDisposable
 
         var localMediaPosition = ToSessionPosition(mediaPosition);
         var transportPosition = PlaybackTimeline.ToPlayerTime(localMediaPosition, _timelineOffsetSeconds);
-        var insideCopyHlsWindow = plan.IsHls &&
-            !_canSeekAnywhere &&
-            PlaybackTimeline.IsInsideExposedWindow(
-                mediaPosition,
-                _timelineOffsetSeconds,
-                mpv.Duration);
         var canSeekLocally = plan.TransportKind == PlaybackTransportKind.DirectProgressive ||
-            (plan.IsHls && (_canSeekAnywhere || insideCopyHlsWindow));
+            (plan.IsHls && _canSeekAnywhere);
 
         if (canSeekLocally)
         {
@@ -494,7 +501,7 @@ public class PlayerService : IDisposable
                 ?? throw new InvalidOperationException("The active playback transport is unknown.");
             var mpv = _mpv
                 ?? throw new InvalidOperationException("The player is no longer active.");
-            var wasPaused = mpv.IsPaused;
+            var wasPaused = CaptureUserPausedState();
 
             _switchingContent = true;
             IsLoading = true;
@@ -773,30 +780,48 @@ public class PlayerService : IDisposable
     /// </summary>
     public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)
     {
-        var wasPaused = _mpv?.IsPaused ?? IsPaused;
+        var wasPaused = CaptureUserPausedState();
         var position = CurrentMediaPosition;
+        var transportReloadScheduled = false;
 
         if (track != null && IsUnsupportedBitmapSubtitle(track))
-            await SetBitmapSubtitleBurnInAsync(track);
+        {
+            transportReloadScheduled = await SetBitmapSubtitleBurnInAsync(track);
+        }
         else if (track != null)
         {
             // A text/PGS track cannot be layered over an HLS stream that is
             // already burning a different bitmap track into the video. Drop
-            // the burn-in recipe first, wait for the replacement transport,
-            // then select the requested native/sidecar track.
+            // the burn-in recipe first and select the requested track only
+            // after the replacement file has loaded. Selecting it before
+            // loadfile settles lets mpv discard the new sid and can briefly
+            // resume stale frames from the outgoing transport.
             if (_activeHlsRecipe?.SubtitleBurnIn == true)
-                await SetBitmapSubtitleBurnInAsync(null);
-            SelectSubtitleTrack(track);
+            {
+                transportReloadScheduled = await SetBitmapSubtitleBurnInAsync(
+                    null,
+                    postLoadSubtitleIndex: track.Index);
+            }
+            else
+            {
+                SelectSubtitleTrack(track);
+            }
         }
         else if (_activeHlsRecipe?.SubtitleBurnIn == true)
-            await SetBitmapSubtitleBurnInAsync(null);
+        {
+            transportReloadScheduled = await SetBitmapSubtitleBurnInAsync(null);
+        }
         else
         {
             ClearEmbeddedSubtitleWindows();
             _mpv?.SetSubtitleTrack(mpvTrackIndex);
         }
 
-        RestorePlaybackStateAfterSubtitleChange(wasPaused, position, allowSeek: true);
+        // BeginMpvLoad deliberately pauses the outgoing stream and FileLoaded
+        // restores the captured user state. Never race that authority by
+        // issuing Play/Pause while a replacement transport is still loading.
+        if (!transportReloadScheduled)
+            RestorePlaybackStateAfterSubtitleChange(wasPaused, position, allowSeek: true);
 
         var key = GetPrefsKey();
         if (string.IsNullOrEmpty(key)) return;
@@ -836,7 +861,28 @@ public class PlayerService : IDisposable
             {
                 var current = CurrentMediaPosition;
                 if (Math.Abs(current - position) > 2.5)
-                    _mpv.SeekFast(position);
+                {
+                    var plan = _activeTransportPlan;
+                    var canCorrectLocally =
+                        plan?.TransportKind == PlaybackTransportKind.DirectProgressive ||
+                        (plan?.IsHls == true && _canSeekAnywhere);
+                    if (canCorrectLocally)
+                    {
+                        var sessionPosition = ToSessionPosition(position);
+                        _mpv.SeekFast(PlaybackTimeline.ToPlayerTime(
+                            sessionPosition,
+                            _timelineOffsetSeconds));
+                    }
+                    else
+                    {
+                        // Sequential remux and incomplete copy-HLS timelines
+                        // cannot seek in-place. Re-anchor only when subtitle
+                        // attachment actually displaced playback, preserving
+                        // the user's prior playing/paused state.
+                        QueueTransportRestartForSeek(position, forceResume: !wasPaused);
+                        return;
+                    }
+                }
             }
 
             if (wasPaused)
@@ -852,6 +898,15 @@ public class PlayerService : IDisposable
             LogToFile("state_trace.txt", $"Restore subtitle playback state failed: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// mpv can report a paused property while its network cache is starving.
+    /// Preserve only an intentional user pause across transport/dialog work;
+    /// otherwise a quality, audio, or subtitle action can freeze a stream that
+    /// was playing immediately before the operation.
+    /// </summary>
+    private bool CaptureUserPausedState()
+        => (_mpv?.IsPaused ?? IsPaused) && _mpv?.IsBufferingForCache != true;
 
     /// <summary>
     /// Change the active audio track AND persist the choice. The index is
@@ -980,6 +1035,7 @@ public class PlayerService : IDisposable
     public event Action<bool>? BufferingChanged;
 
     public bool IsBufferingForCache => _mpv?.IsBufferingForCache ?? false;
+    public bool IsPlaybackSurfaceForeground => _videoWindow?.IsForeground == true;
     public event Action<double>? PositionChanged;
     public event Action<double>? DurationChanged;
     public event Action<bool>? PauseChanged;
@@ -1271,6 +1327,14 @@ public class PlayerService : IDisposable
         var threadId = Environment.CurrentManagedThreadId;
         LogToFile("state_trace.txt", $"SetState: {State} -> {newState} (thread={threadId})");
 
+        // PiP is implemented by a native topmost popup flag, independent of
+        // this service's logical state. Clear that native flag before every
+        // non-PiP layout transition. Otherwise Show() observes the stale flag
+        // and immediately re-enters PiP, leaving the OSC state, fullscreen
+        // state, and actual window geometry out of sync.
+        if (newState != PlayerState.PictureInPicture)
+            _videoWindow?.ExitPictureInPicture();
+
         // Even if the state hasn't changed, we MUST still ensure the video
         // popup is visible when entering Expanded — ContinuePlayingNextAsync
         // hides the popup for the UP NEXT cinematic but the state stays
@@ -1347,128 +1411,51 @@ public class PlayerService : IDisposable
         SetState(PlayerState.PictureInPicture);
     }
 
-    // ── Fullscreen (Win32) ───────────────────────────────────────────────
+    // ── Fullscreen (native playback surface) ─────────────────────────────
 
-    private const int GWL_STYLE = -16;
-    private const long WS_OVERLAPPEDWINDOW = 0x00CF0000L;
-    private const uint SWP_NOACTIVATE = 0x0010;
-    private const uint SWP_NOZORDER = 0x0004;
-
-    [DllImport("user32.dll")] private static extern long GetWindowLongPtrW(IntPtr hWnd, int nIndex);
-    [DllImport("user32.dll")] private static extern long SetWindowLongPtrW(IntPtr hWnd, int nIndex, long dwNewLong);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-    [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-    [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
-    [DllImport("user32.dll")] private static extern bool GetMonitorInfoW(IntPtr hMonitor, ref MONITORINFO lpmi);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int Left, Top, Right, Bottom; }
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct MONITORINFO
-    {
-        public int cbSize;
-        public RECT rcMonitor;
-        public RECT rcWork;
-        public int dwFlags;
-    }
-
-    private long _savedStyle;
-    private RECT _savedRect;
-
     public void EnterFullscreen()
     {
-        if (State != PlayerState.Expanded) return;
-        var mw = App.MainWindowInstance;
-        if (mw == null) return;
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(mw);
+        if (State is not (PlayerState.Expanded or PlayerState.PictureInPicture) ||
+            IsAudiobook ||
+            _videoWindow == null)
+            return;
 
-        _savedStyle = GetWindowLongPtrW(hwnd, GWL_STYLE);
-        GetWindowRect(hwnd, out _savedRect);
-
-        var monitor = MonitorFromWindow(hwnd, 2);
-        var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
-        GetMonitorInfoW(monitor, ref mi);
-
-        SetWindowLongPtrW(hwnd, GWL_STYLE, _savedStyle & ~WS_OVERLAPPEDWINDOW);
-        // HWND_TOPMOST (-1) puts the window above the taskbar
-        SetWindowPos(hwnd, (IntPtr)(-1),
-            mi.rcMonitor.Left, mi.rcMonitor.Top,
-            mi.rcMonitor.Right - mi.rcMonitor.Left,
-            mi.rcMonitor.Bottom - mi.rcMonitor.Top,
-            SWP_NOACTIVATE);
-
-        SetState(PlayerState.Fullscreen);
+        _videoWindow.EnterFullscreen();
+        var entered = _videoWindow.SynchronizeFullscreenState();
+        SetState(entered ? PlayerState.Fullscreen : PlayerState.Expanded);
     }
 
     public void ExitFullscreen()
     {
-        if (State != PlayerState.Fullscreen) return;
-        var mw = App.MainWindowInstance;
-        if (mw == null) return;
-
-        // Defensive: if _savedStyle/_savedRect were never populated (e.g. the
-        // caller accidentally hits this when the popup was the thing in
-        // fullscreen, not the main window), don't stomp the main window to a
-        // zero-sized styleless rect. Just flip state and bail.
-        if (_savedStyle == 0 || (_savedRect.Right - _savedRect.Left) <= 0)
-        {
-            SetState(PlayerState.Expanded);
+        if (State != PlayerState.Fullscreen && _videoWindow?.IsFullscreen != true)
             return;
-        }
 
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(mw);
-
-        SetWindowLongPtrW(hwnd, GWL_STYLE, _savedStyle);
-        // HWND_NOTOPMOST (-2) drops back below the taskbar
-        SetWindowPos(hwnd, (IntPtr)(-2),
-            _savedRect.Left, _savedRect.Top,
-            _savedRect.Right - _savedRect.Left,
-            _savedRect.Bottom - _savedRect.Top,
-            SWP_NOACTIVATE);
-
+        _videoWindow?.ExitFullscreen();
         SetState(PlayerState.Expanded);
     }
 
     public void ToggleFullscreen()
     {
-        if (State == PlayerState.Fullscreen)
+        if (_videoWindow?.IsFullscreen == true || State == PlayerState.Fullscreen)
             ExitFullscreen();
-        else if (State == PlayerState.PictureInPicture)
-        {
-            SetState(PlayerState.Expanded);
-            EnterFullscreen();
-        }
-        else if (State == PlayerState.Expanded)
+        else if (State is PlayerState.Expanded or PlayerState.PictureInPicture)
             EnterFullscreen();
     }
 
     /// <summary>
-    /// Exits whichever fullscreen path is currently active.
-    ///
-    /// There are two independent ways to enter fullscreen:
-    ///   1. <see cref="EnterFullscreen"/> — main window Win32 fullscreen. Saves
-    ///      <c>_savedStyle</c> / <c>_savedRect</c> on this service.
-    ///   2. <see cref="MpvVideoWindow.EnterFullscreen"/> — native popup fullscreen.
-    ///      Saves its own rect on the popup object.
-    /// Only one of these is ever active at a time. Calling the wrong
-    /// <c>ExitFullscreen</c> for the active path restores uninitialized state
-    /// (zeroed rect/style) and collapses the main window to (0,0) 0x0 — which is
-    /// how the "app disappears, mini bar lands on the wrong monitor" bug used to
-    /// manifest when minimizing from popup-fullscreen.
+    /// Exits the native popup's fullscreen mode. The WinUI shell deliberately
+    /// stays at its existing geometry so its title bar and responsive layout
+    /// cannot animate behind the already-resized video surface.
     /// </summary>
     private void ExitAnyFullscreen()
     {
         if (State != PlayerState.Fullscreen) return;
-        if (_videoWindow?.IsFullscreen == true)
-        {
-            _videoWindow.ExitFullscreen();
-            SetState(PlayerState.Expanded);
-        }
-        else
-        {
-            ExitFullscreen();
-        }
+        ExitFullscreen();
     }
 
     // ── Playback ─────────────────────────────────────────────────────────
@@ -1598,6 +1585,7 @@ public class PlayerService : IDisposable
         _transportDurationSeconds = null;
         _canSeekAnywhere = true;
         _activeHlsRecipe = null;
+        _activeQualityTier = "original";
         _preBitmapBurnInPlan = null;
         _preBitmapBurnInQualityTier = null;
         _requestedMediaFileId = null;
@@ -2542,6 +2530,17 @@ public class PlayerService : IDisposable
         _mpv?.SendScriptMessage("osc-set-next-episode-detail", "null");
     }
 
+    private void PrefetchQueuedEpisodeWatchDetail()
+    {
+        if (string.IsNullOrWhiteSpace(NextEpisodeContentId))
+            return;
+
+        PrefetchWatchDetail(NextEpisodeContentId);
+        LogToFile(
+            "state_trace.txt",
+            $"Prefetching queued episode watch detail: {NextEpisodeContentId}");
+    }
+
     /// <summary>
     /// Auto-compute the next-episode hint for a series episode that's just
     /// started playing. Runs in the background so it doesn't block
@@ -2559,7 +2558,6 @@ public class PlayerService : IDisposable
     {
         try
         {
-            await Task.Delay(100, ct); // Let WatchDetail settle
             var wd = _playbackManager?.WatchDetail;
             if (wd == null) return;
             if (string.IsNullOrEmpty(wd.SeriesId)) return;
@@ -2580,14 +2578,17 @@ public class PlayerService : IDisposable
                 LogToFile("state_trace.txt", $"AutoDetectNextEpisode: seasons lookup failed: {ex.Message}");
             }
 
-            var allEpisodes = new List<Episode>();
-            foreach (var seasonNumber in seasonNumbers)
-            {
-                var episodes = await _catalogApi.GetEpisodesAsync(wd.SeriesId, seasonNumber, ct);
-                if (ct.IsCancellationRequested) return;
-                if (episodes.Episodes != null)
-                    allEpisodes.AddRange(episodes.Episodes);
-            }
+            // Current, previous, and next-season episode lists are independent.
+            // Fetch them together so the OSC's previous/next buttons and the
+            // post-roll metadata do not wait on up to three serial round trips.
+            var episodeTasks = seasonNumbers
+                .Select(seasonNumber => _catalogApi.GetEpisodesAsync(wd.SeriesId, seasonNumber, ct))
+                .ToArray();
+            var episodeResponses = await Task.WhenAll(episodeTasks);
+            if (ct.IsCancellationRequested) return;
+            var allEpisodes = episodeResponses
+                .SelectMany(response => response.Episodes ?? [])
+                .ToList();
 
             if (ct.IsCancellationRequested) return;
             if (allEpisodes.Count == 0) return;
@@ -2825,9 +2826,14 @@ public class PlayerService : IDisposable
 
             _videoWindow.SetCursorVisible(true);
             _videoWindow.EnterFullscreen(activate: false);
-            SetState(PlayerState.Fullscreen);
-            PublishFullscreenVisualState(true);
-            LogToFile("state_trace.txt", "Restored fullscreen after Playing Next transition");
+            var restored = _videoWindow.SynchronizeFullscreenState();
+            SetState(restored ? PlayerState.Fullscreen : PlayerState.Expanded);
+            PublishFullscreenVisualState(restored);
+            LogToFile(
+                "state_trace.txt",
+                restored
+                    ? "Restored fullscreen after Playing Next transition"
+                    : "Fullscreen restore did not reach the monitor bounds; controls synchronized to windowed state");
         }
 
         var dispatcher = App.MainWindowInstance?.DispatcherQueue;
@@ -2891,8 +2897,15 @@ public class PlayerService : IDisposable
     {
         if (watchDetail.SeasonNumber.HasValue && watchDetail.EpisodeNumber.HasValue)
         {
-            Title = $"{watchDetail.SeriesTitle ?? watchDetail.Title} - S{watchDetail.SeasonNumber:D2}E{watchDetail.EpisodeNumber:D2}";
-            Subtitle = watchDetail.Title;
+            // Match VideoPlayer.tsx's HUD copy exactly: series title on the
+            // primary line, followed by "S2 · E10 — Episode title". The
+            // previous native-only "Series - S02E10" title made the same
+            // episode visibly disagree between WebUI and desktop.
+            Title = watchDetail.SeriesTitle ?? watchDetail.Title;
+            Subtitle = $"S{watchDetail.SeasonNumber.Value} · E{watchDetail.EpisodeNumber.Value}" +
+                (string.IsNullOrWhiteSpace(watchDetail.Title)
+                    ? string.Empty
+                    : $" \u2014 {watchDetail.Title}");
         }
         else
         {
@@ -2912,6 +2925,7 @@ public class PlayerService : IDisposable
         bestVersion ??= _playbackManager!.SelectBestVariantVersion(
             versions,
             watchDetail.PlaybackVariants,
+            qualityPreference: _authService.SelectedProfile?.QualityPreference,
             userData: watchDetail.UserData,
             preferredEditionKey: watchDetail.EffectiveVersionEditionKey);
         return bestVersion;
@@ -2989,20 +3003,28 @@ public class PlayerService : IDisposable
         {
             var copyVideo = plan.TransportKind == PlaybackTransportKind.RemuxHls;
             var copyAudio = copyVideo && session.PlaybackInfo?.TranscodeAudio != true;
+            var initialTier = copyVideo
+                ? null
+                : TranscodeQualityPolicy.ResolveInitialVideoTier(
+                    version.Resolution,
+                    _authService.SelectedProfile?.QualityPreference);
             var recipe = new TranscodeStartRequest
             {
                 SessionId = session.SessionId,
                 SeekSeconds = mediaStartSeconds,
-                TargetResolution = copyVideo ? "" : version.Resolution,
+                TargetResolution = copyVideo ? "" : initialTier?.Resolution ?? "",
                 TargetCodecVideo = copyVideo ? "copy" : "h264",
                 TargetCodecAudio = copyAudio ? "copy" : "aac",
-                TargetBitrateKbps = copyVideo ? 0 : 8000,
+                TargetBitrateKbps = copyVideo ? 0 : initialTier?.BitrateKbps ?? 0,
                 SegmentDuration = 2,
                 SubtitleTrackIndex = -1,
                 SubtitleBurnIn = false
             };
-            return await PrepareHlsTransportAsync(plan, session, recipe, knownDuration, ct)
+            var prepared = await PrepareHlsTransportAsync(plan, session, recipe, knownDuration, ct)
                 .ConfigureAwait(false);
+            if (!copyVideo)
+                _activeQualityTier = initialTier?.Id ?? "original";
+            return prepared;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -3043,9 +3065,12 @@ public class PlayerService : IDisposable
         return new PreparedPlaybackTransport(
             plan,
             localUrl,
-            MpvLoadStartSeconds: transcodeResponse.CanSeekAnywhere
-                ? Math.Max(0, transcodeResponse.PlayerStartSeconds)
-                : 0,
+            // player_start_seconds is already expressed in the prepared
+            // transport's local timeline. For copy HLS the server may anchor
+            // the manifest at an earlier keyframe and return a non-zero value
+            // here; discarding it replays the material between that anchor and
+            // the requested resume/seek point.
+            MpvLoadStartSeconds: Math.Max(0, transcodeResponse.PlayerStartSeconds),
             ResumeAfterLoadSeconds: 0,
             TimelineOffsetSeconds: Math.Max(0, transcodeResponse.TimelineOffsetSeconds),
             DurationSeconds: duration,
@@ -3161,51 +3186,6 @@ public class PlayerService : IDisposable
         }
     }
 
-    private async Task<(string? streamUrl, double? startPosition)> HandleTranscodeFallbackAsync(PlaybackStartResponse session, FileVersion bestVersion, double startPosition)
-    {
-        if (session.PlayMethod != "transcode") return (null, null);
-
-        try
-        {
-            var transcodeResponse = await _playbackApi.StartTranscodeAsync(new TranscodeStartRequest
-            {
-                SessionId = session.SessionId,
-                SeekSeconds = startPosition,
-                TargetResolution = bestVersion.Resolution,
-                TargetCodecVideo = "h264",
-                TargetCodecAudio = "aac",
-                TargetBitrateKbps = 8000,
-                SegmentDuration = 2,
-                SubtitleTrackIndex = -1,
-                SubtitleBurnIn = false
-            });
-
-            var baseUrl = _apiClient.BaseUrl;
-            var manifestPath = transcodeResponse.ManifestUrl;
-            if (!manifestPath.StartsWith("http") && !manifestPath.StartsWith("/api/v1"))
-                manifestPath = "/api/v1" + manifestPath;
-            var remoteManifestUrl = manifestPath.StartsWith("http") ? manifestPath : $"{baseUrl}{manifestPath}";
-
-            // B52: route the initial transcode manifest through the local HLS
-            // proxy (same as the quality-switch path). The proxy catches 404s
-            // on segments the encoder hasn't produced yet and retries for up
-            // to ~45 s — mpv alone just fails. Without this, starting on a
-            // transcoded stream sometimes stalls on `seg_NNNNN.m4s` 404s.
-            var localUrl = PrepareHlsStreamForMpv(remoteManifestUrl);
-            LogToFile(
-                "state_trace.txt",
-                $"Initial transcode via HLS proxy: remote={PlaybackUrlRedactor.Redact(remoteManifestUrl)} " +
-                $"local={PlaybackUrlRedactor.Redact(localUrl)} playerStart={transcodeResponse.PlayerStartSeconds}");
-
-            return (localUrl, transcodeResponse.PlayerStartSeconds);
-        }
-        catch (Exception ex)
-        {
-            LogToFile("player_transcode_error.txt", ex.ToString());
-            throw new InvalidOperationException("Failed to start transcode playback.", ex);
-        }
-    }
-
     private string PrepareDirectStreamForMpv(string remoteStreamUrl, string? playMethod, bool supportsRanges)
     {
         if (string.IsNullOrWhiteSpace(remoteStreamUrl))
@@ -3270,7 +3250,11 @@ public class PlayerService : IDisposable
 
     private void EnsureMpvInitialized()
     {
-        if (_mpv != null) return;
+        if (_mpv != null)
+        {
+            SendThemeToOsc();
+            return;
+        }
 
         var mainWindow = App.MainWindowInstance;
         var parentHwnd = WinRT.Interop.WindowNative.GetWindowHandle(mainWindow);
@@ -3283,6 +3267,7 @@ public class PlayerService : IDisposable
         _mpv.InitializeWithWindow(_videoWindow.Hwnd);
         _videoWindow.SetMpv(_mpv);
         WireMpvEvents();
+        SendThemeToOsc();
 
         // Restore the persisted volume + mute on this fresh mpv instance so
         // the first track obeys the saved level instead of mpv's default.
@@ -3299,6 +3284,38 @@ public class PlayerService : IDisposable
         // and gets updated on the next SettingsPage save.
         if (_subtitleAppearance != null)
             PushSubtitleAppearanceToMpv(_subtitleAppearance);
+    }
+
+    private void SendThemeToOsc()
+    {
+        if (_mpv == null)
+            return;
+
+        try
+        {
+            Windows.UI.Color? accent = null;
+            if (Microsoft.UI.Xaml.Application.Current.Resources.TryGetValue("AccentColor", out var colorValue) &&
+                colorValue is Windows.UI.Color color)
+            {
+                accent = color;
+            }
+            else if (Microsoft.UI.Xaml.Application.Current.Resources.TryGetValue("AccentBrush", out var brushValue) &&
+                     brushValue is Microsoft.UI.Xaml.Media.SolidColorBrush brush)
+            {
+                accent = brush.Color;
+            }
+
+            if (accent is { } resolved)
+            {
+                _mpv.SendScriptMessage(
+                    "osc-set-theme",
+                    $"{resolved.R:X2}{resolved.G:X2}{resolved.B:X2}");
+            }
+        }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"Send player theme failed: {ex.Message}");
+        }
     }
 
     private void ResetFailedMpvInitialization()
@@ -3491,6 +3508,7 @@ public class PlayerService : IDisposable
             _playingNextShown = true;
             _postRollActive = true;
             _postRollVideoEnded = true;
+            PrefetchQueuedEpisodeWatchDetail();
             InvokeSubscribersSafely(ShowPlayingNextRequested, true, nameof(ShowPlayingNextRequested));
             return;
         }
@@ -3551,6 +3569,7 @@ public class PlayerService : IDisposable
                 _playingNextShown = true;
                 _postRollActive = true;
                 _postRollVideoEnded = false;
+                PrefetchQueuedEpisodeWatchDetail();
                 LogToFile("state_trace.txt", $"Entering early series post-roll at {mediaPosition:F1}/{CurrentMediaDuration:F1}");
                 InvokeSubscribersSafely(ShowPlayingNextRequested, false, nameof(ShowPlayingNextRequested));
             }
@@ -3780,7 +3799,7 @@ public class PlayerService : IDisposable
 
         var manager = _playbackManager;
         var ct = _playbackCts?.Token ?? CancellationToken.None;
-        var wasPaused = _mpv.IsPaused;
+        var wasPaused = CaptureUserPausedState();
         var currentPos = CurrentMediaPosition;
         var replacementAccepted = false;
         _switchingContent = true;
@@ -3833,7 +3852,7 @@ public class PlayerService : IDisposable
                 IsLoading = true;
                 ShowNotice(
                     "Reconnecting playback",
-                    "The version switch was interrupted. Restoring playback from your current positionâ€¦",
+                    "The version switch was interrupted. Restoring playback from your current position…",
                     "warning");
                 _ = RecoverInterruptedStreamAsync(currentPos, "version-switch-failed");
             }
@@ -3854,7 +3873,7 @@ public class PlayerService : IDisposable
 
         var manager = _playbackManager;
         var ct = _playbackCts?.Token ?? CancellationToken.None;
-        var wasPaused = _mpv.IsPaused;
+        var wasPaused = CaptureUserPausedState();
         var currentPos = CurrentMediaPosition;
         if (_activeTransportPlan?.TransportKind == PlaybackTransportKind.DirectProgressive)
         {
@@ -3924,16 +3943,27 @@ public class PlayerService : IDisposable
                 var copyWindow = previousPlan?.IsHls == true
                     ? !previousCanSeekAnywhere
                     : plan.TransportKind == PlaybackTransportKind.RemuxHls;
+                var canSeekAnywhere = response.CanSeekAnywhere ?? !copyWindow;
+                var timelineOffset = Math.Max(
+                    0,
+                    response.StreamOriginSeconds
+                        ?? response.TimelineOffsetSeconds
+                        ?? (copyWindow ? currentPos : 0));
+                var playerStart = Math.Max(
+                    0,
+                    response.PlayerStartSeconds
+                        ?? (canSeekAnywhere ? currentPos : currentPos - timelineOffset));
                 var localUrl = PrepareHlsStreamForMpv(remoteUrl);
+                var activeTier = TranscodeQualityPolicy.Find(_activeQualityTier);
                 var recipe = previousRecipe == null
                     ? new TranscodeStartRequest
                     {
                         SessionId = session.SessionId,
                         SeekSeconds = currentPos,
-                        TargetResolution = copyWindow ? "" : version.Resolution,
+                        TargetResolution = copyWindow ? "" : activeTier?.Resolution ?? "",
                         TargetCodecVideo = copyWindow ? "copy" : "h264",
                         TargetCodecAudio = response.PlaybackInfo?.TranscodeAudio == true ? "aac" : "copy",
-                        TargetBitrateKbps = copyWindow ? 0 : 8000,
+                        TargetBitrateKbps = copyWindow ? 0 : activeTier?.BitrateKbps ?? 0,
                         SegmentDuration = 2,
                         SubtitleTrackIndex = -1,
                         SubtitleBurnIn = false
@@ -3946,11 +3976,11 @@ public class PlayerService : IDisposable
                 prepared = new PreparedPlaybackTransport(
                     plan,
                     localUrl,
-                    MpvLoadStartSeconds: copyWindow ? 0 : currentPos,
+                    MpvLoadStartSeconds: playerStart,
                     ResumeAfterLoadSeconds: 0,
-                    TimelineOffsetSeconds: copyWindow ? currentPos : 0,
+                    TimelineOffsetSeconds: timelineOffset,
                     DurationSeconds: previousDuration > 0 ? previousDuration : GetKnownDuration(session, version),
-                    CanSeekAnywhere: !copyWindow,
+                    CanSeekAnywhere: canSeekAnywhere,
                     HlsRecipe: recipe);
             }
             else
@@ -4062,6 +4092,20 @@ public class PlayerService : IDisposable
         return codec is "pgs" or "hdmv_pgs_subtitle" or "sup";
     }
 
+    private static bool IsTranslatableSubtitleSource(SubtitleTrackInfo track)
+    {
+        var codec = track.Codec?.Trim().ToLowerInvariant() ?? "";
+        if (string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase))
+        {
+            return codec is not (
+                "pgs" or "hdmv_pgs_subtitle" or "sup" or
+                "dvdsub" or "dvd_subtitle" or "vobsub" or
+                "dvbsub" or "dvb_subtitle");
+        }
+
+        return codec is "srt" or "subrip" or "vtt" or "webvtt";
+    }
+
     private bool CanUseNativeEmbeddedSubtitleTrack()
         => _activeTransportPlan?.TransportKind == PlaybackTransportKind.DirectProgressive;
 
@@ -4071,18 +4115,20 @@ public class PlayerService : IDisposable
     /// canonical position and pause state. PGS deliberately does not use this
     /// path because libmpv can render the server's .sup sidecar directly.
     /// </summary>
-    private async Task SetBitmapSubtitleBurnInAsync(SubtitleTrackInfo? track)
+    private async Task<bool> SetBitmapSubtitleBurnInAsync(
+        SubtitleTrackInfo? track,
+        int? postLoadSubtitleIndex = null)
     {
-        if (_mpv == null || _playbackManager?.CurrentSession is not { } session) return;
+        if (_mpv == null || _playbackManager?.CurrentSession is not { } session) return false;
         await CancelAndDrainTransportRestartsAsync();
         var manager = _playbackManager;
-        var wasPaused = _mpv.IsPaused;
+        var wasPaused = CaptureUserPausedState();
         var ct = _playbackCts?.Token ?? CancellationToken.None;
         var transportMutationAttempted = false;
         await _transportRestartGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (manager?.CurrentSession != session || _mpv == null) return;
+            if (manager?.CurrentSession != session || _mpv == null) return false;
             var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
                 ?? Versions.FirstOrDefault(v => v.FileId == (_requestedMediaFileId ?? 0))
                 ?? throw new InvalidOperationException("The subtitle source version is unavailable.");
@@ -4107,14 +4153,13 @@ public class PlayerService : IDisposable
             {
                 var audioTrackIndex = session.AudioTrackIndex >= 0 ? session.AudioTrackIndex : (int?)null;
                 transportMutationAttempted = true;
-                await manager.StopSessionAsync().ConfigureAwait(false);
-                ct.ThrowIfCancellationRequested();
-                var restoredSession = await manager.StartSessionAsync(
+                var restoredSession = await manager.StartReplacementSessionAsync(
                     version.FileId,
                     position,
                     forceStartPosition: true,
                     audioTrackIndex: audioTrackIndex,
                     forceDirectAudioSelection: audioTrackIndex.HasValue,
+                    previousFinalPosition: position,
                     ct: ct).ConfigureAwait(false);
                 InvokeSubscribersSafely(SessionStarted, restoredSession.SessionId, nameof(SessionStarted));
                 var remoteUrl = manager.StreamUrl;
@@ -4123,26 +4168,27 @@ public class PlayerService : IDisposable
                 var restored = await PreparePlaybackTransportAsync(
                     restoredSession, version, remoteUrl, position, ct).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
-                if (_closing || manager.CurrentSession != restoredSession) return;
+                if (_closing || manager.CurrentSession != restoredSession) return false;
                 ApplyPreparedTransport(restored);
                 PlayMethod = restoredSession.PlayMethod;
                 _activeQualityTier = _preBitmapBurnInQualityTier ?? "original";
                 _preBitmapBurnInPlan = null;
                 _preBitmapBurnInQualityTier = null;
+                _pendingInitialServerSubtitleIndex = postLoadSubtitleIndex;
                 BeginMpvLoad(restored, restorePaused: wasPaused);
                 _mpv.ShowOsdText("Bitmap subtitles off · direct playback restored", 2500);
                 SendQualityInfoToOsc();
-                return;
+                return true;
             }
 
             var recipe = _activeHlsRecipe is null
                 ? new TranscodeStartRequest
                 {
                     SessionId = session.SessionId,
-                    TargetResolution = version.Resolution,
+                    TargetResolution = "",
                     TargetCodecVideo = "h264",
                     TargetCodecAudio = "aac",
-                    TargetBitrateKbps = 8000,
+                    TargetBitrateKbps = 0,
                     SegmentDuration = 2,
                 }
                 : CloneTranscodeRecipe(_activeHlsRecipe, session.SessionId, position);
@@ -4154,8 +4200,11 @@ public class PlayerService : IDisposable
             {
                 recipe.TargetCodecVideo = "h264";
                 recipe.TargetCodecAudio = "aac";
-                recipe.TargetResolution = version.Resolution;
-                recipe.TargetBitrateKbps = 8000;
+                // Match the WebUI's Original + bitmap-subtitle request.
+                // Empty values delegate the safe source-resolution recipe,
+                // including the 4K guard, to the server resolver.
+                recipe.TargetResolution = "";
+                recipe.TargetBitrateKbps = 0;
             }
 
             var plan = new PlaybackTransportPlan(
@@ -4166,7 +4215,7 @@ public class PlayerService : IDisposable
             var prepared = await PrepareHlsTransportAsync(
                 plan, session, recipe, CurrentMediaDuration, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
-            if (_closing || manager.CurrentSession != session) return;
+            if (_closing || manager.CurrentSession != session) return false;
             ApplyPreparedTransport(prepared);
             PlayMethod = "transcode";
             if (track is null)
@@ -4174,8 +4223,10 @@ public class PlayerService : IDisposable
                 _preBitmapBurnInPlan = null;
                 _preBitmapBurnInQualityTier = null;
             }
+            _pendingInitialServerSubtitleIndex = postLoadSubtitleIndex;
             BeginMpvLoad(prepared, restorePaused: wasPaused);
             _mpv.ShowOsdText(track is null ? "Bitmap subtitles off" : $"{track.Label} · burned in", 2500);
+            return true;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception ex)
@@ -4188,7 +4239,7 @@ public class PlayerService : IDisposable
                 IsLoading = true;
                 ShowNotice(
                     "Reconnecting playback",
-                    "The subtitle transport switch was interrupted. Restoring playback from your current positionâ€¦",
+                    "The subtitle transport switch was interrupted. Restoring playback from your current position…",
                     "warning");
                 _ = RecoverInterruptedStreamAsync(CurrentMediaPosition, "subtitle-switch-failed");
             }
@@ -4202,6 +4253,7 @@ public class PlayerService : IDisposable
             }
         }
         finally { _transportRestartGate.Release(); }
+        return false;
     }
 
     private async Task SelectSubtitleByServerIndexAsync(int serverTrackIndex, bool persist = true)
@@ -4458,6 +4510,7 @@ public class PlayerService : IDisposable
             ["video_profile"] = videoTrack?.Profile ?? "",
             ["video_bitrate"] = videoTrack?.Bitrate ?? 0,
             ["video_range"] = FormatVideoRangeForHud(version, videoTrack),
+            ["color_range"] = videoTrack?.ColorRange ?? "",
             ["audio_bitrate"] = audioTrack?.Bitrate ?? 0,
             ["audio_sample_rate"] = audioTrack?.SampleRate ?? 0,
             ["requested_source"] = BuildRequestedSourceLabel(version),
@@ -4639,11 +4692,25 @@ public class PlayerService : IDisposable
                 return;
 
             token.ThrowIfCancellationRequested();
-            using var bitmap = await CanvasBitmap.LoadAsync(CanvasDevice.GetSharedDevice(), sourcePath);
+            // The image cache intentionally uses a generic .img extension.
+            // Loading that path through Win2D makes codec selection depend on
+            // the filename, and the server now supplies chapter previews as
+            // WebP. Decode from an IRandomAccessStream so Windows Imaging
+            // sniffs the actual file bytes instead.
+            var sourceFile = await StorageFile.GetFileFromPathAsync(sourcePath);
+            using var sourceStream = await sourceFile.OpenReadAsync();
+            var decoder = await BitmapDecoder.CreateAsync(sourceStream);
             token.ThrowIfCancellationRequested();
-            var pixels = bitmap.GetPixelBytes();
-            var width = checked((int)bitmap.SizeInPixels.Width);
-            var height = checked((int)bitmap.SizeInPixels.Height);
+            var pixelData = await decoder.GetPixelDataAsync(
+                BitmapPixelFormat.Bgra8,
+                BitmapAlphaMode.Premultiplied,
+                new BitmapTransform(),
+                ExifOrientationMode.RespectExifOrientation,
+                ColorManagementMode.ColorManageToSRgb);
+            token.ThrowIfCancellationRequested();
+            var pixels = pixelData.DetachPixelData();
+            var width = checked((int)decoder.OrientedPixelWidth);
+            var height = checked((int)decoder.OrientedPixelHeight);
             if (width <= 0 || height <= 0 || pixels.Length < width * height * 4)
                 return;
 
@@ -4846,6 +4913,11 @@ public class PlayerService : IDisposable
                 // Dispatch to UI thread for XAML state updates
                 App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Expanded));
             }
+            else if (State == PlayerState.PictureInPicture)
+            {
+                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
+                    () => SetState(PlayerState.Expanded));
+            }
             else
             {
                 _videoWindow.Hide();
@@ -4878,8 +4950,10 @@ public class PlayerService : IDisposable
             else
             {
                 _videoWindow.EnterFullscreen();
-                PublishFullscreenVisualState(true);
-                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => SetState(PlayerState.Fullscreen));
+                var enteredFullscreen = _videoWindow.SynchronizeFullscreenState();
+                PublishFullscreenVisualState(enteredFullscreen);
+                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
+                    () => SetState(enteredFullscreen ? PlayerState.Fullscreen : PlayerState.Expanded));
             }
         };
     }
@@ -4907,6 +4981,9 @@ public class PlayerService : IDisposable
                 break;
             case "silo-fullscreen-toggle":
                 dispatch.TryEnqueue(ToggleFullscreenFromOsc);
+                break;
+            case "silo-escape-unhandled":
+                dispatch.TryEnqueue(HandleUnhandledPlaybackEscape);
                 break;
             case "silo-pip-toggle":
                 dispatch.TryEnqueue(() =>
@@ -5072,7 +5149,7 @@ public class PlayerService : IDisposable
 
         var manager = _playbackManager;
         var ct = _playbackCts?.Token ?? CancellationToken.None;
-        var wasPaused = _mpv.IsPaused;
+        var wasPaused = CaptureUserPausedState();
         var currentPos = CurrentMediaPosition;
         var switchSucceeded = false;
 
@@ -5148,7 +5225,7 @@ public class PlayerService : IDisposable
                         IsLoading = true;
                         ShowNotice(
                             "Reconnecting playback",
-                            "The quality switch was interrupted. Restoring playback from your current positionâ€¦",
+                            "The quality switch was interrupted. Restoring playback from your current position…",
                             "warning");
                         _ = RecoverInterruptedStreamAsync(currentPos, "quality-reset-failed");
                     }
@@ -5165,17 +5242,9 @@ public class PlayerService : IDisposable
         else
         {
             var transportReplaced = false;
-            var (resolution, bitrate) = tierId switch
-            {
-                "auto"       => ("", 0),
-                "1080p-high" => ("1080p", 10000),
-                "1080p"      => ("1080p", 6000),
-                "720p-high"  => ("720p", 4000),
-                "720p"       => ("720p", 2000),
-                "480p"       => ("480p", 1500),
-                "420p"       => ("420p", 720),
-                _ => ("1080p", 6000)
-            };
+            var tier = TranscodeQualityPolicy.Find(tierId);
+            var resolution = tier?.Resolution ?? "";
+            var bitrate = tier?.BitrateKbps ?? 0;
 
             // Pause and show loading
             _mpv.Pause();
@@ -5229,9 +5298,10 @@ public class PlayerService : IDisposable
                         PlaybackTransportKind.TranscodeHls,
                         RequiresTranscodeStartPreparation: true),
                     localUrl,
-                    MpvLoadStartSeconds: transcodeResponse.CanSeekAnywhere
-                        ? Math.Max(0, transcodeResponse.PlayerStartSeconds)
-                        : 0,
+                    // This is transport-local even when the returned HLS
+                    // window is not globally seekable. Copy-HLS may start at
+                    // an earlier keyframe and require a non-zero local start.
+                    MpvLoadStartSeconds: Math.Max(0, transcodeResponse.PlayerStartSeconds),
                     ResumeAfterLoadSeconds: 0,
                     TimelineOffsetSeconds: Math.Max(0, transcodeResponse.TimelineOffsetSeconds),
                     DurationSeconds: transcodeResponse.DurationSeconds is > 0
@@ -5303,27 +5373,42 @@ public class PlayerService : IDisposable
             .Select(track => track.Language)
             .FirstOrDefault(language => !string.IsNullOrWhiteSpace(language));
         var changed = false;
-        var dialog = new SiloPlayer.Controls.SubtitleSearchDialog(session.MediaFileId, preferredLanguage)
+        int? downloadedSubtitleId = null;
+        var dialog = new SiloPlayer.Controls.SubtitleSearchDialog(session.MediaFileId, preferredLanguage);
+        dialog.SubtitleDownloaded += subtitleId =>
         {
-            XamlRoot = mainWindow.Content.XamlRoot,
+            changed = true;
+            downloadedSubtitleId = subtitleId;
         };
-        dialog.SubtitleDownloaded += () => changed = true;
 
-        _videoWindow?.Hide();
+        if (!await _playbackDialogGate.WaitAsync(0))
+            return;
+        var restorePlayerInput = false;
         try
         {
-            await dialog.ShowAsync();
+            restorePlayerInput = await PlaybackDialogHost.ShowAsync(
+                _videoWindow?.Hwnd ?? IntPtr.Zero,
+                async (xamlRoot, hostHwnd) =>
+                {
+                    dialog.XamlRoot = xamlRoot;
+                    dialog.HostWindowHandle = hostHwnd;
+                    await dialog.ShowAsync();
+                });
         }
         finally
         {
-            RestorePlaybackUiSnapshot(snapshot);
+            _playbackDialogGate.Release();
+            RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);
+            _mpv?.SendScriptMessage("osc-subtitle-dialog-closed");
         }
 
         if (!changed || _closing || !ReferenceEquals(session, _playbackManager?.CurrentSession))
             return;
 
-        await RefreshSubtitlesAfterAiAsync(session.MediaFileId);
-        RestorePlaybackStateAfterSubtitleChange(snapshot.WasPaused, snapshot.Position, allowSeek: true);
+        // The refresh-and-select path snapshots the live state at the actual
+        // attachment boundary. Do not restore the older dialog-open position:
+        // playback is intentionally allowed to continue behind the modal.
+        await RefreshSubtitlesAfterAiAsync(session.MediaFileId, downloadedSubtitleId);
     }
 
     private async Task ShowSubtitleAppearanceDialogAsync()
@@ -5333,19 +5418,52 @@ public class PlayerService : IDisposable
             return;
 
         var snapshot = CapturePlaybackUiSnapshot();
-        var dialog = new SiloPlayer.Controls.SubtitleAppearanceDialog
-        {
-            XamlRoot = mainWindow.Content.XamlRoot,
-        };
-        _videoWindow?.Hide();
+        var dialog = new SiloPlayer.Controls.SubtitleAppearanceDialog();
+        if (!await _playbackDialogGate.WaitAsync(0))
+            return;
+        var restorePlayerInput = false;
         try
         {
-            await dialog.ShowAsync();
+            restorePlayerInput = await PlaybackDialogHost.ShowAsync(
+                _videoWindow?.Hwnd ?? IntPtr.Zero,
+                async (xamlRoot, _) =>
+                {
+                    dialog.XamlRoot = xamlRoot;
+                    await dialog.ShowAsync();
+                });
         }
         finally
         {
-            RestorePlaybackUiSnapshot(snapshot);
+            _playbackDialogGate.Release();
+            RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);
+            _mpv?.SendScriptMessage("osc-subtitle-dialog-closed");
         }
+    }
+
+    private void HandleUnhandledPlaybackEscape()
+    {
+        if (_videoWindow == null || State == PlayerState.Idle)
+            return;
+
+        if (_videoWindow.IsFullscreen)
+        {
+            _videoWindow.ExitFullscreen();
+            PublishFullscreenVisualState(false);
+            SetState(PlayerState.Expanded);
+            return;
+        }
+
+        // The browser WebUI returns the video to its playback page when the
+        // native PiP surface is dismissed. Escape/controller Back should do
+        // the same here instead of terminating the playback session.
+        if (State == PlayerState.PictureInPicture)
+        {
+            SetState(PlayerState.Expanded);
+            return;
+        }
+
+        _videoWindow.Hide();
+        _ = CloseAsync();
     }
 
     private async Task ShowSubtitleAiDialogAsync()
@@ -5355,14 +5473,20 @@ public class PlayerService : IDisposable
             return;
 
         var snapshot = CapturePlaybackUiSnapshot();
-        _videoWindow?.Hide();
+        if (!await _playbackDialogGate.WaitAsync(0))
+            return;
+        var restorePlayerInput = false;
         try
         {
-            await mainWindow.ShowSubtitleAiDialogAsync();
+            restorePlayerInput = await PlaybackDialogHost.ShowAsync(
+                _videoWindow?.Hwnd ?? IntPtr.Zero,
+                (xamlRoot, _) => mainWindow.ShowSubtitleAiDialogAsync(xamlRoot));
         }
         finally
         {
-            RestorePlaybackUiSnapshot(snapshot);
+            _playbackDialogGate.Release();
+            RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);
+            _mpv?.SendScriptMessage("osc-subtitle-dialog-closed");
         }
     }
 
@@ -5371,10 +5495,10 @@ public class PlayerService : IDisposable
     private PlaybackUiSnapshot CapturePlaybackUiSnapshot()
         => new(
             _videoWindow?.IsFullscreen == true,
-            _mpv?.IsPaused ?? IsPaused,
+            CaptureUserPausedState(),
             CurrentMediaPosition);
 
-    private void RestorePlaybackUiSnapshot(PlaybackUiSnapshot snapshot)
+    private void RestorePlaybackUiSnapshot(PlaybackUiSnapshot snapshot, bool activatePlaybackSurface)
     {
         if (State is PlayerState.Idle or PlayerState.Minimized)
             return;
@@ -5383,8 +5507,10 @@ public class PlayerService : IDisposable
         {
             if (snapshot.WasFullscreen)
             {
-                _videoWindow?.EnterFullscreen();
-                SetState(PlayerState.Fullscreen);
+                _videoWindow?.EnterFullscreen(activate: activatePlaybackSurface);
+                var restored = _videoWindow?.SynchronizeFullscreenState() == true;
+                SetState(restored ? PlayerState.Fullscreen : PlayerState.Expanded);
+                PublishFullscreenVisualState(restored);
             }
             else
             {
@@ -5454,14 +5580,19 @@ public class PlayerService : IDisposable
             return;
 
         var snapshot = CapturePlaybackUiSnapshot();
-        _videoWindow?.Hide();
+        if (!await _playbackDialogGate.WaitAsync(0))
+            return;
+        var restorePlayerInput = false;
         try
         {
-            await mainWindow.ShowMarkerEditDialogAsync();
+            restorePlayerInput = await PlaybackDialogHost.ShowAsync(
+                _videoWindow?.Hwnd ?? IntPtr.Zero,
+                (xamlRoot, _) => mainWindow.ShowMarkerEditDialogAsync(xamlRoot));
         }
         finally
         {
-            RestorePlaybackUiSnapshot(snapshot);
+            _playbackDialogGate.Release();
+            RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);
         }
     }
 
@@ -5477,7 +5608,15 @@ public class PlayerService : IDisposable
         try
         {
             var status = await _playbackApi.GetSubtitleAiStatusAsync(ct);
-            available = status.Enabled || status.TranscribeEnabled;
+            var session = _playbackManager?.CurrentSession;
+            var currentVersion = session == null
+                ? null
+                : Versions.FirstOrDefault(version => version.FileId == session.MediaFileId);
+            var canTranslate = status.Enabled &&
+                session?.SubtitleUrls.Any(IsTranslatableSubtitleSource) == true;
+            var canTranscribe = status.TranscribeEnabled &&
+                currentVersion?.AudioTracks?.Count > 0;
+            available = canTranslate || canTranscribe;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -5570,7 +5709,8 @@ public class PlayerService : IDisposable
         else
         {
             _videoWindow.EnterFullscreen();
-            SetState(PlayerState.Fullscreen);
+            var enteredFullscreen = _videoWindow.SynchronizeFullscreenState();
+            SetState(enteredFullscreen ? PlayerState.Fullscreen : PlayerState.Expanded);
         }
     }
 
@@ -5611,7 +5751,7 @@ public class PlayerService : IDisposable
         else if (State == PlayerState.PictureInPicture)
             _videoWindow?.EnterPictureInPicture();
         else
-            _videoWindow?.MatchParentPosition();
+            _videoWindow?.SynchronizePosition();
     }
 
     public void HandleWindowMinimized(bool minimized)
@@ -5739,6 +5879,7 @@ public class PlayerService : IDisposable
         _transportDurationSeconds = null;
         _canSeekAnywhere = true;
         _activeHlsRecipe = null;
+        _activeQualityTier = "original";
         _preBitmapBurnInPlan = null;
         _preBitmapBurnInQualityTier = null;
         _requestedMediaFileId = null;
@@ -5982,6 +6123,8 @@ public class PlayerService : IDisposable
             _liveSubtitleCues.Clear();
             _preLiveSubtitleSid = Math.Max(0, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
             _resumeAfterLiveSubtitleBuffer = !_mpv.IsPaused;
+            if (_resumeAfterLiveSubtitleBuffer)
+                _mpv.Pause();
 
             var folder = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -6117,8 +6260,6 @@ public class PlayerService : IDisposable
         var manager = _playbackManager;
         var session = manager?.CurrentSession;
         if (manager == null || session == null || session.MediaFileId != mediaFileId) return;
-        var wasPaused = _mpv?.IsPaused ?? IsPaused;
-        var position = CurrentMediaPosition;
         try
         {
             var response = await _playbackApi.GetSubtitlesAsync(mediaFileId).ConfigureAwait(false);
@@ -6151,8 +6292,7 @@ public class PlayerService : IDisposable
                 : null;
             if (preferred != null && _mpv != null)
             {
-                SelectSubtitleTrack(preferred);
-                RestorePlaybackStateAfterSubtitleChange(wasPaused, position, allowSeek: true);
+                await SelectSubtitleByServerIndexAsync(preferred.Index).ConfigureAwait(false);
                 var completedJobId = _liveSubtitleJobId;
                 if (completedJobId > 0) ResumeAfterLiveSubtitleBuffer(completedJobId);
                 lock (_liveSubtitleLock)

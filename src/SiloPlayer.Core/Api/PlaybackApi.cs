@@ -373,5 +373,9 @@ public class ChangeAudioResponse
     public string PlayMethod { get; set; } = "";
     public string StreamUrl { get; set; } = "";
     public string SwitchMode { get; set; } = "";
+    public double? PlayerStartSeconds { get; set; }
+    public double? StreamOriginSeconds { get; set; }
+    public double? TimelineOffsetSeconds { get; set; }
+    public bool? CanSeekAnywhere { get; set; }
     public PlaybackInfo? PlaybackInfo { get; set; }
 }

@@ -1040,10 +1040,9 @@ public sealed partial class PlayerOverlay : UserControl
             {
                 XamlRoot = XamlRoot
             };
-            dialog.SubtitleDownloaded += async () =>
+            dialog.SubtitleDownloaded += async subtitleId =>
             {
-                var version = _playerService.Versions.FirstOrDefault(v => v.FileId == session.MediaFileId);
-                if (version != null) await _playerService.SwitchVersionAsync(version);
+                await _playerService.RefreshSubtitlesAfterAiAsync(session.MediaFileId, subtitleId);
             };
             await dialog.ShowAsync();
         };
@@ -1076,174 +1075,119 @@ public sealed partial class PlayerOverlay : UserControl
         PopulateSubtitleFlyout();
     }
 
-    public async Task ShowSubtitleAiDialogAsync()
+    public async Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null)
     {
+        var activeXamlRoot = dialogXamlRoot ?? XamlRoot;
         var session = _playerService.Manager?.CurrentSession;
         if (session == null) return;
         var api = App.Services.GetRequiredService<PlaybackApi>();
         SubtitleAiStatus capability;
         try { capability = await api.GetSubtitleAiStatusAsync(); }
-        catch (Exception ex) { await ShowPlayerDialogAsync("AI subtitles unavailable", ex.Message); return; }
+        catch (Exception ex) { await ShowPlayerDialogAsync("AI subtitles unavailable", ex.Message, activeXamlRoot); return; }
         if (!capability.Enabled && !capability.TranscribeEnabled)
         {
-            await ShowPlayerDialogAsync("AI subtitles unavailable", "This Silo server has not enabled subtitle translation or transcription.");
+            await ShowPlayerDialogAsync("AI subtitles unavailable", "This Silo server has not enabled subtitle translation or transcription.", activeXamlRoot);
             return;
         }
 
         var version = _playerService.Versions.FirstOrDefault(v => v.FileId == session.MediaFileId);
         var subtitleTracks = (_playerService.Manager?.GetSubtitleUrls() ?? [])
             .Select(pair => pair.Track)
-            .Where(track => track.Source == "embedded" ? !IsUnsupportedBitmapSubtitle(track.Codec) : track.Codec?.ToLowerInvariant() is "srt" or "subrip" or "vtt" or "webvtt")
+            .Where(IsTranslatableSubtitleSource)
             .ToList();
         var audioTracks = version?.AudioTracks ?? [];
-        var mode = new ComboBox { Header = "Source", HorizontalAlignment = HorizontalAlignment.Stretch };
-        if (capability.Enabled && subtitleTracks.Count > 0) mode.Items.Add(new ComboBoxItem { Content = "Translate subtitles", Tag = "subtitles" });
-        if (capability.TranscribeEnabled && audioTracks.Count > 0) mode.Items.Add(new ComboBoxItem { Content = "Generate from audio", Tag = "audio" });
-        if (mode.Items.Count == 0) { await ShowPlayerDialogAsync("No compatible source", "Add a text subtitle track first, or ask the server administrator to enable audio transcription."); return; }
-        mode.SelectedIndex = 0;
-
-        var source = new ComboBox { Header = "Track", HorizontalAlignment = HorizontalAlignment.Stretch };
-        var target = new ComboBox { Header = "Language", HorizontalAlignment = HorizontalAlignment.Stretch };
-        foreach (var language in MediaLanguageCatalog.All)
-            target.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
-        target.SelectedIndex = target.Items.Cast<ComboBoxItem>()
-            .Select((item, index) => (item, index))
-            .FirstOrDefault(pair => string.Equals(pair.item.Tag?.ToString(), "en", StringComparison.Ordinal)).index;
-        void RebuildSource()
+        var canTranslate = capability.Enabled && subtitleTracks.Count > 0;
+        var canTranscribe = capability.TranscribeEnabled && audioTracks.Count > 0;
+        if (!canTranslate && !canTranscribe)
         {
-            source.Items.Clear();
-            if ((mode.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "audio")
-            {
-                for (var i = 0; i < audioTracks.Count; i++)
-                    source.Items.Add(new ComboBoxItem { Content = $"{PlayerService.LanguageCodeToName(audioTracks[i].Language)} - {audioTracks[i].Title ?? audioTracks[i].Codec}", Tag = i });
-            }
-            else
-            {
-                foreach (var track in subtitleTracks)
-                    source.Items.Add(new ComboBoxItem { Content = $"{PlayerService.LanguageCodeToName(track.Language)} - {track.Label}", Tag = track });
-            }
-            if (source.Items.Count > 0) source.SelectedIndex = 0;
+            await ShowPlayerDialogAsync(
+                "No compatible source",
+                "Add a text subtitle track first, or ask the server administrator to enable audio transcription.",
+                activeXamlRoot);
+            return;
         }
-        mode.SelectionChanged += (_, _) => RebuildSource();
-        RebuildSource();
+
         SubtitleAiQuota? quota = null;
         if (capability.TranscribeEnabled)
         {
             try { quota = await api.GetSubtitleAiQuotaAsync(); } catch { }
         }
-        var quotaText = new TextBlock
-        {
-            FontSize = 11,
-            Foreground = quota?.Limited == true && quota.Remaining <= 0
-                ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Orange)
-                : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(90, 255, 255, 255)),
-            TextWrapping = TextWrapping.Wrap,
-            Visibility = quota?.Limited == true ? Visibility.Visible : Visibility.Collapsed,
-            Text = quota?.Limited == true
-                ? quota.Remaining <= 0
-                    ? $"You've used all {quota.Limit} transcriptions for the {FormatQuotaPeriod(quota.Period)}. Try again later."
-                    : $"{quota.Remaining} of {quota.Limit} transcriptions left for the {FormatQuotaPeriod(quota.Period)}."
-                : ""
-        };
-        var helpText = new TextBlock
-        {
-            FontSize = 11,
-            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(90, 255, 255, 255)),
-            TextWrapping = TextWrapping.Wrap
-        };
-        void UpdateHelpText()
-        {
-            var fromAudio = (mode.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "audio";
-            helpText.Text = fromAudio
-                ? "The audio is transcribed on the server (and translated if the language differs) — longer files take a while. The finished track is saved for everyone."
-                : "Playback keeps running while the first translated lines are prepared, then subtitles stream in. The finished track is saved for everyone.";
-        }
-        UpdateHelpText();
-        var form = new StackPanel { Spacing = 12, MinWidth = 390, Children = { mode, source, target, quotaText, helpText } };
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot,
-            Title = (mode.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "audio"
-                ? "Generate subtitles with AI"
-                : "Translate subtitles with AI",
-            Content = form,
-            PrimaryButtonText = (mode.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "audio" ? "Generate" : "Translate",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary
-        };
-        void UpdateDialogMode()
-        {
-            var fromAudio = (mode.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "audio";
-            dialog.Title = fromAudio ? "Generate subtitles with AI" : "Translate subtitles with AI";
-            dialog.PrimaryButtonText = fromAudio ? "Generate" : "Translate";
-            dialog.IsPrimaryButtonEnabled = !fromAudio || quota?.Limited != true || quota.Remaining > 0;
-            UpdateHelpText();
-        }
-        mode.SelectionChanged += (_, _) => UpdateDialogMode();
-        UpdateDialogMode();
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        var dialog = new SubtitleAiDialog(
+            subtitleTracks,
+            audioTracks,
+            capability.Enabled,
+            capability.TranscribeEnabled,
+            quota,
+            async selection =>
+            {
+                if (!ReferenceEquals(session, _playerService.Manager?.CurrentSession))
+                    throw new InvalidOperationException(
+                        "Playback changed while the subtitle tool was open. Open it again for the current item.");
 
-        var selectedMode = (mode.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "subtitles";
-        var targetLanguage = (target.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "en";
-        var request = new SubtitleAiRequest
+                var request = new SubtitleAiRequest
+                {
+                    MediaFileId = session.MediaFileId,
+                    TargetLanguage = MediaLanguageCatalog.Normalize(selection.TargetLanguage),
+                    SessionId = session.SessionId,
+                    StartPosition = _playerService.Position,
+                    SourceIndex = selection.SourceIndex,
+                    SourceLanguage = MediaLanguageCatalog.Normalize(selection.SourceLanguage),
+                };
+                if (selection.Mode == "audio")
+                {
+                    request.Kind = string.Equals(
+                        selection.SourceLanguage,
+                        selection.TargetLanguage,
+                        StringComparison.OrdinalIgnoreCase)
+                        ? "transcribe"
+                        : "transcribe_translate";
+                    if (request.Kind == "transcribe")
+                        request.TargetLanguage = "";
+                }
+
+                var started = await api.StartSubtitleAiAsync(request);
+                var liveLanguage = string.IsNullOrWhiteSpace(request.TargetLanguage)
+                    ? request.SourceLanguage
+                    : request.TargetLanguage;
+                if (string.Equals(started.Job.Status, "running", StringComparison.OrdinalIgnoreCase))
+                {
+                    App.Services.GetService<ToastService>()?.Info(
+                        "A job for this track is already in progress — it'll appear when it's ready.");
+                }
+                else
+                {
+                    _playerService.PrepareLiveSubtitleTranslation(
+                        started.Job.Id,
+                        session.MediaFileId,
+                        liveLanguage,
+                        $"{PlayerService.LanguageCodeToName(liveLanguage)} AI");
+                }
+                _ = MonitorSubtitleAiJobAsync(api, started.Job.Id, session.MediaFileId);
+            },
+            async () =>
+            {
+                try { return await api.GetSubtitleAiQuotaAsync(); }
+                catch { return null; }
+            })
         {
-            MediaFileId = session.MediaFileId,
-            TargetLanguage = targetLanguage,
-            SessionId = session.SessionId,
-            StartPosition = _playerService.Position
+            XamlRoot = activeXamlRoot,
         };
-        if (selectedMode == "audio")
-        {
-            var index = (source.SelectedItem as ComboBoxItem)?.Tag is int selectedIndex ? selectedIndex : 0;
-            var language = audioTracks.ElementAtOrDefault(index)?.Language ?? "";
-            request.Kind = string.Equals(language, targetLanguage, StringComparison.OrdinalIgnoreCase) ? "transcribe" : "transcribe_translate";
-            request.SourceIndex = index;
-            request.SourceLanguage = language;
-            if (request.Kind == "transcribe") request.TargetLanguage = "";
-        }
-        else if ((source.SelectedItem as ComboBoxItem)?.Tag is SubtitleTrackInfo track)
-        {
-            request.SourceIndex = track.Index;
-            request.SourceLanguage = track.Language;
-        }
-        try
-        {
-            var started = await api.StartSubtitleAiAsync(request);
-            var liveLanguage = string.IsNullOrWhiteSpace(request.TargetLanguage)
-                ? request.SourceLanguage
-                : request.TargetLanguage;
-            if (string.Equals(started.Job.Status, "running", StringComparison.OrdinalIgnoreCase))
-            {
-                App.Services.GetService<ToastService>()?.Info(
-                    "A job for this track is already in progress — it'll appear when it's ready.");
-            }
-            else
-            {
-                _playerService.PrepareLiveSubtitleTranslation(
-                    started.Job.Id,
-                    session.MediaFileId,
-                    liveLanguage,
-                    $"{PlayerService.LanguageCodeToName(liveLanguage)} AI");
-            }
-            _ = MonitorSubtitleAiJobAsync(api, started.Job.Id, session.MediaFileId);
-        }
-        catch (Exception ex) { await ShowPlayerDialogAsync("Could not start AI subtitles", ex.Message); }
+        await dialog.ShowAsync();
     }
-
-    private static string FormatQuotaPeriod(string period) => period switch
-    {
-        "hour" or "hourly" => "last hour",
-        "day" or "daily" => "last day",
-        "week" or "weekly" => "last week",
-        "month" or "monthly" => "last month",
-        _ => string.IsNullOrWhiteSpace(period) ? "current period" : period
-    };
 
     private async Task MonitorSubtitleAiJobAsync(PlaybackApi api, long jobId, int mediaFileId)
     {
         if (jobId <= 0) return;
         for (var attempt = 0; attempt < 3600; attempt++)
         {
+            var activeSession = _playerService.Manager?.CurrentSession;
+            if (activeSession == null ||
+                activeSession.MediaFileId != mediaFileId ||
+                _playerService.State == PlayerState.Idle)
+            {
+                return;
+            }
+
             await Task.Delay(TimeSpan.FromSeconds(2));
             SubtitleAiJob job;
             try { job = await api.GetSubtitleAiJobAsync(jobId); }
@@ -1261,9 +1205,9 @@ public sealed partial class PlayerOverlay : UserControl
         }
     }
 
-    private async Task ShowPlayerDialogAsync(string title, string message)
+    private async Task ShowPlayerDialogAsync(string title, string message, XamlRoot? dialogXamlRoot = null)
     {
-        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = title, Content = message, CloseButtonText = "Close" };
+        var dialog = new ContentDialog { XamlRoot = dialogXamlRoot ?? XamlRoot, Title = title, Content = message, CloseButtonText = "Close" };
         await dialog.ShowAsync();
     }
 
@@ -1273,10 +1217,11 @@ public sealed partial class PlayerOverlay : UserControl
     private async void MarkerEdit_Click(object sender, RoutedEventArgs e)
         => await ShowMarkerEditDialogAsync();
 
-    public async Task ShowMarkerEditDialogAsync()
+    public async Task ShowMarkerEditDialogAsync(XamlRoot? dialogXamlRoot = null)
     {
         var session = _playerService.Manager?.CurrentSession;
         if (session == null || !CanEditMarkers()) return;
+        var activeXamlRoot = dialogXamlRoot ?? XamlRoot;
 
         var rows = new[]
         {
@@ -1329,7 +1274,7 @@ public sealed partial class PlayerOverlay : UserControl
 
         var dialog = new ContentDialog
         {
-            XamlRoot = XamlRoot,
+            XamlRoot = activeXamlRoot,
             Title = "Edit markers",
             Content = panel,
             PrimaryButtonText = "Save",
@@ -1424,7 +1369,7 @@ public sealed partial class PlayerOverlay : UserControl
         }
         catch (Exception ex)
         {
-            var error = new ContentDialog { XamlRoot = XamlRoot, Title = "Could not save markers", Content = ex.Message, CloseButtonText = "Close" };
+            var error = new ContentDialog { XamlRoot = activeXamlRoot, Title = "Could not save markers", Content = ex.Message, CloseButtonText = "Close" };
             await error.ShowAsync();
         }
     }
@@ -1496,6 +1441,20 @@ public sealed partial class PlayerOverlay : UserControl
     {
         var normalized = codec?.ToLowerInvariant() ?? "";
         return normalized is "dvdsub" or "dvd_subtitle" or "vobsub" or "dvbsub" or "dvb_subtitle";
+    }
+
+    private static bool IsTranslatableSubtitleSource(SubtitleTrackInfo track)
+    {
+        var codec = track.Codec?.Trim().ToLowerInvariant() ?? "";
+        if (string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase))
+        {
+            return codec is not (
+                "pgs" or "hdmv_pgs_subtitle" or "sup" or
+                "dvdsub" or "dvd_subtitle" or "vobsub" or
+                "dvbsub" or "dvb_subtitle");
+        }
+
+        return codec is "srt" or "subrip" or "vtt" or "webvtt";
     }
 
     private void PopulateSpeedFlyout()

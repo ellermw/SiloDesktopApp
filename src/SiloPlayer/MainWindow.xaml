@@ -10,11 +10,15 @@
     mc:Ignorable="d"
     Title="Silo">
 
-    <Grid Background="{StaticResource AppBackgroundBrush}"
-          CharacterReceived="RootGrid_CharacterReceived">
+    <Grid
+        x:Name="RootGrid"
+        Background="{StaticResource AppBackgroundBrush}"
+        CharacterReceived="RootGrid_CharacterReceived"
+        PointerPressed="RootGrid_PointerPressed">
         <Grid.KeyboardAccelerators>
             <!-- Ctrl+K opens the global search palette (webui parity). -->
             <KeyboardAccelerator Modifiers="Control" Key="K" Invoked="GlobalSearchAccelerator_Invoked" />
+            <KeyboardAccelerator Modifiers="Menu" Key="Left" Invoked="NavigationBackAccelerator_Invoked" />
             <KeyboardAccelerator Key="Space" Invoked="AudiobookAccelerator_Invoked" />
             <KeyboardAccelerator Key="K" Invoked="AudiobookAccelerator_Invoked" />
             <KeyboardAccelerator Key="Left" Invoked="AudiobookAccelerator_Invoked" />
@@ -128,7 +132,11 @@
                         <FontIcon Glyph="&#xE7F4;" />
                     </NavigationViewItem.Icon>
                     <NavigationViewItem.InfoBadge>
-                        <InfoBadge x:Name="NotificationUnreadBadge" Visibility="Collapsed" />
+                        <InfoBadge
+                            x:Name="NotificationUnreadBadge"
+                            Background="{StaticResource AccentBrush}"
+                            Foreground="{StaticResource AccentForegroundBrush}"
+                            Visibility="Collapsed" />
                     </NavigationViewItem.InfoBadge>
                 </NavigationViewItem>
 
@@ -214,19 +222,31 @@
                         CornerRadius="12">
                         <StackPanel x:Name="ProfileFooterContent" Orientation="Horizontal" Spacing="10">
                             <!-- Avatar -->
-                            <Border
-                                Width="28" Height="28"
-                                CornerRadius="14"
-                                Background="{StaticResource AccentBrush}">
-                                <TextBlock
-                                    x:Name="ProfileInitialText"
-                                    Text="?"
-                                    FontSize="12"
-                                    FontWeight="Bold"
-                                    Foreground="{StaticResource AccentForegroundBrush}"
-                                    HorizontalAlignment="Center"
-                                    VerticalAlignment="Center" />
-                            </Border>
+                            <Grid Width="28" Height="28">
+                                <Border
+                                    CornerRadius="14"
+                                    Background="{StaticResource AccentBrush}">
+                                    <TextBlock
+                                        x:Name="ProfileInitialText"
+                                        Text="?"
+                                        FontSize="12"
+                                        FontWeight="Bold"
+                                        Foreground="{StaticResource AccentForegroundBrush}"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center" />
+                                </Border>
+                                <Ellipse
+                                    x:Name="ProfileAvatarImage"
+                                    Width="28"
+                                    Height="28"
+                                    Visibility="Collapsed">
+                                    <Ellipse.Fill>
+                                        <ImageBrush
+                                            x:Name="ProfileAvatarBrush"
+                                            Stretch="UniformToFill" />
+                                    </Ellipse.Fill>
+                                </Ellipse>
+                            </Grid>
                             <TextBlock
                                 x:Name="ProfileNameText"
                                 Text="Profile"
@@ -236,7 +256,11 @@
                                 FontWeight="Medium" />
                         </StackPanel>
                         <Button.Flyout>
-                            <Flyout Placement="Top">
+                            <Flyout
+                                x:Name="ProfileFooterFlyout"
+                                Placement="Top"
+                                Opened="ProfileFooterFlyout_Opened"
+                                Closed="ProfileFooterFlyout_Closed">
                                 <Flyout.FlyoutPresenterStyle>
                                     <Style TargetType="FlyoutPresenter">
                                         <Setter Property="Padding" Value="8" />
@@ -248,13 +272,26 @@
                                 <StackPanel Spacing="4">
                                     <!-- Avatar + name header -->
                                     <StackPanel Orientation="Horizontal" Spacing="12" Margin="8,8,8,4">
-                                        <Border Width="36" Height="36" CornerRadius="18"
-                                                Background="{StaticResource AccentBrush}">
-                                            <TextBlock x:Name="ProfileDropdownInitial" Text="?"
-                                                       FontSize="14" FontWeight="Bold"
-                                                       Foreground="{StaticResource AccentForegroundBrush}"
-                                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                        </Border>
+                                        <Grid Width="36" Height="36">
+                                            <Border CornerRadius="18"
+                                                    Background="{StaticResource AccentBrush}">
+                                                <TextBlock x:Name="ProfileDropdownInitial" Text="?"
+                                                           FontSize="14" FontWeight="Bold"
+                                                           Foreground="{StaticResource AccentForegroundBrush}"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </Border>
+                                            <Ellipse
+                                                x:Name="ProfileDropdownAvatarImage"
+                                                Width="36"
+                                                Height="36"
+                                                Visibility="Collapsed">
+                                                <Ellipse.Fill>
+                                                    <ImageBrush
+                                                        x:Name="ProfileDropdownAvatarBrush"
+                                                        Stretch="UniformToFill" />
+                                                </Ellipse.Fill>
+                                            </Ellipse>
+                                        </Grid>
                                         <StackPanel VerticalAlignment="Center" Spacing="0">
                                             <TextBlock x:Name="ProfileDropdownName" Text="Profile"
                                                        FontSize="14" FontWeight="SemiBold"
@@ -319,24 +356,136 @@
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
+
+                <!-- Current WebUI mobile shell: rounded glass header with menu,
+                     brand, search, admin activity, and profile access. -->
+                <Border
+                    x:Name="MobileShellHeader"
+                    Grid.Row="0"
+                    Visibility="Collapsed"
+                    Margin="12,12,12,0"
+                    Padding="12,8"
+                    MinHeight="64"
+                    CornerRadius="16"
+                    Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource SidebarBorderBrush}"
+                    BorderThickness="1"
+                    Canvas.ZIndex="20">
+                    <Border.TranslationTransition>
+                        <Vector3Transition Duration="0:0:0.2" />
+                    </Border.TranslationTransition>
+                    <Border.OpacityTransition>
+                        <ScalarTransition Duration="0:0:0.2" />
+                    </Border.OpacityTransition>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel
+                            Grid.Column="0"
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            VerticalAlignment="Center">
+                            <Button
+                                Width="40"
+                                Height="40"
+                                Padding="0"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                CornerRadius="12"
+                                Click="MobileMenu_Click"
+                                AutomationProperties.Name="Open menu">
+                                <FontIcon
+                                    Glyph="&#xE700;"
+                                    FontSize="20"
+                                    Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Button>
+                            <Button
+                                Padding="0"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Click="MobileHome_Click"
+                                AutomationProperties.Name="Home">
+                                <Image
+                                    Source="ms-appx:///Assets/silo-wordmark-sidebar.png"
+                                    Width="94"
+                                    Height="40"
+                                    Stretch="Uniform" />
+                            </Button>
+                        </StackPanel>
+
+                        <StackPanel
+                            Grid.Column="2"
+                            Orientation="Horizontal"
+                            Spacing="4"
+                            VerticalAlignment="Center">
+                            <Button
+                                Width="40"
+                                Height="40"
+                                Padding="0"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                CornerRadius="12"
+                                Click="MobileSearch_Click"
+                                AutomationProperties.Name="Search">
+                                <FontIcon
+                                    Glyph="&#xE721;"
+                                    FontSize="20"
+                                    Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Button>
+                            <controls:ServerActivityButton
+                                x:Name="MobileServerActivityButton"
+                                HideWhenEmpty="True" />
+                            <Button
+                                x:Name="MobileProfileButton"
+                                Width="40"
+                                Height="40"
+                                Padding="2"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                CornerRadius="12"
+                                Click="MobileProfile_Click"
+                                AutomationProperties.Name="Playback settings">
+                                <Border
+                                    Width="36"
+                                    Height="36"
+                                    CornerRadius="12"
+                                    Background="{StaticResource AccentBrush}">
+                                    <TextBlock
+                                        x:Name="MobileProfileInitialText"
+                                        Text="?"
+                                        FontSize="12"
+                                        FontWeight="Bold"
+                                        Foreground="{StaticResource AccentForegroundBrush}"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center" />
+                                </Border>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                </Border>
 
                 <!-- Impersonation banner (hidden by default) -->
                 <controls:ImpersonationBanner
                     x:Name="ImpersonationBannerControl"
-                    Grid.Row="0"
+                    Grid.Row="1"
                     Visibility="Collapsed"
                     EndImpersonationRequested="ImpersonationBanner_EndRequested" />
 
                 <!-- Page content -->
-                <Frame x:Name="ContentFrame" Grid.Row="1" CacheSize="16" />
+                <Frame x:Name="ContentFrame" Grid.Row="2" CacheSize="16" />
 
                 <!-- Server Activity button (overlay on top of ContentFrame). -->
                 <controls:ServerActivityButton
                     x:Name="MainServerActivityButton"
                     HideWhenEmpty="True"
-                    Grid.Row="1"
+                    Grid.Row="2"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Top"
                     Margin="0,12,20,0" />
@@ -401,6 +550,7 @@
             <Border Grid.RowSpan="2" Background="#A8000000" />
             <Button x:Name="PlayingNextCloseButton"
                     Grid.RowSpan="2"
+                    Canvas.ZIndex="10"
                     Style="{StaticResource GhostButtonStyle}"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Top"
@@ -409,7 +559,10 @@
                     Padding="0"
                     CornerRadius="22"
                     Margin="0,22,22,0"
-                    Click="PlayingNextCancel_Click">
+                    PointerPressed="PlayingNextClose_PointerPressed"
+                    Click="PlayingNextCancel_Click"
+                    AutomationProperties.Name="Close Playing Next"
+                    ToolTipService.ToolTip="Close">
                 <Button.KeyboardAccelerators>
                     <KeyboardAccelerator Key="Escape" />
                 </Button.KeyboardAccelerators>

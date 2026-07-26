@@ -444,7 +444,13 @@ public sealed class ServerContractSourceTests
         Assert.Contains("""["score"] = result.Score""", api);
         Assert.Contains("""["hearing_impaired"] = result.HearingImpaired""", api);
         Assert.Contains("SplitReleaseNames", dialog);
+        Assert.Contains("Action<int?>? SubtitleDownloaded", dialog);
+        Assert.Contains("GetDownloadedSubtitleId(response)", dialog);
         Assert.Contains("Downloads", dialog);
+        Assert.Contains("_downloadInProgress", dialog);
+        Assert.Contains("ResultsList.IsEnabled = false", dialog);
+        Assert.Contains("_lifetimeCts.Token", dialog);
+        Assert.Contains("OperationCanceledException", dialog);
     }
 
     [Fact]
@@ -466,6 +472,11 @@ public sealed class ServerContractSourceTests
         Assert.Contains("DetectSubtitleLanguageAsync", playbackApi);
         Assert.Contains("Upload subtitle", dialogXaml);
         Assert.Contains("BrowseUploadButton_Click", dialogCode);
+        Assert.Contains("UploadDropTarget_DragOver", dialogXaml);
+        Assert.Contains("UploadDropTarget_Drop", dialogXaml);
+        Assert.Contains("IsAcceptedSubtitleExtension", dialogCode);
+        Assert.Equal(2, dialogXaml.Split("Content=\"Vietnamese\" Tag=\"vi\"", StringSplitOptions.None).Length - 1);
+        Assert.Equal(2, dialogXaml.Split("Content=\"Bengali\" Tag=\"bn\"", StringSplitOptions.None).Length - 1);
         Assert.Contains("UploadButton_Click", dialogCode);
         Assert.Contains("Add subtitles...", itemDetail);
 

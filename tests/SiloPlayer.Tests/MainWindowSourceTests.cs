@@ -31,6 +31,16 @@ public sealed class MainWindowSourceTests
 
         Assert.Contains("PlayingNextBackdrop", xaml);
         Assert.Contains("PlayingNextCloseButton", xaml);
+        Assert.Contains("Canvas.ZIndex=\"10\"", xaml);
+        Assert.Contains("PointerPressed=\"PlayingNextClose_PointerPressed\"", xaml);
+        Assert.Contains("Click=\"PlayingNextCancel_Click\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"Close Playing Next\"", xaml);
+        Assert.Contains("PlayingNextClose_PointerPressed(", code);
+        Assert.Contains("Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)", code);
+        Assert.Contains("Properties.IsLeftButtonPressed", code);
+        Assert.Contains("PlayingNextCancel_Click(object sender, RoutedEventArgs e)", code);
+        Assert.Contains("=> DismissPlayingNext();", code);
+        Assert.Contains("_playerService.CancelPlayingNext();", code);
         Assert.Contains("PlayingNextCountdownPanel", xaml);
         Assert.Contains("PlayingNextAutoplayToggle", xaml);
         Assert.Contains("PlayingNextCountdownText", xaml);
@@ -52,6 +62,10 @@ public sealed class MainWindowSourceTests
         Assert.Contains("_playerService.IsPostRollVideoEnded", code);
         Assert.Contains("_playerService.EnterPostRollPreview();", code);
         Assert.Contains("_playerService.FinishPostRollPreview();", code);
+        Assert.True(
+            code.IndexOf("_playerService.EnterPostRollPreview();", StringComparison.Ordinal) <
+            code.IndexOf("PlayingNextOverlay.Visibility = Visibility.Visible;", StringComparison.Ordinal),
+            "The native mpv HWND must move before the WinUI Playing Next surface is exposed.");
         Assert.Contains("if (playbackHasEnded && hasNextEpisode && _playingNextAutoPlay)", code);
         Assert.Contains("PlayingNextFinishedHeading.Text", code);
         Assert.Contains("PlayingNextOnDeckScroller.ChangeView", code);
@@ -61,6 +75,10 @@ public sealed class MainWindowSourceTests
         Assert.Contains("The effective-setting request must never hold", code);
         Assert.Contains("_playerService.IsPostRollVideoEnded &&", code);
         Assert.Contains("PlayingNextOverlay.Visibility != Visibility.Visible", code);
+        Assert.Contains("this.Activated += OnWindowActivated;", code);
+        Assert.Contains("var shouldFocusOverlay = _isWindowActive || _playerService.IsPlaybackSurfaceForeground;", code);
+        Assert.Contains("if (shouldFocusOverlay)", code);
+        Assert.Contains("Never request focus from the background", code);
     }
 
     [Fact]
@@ -93,6 +111,8 @@ public sealed class MainWindowSourceTests
         Assert.Contains("x:Name=\"RequestsNavItem\"", xaml);
         Assert.Contains("x:Name=\"NotificationsNavItem\"", xaml);
         Assert.Contains("x:Name=\"NotificationUnreadBadge\"", xaml);
+        Assert.Contains("Background=\"{StaticResource AccentBrush}\"", xaml);
+        Assert.Contains("Foreground=\"{StaticResource AccentForegroundBrush}\"", xaml);
         Assert.Contains("IsPaneOpen=\"True\"", xaml);
         Assert.Contains("PaneClosing=\"NavView_PaneClosing\"", xaml);
         Assert.Contains("CompactPaneLength=\"64\"", xaml);
@@ -107,14 +127,70 @@ public sealed class MainWindowSourceTests
         Assert.Contains("ApplyResponsiveShellLayout", code);
         Assert.Contains("_currentWindowWidth < 1024", code);
         Assert.Contains("NavigationViewPaneDisplayMode.LeftMinimal", code);
-        Assert.Contains("NavView.IsPaneToggleButtonVisible = isNarrow", code);
-        Assert.Contains("var shouldOpen = !isNarrow && !_routeWantsCompactPane", code);
-        Assert.Contains("CanExposeAuthenticatedNavigation && !_routeWantsCompactPane", code);
+        Assert.Contains("NavView.IsPaneToggleButtonVisible = false", code);
+        Assert.Contains("x:Name=\"MobileShellHeader\"", xaml);
+        Assert.Contains("Click=\"MobileMenu_Click\"", xaml);
+        Assert.Contains("Click=\"MobileSearch_Click\"", xaml);
+        Assert.Contains("x:Name=\"MobileServerActivityButton\"", xaml);
+        Assert.Contains("Click=\"MobileProfile_Click\"", xaml);
+        Assert.Contains("(!_routeWantsCompactPane || _sidebarHoverExpanded || _profileFooterFlyoutOpen)", code);
+        Assert.Contains("NavView.PointerMoved += NavView_PointerMoved", code);
+        Assert.Contains("Interval = TimeSpan.FromMilliseconds(150)", code);
+        Assert.Contains("pointerX <= paneWidth", code);
+        Assert.Contains("CollapseImmersiveSidebarAfterPointerExit", code);
+        Assert.Contains("x:Name=\"ProfileFooterFlyout\"", xaml);
+        Assert.Contains("Opened=\"ProfileFooterFlyout_Opened\"", xaml);
+        Assert.Contains("Closed=\"ProfileFooterFlyout_Closed\"", xaml);
         Assert.Contains("x:Name=\"ProfileFooterContent\"", xaml);
         Assert.Contains("ProfileFooterContent.Spacing = isOpen ? 10 : 0", code);
         Assert.Contains("ApplyResponsiveShellLayout();", code);
         Assert.Contains("ContentFrame.Content is Views.Admin.AdminShellPage", code);
         Assert.Contains("AdminShell owns both its sidebar and ServerActivity button", code);
+        Assert.Contains("SynchronizeSelectedNavigationItem(e.SourcePageType, e.Parameter)", code);
+        Assert.Contains("ResynchronizeSelectedNavigationItem();", code);
+        Assert.Contains("FindLibraryNavigationItem", code);
+        Assert.Contains("FindCatalogNavigationItem", code);
+        Assert.Contains("FindCollectionNavigationItem", code);
+        Assert.Contains("FindPluginNavigationItem", code);
+        Assert.Contains("CloseMobileNavigationPane();", code);
+        Assert.Contains("Modifiers=\"Menu\" Key=\"Left\"", xaml);
+        Assert.DoesNotContain("Key=\"GamepadB\"", xaml);
+        Assert.Contains("RootGrid.AddHandler(", code);
+        Assert.Contains("Windows.System.VirtualKey.GamepadB", code);
+        Assert.Contains("PointerPressed=\"RootGrid_PointerPressed\"", xaml);
+        Assert.Contains("point.Properties.IsXButton1Pressed", code);
+        Assert.Contains("_navigationService.GoBack();", code);
+    }
+
+    [Fact]
+    public void SharedProfileChromeUsesServerAvatarWithInitialFallback()
+    {
+        var root = FindRepositoryRoot();
+        var xaml = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml"));
+        var code = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml.cs"));
+
+        Assert.Contains("x:Name=\"ProfileAvatarImage\"", xaml);
+        Assert.Contains("x:Name=\"ProfileDropdownAvatarImage\"", xaml);
+        Assert.Contains("x:Name=\"MobileProfileInitialText\"", xaml);
+        Assert.Contains("ApplyProfileAvatar(profile.AvatarUrl)", code);
+        Assert.Contains("MobileProfileInitialText.Text = ProfileInitialText.Text", code);
+        Assert.Contains("_navigationService.Navigate<SettingsPage>();", code);
+        Assert.Contains("string.Equals(username, profile.Name, StringComparison.Ordinal)", code);
+    }
+
+    [Fact]
+    public void SelectedNavigationUsesSidebarForegroundInsteadOfAccentColoredText()
+    {
+        var theme = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer",
+            "Themes",
+            "DarkTheme.xaml"));
+
+        Assert.Contains(
+            "x:Key=\"NavigationViewItemForegroundSelected\" Color=\"{StaticResource PrimaryTextColor}\"",
+            theme);
     }
 
     [Fact]

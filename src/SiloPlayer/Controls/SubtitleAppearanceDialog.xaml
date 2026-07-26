@@ -7,8 +7,6 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
     Title=""
-    CloseButtonText="Done"
-    DefaultButton="Close"
     Background="#F1111114"
     Foreground="White">
 
@@ -19,7 +17,7 @@
         <SolidColorBrush x:Key="PanelFooterText" Color="#66FFFFFF" />
     </ContentDialog.Resources>
 
-    <Grid Width="620" RowSpacing="0">
+    <Grid MinWidth="320" MaxWidth="620" RowSpacing="0">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <!-- Header -->
@@ -32,19 +30,38 @@
         </Grid.RowDefinitions>
 
         <!-- Header -->
-        <StackPanel Grid.Row="0" Spacing="2" Margin="0,0,0,16">
-            <TextBlock
-                Text="CAPTIONS"
-                FontSize="10"
-                FontWeight="SemiBold"
-                CharacterSpacing="220"
-                Foreground="{StaticResource PanelSectionLabel}" />
-            <TextBlock
-                Text="Subtitle appearance"
-                FontSize="17"
-                FontWeight="SemiBold"
-                Foreground="White" />
-        </StackPanel>
+        <Grid Grid.Row="0" Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Spacing="2">
+                <TextBlock
+                    Text="CAPTIONS"
+                    FontSize="10"
+                    FontWeight="SemiBold"
+                    CharacterSpacing="220"
+                    Foreground="{StaticResource PanelSectionLabel}" />
+                <TextBlock
+                    Text="Subtitle appearance"
+                    FontSize="17"
+                    FontWeight="SemiBold"
+                    Foreground="White" />
+            </StackPanel>
+            <Button
+                Grid.Column="1"
+                Width="36"
+                Height="36"
+                Padding="0"
+                Background="Transparent"
+                BorderThickness="0"
+                CornerRadius="18"
+                ToolTipService.ToolTip="Close"
+                AutomationProperties.Name="Close"
+                Click="Close_Click">
+                <FontIcon Glyph="&#xE711;" FontSize="15" Foreground="#B3FFFFFF" />
+            </Button>
+        </Grid>
 
         <!-- Live preview (faux video gradient + centered stacked cue lines) -->
         <Border
@@ -139,16 +156,6 @@
                                       Toggled="OutlineToggle_Toggled" />
                     </Grid>
 
-                    <Grid x:Name="OutlineColorRow" ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="100" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Outline color" FontSize="13"
-                                   VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
-                        <StackPanel Grid.Column="1" x:Name="OutlineColorSwatchHost" Orientation="Horizontal"
-                                    Spacing="8" VerticalAlignment="Center" />
-                    </Grid>
                 </StackPanel>
 
                 <Border Height="1" Background="{StaticResource PanelDivider}" />
@@ -245,7 +252,7 @@
                     Padding="10,6">
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <FontIcon Glyph="&#xE72C;" FontSize="12" Foreground="#B3FFFFFF" />
-                    <TextBlock Text="Reset to defaults" FontSize="13" Foreground="#B3FFFFFF" />
+                    <TextBlock Text="Use fallback style" FontSize="13" Foreground="#B3FFFFFF" />
                 </StackPanel>
             </Button>
             <TextBlock Grid.Column="1"

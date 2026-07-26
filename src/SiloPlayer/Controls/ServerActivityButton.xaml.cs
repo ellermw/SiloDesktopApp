@@ -26,13 +26,18 @@ namespace SiloPlayer.Controls;
 /// </summary>
 public sealed partial class ServerActivityButton : UserControl
 {
+    private static readonly TimeSpan ConnectionProblemIndicatorDelay = TimeSpan.FromSeconds(4);
     private const int MaxActivityScanRows = 25;
     private readonly AdminApi _adminApi;
     private DispatcherTimer? _pollTimer;
+    private DispatcherTimer? _connectionProblemTimer;
     private readonly EventChannelClient _events;
     private IDisposable? _subscription;
     private bool _wsConnected;
+    private bool _showConnectionProblem;
+    private WebSocketState _wsState = WebSocketState.None;
     private bool _hostVisibilityAllowed = true;
+    private bool _isLoaded;
     private DateTime _lastEventPollAt = DateTime.MinValue;
 
     // Cached snapshot for popover rebuilds
@@ -51,7 +56,20 @@ public sealed partial class ServerActivityButton : UserControl
 
     public void SetHostVisibility(bool allowed)
     {
+        if (_hostVisibilityAllowed == allowed)
+        {
+            UpdateBadgeState();
+            return;
+        }
+
         _hostVisibilityAllowed = allowed;
+        if (_isLoaded)
+        {
+            if (allowed)
+                StartMonitoring();
+            else
+                StopMonitoring();
+        }
         UpdateBadgeState();
     }
 
@@ -78,6 +96,18 @@ public sealed partial class ServerActivityButton : UserControl
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        _isLoaded = true;
+        if (!_hostVisibilityAllowed)
+        {
+            UpdateBadgeState();
+            return;
+        }
+
+        StartMonitoring();
+    }
+
+    private void StartMonitoring()
+    {
         // Kick off an immediate poll so the badge count is fresh the moment
         // the host makes us visible. Don't wait for the first timer tick.
         _ = PollAsync();
@@ -97,7 +127,15 @@ public sealed partial class ServerActivityButton : UserControl
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
+        _isLoaded = false;
+        StopMonitoring();
+    }
+
+    private void StopMonitoring()
+    {
         _pollTimer?.Stop();
+        StopConnectionProblemTimer();
+        _showConnectionProblem = false;
         UnsubscribeFromEvents();
     }
 
@@ -111,7 +149,7 @@ public sealed partial class ServerActivityButton : UserControl
             // The shared client may already be live before this control loads.
             // Seed from its current state instead of showing a false warning
             // until the next reconnect transition.
-            _wsConnected = _events.CurrentState == WebSocketState.Open;
+            ApplyConnectionState(_events.CurrentState);
             _events.SnapshotReceived += OnSnapshot;
             _events.EventReceived += OnEvent;
             _events.StateChanged += OnWsStateChanged;
@@ -140,8 +178,54 @@ public sealed partial class ServerActivityButton : UserControl
 
     private void OnWsStateChanged(WebSocketState state)
     {
+        DispatcherQueue.TryEnqueue(() => ApplyConnectionState(state));
+    }
+
+    private void ApplyConnectionState(WebSocketState state)
+    {
+        _wsState = state;
         _wsConnected = state == WebSocketState.Open;
-        DispatcherQueue.TryEnqueue(UpdateBadgeState);
+        if (_wsConnected)
+        {
+            StopConnectionProblemTimer();
+            _showConnectionProblem = false;
+            UpdateBadgeState();
+            return;
+        }
+
+        if (!_showConnectionProblem && _connectionProblemTimer == null)
+        {
+            _connectionProblemTimer = new DispatcherTimer
+            {
+                // ServerActivity.tsx deliberately suppresses transient
+                // reconnect noise for four seconds.
+                Interval = ConnectionProblemIndicatorDelay,
+            };
+            _connectionProblemTimer.Tick += ConnectionProblemTimer_Tick;
+            _connectionProblemTimer.Start();
+        }
+
+        UpdateBadgeState();
+    }
+
+    private void ConnectionProblemTimer_Tick(object? sender, object e)
+    {
+        StopConnectionProblemTimer();
+        if (_wsConnected)
+            return;
+
+        _showConnectionProblem = true;
+        UpdateBadgeState();
+    }
+
+    private void StopConnectionProblemTimer()
+    {
+        if (_connectionProblemTimer == null)
+            return;
+
+        _connectionProblemTimer.Stop();
+        _connectionProblemTimer.Tick -= ConnectionProblemTimer_Tick;
+        _connectionProblemTimer = null;
     }
 
     private void OnSnapshot(string channel, System.Text.Json.JsonElement data)
@@ -274,7 +358,7 @@ public sealed partial class ServerActivityButton : UserControl
         // still have activity to report. Mirrors upstream ServerActivity.tsx:100.
         if (DisconnectedDot != null)
             DisconnectedDot.Visibility =
-                (!_wsConnected && total > 0) ? Visibility.Visible : Visibility.Collapsed;
+                _showConnectionProblem ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void RootButton_Click(object sender, RoutedEventArgs e)
@@ -308,6 +392,21 @@ public sealed partial class ServerActivityButton : UserControl
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
         });
+        if (!_wsConnected)
+        {
+            var status = new TextBlock
+            {
+                Text = _wsState is WebSocketState.Connecting or WebSocketState.None
+                    ? "Connecting\u2026"
+                    : "Disconnected",
+                FontSize = 10,
+                FontWeight = FontWeights.Medium,
+                Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xF5, 0x9E, 0x0B)),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(status, 1);
+            headerRow.Children.Add(status);
+        }
         PopoverRoot.Children.Add(headerRow);
         PopoverRoot.Children.Add(Divider());
 

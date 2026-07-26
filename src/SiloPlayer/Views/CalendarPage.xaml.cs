@@ -41,6 +41,7 @@ public sealed partial class CalendarPage : Page
     private double _gutter = 48;
     private double _eventCardWidth = 185;
     private CancellationTokenSource? _imageLoadCts;
+    private double _lastMobileHeaderScrollY;
 
     public CalendarPage()
     {
@@ -53,6 +54,8 @@ public sealed partial class CalendarPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _lastMobileHeaderScrollY = ContentScrollViewer.VerticalOffset;
+        App.MainWindowInstance?.SetMobileHeaderHidden(false);
         RenewImageLoadScope();
     }
 
@@ -83,6 +86,7 @@ public sealed partial class CalendarPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        App.MainWindowInstance?.SetMobileHeaderHidden(false);
         ViewModel.CancelLoad();
         CancelImageLoads();
         if (_eventsAttached)
@@ -92,6 +96,21 @@ public sealed partial class CalendarPage : Page
             ViewModel.Libraries.CollectionChanged -= OnLibrariesChanged;
             _eventsAttached = false;
         }
+    }
+
+    private void ContentScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    {
+        var y = ContentScrollViewer.VerticalOffset;
+        var delta = y - _lastMobileHeaderScrollY;
+        if (Math.Abs(delta) <= 4)
+            return;
+
+        if (delta > 0 && y > 80)
+            App.MainWindowInstance?.SetMobileHeaderHidden(true);
+        else if (delta < 0)
+            App.MainWindowInstance?.SetMobileHeaderHidden(false);
+
+        _lastMobileHeaderScrollY = y;
     }
 
     // ---------- Reactive wiring ----------

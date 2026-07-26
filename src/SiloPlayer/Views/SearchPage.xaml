@@ -26,7 +26,7 @@
             x:Name="EmptyState"
             VerticalAlignment="Center"
             HorizontalAlignment="Center"
-            Spacing="16"
+            Spacing="0"
             Padding="40">
 
             <!-- Search icon (web: Search h-10 w-10 strokeWidth=1.5) -->
@@ -34,15 +34,20 @@
                 Glyph="&#xE721;"
                 FontSize="40"
                 Foreground="{StaticResource SecondaryTextBrush}"
-                HorizontalAlignment="Center" />
+                HorizontalAlignment="Center"
+                Margin="0,0,0,24" />
 
-            <!-- Title (web: page-title mb-4) -->
+            <!-- Current WebUI Catalog empty-query heading: page-title mb-4. -->
             <TextBlock
+                x:Name="EmptySearchTitle"
                 Text="Search"
-                FontSize="{StaticResource FontSizeDisplayLarge}"
-                FontWeight="Bold"
+                FontSize="60"
+                FontWeight="ExtraBold"
+                CharacterSpacing="-50"
+                LineHeight="57"
                 Foreground="{StaticResource PrimaryTextBrush}"
-                HorizontalAlignment="Center" />
+                HorizontalAlignment="Center"
+                Margin="0,0,0,16" />
 
             <!-- Subtitle (web: page-subtitle mb-8 max-w-xl text-sm) -->
             <TextBlock
@@ -52,19 +57,22 @@
                 HorizontalAlignment="Center"
                 TextAlignment="Center"
                 TextWrapping="Wrap"
-                MaxWidth="480" />
+                MaxWidth="576"
+                Margin="0,0,0,32" />
 
             <!-- Prominent search bar (web: SearchBar prominent - surface-panel h-14 rounded-[1.4rem] pl-12) -->
             <Border
+                x:Name="EmptySearchSurface"
                 Background="{StaticResource SurfaceBrush}"
-                CornerRadius="20"
-                MaxWidth="520"
-                HorizontalAlignment="Stretch"
-                Margin="0,8,0,0">
+                CornerRadius="22"
+                Width="576"
+                MaxWidth="576"
+                Height="56"
+                HorizontalAlignment="Stretch">
                 <Grid>
                     <FontIcon
                         Glyph="&#xE721;"
-                        FontSize="18"
+                        FontSize="20"
                         Foreground="{StaticResource SecondaryTextBrush}"
                         HorizontalAlignment="Left"
                         VerticalAlignment="Center"
@@ -74,11 +82,12 @@
                         PlaceholderText="Search movies, series..."
                         TextChanged="SearchBox_TextChanged"
                         KeyDown="SearchBox_KeyDown"
-                        FontSize="15"
-                        Padding="46,14,12,14"
+                        FontSize="16"
+                        Padding="48,0,12,0"
+                        VerticalContentAlignment="Center"
                         Background="Transparent"
                         BorderThickness="0"
-                        CornerRadius="20"
+                        CornerRadius="22"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                 </Grid>
             </Border>
@@ -100,15 +109,18 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
             <!-- Header with title + inline result count (web: page-header in CatalogResults) -->
-            <StackPanel x:Name="ResultsHeader" Grid.Row="0" MaxWidth="1400" HorizontalAlignment="Stretch" Margin="40,24,40,20" Spacing="6">
+            <StackPanel x:Name="ResultsHeader" Grid.Row="0" MaxWidth="1400" HorizontalAlignment="Stretch" Margin="40,24,40,24" Spacing="12">
                 <TextBlock
                     x:Name="ResultsTitle"
-                    FontSize="{StaticResource FontSizeDisplayLarge}"
-                    FontWeight="Bold"
+                    FontSize="56"
+                    FontWeight="ExtraBold"
+                    CharacterSpacing="-50"
+                    LineHeight="53"
                     Foreground="{StaticResource PrimaryTextBrush}" />
 
                 <TextBlock Text="Refine the archive by type, era, rating, or genre."
@@ -129,40 +141,82 @@
                 x:Name="ResultsSearchSurface"
                 Grid.Row="1"
                 Background="{StaticResource SurfaceBrush}"
-                CornerRadius="20"
-                Margin="40,0,40,20"
-                MaxWidth="600"
+                CornerRadius="22"
+                Margin="40,0,40,12"
+                Width="576"
+                MaxWidth="576"
+                Height="56"
                 HorizontalAlignment="Center">
                 <Grid>
                     <FontIcon
                         Glyph="&#xE721;"
-                        FontSize="16"
+                        FontSize="20"
                         Foreground="{StaticResource SecondaryTextBrush}"
                         HorizontalAlignment="Left"
                         VerticalAlignment="Center"
-                        Margin="14,0,0,0" />
+                        Margin="16,0,0,0" />
                     <TextBox
                         x:Name="ResultsSearchBox"
                         PlaceholderText="Search movies, series..."
                         TextChanged="SearchBox_TextChanged"
                         KeyDown="SearchBox_KeyDown"
-                        FontSize="14"
-                        Padding="40,10,12,10"
+                        FontSize="16"
+                        Padding="48,0,12,0"
+                        VerticalContentAlignment="Center"
                         Background="Transparent"
                         BorderThickness="0"
-                        CornerRadius="20"
+                        CornerRadius="22"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                 </Grid>
             </Border>
 
-            <StackPanel x:Name="ResultsScopePanel" Grid.Row="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Margin="0,0,0,16">
-                <Button x:Name="ResultsVideoScope" Content="Media" Tag="video" Click="Scope_Click" />
-                <Button x:Name="ResultsAudiobookScope" Content="Audiobooks" Tag="audiobook" Click="Scope_Click" />
-                <Button x:Name="ResultsAllScope" Content="All" Tag="all" Click="Scope_Click" />
-            </StackPanel>
+            <!-- Current WebUI SearchScopeChips: one surface-panel radiogroup,
+                 rounded-full with 4px padding/gaps and pill-shaped choices. -->
+            <Border Grid.Row="2"
+                    HorizontalAlignment="Center"
+                    Margin="0,0,0,24"
+                    Padding="4"
+                    CornerRadius="999"
+                    Background="{StaticResource SurfaceBrush}"
+                    AutomationProperties.Name="Search scope">
+                <StackPanel x:Name="ResultsScopePanel"
+                            Orientation="Horizontal"
+                            Spacing="4">
+                    <Button x:Name="ResultsVideoScope"
+                            Content="Media"
+                            Tag="video"
+                            Click="Scope_Click"
+                            CornerRadius="999"
+                            Padding="16,6"
+                            BorderThickness="0"
+                            FontSize="14"
+                            FontWeight="Medium"
+                            AutomationProperties.Name="Search media" />
+                    <Button x:Name="ResultsAudiobookScope"
+                            Content="Audiobooks"
+                            Tag="audiobook"
+                            Click="Scope_Click"
+                            CornerRadius="999"
+                            Padding="16,6"
+                            BorderThickness="0"
+                            FontSize="14"
+                            FontWeight="Medium"
+                            AutomationProperties.Name="Search audiobooks" />
+                    <Button x:Name="ResultsAllScope"
+                            Content="All"
+                            Tag="all"
+                            Click="Scope_Click"
+                            CornerRadius="999"
+                            Padding="16,6"
+                            BorderThickness="0"
+                            FontSize="14"
+                            FontWeight="Medium"
+                            AutomationProperties.Name="Search all media" />
+                </StackPanel>
+            </Border>
 
             <controls:WrapPanel x:Name="ResultsToolbar" Grid.Row="3" MaxWidth="1400"
-                                Margin="40,0,40,16" HorizontalSpacing="10" VerticalSpacing="10"
+                                Margin="40,0,40,24" HorizontalSpacing="10" VerticalSpacing="10"
                                 HorizontalAlignment="Stretch">
                 <ComboBox x:Name="ResultTypeCombo" Width="180" SelectionChanged="ResultFilter_Changed">
                     <ComboBoxItem Content="Movies &amp; Series" Tag="video" IsSelected="True" />
@@ -200,18 +254,46 @@
                     <ComboBoxItem Content="Descending" Tag="desc" IsSelected="True" />
                     <ComboBoxItem Content="Ascending" Tag="asc" />
                 </ComboBox>
-                <Button Style="{StaticResource OutlineButtonStyle}" Click="OpenResultFilters_Click">
+                <Button x:Name="ResultFiltersButton"
+                        Style="{StaticResource OutlineButtonStyle}"
+                        Click="OpenResultFilters_Click">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon Glyph="&#xE71C;" FontSize="14" />
                         <TextBlock Text="Filters" />
+                        <Border x:Name="ResultFiltersButtonCountBadge"
+                                Visibility="Collapsed"
+                                Padding="6,0"
+                                MinWidth="18"
+                                Height="18"
+                                CornerRadius="9"
+                                Background="{StaticResource AccentBrush}">
+                            <TextBlock x:Name="ResultFiltersButtonCount"
+                                       FontSize="10"
+                                       FontWeight="Bold"
+                                       Foreground="{StaticResource AccentForegroundBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
+                        </Border>
                     </StackPanel>
                 </Button>
             </controls:WrapPanel>
 
+            <!-- Current WebUI ActiveFilterBadges: active secondary filters
+                 remain visible below the toolbar and can be removed directly. -->
+            <controls:WrapPanel x:Name="ActiveResultFiltersPanel"
+                                Grid.Row="4"
+                                MaxWidth="1400"
+                                Margin="40,0,40,24"
+                                HorizontalSpacing="8"
+                                VerticalSpacing="8"
+                                HorizontalAlignment="Stretch"
+                                Visibility="Collapsed"
+                                AutomationProperties.Name="Active search filters" />
+
             <!-- Results grid -->
-            <ScrollViewer x:Name="ResultsScroll" Grid.Row="4" Padding="40,0,40,24"
+            <ScrollViewer x:Name="ResultsScroll" Grid.Row="5" Padding="40,0,40,24"
                           ViewChanged="ResultsScroll_ViewChanged">
-                <StackPanel MaxWidth="1400" HorizontalAlignment="Center">
+                <StackPanel x:Name="ResultsContent" MaxWidth="1400" HorizontalAlignment="Center">
 
                     <!-- People results section -->
                     <StackPanel x:Name="PeopleSection" Visibility="Collapsed" Margin="0,0,0,24">
@@ -349,7 +431,7 @@
 
             <!-- WebUI parity: long result grids expose a floating scroll-to-top affordance. -->
             <Button x:Name="SearchScrollToTopButton"
-                    Grid.RowSpan="5"
+                    Grid.RowSpan="6"
                     Canvas.ZIndex="20"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Bottom"

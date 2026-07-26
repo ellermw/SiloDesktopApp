@@ -31,6 +31,12 @@ public sealed class FullscreenStateSyncSourceTests
         var service = ReadRepoFile("src", "SiloPlayer", "Services", "PlayerService.cs");
 
         Assert.Contains("PublishPictureInPictureVisualState", service);
+        Assert.Contains(
+            "if (newState != PlayerState.PictureInPicture)\r\n            _videoWindow?.ExitPictureInPicture();",
+            service.ReplaceLineEndings("\r\n"));
+        Assert.Matches(
+            "(?s)HandleUnhandledPlaybackEscape\\(\\).*?State == PlayerState\\.PictureInPicture.*?SetState\\(PlayerState\\.Expanded\\)",
+            service);
         Assert.Contains("case \"silo-pip-toggle\"", service);
         Assert.Contains("case \"silo-prev-episode\"", service);
         Assert.Contains("PlayPreviousEpisodeAsync", service);

@@ -77,6 +77,29 @@ public sealed class MpvOscScriptTests
     }
 
     [Fact]
+    public void SubtitleLanguageLabelsMatchTheCurrentWebUiCatalogAndRegionalCodes()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("local base = normalized:match(\"^([^%-_]+)\") or normalized", script);
+        Assert.Contains("sk = \"Slovak\", slo = \"Slovak\", slk = \"Slovak\"", script);
+        Assert.Contains("sl = \"Slovenian\", slv = \"Slovenian\"", script);
+        Assert.Contains("ms = \"Malay\", may = \"Malay\", msa = \"Malay\"", script);
+        Assert.Contains("ta = \"Tamil\", tam = \"Tamil\", te = \"Telugu\", tel = \"Telugu\"", script);
+        Assert.Contains("bn = \"Bengali\", ben = \"Bengali\", fa = \"Persian\"", script);
+    }
+
+    [Fact]
+    public void OscAccentTracksTheActiveApplicationTheme()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("osc-set-theme", script);
+        Assert.Contains("WinUI sends RRGGBB; ASS colors are BGR.", script);
+        Assert.Contains("config.accent_color = value:sub(5, 6)", script);
+    }
+
+    [Fact]
     public void KeyboardShortcutsMatchCurrentWebUiPlayer()
     {
         var script = File.ReadAllText(FindOscScriptPath());
@@ -94,7 +117,14 @@ public sealed class MpvOscScriptTests
         Assert.Contains("silo-menu-end", script);
         Assert.Contains("silo-menu-activate", script);
         Assert.Contains("silo-menu-escape", script);
+        Assert.Contains("silo-escape-unhandled", script);
+        Assert.Contains("mp.add_forced_key_binding(\"ESC\"", script);
         Assert.Contains("move_keyboard_menu_focus", script);
+        Assert.Contains("silo-control-focus-next", script);
+        Assert.Contains("osc-controller-nav", script);
+        Assert.Contains("osc-controller-activate", script);
+        Assert.Contains("activate_controller_focus", script);
+        Assert.Contains("state.controller_focus_name", script);
         Assert.Contains("state.keyboard_menu_index == keyboard_row", script);
         Assert.Contains("silo-vol-up", script);
         Assert.Contains("silo-vol-down", script);
@@ -114,6 +144,32 @@ public sealed class MpvOscScriptTests
         Assert.Contains("delta = 0.1", script);
         Assert.Contains("subtitle_menu_offset", script);
         Assert.Contains("max_visible_tracks", script);
+        Assert.Contains("local menu_bottom = (L.seek_bar and L.seek_bar.y", script);
+        Assert.Contains("local menu_y = menu_bottom - menu_h", script);
+        Assert.Contains("math.floor((menu_bottom - math.floor(10 * sc) - fixed_height) / track_item_h)", script);
+        Assert.Contains("8, \"000000\", \"1A\", 1.0)", script);
+        Assert.DoesNotContain("local menu_y = (L.btn_cc.y - menu_h)", script);
+    }
+
+    [Fact]
+    public void TransportMenusUseReadableWebUiSurfacesAndStayAboveTheSeekRail()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.True(
+            System.Text.RegularExpressions.Regex.Matches(
+                script,
+                "8, \\\"000000\\\", \\\"1A\\\", 1\\.0\\)").Count >= 2);
+        Assert.Contains(
+            "local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y",
+            script);
+        Assert.Contains("state.layout.btn_audio.y) - math.floor(8 * sc)", script);
+        Assert.Contains("state.layout.btn_chapters.y) - math.floor(8 * sc)", script);
+        Assert.True(
+            System.Text.RegularExpressions.Regex.Matches(
+                script,
+                "local menu_y = math\\.max\\(10, menu_bottom - menu_h\\)").Count >= 2);
+        Assert.DoesNotContain("anchor.y - menu_h - math.floor(8 * sc)", script);
     }
 
     [Fact]
@@ -167,7 +223,13 @@ public sealed class MpvOscScriptTests
         Assert.DoesNotContain("Delayed frames", script);
         Assert.Contains("CURRENT SOURCE FILE", script);
         Assert.Contains("Audio sample rate", script);
+        Assert.Contains("Color range", script);
         Assert.Contains("Auto-switched from", script);
+        Assert.Contains("format_mbps_from_kbps(mi.bitrate)", script);
+        Assert.Contains("format_mbps_from_kbps(mi.video_bitrate)", script);
+        Assert.Contains("format_kbps(mi.audio_bitrate)", script);
+        Assert.Contains("format_sample_rate(mi.audio_sample_rate)", script);
+        Assert.DoesNotContain("format_bitrate(mi.video_bitrate)", script);
     }
 
     [Fact]
@@ -293,6 +355,24 @@ public sealed class MpvOscScriptTests
         Assert.Contains("osc-set-chapter-thumbnail", script);
         Assert.Contains("overlay-add", script);
         Assert.Contains("fmt = \"bgra\"", script);
+    }
+
+    [Fact]
+    public void ChapterMenuRepaintsWhenAnAsyncThumbnailArrives()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+        var handlerStart = script.IndexOf(
+            "mp.register_script_message(\"osc-set-chapter-thumbnail\"",
+            StringComparison.Ordinal);
+        var handlerEnd = script.IndexOf(
+            "mp.register_script_message(\"osc-clear-chapter-thumbnail\"",
+            handlerStart,
+            StringComparison.Ordinal);
+
+        Assert.True(handlerStart >= 0 && handlerEnd > handlerStart);
+        var handler = script[handlerStart..handlerEnd];
+        Assert.Contains("if state.chapter_menu_visible then", handler, StringComparison.Ordinal);
+        Assert.Contains("render_chapter_menu()", handler, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -474,6 +554,8 @@ public sealed class MpvOscScriptTests
         Assert.Contains("item.action == \"search\"", items);
         Assert.Contains("item.action == \"appearance\"", items);
         Assert.Contains("item.action == \"ai\"", items);
+        Assert.Contains("item.action == \"delay\"", items);
+        Assert.Contains("item.action == \"delay_reset\"", items);
 
         var activateStart = script.IndexOf("local function activate_keyboard_menu_item()", StringComparison.Ordinal);
         var activateEnd = script.IndexOf("local function close_keyboard_surface()", activateStart, StringComparison.Ordinal);
@@ -482,7 +564,83 @@ public sealed class MpvOscScriptTests
         Assert.Contains("silo-subtitle-search", activate);
         Assert.Contains("silo-subtitle-appearance", activate);
         Assert.Contains("silo-subtitle-ai", activate);
+        Assert.Contains("mp.set_property_number(\"sub-delay\"", activate);
         Assert.Contains("state.subtitle_menu_visible = false", activate);
+    }
+
+    [Fact]
+    public void SubtitleDialogsRestoreControllerFocusToTheirTrigger()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("restore_subtitle_focus_after_dialog", script);
+        Assert.Contains(
+            "state.restore_subtitle_focus_after_dialog = state.controller_focus_name == \"btn_cc\"",
+            script);
+        Assert.Contains("osc-subtitle-dialog-closed", script);
+        Assert.Contains("state.controller_focus_name = \"btn_cc\"", script);
+        Assert.Contains("show_osc()", script);
+    }
+
+    [Fact]
+    public void ControllerNavigationTraversesBoundedMenusAndStartsOnTheFirstItem()
+    {
+        var script = File.ReadAllText(FindOscScriptPath()).Replace("\r\n", "\n");
+        var moveStart = script.IndexOf("local function move_keyboard_menu_focus(direction)", StringComparison.Ordinal);
+        var moveEnd = script.IndexOf("local function activate_keyboard_menu_item()", moveStart, StringComparison.Ordinal);
+        Assert.True(moveStart >= 0 && moveEnd > moveStart);
+        var move = script[moveStart..moveEnd];
+
+        Assert.Contains("state.keyboard_menu_index < 1 and 1", move);
+        Assert.Contains("state.subtitle_menu_offset = state.subtitle_menu_offset + 1", move);
+        Assert.Contains("state.audio_menu_offset = state.audio_menu_offset + 1", move);
+        Assert.Contains("state.chapter_menu_offset = state.chapter_menu_offset + 1", move);
+        Assert.Contains("state.audio_menu_offset = #state.audio_tracks", move);
+        Assert.Contains("state.chapter_menu_offset = #state.chapters", move);
+    }
+
+    [Fact]
+    public void EscapeClosesOscSurfacesBeforeReturningControlToTheNativeWindow()
+    {
+        var script = File.ReadAllText(FindOscScriptPath()).Replace("\r\n", "\n");
+
+        var closeStart = script.IndexOf("local function close_keyboard_surface()", StringComparison.Ordinal);
+        var closeEnd = script.IndexOf("local function set_keyboard_transport_menu", closeStart, StringComparison.Ordinal);
+        Assert.True(closeStart >= 0 && closeEnd > closeStart);
+        var close = script[closeStart..closeEnd];
+        Assert.Contains("close_transport_menus(nil)", close);
+        Assert.Contains("close_marker_editor()", close);
+        Assert.Contains("state.stats_visible = false", close);
+
+        var escapeStart = script.IndexOf(
+            "mp.add_forced_key_binding(\"ESC\", \"silo-menu-escape\"",
+            StringComparison.Ordinal);
+        Assert.True(escapeStart >= 0);
+        var escape = script[escapeStart..Math.Min(script.Length, escapeStart + 320)];
+        Assert.Contains("if not close_keyboard_surface() then", escape);
+        Assert.Contains("silo-escape-unhandled", escape);
+    }
+
+    [Fact]
+    public void TransportMenusCloseWhenTheOscFades()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+        var helperStart = script.IndexOf(
+            "local function dismiss_transport_menus_for_fade()",
+            StringComparison.Ordinal);
+        var hideStart = script.IndexOf("hide_osc = function()", helperStart, StringComparison.Ordinal);
+        var hideEnd = script.IndexOf("local last_cursor_visible", hideStart, StringComparison.Ordinal);
+        Assert.True(helperStart >= 0 && hideStart > helperStart && hideEnd > hideStart);
+
+        var helper = script[helperStart..hideStart];
+        Assert.Contains("state.subtitle_menu_visible = false", helper, StringComparison.Ordinal);
+        Assert.Contains("state.quality_menu_visible = false", helper, StringComparison.Ordinal);
+        Assert.Contains("state.audio_menu_visible = false", helper, StringComparison.Ordinal);
+        Assert.Contains("state.chapter_menu_visible = false", helper, StringComparison.Ordinal);
+        Assert.Contains("state.keyboard_menu_kind = nil", helper, StringComparison.Ordinal);
+
+        var hide = script[hideStart..hideEnd];
+        Assert.Contains("dismiss_transport_menus_for_fade()", hide, StringComparison.Ordinal);
     }
 
     private static string FindOscScriptPath()
