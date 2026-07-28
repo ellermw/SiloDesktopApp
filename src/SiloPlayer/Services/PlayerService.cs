@@ -66,6 +66,7 @@ public class PlayerService : IDisposable
     private bool _postRollActive;
     private bool _postRollVideoEnded;
     private bool _restoreFullscreenAfterPostRollContinue;
+    private readonly EpisodeNavigationState _episodeNavigation = new();
     // Premature-EOF loop-breaker. mpv keep-open=yes pauses at EOF; our handler
     // restarts the stream to punch through transient CDN/server drops. Track
     // last attempt time and streak length so rapid duplicate EOFs do not spawn
@@ -445,8 +446,9 @@ public class PlayerService : IDisposable
 
         var localMediaPosition = ToSessionPosition(mediaPosition);
         var transportPosition = PlaybackTimeline.ToPlayerTime(localMediaPosition, _timelineOffsetSeconds);
+        var targetPrecedesTransportWindow = transportPosition < 0;
         var canSeekLocally = plan.TransportKind == PlaybackTransportKind.DirectProgressive ||
-            (plan.IsHls && _canSeekAnywhere);
+            (plan.IsHls && _canSeekAnywhere && !targetPrecedesTransportWindow);
 
         if (canSeekLocally)
         {
@@ -869,9 +871,15 @@ public class PlayerService : IDisposable
                     if (canCorrectLocally)
                     {
                         var sessionPosition = ToSessionPosition(position);
-                        _mpv.SeekFast(PlaybackTimeline.ToPlayerTime(
+                        var playerPosition = PlaybackTimeline.ToPlayerTime(
                             sessionPosition,
-                            _timelineOffsetSeconds));
+                            _timelineOffsetSeconds);
+                        if (playerPosition < 0)
+                        {
+                            QueueTransportRestartForSeek(position, forceResume: !wasPaused);
+                            return;
+                        }
+                        _mpv.SeekFast(playerPosition);
                     }
                     else
                     {
@@ -1057,15 +1065,57 @@ public class PlayerService : IDisposable
 
     // ── Next-episode metadata (set by ItemDetailPage before playback) ────
 
-    /// <summary>Content ID of the next episode to play. Null = no prompt shown at end.</summary>
-    public string? NextEpisodeContentId { get; set; }
-    public string? NextEpisodeTitle { get; set; }
-    public string? NextEpisodeSeriesTitle { get; set; }
-    public string? NextEpisodePosterUrl { get; set; }
-    public string? NextEpisodeOverview { get; set; }
-    public string? NextEpisodeAirDate { get; set; }
-    public int NextEpisodeRuntime { get; set; }
-    public string? PreviousEpisodeContentId { get; private set; }
+    private EpisodeNavigationSnapshot EpisodeNavigation => _episodeNavigation.Snapshot;
+    public string? NextEpisodeContentId => EpisodeNavigation.Next?.ContentId;
+    public string? NextEpisodeTitle => EpisodeNavigation.Next?.Title;
+    public string? NextEpisodeSeriesTitle => EpisodeNavigation.Next?.SeriesTitle;
+    public string? NextEpisodePosterUrl => EpisodeNavigation.Next?.PosterUrl;
+    public string? NextEpisodeOverview => EpisodeNavigation.Next?.Overview;
+    public string? NextEpisodeAirDate => EpisodeNavigation.Next?.AirDate;
+    public int NextEpisodeRuntime => EpisodeNavigation.Next?.RuntimeSeconds ?? 0;
+    public string? PreviousEpisodeContentId => EpisodeNavigation.PreviousContentId;
+
+    public bool HasEpisodeNavigationForCurrentPlayback =>
+        IsCurrentPlaybackSeriesEpisode() &&
+        _episodeNavigation.IsOwnedBy(ContentId);
+
+    public bool HasNextEpisodeForCurrentPlayback =>
+        IsCurrentPlaybackSeriesEpisode() &&
+        _episodeNavigation.HasNextFor(ContentId);
+
+    private bool IsCurrentPlaybackSeriesEpisode()
+    {
+        var detail = WatchDetail;
+        return detail is not null &&
+               !string.IsNullOrWhiteSpace(detail.SeriesId) &&
+               string.Equals(detail.ContentId, ContentId, StringComparison.Ordinal);
+    }
+
+    public void SetNextEpisodeHint(
+        string ownerContentId,
+        string nextContentId,
+        string? title,
+        string? seriesTitle,
+        string? posterUrl,
+        string? overview,
+        string? airDate = null,
+        int runtimeSeconds = 0,
+        int? seasonNumber = null,
+        int? episodeNumber = null)
+    {
+        _episodeNavigation.SetHint(
+            ownerContentId,
+            new EpisodeNavigationTarget(
+                nextContentId,
+                title,
+                seriesTitle,
+                posterUrl,
+                overview,
+                airDate,
+                runtimeSeconds,
+                seasonNumber,
+                episodeNumber));
+    }
 
     // ── State transitions ────────────────────────────────────────────────
 
@@ -1546,6 +1596,7 @@ public class PlayerService : IDisposable
         _pendingSubtitleSelection = subtitleSelection;
         _pendingInitialServerSubtitleIndex = null;
         LogToFile("state_trace.txt", $"PlayAsync called: contentId={contentId} fromStart={fromStart} audioTrackIndex={audioTrackIndex?.ToString() ?? "auto"} subtitleSelection={FormatSubtitleSelection(subtitleSelection)} State={State} IsLoading={IsLoading}");
+        PrepareEpisodeNavigationForContent(contentId);
 
         // CRITICAL: set the "switching content" flag BEFORE stopping the
         // previous mpv session. Without it, _mpv?.Stop() fires end-file →
@@ -2440,7 +2491,9 @@ public class PlayerService : IDisposable
     /// </summary>
     public async Task ContinuePlayingNextAsync()
     {
-        var nextId = NextEpisodeContentId;
+        var nextId = HasNextEpisodeForCurrentPlayback
+            ? NextEpisodeContentId
+            : null;
         var restoreFullscreen = _restoreFullscreenAfterPostRollContinue
             || State == PlayerState.Fullscreen
             || _videoWindow?.IsFullscreen == true;
@@ -2466,7 +2519,9 @@ public class PlayerService : IDisposable
 
     public Task PlayPreviousEpisodeAsync()
     {
-        var previousId = PreviousEpisodeContentId;
+        var previousId = HasEpisodeNavigationForCurrentPlayback
+            ? PreviousEpisodeContentId
+            : null;
         ClearNextEpisodeHint();
         return string.IsNullOrEmpty(previousId) ? Task.CompletedTask : PlayAsync(previousId);
     }
@@ -2515,15 +2570,26 @@ public class PlayerService : IDisposable
         _postRollActive = false;
         _postRollVideoEnded = false;
         _restoreFullscreenAfterPostRollContinue = false;
-        NextEpisodeContentId = null;
-        NextEpisodeTitle = null;
-        NextEpisodeSeriesTitle = null;
-        NextEpisodePosterUrl = null;
-        NextEpisodeOverview = null;
-        NextEpisodeAirDate = null;
-        NextEpisodeRuntime = 0;
-        PreviousEpisodeContentId = null;
+        _episodeNavigation.Clear();
         // Also tell the OSC to drop episode navigation and its credits action.
+        _mpv?.SendScriptMessage("osc-set-post-roll", "false");
+        _mpv?.SendScriptMessage("osc-set-episode-navigation", "false", "false", "false");
+        _mpv?.SendScriptMessage("osc-set-next-episode", "false");
+        _mpv?.SendScriptMessage("osc-set-next-episode-detail", "null");
+    }
+
+    private void PrepareEpisodeNavigationForContent(string contentId)
+    {
+        _playingNextShown = false;
+        _postRollActive = false;
+        _postRollVideoEnded = false;
+        _restoreFullscreenAfterPostRollContinue = false;
+        _episodeNavigation.PrepareFor(contentId);
+
+        // The mpv instance and Lua OSC are reused between files. Clear the
+        // previous file's visual/navigation state synchronously before Stop()
+        // or LoadFile can emit another event. The current episode lookup will
+        // republish the correct state after FILE_LOADED.
         _mpv?.SendScriptMessage("osc-set-post-roll", "false");
         _mpv?.SendScriptMessage("osc-set-episode-navigation", "false", "false", "false");
         _mpv?.SendScriptMessage("osc-set-next-episode", "false");
@@ -2532,7 +2598,8 @@ public class PlayerService : IDisposable
 
     private void PrefetchQueuedEpisodeWatchDetail()
     {
-        if (string.IsNullOrWhiteSpace(NextEpisodeContentId))
+        if (!HasNextEpisodeForCurrentPlayback ||
+            string.IsNullOrWhiteSpace(NextEpisodeContentId))
             return;
 
         PrefetchWatchDetail(NextEpisodeContentId);
@@ -2558,16 +2625,21 @@ public class PlayerService : IDisposable
     {
         try
         {
-            var wd = _playbackManager?.WatchDetail;
+            var ownerManager = _playbackManager;
+            var wd = ownerManager?.WatchDetail;
             if (wd == null) return;
             if (string.IsNullOrEmpty(wd.SeriesId)) return;
             if (!wd.SeasonNumber.HasValue || !wd.EpisodeNumber.HasValue) return;
+            var ownerContentId = wd.ContentId;
+            if (string.IsNullOrWhiteSpace(ownerContentId) ||
+                !IsEpisodeNavigationLookupCurrent(ownerManager, ownerContentId, ct))
+                return;
 
             var seasonNumbers = new SortedSet<int> { wd.SeasonNumber.Value };
             try
             {
                 var seasons = await _catalogApi.GetSeasonsAsync(wd.SeriesId, ct);
-                if (ct.IsCancellationRequested) return;
+                if (!IsEpisodeNavigationLookupCurrent(ownerManager, ownerContentId, ct)) return;
                 if (seasons.Seasons.Any(s => s.SeasonNumber == wd.SeasonNumber.Value + 1))
                     seasonNumbers.Add(wd.SeasonNumber.Value + 1);
                 if (seasons.Seasons.Any(s => s.SeasonNumber == wd.SeasonNumber.Value - 1))
@@ -2585,18 +2657,17 @@ public class PlayerService : IDisposable
                 .Select(seasonNumber => _catalogApi.GetEpisodesAsync(wd.SeriesId, seasonNumber, ct))
                 .ToArray();
             var episodeResponses = await Task.WhenAll(episodeTasks);
-            if (ct.IsCancellationRequested) return;
+            if (!IsEpisodeNavigationLookupCurrent(ownerManager, ownerContentId, ct)) return;
             var allEpisodes = episodeResponses
                 .SelectMany(response => response.Episodes ?? [])
                 .ToList();
 
-            if (ct.IsCancellationRequested) return;
             if (allEpisodes.Count == 0) return;
 
             var orderedEpisodes = allEpisodes.OrderBy(ep => ep.SeasonNumber).ThenBy(ep => ep.EpisodeNumber).ToList();
             var currentIndex = orderedEpisodes.FindIndex(ep => ep.ContentId == wd.ContentId ||
                 (ep.SeasonNumber == wd.SeasonNumber.Value && ep.EpisodeNumber == wd.EpisodeNumber.Value));
-            PreviousEpisodeContentId = currentIndex > 0 ? orderedEpisodes[currentIndex - 1].ContentId : null;
+            var previousContentId = currentIndex > 0 ? orderedEpisodes[currentIndex - 1].ContentId : null;
 
             int currentNumber = wd.EpisodeNumber.Value;
             var next = NextEpisodeResolver.FindNextEpisode(
@@ -2604,25 +2675,43 @@ public class PlayerService : IDisposable
                 wd.SeasonNumber.Value,
                 currentNumber,
                 wd.ContentId);
+            var nextTarget = next == null
+                ? null
+                : new EpisodeNavigationTarget(
+                    next.ContentId,
+                    string.IsNullOrEmpty(next.Title)
+                        ? $"S{next.SeasonNumber}:E{next.EpisodeNumber}"
+                        : $"S{next.SeasonNumber}:E{next.EpisodeNumber} \u2014 {next.Title}",
+                    wd.SeriesTitle,
+                    next.StillUrl,
+                    next.Overview,
+                    next.AirDate,
+                    next.Runtime,
+                    next.SeasonNumber,
+                    next.EpisodeNumber);
+
+            if (!IsEpisodeNavigationLookupCurrent(ownerManager, ownerContentId, ct) ||
+                !_episodeNavigation.TrySetResolved(ownerContentId, previousContentId, nextTarget))
+            {
+                LogToFile(
+                    "state_trace.txt",
+                    $"AutoDetectNextEpisode: discarded stale result for {ownerContentId}");
+                return;
+            }
+
             _mpv?.SendScriptMessage(
                 "osc-set-episode-navigation",
                 "true",
-                PreviousEpisodeContentId != null ? "true" : "false",
+                previousContentId != null ? "true" : "false",
                 next != null ? "true" : "false");
             if (next == null)
             {
+                _mpv?.SendScriptMessage("osc-set-next-episode-detail", "null");
+                _mpv?.SendScriptMessage("osc-set-next-episode", "false");
                 LogToFile("state_trace.txt", $"AutoDetectNextEpisode: no next episode after S{wd.SeasonNumber} E{currentNumber}");
                 return;
             }
 
-            NextEpisodeContentId = next.ContentId;
-            var label = $"S{next.SeasonNumber}:E{next.EpisodeNumber}";
-            NextEpisodeTitle = string.IsNullOrEmpty(next.Title) ? label : $"{label} \u2014 {next.Title}";
-            NextEpisodeSeriesTitle = wd.SeriesTitle;
-            NextEpisodePosterUrl = next.StillUrl;
-            NextEpisodeOverview = next.Overview;
-            NextEpisodeAirDate = next.AirDate;
-            NextEpisodeRuntime = next.Runtime;
             LogToFile("state_trace.txt", $"AutoDetectNextEpisode: next={next.ContentId} ({NextEpisodeTitle})");
 
             _mpv?.SendScriptMessage("osc-set-next-episode-detail", JsonSerializer.Serialize(new
@@ -2636,6 +2725,16 @@ public class PlayerService : IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex) { LogToFile("state_trace.txt", $"AutoDetectNextEpisode error: {ex.Message}"); }
     }
+
+    private bool IsEpisodeNavigationLookupCurrent(
+        PlaybackManager? ownerManager,
+        string ownerContentId,
+        CancellationToken ct)
+        => !ct.IsCancellationRequested &&
+           !_closing &&
+           ReferenceEquals(_playbackManager, ownerManager) &&
+           string.Equals(ContentId, ownerContentId, StringComparison.Ordinal) &&
+           string.Equals(ownerManager?.WatchDetail?.ContentId, ownerContentId, StringComparison.Ordinal);
 
     private void ResolveInitialSubtitleSelection(
         WatchDetailResponse watchDetail,

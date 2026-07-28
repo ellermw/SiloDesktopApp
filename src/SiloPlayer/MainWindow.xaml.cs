@@ -457,7 +457,7 @@ public sealed partial class MainWindow : Window
             {
                 _playerService.FinishPostRollPreview();
                 UpdatePlayingNextAutoPlayVisuals();
-                if (!string.IsNullOrWhiteSpace(_playerService.NextEpisodeContentId) &&
+                if (_playerService.HasNextEpisodeForCurrentPlayback &&
                     _playingNextAutoPlay)
                 {
                     StartPlayingNextCountdown();
@@ -465,7 +465,7 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            var hasNextEpisode = !string.IsNullOrWhiteSpace(_playerService.NextEpisodeContentId);
+            var hasNextEpisode = _playerService.HasNextEpisodeForCurrentPlayback;
             var presentationGeneration = Interlocked.Increment(ref _playingNextPresentationGeneration);
             var title = _playerService.NextEpisodeTitle ?? "Next episode";
             var series = _playerService.NextEpisodeSeriesTitle;
@@ -623,7 +623,7 @@ public sealed partial class MainWindow : Window
         }
         UpdatePlayingNextAutoPlayVisuals();
         if (_playerService.IsPostRollVideoEnded &&
-            !string.IsNullOrWhiteSpace(_playerService.NextEpisodeContentId) &&
+            _playerService.HasNextEpisodeForCurrentPlayback &&
             autoPlay &&
             _playingNextTimer == null)
         {
@@ -661,7 +661,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdatePlayingNextAutoPlayVisuals()
     {
-        var hasNextEpisode = !string.IsNullOrWhiteSpace(_playerService.NextEpisodeContentId);
+        var hasNextEpisode = _playerService.HasNextEpisodeForCurrentPlayback;
         PlayingNextCountdownPanel.Visibility = hasNextEpisode &&
             _playingNextAutoPlay &&
             _playerService.IsPostRollVideoEnded

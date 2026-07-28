@@ -10,6 +10,7 @@ public sealed class PlaybackTimelineTests
         Assert.Equal(615.25, PlaybackTimeline.ToMediaTime(0, 615.25), 3);
         Assert.Equal(0, PlaybackTimeline.ToPlayerTime(615.25, 615.25), 3);
         Assert.Equal(14.75, PlaybackTimeline.ToPlayerTime(630, 615.25), 3);
+        Assert.Equal(-15.25, PlaybackTimeline.ToPlayerTime(600, 615.25), 3);
     }
 
     [Fact]

@@ -468,7 +468,7 @@ public sealed partial class PlayerOverlay : UserControl
         SkipIntroButton.Visibility = showIntro ? Visibility.Visible : Visibility.Collapsed;
 
         var credits = _playerService.ActiveCredits;
-        bool hasNextEpisode = !string.IsNullOrEmpty(_playerService.NextEpisodeContentId);
+        bool hasNextEpisode = _playerService.HasNextEpisodeForCurrentPlayback;
         var dur = _playerService.Duration;
         bool showCredits = !hasNextEpisode
             && credits != null
@@ -493,7 +493,7 @@ public sealed partial class PlayerOverlay : UserControl
 
     private bool ShouldShowNextEpisodeButton(double pos, double duration)
     {
-        if (string.IsNullOrEmpty(_playerService.NextEpisodeContentId)) return false;
+        if (!_playerService.HasNextEpisodeForCurrentPlayback) return false;
         if (pos <= 0 || duration <= 0) return false;
 
         var credits = _playerService.ActiveCredits;
@@ -820,8 +820,9 @@ public sealed partial class PlayerOverlay : UserControl
     /// </summary>
     private void UpdateEpisodeNav(double pos = 0, double duration = 0)
     {
-        var hasPrevious = !string.IsNullOrEmpty(_playerService.PreviousEpisodeContentId);
-        var hasNext = !string.IsNullOrEmpty(_playerService.NextEpisodeContentId);
+        var hasPrevious = _playerService.HasEpisodeNavigationForCurrentPlayback &&
+            !string.IsNullOrEmpty(_playerService.PreviousEpisodeContentId);
+        var hasNext = _playerService.HasNextEpisodeForCurrentPlayback;
         bool hasAnyEpisodeSlot = hasPrevious || hasNext;
 
         if (!hasAnyEpisodeSlot)

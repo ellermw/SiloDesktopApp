@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.72**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.72/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.74**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.74/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `7B1FED010892D8313D6BA9099D2F3824313416074F1445A97982926FA24A9585`
+SHA-256: `66A6F42EADE972FE09699A75C1A12A7909254D4D1108E3B8CD29F46222C615D5`
 
 The installer is currently locally test-signed for QA, so Windows may still display a SmartScreen warning on machines that do not trust the local certificate. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
 
@@ -54,11 +54,13 @@ Status meanings:
 
 ## Latest release
 
-### 1.1.72
+### 1.1.74
 
-- Fixed the WinUI startup crash caused by the unsupported `GamepadB` XAML accelerator while preserving controller Back through runtime key handling.
-- Includes the 1.1.71 player reliability and current-WebUI parity milestone.
-- Verified with 695 passing tests, a zero-warning x64 Release build, signed payload validation, and a successful installed-launch test.
+- Prevented episode-only Previous/Next, credits countdown, and Playing Next state from leaking into movie playback.
+- Improved title, season/episode, and timeline typography on 4K playback surfaces.
+- Preserved current-server HLS/remux timeline seeking so transcoded playback can seek throughout the available media range.
+- Corrected package version metadata and added trusted timestamps to the locally signed app binaries, installer, and generated uninstaller.
+- Verified with 703 passing tests, a successful x64 publish, signature validation, a Smart App Control launch test with zero Code Integrity blocks, and real 4K/transcoded playback testing.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
 ## Playback goals
@@ -109,4 +111,4 @@ powershell -ExecutionPolicy Bypass -File installer/build.ps1
 
 ## Reference source
 
-Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). The player milestone carried into local QA build 1.1.72 was compared against Silo Server commit `02203d9e408c8f53ecbf8adf672d84d434180389` from July 26, 2026.
+Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). The player milestone carried into QA build 1.1.74 was compared against Silo Server commit `271a2e1741e1c1737d54f9fae00c466883363c0d` from July 28, 2026.

@@ -7,7 +7,8 @@ param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
     [string]$PublishDirectory = "",
-    [string]$SigningCertificateThumbprint = $env:SILO_SIGNING_CERT_THUMBPRINT
+    [string]$SigningCertificateThumbprint = $env:SILO_SIGNING_CERT_THUMBPRINT,
+    [string]$TimestampServer = "http://timestamp.digicert.com"
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,7 +46,8 @@ function Set-LocalCodeSignature {
     $signature = Set-AuthenticodeSignature `
         -LiteralPath $Path `
         -Certificate $SigningCertificate `
-        -HashAlgorithm SHA256
+        -HashAlgorithm SHA256 `
+        -TimestampServer $TimestampServer
     if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
         throw "Signing failed for '$Path': $($signature.Status) - $($signature.StatusMessage)"
     }
@@ -191,7 +193,16 @@ if (-not (Test-Path $IconDest)) {
 Write-Host "=== Compiling installer ==="
 if (-not (Test-Path $OutputDir)) { $null = New-Item -ItemType Directory -Path $OutputDir }
 
-& $IsccPath "/DPublishSourceDir=$PublishDir" "$InstallerDir\SiloInstaller.iss"
+$IsccArguments = @("/DPublishSourceDir=$PublishDir")
+if ($SigningCertificate) {
+    $InnoSignScript = Join-Path $InstallerDir "sign-file.ps1"
+    $InnoSignCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$InnoSignScript`" -Path `$f -Thumbprint `"$($SigningCertificate.Thumbprint)`" -TimestampServer `"$TimestampServer`""
+    $IsccArguments += "/DLocalSigning=1"
+    $IsccArguments += "/Slocaltesting=$InnoSignCommand"
+}
+$IsccArguments += "$InstallerDir\SiloInstaller.iss"
+
+& $IsccPath $IsccArguments
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Inno Setup compilation failed"
@@ -205,8 +216,12 @@ $SetupExe = Get-ChildItem "$OutputDir\SiloInstaller-*-Setup.exe" -ErrorAction Si
     Select-Object -First 1
 if ($SetupExe) {
     if ($SigningCertificate) {
-        Set-LocalCodeSignature -Path $SetupExe.FullName
-        Write-Host "Signed installer with $($SigningCertificate.Subject)."
+        $setupSignature = Get-AuthenticodeSignature -LiteralPath $SetupExe.FullName
+        if ($setupSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+            -not $setupSignature.TimeStamperCertificate) {
+            Set-LocalCodeSignature -Path $SetupExe.FullName
+        }
+        Write-Host "Verified timestamp-signed installer with $($SigningCertificate.Subject)."
     }
 
     # GitHub publishes a stable asset name. Always refresh it from the installer

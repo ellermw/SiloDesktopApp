@@ -33,4 +33,44 @@ Reported July 28, 2026.
 - Resume and start-from-beginning paths.
 - Windowed and fullscreen playback.
 
-Root cause is not yet confirmed. Verify session/content ownership before implementing the fix, then add regression coverage for clearing and gating all episode-only state.
+Confirmed root cause: the reusable player retained episode-navigation metadata
+until a full close, while the background lookup could publish without an
+explicit current-content ownership check.
+
+Implementation status: fixed in the 1.1.73 QA code by content-owning the
+navigation snapshot, rejecting late lookups from retired sessions, and clearing
+the reusable mpv/Lua context on every content transition. Installed real-media
+verification remains required before closing this item.
+
+## P2 — Player identity and time text is too small at 4K
+
+Reported July 28, 2026.
+
+### Observed behavior
+
+On a 3840×2160 display, the bottom-left text beneath the playback timeline does not scale appropriately:
+
+- The movie or episode title is readable but slightly too small.
+- Season and episode identifiers (`S#`, `E#`) are extremely small.
+- Current playback time and total duration are extremely small.
+- The visual hierarchy and legibility do not match the live Silo WebUI at the same display size.
+
+### Expected behavior
+
+- Scale the movie/episode title, season/episode metadata, and current-time/total-duration text responsively for 4K playback.
+- Preserve the current WebUI's relative typography hierarchy rather than applying one uniform enlargement.
+- Respect Windows display scaling as well as the playback window's actual pixel and logical dimensions.
+- Keep the metadata aligned beneath the timeline without crowding, clipping, or overlapping nearby controls.
+- Maintain appropriate sizes in windowed playback, 1080p fullscreen, ultrawide fullscreen, and 4K fullscreen.
+
+### Required milestone verification
+
+- Compare the installed desktop player directly with the live WebUI on the same 4K monitor.
+- Verify movie, episode, and other supported playback types.
+- Verify 100%, 125%, 150%, and 200% Windows display scaling where available.
+- Verify fullscreen, maximized, and smaller windowed layouts.
+- Confirm keyboard/controller focus indicators and OSC auto-hide transitions do not shift or clip the text.
+
+Implementation status: fixed in the 1.1.73 QA code with a dedicated,
+axis-aware 4K metadata scale. Installed comparison at the listed resolutions
+and Windows scaling levels remains required before closing this item.

@@ -10,7 +10,9 @@ public static class PlaybackTimeline
         => Math.Max(0, playerSeconds) + Math.Max(0, timelineOffsetSeconds);
 
     public static double ToPlayerTime(double mediaSeconds, double timelineOffsetSeconds)
-        => Math.Max(0, Math.Max(0, mediaSeconds) - Math.Max(0, timelineOffsetSeconds));
+        // Preserve a negative result so callers can distinguish a target that
+        // predates the currently exposed HLS/remux window from local time zero.
+        => Math.Max(0, mediaSeconds) - Math.Max(0, timelineOffsetSeconds);
 
     public static double ResolveMediaDuration(
         double playerDurationSeconds,

@@ -301,6 +301,19 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
+    public void EpisodeNavigationIsScopedToTheCurrentContentAndRejectsLateLookups()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+
+        Assert.Contains("PrepareEpisodeNavigationForContent(contentId);", source);
+        Assert.Contains("_episodeNavigation.PrepareFor(contentId);", source);
+        Assert.Contains("IsEpisodeNavigationLookupCurrent(ownerManager, ownerContentId, ct)", source);
+        Assert.Contains("_episodeNavigation.TrySetResolved(ownerContentId, previousContentId, nextTarget)", source);
+        Assert.Contains("HasNextEpisodeForCurrentPlayback", source);
+    }
+
+    [Fact]
     public void SubtitleSearchRefreshDoesNotRestoreTheStaleDialogOpenPosition()
     {
         var root = FindRepositoryRoot();
@@ -619,7 +632,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("ApplyAutoSkipMarkers(pos, dur)", source);
         Assert.Contains("SeekAndResume(intro.End)", source);
         Assert.Contains("SeekAndResume(Math.Min(credits.End, dur))", source);
-        Assert.Contains("NextEpisodeContentId", source);
+        Assert.Contains("HasNextEpisodeForCurrentPlayback", source);
     }
 
     [Fact]
@@ -946,9 +959,10 @@ public sealed class PlayerServiceSourceTests
         var method = source[methodStart..methodEnd];
 
         Assert.Contains(
-            "(plan.IsHls && _canSeekAnywhere)",
+            "(plan.IsHls && _canSeekAnywhere && !targetPrecedesTransportWindow)",
             method,
             StringComparison.Ordinal);
+        Assert.Contains("var targetPrecedesTransportWindow = transportPosition < 0;", method);
         Assert.DoesNotContain(
             "PlaybackTimeline.IsInsideExposedWindow",
             method,

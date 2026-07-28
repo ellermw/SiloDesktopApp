@@ -2,7 +2,7 @@
 ; Inno Setup script for Silo Desktop Player
 
 #define MyAppName "Silo Desktop Player"
-#define MyAppVersion "1.1.72"
+#define MyAppVersion "1.1.74"
 #define MyAppPublisher "Silo"
 #define MyAppExeName "SiloPlayer.exe"
 #ifndef PublishSourceDir
@@ -30,6 +30,9 @@ PrivilegesRequired=admin
 DisableProgramGroupPage=yes
 CloseApplications=force
 RestartApplications=no
+#ifdef LocalSigning
+SignTool=localtesting
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

@@ -4303,7 +4303,6 @@ public sealed partial class ItemDetailPage : Page
     private async Task PlayExtraAsync(string contentId)
     {
         var playerService = App.Services.GetRequiredService<Services.PlayerService>();
-        playerService.NextEpisodeContentId = null;
         await playerService.PlayAsync(contentId);
     }
 
@@ -4592,13 +4591,6 @@ public sealed partial class ItemDetailPage : Page
     /// </summary>
     private void SetNextEpisodeHintIfApplicable(Services.PlayerService playerService, string currentContentId)
     {
-        // Always clear first so a previous episode's next-hint doesn't leak in.
-        playerService.NextEpisodeContentId = null;
-        playerService.NextEpisodeTitle = null;
-        playerService.NextEpisodeSeriesTitle = null;
-        playerService.NextEpisodePosterUrl = null;
-        playerService.NextEpisodeOverview = null;
-
         if (!ViewModel.IsSeries || ViewModel.Episodes.Count == 0) return;
 
         int currentIdx = -1;
@@ -4613,13 +4605,19 @@ public sealed partial class ItemDetailPage : Page
         if (currentIdx < 0 || currentIdx >= ViewModel.Episodes.Count - 1) return;
 
         var next = ViewModel.Episodes[currentIdx + 1];
-        playerService.NextEpisodeContentId = next.ContentId;
         // Match the current WebUI post-roll episode label.
         var label = $"S{next.SeasonNumber}:E{next.EpisodeNumber}";
-        playerService.NextEpisodeTitle = string.IsNullOrEmpty(next.Title) ? label : $"{label} \u2014 {next.Title}";
-        playerService.NextEpisodeSeriesTitle = ViewModel.Item?.Title;
-        playerService.NextEpisodePosterUrl = next.StillUrl;
-        playerService.NextEpisodeOverview = next.Overview;
+        playerService.SetNextEpisodeHint(
+            currentContentId,
+            next.ContentId,
+            string.IsNullOrEmpty(next.Title) ? label : $"{label} \u2014 {next.Title}",
+            ViewModel.Item?.Title,
+            next.StillUrl,
+            next.Overview,
+            next.AirDate,
+            next.Runtime,
+            next.SeasonNumber,
+            next.EpisodeNumber);
     }
 
     // ===== Initial Play Button & Quality Badges from Catalog Item Data =====

@@ -2,6 +2,21 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.1.74 (QA package launch-policy fix)
+
+- Corrected the executable file and assembly versions so the package no longer ships changed binaries that still identify themselves as `1.1.72.0`.
+- Added a trusted RFC 3161 timestamp to every locally signed application binary and to the installer.
+- Configured Inno Setup to timestamp-sign its generated uninstaller as part of compilation instead of leaving `unins000.exe` unsigned.
+- Preserved the existing multi-file, self-contained Windows package and all 1.1.73 player changes.
+
+## 1.1.73 (player content-isolation and 4K OSC QA build)
+
+- Re-audited episode and movie controls against the signed-in live WebUI and public Silo Server GitHub `main` commit `271a2e1741e1c1737d54f9fae00c466883363c0d`.
+- Bound Previous Episode, Next Episode, credits countdown, and Playing Next metadata to the content ID that produced them, preventing a completed episode or late asynchronous lookup from publishing episodic actions into a movie session.
+- Reset the reusable mpv/Lua episode context synchronously at every content transition and defensively on every file load.
+- Enlarged the bottom-left title, season/episode label, and current/total time responsively on true 4K playback surfaces without globally inflating subtitle, quality, chapter, or playback-info menus.
+- Adopted the current server/WebUI media-timeline contract so seeks before an exposed HLS/remux window trigger a transport re-anchor instead of being silently clamped to the window start.
+
 ## 1.1.72 (startup regression QA fix)
 
 - Fixed the WinUI startup crash introduced by declaring the controller B button as a XAML `KeyboardAccelerator`; WinUI could not parse `GamepadB` while constructing the main window.

@@ -50,9 +50,11 @@ local config = {
     stats_font_size     = 16,
     stats_bg_alpha      = "B0",
 
-    -- Top title bar
-    -- Font sizes
-    font_size_time      = 11,
+    -- Bottom-left media identity. These are CSS-pixel equivalents at 1080p;
+    -- metadata_scale() enlarges them more assertively on true 4K surfaces.
+    font_size_title     = 17,
+    font_size_subtitle  = 12,
+    font_size_time      = 13,
 
     -- Button dimensions
     button_size         = 56,
@@ -404,6 +406,20 @@ local function ui_scale()
     -- Dampened scaling: sqrt-based so 4K gets ~1.41x instead of 2x.
     -- Linear 2x made text too large and caused quality menu overlap.
     return math.sqrt(w / 1920)
+end
+
+-- The WebUI's title strip is readable in CSS pixels, while mpv's ASS canvas
+-- is rendered in output pixels. A global sqrt scale keeps menus from becoming
+-- oversized, but left the title, S/E label, and timecode undersized at 4K.
+-- Scale only that typography against both axes and cap it below 2x so the
+-- transport and utility rails keep their current proportions.
+local function metadata_scale()
+    local width_scale = state.osd_width / 1920
+    local height_scale = state.osd_height / 1080
+    local surface_scale = math.min(width_scale, height_scale)
+    if surface_scale < 1.0 then return 1.0 end
+    if surface_scale > 1.75 then return 1.75 end
+    return surface_scale
 end
 
 -- Format seconds to H:MM:SS or M:SS
@@ -2003,7 +2019,8 @@ local function render_osc()
 
     -- 4. Bottom-left title, episode label, and mono timecode.
     local md = L.metadata
-    local title_font_size = math.floor(16 * sc)
+    local text_sc = metadata_scale()
+    local title_font_size = math.floor(config.font_size_title * text_sc)
     if state.content_title ~= "" and md.max_w > math.floor(24 * sc) then
         local title = truncate_display_text(state.content_title, md.max_w, title_font_size)
         draw_text(ass, md.x, md.y - math.floor(9 * sc), ass_escape_text(title),
@@ -2012,8 +2029,8 @@ local function render_osc()
     local meta_y = md.y + math.floor(14 * sc)
     local time_x = md.x
     if state.content_subtitle ~= "" then
-        time_x = md.x + math.min(md.max_w * 0.55, math.floor(220 * sc))
-        local subtitle_font_size = math.floor(10 * sc)
+        time_x = md.x + math.min(md.max_w * 0.60, math.floor(240 * text_sc))
+        local subtitle_font_size = math.floor(config.font_size_subtitle * text_sc)
         local subtitle_width = math.max(0, time_x - md.x - math.floor(12 * sc))
         local subtitle = truncate_display_text(
             state.content_subtitle, subtitle_width, subtitle_font_size)
@@ -2025,7 +2042,7 @@ local function render_osc()
     local time_str = format_time(state.time_pos) .. "  /  " .. format_time(state.duration)
     if md.max_w > math.floor(72 * sc) then
         draw_text(ass, time_x, meta_y, time_str,
-            math.floor(config.font_size_time * sc), config.text_color, "40", ma, 4, "Consolas", false)
+            math.floor(config.font_size_time * text_sc), config.text_color, "28", ma, 4, "Consolas", false)
     end
 
     -- 5. Center transport cluster: glass secondaries around a glossy white disc.
@@ -5917,11 +5934,20 @@ local function init()
         state.dragging_volume = false
         state.seek_drag_pos = 0
         state.restore_subtitle_focus_after_dialog = false
+        -- The mpv process and Lua VM are reused across content. Never carry
+        -- episode-only transport slots or post-roll actions into the next
+        -- file while the native host resolves that file's real context.
+        state.series_context = false
+        state.prev_ep_available = false
+        state.next_ep_available = false
+        state.next_ep_visible = false
+        state.next_ep_detail = nil
         state.next_ep_countdown_active = false
         state.next_ep_countdown_cancelled = false
         state.next_ep_countdown_started_at = 0
         state.next_ep_countdown_remaining = 10
         state.post_roll_active = false
+        render_next_episode_button()
         render_next_episode_countdown()
         show_osc()
     end)

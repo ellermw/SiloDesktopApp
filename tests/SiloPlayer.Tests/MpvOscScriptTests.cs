@@ -65,6 +65,36 @@ public sealed class MpvOscScriptTests
     }
 
     [Fact]
+    public void FileLoadClearsReusableEpisodeNavigationBeforeHostPublishesNewContext()
+    {
+        var script = File.ReadAllText(FindOscScriptPath()).Replace("\r\n", "\n");
+        var start = script.IndexOf("mp.register_event(\"file-loaded\"", StringComparison.Ordinal);
+        var end = script.IndexOf("mp.register_event(\"shutdown\"", start, StringComparison.Ordinal);
+
+        Assert.True(start >= 0 && end > start);
+        var fileLoaded = script[start..end];
+        Assert.Contains("state.series_context = false", fileLoaded);
+        Assert.Contains("state.prev_ep_available = false", fileLoaded);
+        Assert.Contains("state.next_ep_available = false", fileLoaded);
+        Assert.Contains("state.next_ep_detail = nil", fileLoaded);
+        Assert.Contains("render_next_episode_button()", fileLoaded);
+    }
+
+    [Fact]
+    public void FourKMetadataUsesDedicatedReadableScaleWithoutEnlargingEveryMenu()
+    {
+        var script = File.ReadAllText(FindOscScriptPath());
+
+        Assert.Contains("local function metadata_scale()", script);
+        Assert.Contains("math.min(width_scale, height_scale)", script);
+        Assert.Contains("if surface_scale > 1.75 then return 1.75 end", script);
+        Assert.Contains("font_size_title     = 17", script);
+        Assert.Contains("font_size_subtitle  = 12", script);
+        Assert.Contains("font_size_time      = 13", script);
+        Assert.Contains("local text_sc = metadata_scale()", script);
+    }
+
+    [Fact]
     public void PictureInPictureMatchesCurrentWebUiUtilityActionAndShortcut()
     {
         var script = File.ReadAllText(FindOscScriptPath());
