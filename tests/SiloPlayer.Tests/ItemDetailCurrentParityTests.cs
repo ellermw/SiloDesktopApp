@@ -276,16 +276,31 @@ public sealed class ItemDetailCurrentParityTests
     public void PrePlaySummariesUseCurrentWebUiLanguageAndOffLabels()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var web = ReadWeb("web", "src", "pages", "ItemDetail", "components", "SubtitlesPopover.tsx");
 
         Assert.Contains("MediaLanguageCatalog.Label(track.Language)", page);
         Assert.Contains("VersionRanking.MapAudioLabel(track.Codec)", page);
         Assert.Contains("return string.Join(\" · \", parts)", page);
         Assert.Contains("2 => \"stereo\"", page);
         Assert.Contains("Auto, Off, optional candidate sections", page);
-        Assert.Contains("var autoItem = new MenuFlyoutItem { Text = \"Auto\" }", page);
-        Assert.Contains("var offItem = new MenuFlyoutItem { Text = \"Off\" }", page);
+        Assert.Contains("var autoItem = CreateSubtitleMenuItem(\"Auto\")", page);
+        Assert.Contains("var offItem = CreateSubtitleMenuItem(\"Off\")", page);
         Assert.Contains("Text = \"No subtitles available.\"", page);
         Assert.Contains("SubtitlesSummary.Text = \"Auto: Off\"", page);
+        Assert.Contains("MediaLanguageCatalog.Label(sub.Language)", page);
+        Assert.Contains("\"srt\" or \"subrip\" => \"SRT\"", page);
+        Assert.Contains("PreferredTrackSignature: _watchDetail.EffectiveSubtitleTrackSignature", page);
+        Assert.Contains("AddTrackGroup(\"Embedded\"", page);
+        Assert.Contains("AddTrackGroup(\"External\"", page);
+        Assert.Contains("Text = \"Downloaded\"", page);
+        Assert.Contains("OrderBy(row => MediaLanguageCatalog.Label(row.Track.Language)", page);
+        Assert.Contains("ThenByDescending(row => row.Track.Forced == true)", page);
+        Assert.Contains("ThenByDescending(row => row.Track.Default == true)", page);
+        Assert.Contains("OrderByDescending(entry => entry.Score)", page);
+        Assert.Contains("MinWidth = 300", page);
+        Assert.Contains("FormatSubtitleTrackMenuText", page);
+        Assert.DoesNotContain("Text = \"Add subtitles...\"", page);
+        Assert.DoesNotContain("Add subtitles", web);
     }
 
     [Fact]
@@ -335,6 +350,7 @@ public sealed class ItemDetailCurrentParityTests
     public void SingleVersionResumeUsesTheWebChoiceDialogAndNavigationResetsPlaybackState()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var webLayout = ReadWeb("web", "src", "pages", "ItemDetail", "itemDetailLayout.ts");
 
         Assert.Contains("ShouldOfferResumeChoice", page);
         Assert.Contains("Title = \"Resume Playback?\"", page);
@@ -345,6 +361,9 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("_watchDetail = null", page);
         Assert.Contains("_selectedVersion = null", page);
         Assert.Contains("_selectedSubtitleSignature = null", page);
+        Assert.Contains("including a rewatch in flight (played stays true)", webLayout);
+        Assert.Contains("any nonzero position remains a", page);
+        Assert.DoesNotContain("&& !userData.Played", page);
     }
 
     [Fact]

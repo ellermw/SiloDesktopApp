@@ -423,6 +423,14 @@ public sealed class MpvVideoWindow : IDisposable
     public void Hide()
     {
         if (_hwnd == IntPtr.Zero) return;
+        // Hiding a tracked popup does not reliably produce WM_MOUSELEAVE.
+        // Discard the old tracking/click state so the next visible playback
+        // surface arms a fresh leave notification and cannot inherit an
+        // unfinished pointer gesture from Playing Next.
+        _mouseTracking = false;
+        if (_lbuttonDownTicks > 0)
+            ReleaseCapture();
+        _lbuttonDownTicks = 0;
         ShowWindow(_hwnd, SW_HIDE);
     }
 

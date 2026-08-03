@@ -20,7 +20,7 @@
         <converters:UrlToImageSourceConverter x:Key="UrlToImage" />
     </Page.Resources>
 
-    <Grid>
+    <Grid x:Name="SearchRoot">
         <!-- Empty state: shown when no query entered (web: Catalog.tsx empty search state) -->
         <StackPanel
             x:Name="EmptyState"
@@ -60,37 +60,13 @@
                 MaxWidth="576"
                 Margin="0,0,0,32" />
 
-            <!-- Prominent search bar (web: SearchBar prominent - surface-panel h-14 rounded-[1.4rem] pl-12) -->
-            <Border
-                x:Name="EmptySearchSurface"
-                Background="{StaticResource SurfaceBrush}"
-                CornerRadius="22"
-                Width="576"
-                MaxWidth="576"
-                Height="56"
-                HorizontalAlignment="Stretch">
-                <Grid>
-                    <FontIcon
-                        Glyph="&#xE721;"
-                        FontSize="20"
-                        Foreground="{StaticResource SecondaryTextBrush}"
-                        HorizontalAlignment="Left"
-                        VerticalAlignment="Center"
-                        Margin="16,0,0,0" />
-                    <TextBox
-                        x:Name="SearchBox"
-                        PlaceholderText="Search movies, series..."
-                        TextChanged="SearchBox_TextChanged"
-                        KeyDown="SearchBox_KeyDown"
-                        FontSize="16"
-                        Padding="48,0,12,0"
-                        VerticalContentAlignment="Center"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        CornerRadius="22"
-                        Foreground="{StaticResource PrimaryTextBrush}" />
-                </Grid>
-            </Border>
+            <!-- This host only reserves the input's layout slot. SearchSurface
+                 remains a child of SearchRoot for the page's entire lifetime. -->
+            <Grid x:Name="EmptySearchHost"
+                  Width="576"
+                  MaxWidth="576"
+                  Height="56"
+                  HorizontalAlignment="Center" />
             <StackPanel x:Name="EmptyScopeChips" Orientation="Horizontal" Spacing="8"
                         HorizontalAlignment="Center" Visibility="Collapsed">
                 <Button x:Name="EmptyVideoScope" Content="Media" Tag="video" Click="Scope_Click" />
@@ -136,47 +112,24 @@
                 </StackPanel>
             </StackPanel>
 
-            <!-- Search bar in results view (web: centered prominent SearchBar) -->
-            <Border
-                x:Name="ResultsSearchSurface"
+            <!-- Reserves the same persistent input's results-layout slot. -->
+            <Grid
+                x:Name="ResultsSearchHost"
                 Grid.Row="1"
-                Background="{StaticResource SurfaceBrush}"
-                CornerRadius="22"
                 Margin="40,0,40,12"
                 Width="576"
                 MaxWidth="576"
                 Height="56"
-                HorizontalAlignment="Center">
-                <Grid>
-                    <FontIcon
-                        Glyph="&#xE721;"
-                        FontSize="20"
-                        Foreground="{StaticResource SecondaryTextBrush}"
-                        HorizontalAlignment="Left"
-                        VerticalAlignment="Center"
-                        Margin="16,0,0,0" />
-                    <TextBox
-                        x:Name="ResultsSearchBox"
-                        PlaceholderText="Search movies, series..."
-                        TextChanged="SearchBox_TextChanged"
-                        KeyDown="SearchBox_KeyDown"
-                        FontSize="16"
-                        Padding="48,0,12,0"
-                        VerticalContentAlignment="Center"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        CornerRadius="22"
-                        Foreground="{StaticResource PrimaryTextBrush}" />
-                </Grid>
-            </Border>
+                HorizontalAlignment="Center" />
 
             <!-- Current WebUI SearchScopeChips: one surface-panel radiogroup,
                  rounded-full with 4px padding/gaps and pill-shaped choices. -->
             <Border Grid.Row="2"
                     HorizontalAlignment="Center"
                     Margin="0,0,0,24"
+                    Height="40"
                     Padding="4"
-                    CornerRadius="999"
+                    CornerRadius="20"
                     Background="{StaticResource SurfaceBrush}"
                     AutomationProperties.Name="Search scope">
                 <StackPanel x:Name="ResultsScopePanel"
@@ -186,8 +139,10 @@
                             Content="Media"
                             Tag="video"
                             Click="Scope_Click"
-                            CornerRadius="999"
-                            Padding="16,6"
+                            Height="32"
+                            MinHeight="0"
+                            CornerRadius="16"
+                            Padding="16,0"
                             BorderThickness="0"
                             FontSize="14"
                             FontWeight="Medium"
@@ -196,8 +151,10 @@
                             Content="Audiobooks"
                             Tag="audiobook"
                             Click="Scope_Click"
-                            CornerRadius="999"
-                            Padding="16,6"
+                            Height="32"
+                            MinHeight="0"
+                            CornerRadius="16"
+                            Padding="16,0"
                             BorderThickness="0"
                             FontSize="14"
                             FontWeight="Medium"
@@ -206,8 +163,10 @@
                             Content="All"
                             Tag="all"
                             Click="Scope_Click"
-                            CornerRadius="999"
-                            Padding="16,6"
+                            Height="32"
+                            MinHeight="0"
+                            CornerRadius="16"
+                            Padding="16,0"
                             BorderThickness="0"
                             FontSize="14"
                             FontWeight="Medium"
@@ -229,7 +188,8 @@
                     <ComboBoxItem Content="All Media" Tag="all" />
                 </ComboBox>
                 <ComboBox x:Name="ResultSortCombo" Width="180" SelectionChanged="ResultSort_Changed">
-                    <ComboBoxItem Content="Date Added" Tag="added_at" IsSelected="True" />
+                    <ComboBoxItem Content="Relevance" Tag="relevance" IsSelected="True" />
+                    <ComboBoxItem Content="Date Added" Tag="added_at" />
                     <ComboBoxItem Content="Title" Tag="title" />
                     <ComboBoxItem Content="Release Date" Tag="release_date" />
                     <ComboBoxItem Content="Latest Episode Air Date" Tag="last_air_date" />
@@ -449,6 +409,47 @@
                 <FontIcon Glyph="&#xE74A;" FontSize="14" />
             </Button>
         </Grid>
+
+        <!-- A single persistent input. It is positioned over the visible host,
+             never removed from or appended to a WinUI children collection. -->
+        <Border
+            x:Name="SearchSurface"
+            Canvas.ZIndex="10"
+            Background="{StaticResource SurfaceBrush}"
+            CornerRadius="22"
+            Width="576"
+            MaxWidth="576"
+            Height="56"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Top">
+            <Grid>
+                <FontIcon
+                    Glyph="&#xE721;"
+                    FontSize="20"
+                    Foreground="{StaticResource SecondaryTextBrush}"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center"
+                    Margin="16,0,0,0" />
+                <TextBox
+                    x:Name="SearchBox"
+                    PlaceholderText="Search movies, series..."
+                    TextChanged="SearchBox_TextChanged"
+                    KeyDown="SearchBox_KeyDown"
+                    Height="56"
+                    MinHeight="0"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch"
+                    FontSize="16"
+                    Padding="48,16,12,16"
+                    VerticalContentAlignment="Center"
+                    TextWrapping="NoWrap"
+                    AcceptsReturn="False"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    CornerRadius="22"
+                    Foreground="{StaticResource PrimaryTextBrush}" />
+            </Grid>
+        </Border>
 
         <controls:SlideSheet x:Name="ResultFiltersSheet" Title="Filters">
             <controls:SlideSheet.SheetContent>

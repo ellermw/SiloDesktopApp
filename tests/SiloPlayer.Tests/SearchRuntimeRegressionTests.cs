@@ -3,26 +3,74 @@ namespace SiloPlayer.Tests;
 public sealed class SearchRuntimeRegressionTests
 {
     [Fact]
-    public void TypingDoesNotWaitForFilterWarmupAndOnlyUsesTheNativeClearButton()
+    public void TypingUsesOnePersistentNativeInputAndDoesNotWaitForFilterWarmup()
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml");
         var code = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
-        var handler = Slice(code, "private void SearchBox_TextChanged", "private void SearchBox_KeyDown");
+        var handler = Slice(code, "private void SearchBox_TextChanged", "private async void SearchBox_KeyDown");
 
         Assert.DoesNotContain("SearchBoxClearButton", xaml);
         Assert.DoesNotContain("ResultsSearchBoxClearButton", xaml);
+        Assert.Equal(1, xaml.Split("x:Name=\"SearchBox\"").Length - 1);
+        Assert.DoesNotContain("x:Name=\"ResultsSearchBox\"", xaml);
         Assert.DoesNotContain("EnsureInitializedAsync", handler);
         Assert.Contains("TimeSpan.FromMilliseconds(100)", handler);
-        Assert.Contains("SearchBox.FocusState != FocusState.Unfocused", handler);
-        Assert.Contains("_pendingResultsSearchFocus = true", handler);
         Assert.Contains("ShowResultsShellForCurrentQuery();", handler);
-        Assert.Contains("FocusResultsSearchBox(_pendingResultsSearchFocusState);", handler);
-        Assert.True(handler.IndexOf("FocusResultsSearchBox(_pendingResultsSearchFocusState);", StringComparison.Ordinal) <
+        Assert.Contains("RestoreSearchFocus(focusState);", handler);
+        Assert.True(handler.IndexOf("RestoreSearchFocus(focusState);", StringComparison.Ordinal) <
                     handler.IndexOf("await ViewModel.SearchCommand.ExecuteAsync", StringComparison.Ordinal));
 
-        var focusHelper = Slice(code, "private void FocusResultsSearchBox", "private void SearchBox_KeyDown");
-        Assert.Contains("ResultsSearchBox.Focus", focusHelper);
-        Assert.Contains("ResultsSearchBox.SelectionStart = ResultsSearchBox.Text.Length", focusHelper);
+        var positionHelper = Slice(code, "private void PositionSearchSurface", "private async void SearchBox_KeyDown");
+        Assert.Contains("? EmptySearchHost", positionHelper);
+        Assert.Contains(": ResultsSearchHost", positionHelper);
+        Assert.Contains("TransformToVisual(SearchRoot)", positionHelper);
+        Assert.DoesNotContain("Children.Remove(SearchSurface)", code);
+        Assert.DoesNotContain("Children.Add(SearchSurface)", code);
+        Assert.Contains("SearchBox.Focus", positionHelper);
+        Assert.Contains("SearchBox.SelectionStart = SearchBox.Text.Length", positionHelper);
+    }
+
+    [Fact]
+    public void SearchChromeUsesTheWebUiDimensionsWithoutOversizedCornerRadii()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml");
+        var code = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
+
+        Assert.True(xaml.Split("Height=\"56\"").Length - 1 >= 4);
+        Assert.True(xaml.Split("VerticalContentAlignment=\"Center\"").Length - 1 >= 1);
+        Assert.Contains("Padding=\"48,16,12,16\"", xaml);
+        Assert.DoesNotContain("Padding=\"48,0,12,0\"", xaml);
+        Assert.True(xaml.Split("TextWrapping=\"NoWrap\"").Length - 1 >= 1);
+        Assert.Contains("AutomationProperties.Name=\"Search scope\"", xaml);
+        Assert.Contains("Height=\"40\"", xaml);
+        Assert.Contains("CornerRadius=\"20\"", xaml);
+        Assert.True(xaml.Split("Height=\"32\"").Length - 1 >= 3);
+        Assert.True(xaml.Split("CornerRadius=\"16\"").Length - 1 >= 3);
+        Assert.DoesNotContain("CornerRadius=\"999\"", xaml);
+        Assert.DoesNotContain("new CornerRadius(999)", code);
+        Assert.Contains("new CornerRadius(16)", code);
+    }
+
+    [Fact]
+    public void PrimarySearchDoesNotCompeteWithAnUnscopedFacetScanOrForceDateSorting()
+    {
+        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "SearchViewModel.cs");
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
+        var initialize = Slice(page, "private async Task InitializeAsync()", "private void UpdateResultsState()");
+        var fetch = Slice(viewModel, "private Task<CatalogResponse> FetchCatalogPageAsync", "private async Task<List<RequestMediaResult>> SearchOutsideLibraryAsync");
+        var debounce = Slice(page, "private void SearchBox_TextChanged", "private void ShowResultsShellForCurrentQuery");
+
+        Assert.DoesNotContain("LoadFiltersAsync", initialize);
+        Assert.Contains("await ViewModel.LoadMediaScopeAsync();", initialize);
+        Assert.Contains("_ = EnsureSearchFiltersLoadedAsync();", debounce);
+        Assert.Contains("ViewModel.LoadFiltersAsync(query, mediaType)", page);
+        Assert.Contains("q: normalizedQuery", viewModel);
+        Assert.Contains("type: normalizedType", viewModel);
+        Assert.Contains("private string _sortField = \"relevance\"", viewModel);
+        Assert.Contains("sort: SortField", fetch);
+        Assert.Contains("order: SortOrder", fetch);
+        Assert.DoesNotContain("sort: \"added_at\"", fetch);
+        Assert.Contains("search_timing.txt", viewModel);
     }
 
     [Fact]
@@ -43,6 +91,8 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("BuildSearchKey(querySnapshot)", source);
         Assert.Contains("string.Equals(_lastAppliedSearchKey, searchKey, StringComparison.Ordinal)", source);
         Assert.Contains("ReplaceMediaResults(response.Items)", source);
+        Assert.Contains("BulkObservableCollection<MediaItem> Results", source);
+        Assert.Contains("Results.AddRange(items)", source);
         Assert.Contains("ReplacePeopleResults(people)", source);
         Assert.Contains("_lastAppliedSearchKey = searchKey", source);
         Assert.Contains("IsCurrentSearchQuery(querySnapshot)", source);
@@ -52,6 +102,9 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("StableRequestResultKey", source);
         Assert.Contains("SequenceEqual(outside.Select(StableRequestResultKey))", source);
         Assert.Contains("outside.Count == 0 && OutsideLibraryResults.Count == 0", source);
+        Assert.True(
+            searchMethod.IndexOf("ReplaceMediaResults(response.Items)", StringComparison.Ordinal) <
+            searchMethod.IndexOf("SearchOutsideLibraryAsync(querySnapshot, ct)", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -114,7 +167,7 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("AutomationProperties.Name=\"Back to top\"", xaml);
         Assert.Contains("ResultsScroll.VerticalOffset > 720", source);
         Assert.Contains("ResultsScroll.ChangeView(null, 0, null)", source);
-        Assert.Contains("ResultsSearchBox.Focus(FocusState.Programmatic)", source);
+        Assert.Contains("SearchBox.Focus(FocusState.Programmatic)", source);
         Assert.Contains("_resultsScrollUserScrolled", source);
         Assert.Contains("ResultsScroll.ChangeView(null, 0, null, disableAnimation: true)", source);
         Assert.Contains("ResultsScroll.VerticalOffset > 24", source);

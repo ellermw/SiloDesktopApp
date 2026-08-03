@@ -19,6 +19,7 @@
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
             Click="RootButton_Click"
+            AutomationProperties.Name="Server activity"
             ToolTipService.ToolTip="Server Activity">
             <Grid Width="36" Height="36">
             <!-- Lucide Activity: the WebUI uses the pulse line, not a heart or

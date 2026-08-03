@@ -4702,7 +4702,10 @@ public sealed partial class ItemDetailPage : Page
 
         // Resume state from user data
         var userData = item.UserData;
-        if (userData != null && userData.PositionSeconds > 0 && !userData.Played)
+        // Match resolveLeafPrimaryAction in the current WebUI: a watched item
+        // can be in the middle of a rewatch, so any nonzero position remains a
+        // live resume point even while the historical played flag stays true.
+        if (userData != null && userData.PositionSeconds > 0)
         {
             PlayButtonText.Text = ShouldOfferResumeChoice(out _, out _)
                 ? "Play"
@@ -4860,9 +4863,6 @@ public sealed partial class ItemDetailPage : Page
         duration = _watchDetail?.UserData?.DurationSeconds
             ?? ViewModel.Item?.UserData?.DurationSeconds
             ?? 0;
-        var played = _watchDetail?.UserData?.Played
-            ?? ViewModel.Item?.UserData?.Played
-            ?? false;
         var type = ViewModel.Item?.Type;
         var versionCount = _watchDetail?.Versions.Count
             ?? ViewModel.Item?.Versions?.Count
@@ -4873,7 +4873,6 @@ public sealed partial class ItemDetailPage : Page
 
         return type is "movie" or "episode"
             && position > 0
-            && !played
             && versionCount <= 1
             && variantCount <= 1;
     }
@@ -4957,7 +4956,9 @@ public sealed partial class ItemDetailPage : Page
 
         // Show resume button text if there's saved progress
         var userData = _watchDetail.UserData;
-        bool isResuming = userData?.PositionSeconds > 0 && userData.Played != true;
+        // Watched is historical state; a nonzero position can belong to a
+        // rewatch in progress and must still present Resume like the WebUI.
+        bool isResuming = userData?.PositionSeconds > 0;
 
         if (isResuming)
         {
@@ -5151,7 +5152,7 @@ public sealed partial class ItemDetailPage : Page
         // for a selected version, even before any tracks are available:
         // Auto, Off, optional candidate sections, "No subtitles available.",
         // then Add subtitles.
-        var autoItem = new MenuFlyoutItem { Text = "Auto" };
+        var autoItem = CreateSubtitleMenuItem("Auto");
         autoItem.Click += (_, _) =>
         {
             _selectedSubtitleIndex = null;
@@ -5160,7 +5161,7 @@ public sealed partial class ItemDetailPage : Page
         };
         SubtitlesPopoverFlyout.Items.Add(autoItem);
 
-        var offItem = new MenuFlyoutItem { Text = "Off" };
+        var offItem = CreateSubtitleMenuItem("Off");
         offItem.Click += (_, _) =>
         {
             _selectedSubtitleIndex = -1;
@@ -5171,35 +5172,62 @@ public sealed partial class ItemDetailPage : Page
 
         if (hasSubtitleInventory)
         {
-
             SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutSeparator());
 
-            // Explicit embedded and external tracks
-            for (int i = 0; i < subs.Count; i++)
+            void AddTrackGroup(string heading, IEnumerable<(VersionSubtitleTrack Track, int Index)> tracks)
             {
-                var idx = i;
-                var sub = subs[i];
-                var item = new MenuFlyoutItem { Text = FormatSubtitleTrackSummary(sub) };
-                item.Click += (_, _) =>
+                var rows = tracks.ToList();
+                if (rows.Count == 0) return;
+
+                SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutItem
                 {
-                    _selectedSubtitleIndex = idx;
-                    _selectedSubtitleSignature = BuildSubtitleSignature(sub);
-                    UpdateSubtitlesPopoverSummary(subs);
-                };
-                SubtitlesPopoverFlyout.Items.Add(item);
+                    Text = heading,
+                    IsEnabled = false,
+                    MinWidth = 300,
+                    MaxWidth = 320,
+                });
+                foreach (var (sub, idx) in rows)
+                {
+                    var item = CreateSubtitleMenuItem(FormatSubtitleTrackMenuText(sub));
+                    item.Click += (_, _) =>
+                    {
+                        _selectedSubtitleIndex = idx;
+                        _selectedSubtitleSignature = BuildSubtitleSignature(sub);
+                        UpdateSubtitlesPopoverSummary(subs);
+                    };
+                    SubtitlesPopoverFlyout.Items.Add(item);
+                }
             }
+
+            var indexedTracks = subs
+                .Select((track, index) => (Track: track, Index: index))
+                .OrderBy(row => MediaLanguageCatalog.Label(row.Track.Language),
+                    StringComparer.CurrentCultureIgnoreCase)
+                .ThenByDescending(row => row.Track.Forced == true)
+                .ThenByDescending(row => row.Track.Default == true)
+                .ThenBy(
+                    row => row.Track.Title ?? row.Track.EmbeddedTitle ?? row.Track.Codec ?? "",
+                    StringComparer.CurrentCultureIgnoreCase);
+            AddTrackGroup("Embedded", indexedTracks.Where(row => row.Track.External != true));
+            AddTrackGroup("External", indexedTracks.Where(row => row.Track.External == true));
 
             if (downloaded.Count > 0)
             {
-                if (subs.Count > 0)
-                    SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutSeparator());
-                foreach (var subtitle in downloaded)
+                SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutItem
+                {
+                    Text = "Downloaded",
+                    IsEnabled = false,
+                    MinWidth = 300,
+                    MaxWidth = 320,
+                });
+                foreach (var subtitle in downloaded
+                    .OrderByDescending(entry => entry.Score)
+                    .ThenBy(entry => entry.Provider, StringComparer.CurrentCultureIgnoreCase)
+                    .ThenBy(entry => entry.ReleaseName, StringComparer.CurrentCultureIgnoreCase))
                 {
                     var downloadedSubtitle = subtitle;
-                    var item = new MenuFlyoutItem
-                    {
-                        Text = FormatDownloadedSubtitleSummary(downloadedSubtitle)
-                    };
+                    var item = CreateSubtitleMenuItem(
+                        FormatDownloadedSubtitleMenuText(downloadedSubtitle));
                     item.Click += (_, _) =>
                     {
                         _selectedSubtitleIndex = null;
@@ -5217,8 +5245,6 @@ public sealed partial class ItemDetailPage : Page
                     SubtitlesPopoverFlyout.Items.Add(item);
                 }
             }
-
-            SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutSeparator());
         }
         else
         {
@@ -5226,15 +5252,11 @@ public sealed partial class ItemDetailPage : Page
             {
                 Text = "No subtitles available.",
                 IsEnabled = false,
+                MinWidth = 300,
+                MaxWidth = 320,
             };
             SubtitlesPopoverFlyout.Items.Add(emptyItem);
-            SubtitlesPopoverFlyout.Items.Add(new MenuFlyoutSeparator());
         }
-
-        // Opens the full SubtitleSearchDialog for provider search or upload.
-        var searchItem = new MenuFlyoutItem { Text = "Add subtitles..." };
-        searchItem.Click += async (_, _) => await OpenSubtitleSearchDialogAsync();
-        SubtitlesPopoverFlyout.Items.Add(searchItem);
 
         if (hasSubtitleInventory)
             UpdateSubtitlesPopoverSummary(subs);
@@ -5309,10 +5331,24 @@ public sealed partial class ItemDetailPage : Page
         {
             // Resolve what "Auto" picks using profile prefs + effective audio language
             // so the user can see what will actually turn on. The WebUI uses
-            // "Auto: Off" when the policy does not resolve a candidate.
+            // "Auto: Off" when the policy does not resolve a candidate. A
+            // stored series override is presented as the resolved selection,
+            // without an "Auto:" prefix.
+            var preferredSignature = _watchDetail?.EffectiveSubtitleTrackSignature;
+            if (preferredSignature?.Source.Equals("downloaded", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                var downloadedOverride = FindDownloadedSubtitle(preferredSignature);
+                if (downloadedOverride != null)
+                {
+                    SubtitlesSummary.Text = FormatDownloadedSubtitleSummary(downloadedOverride);
+                    return;
+                }
+            }
             var resolved = ResolveAutoSubtitle(subs);
             SubtitlesSummary.Text = resolved != null
-                ? $"Auto: {FormatSubtitleTrackSummary(resolved)}"
+                ? preferredSignature != null
+                    ? FormatSubtitleTrackSummary(resolved)
+                    : $"Auto: {FormatSubtitleTrackSummary(resolved)}"
                 : "Auto: Off";
             return;
         }
@@ -5374,7 +5410,8 @@ public sealed partial class ItemDetailPage : Page
             PreferredLanguage: preferredLang,
             AudioLanguage: audioLang,
             ProfileLanguage: null, // profile-level "language" isn't yet surfaced client-side
-            ShowForcedSubtitles: showForced ?? true));
+            ShowForcedSubtitles: showForced ?? true,
+            PreferredTrackSignature: _watchDetail.EffectiveSubtitleTrackSignature));
 
         if (idx == null) return null;
         // Resolve back to a VersionSubtitleTrack. OriginalIndex was set to track.Index ?? fallback.
@@ -5384,27 +5421,60 @@ public sealed partial class ItemDetailPage : Page
         return idx.Value >= 0 && idx.Value < subs.Count ? subs[idx.Value] : null;
     }
 
-    /// <summary>Short label for a subtitle track: "ENG (Forced)", "JPN SRT", etc.</summary>
+    /// <summary>Current WebUI pill label: "English · SRT", "Japanese (Forced) · ASS", etc.</summary>
     private static string FormatSubtitleTrackSummary(VersionSubtitleTrack sub)
     {
-        var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(sub.Language))
-            parts.Add(sub.Language.ToUpperInvariant());
-        else if (!string.IsNullOrWhiteSpace(sub.Title))
-            parts.Add(sub.Title!);
-        else
-            parts.Add("Unknown");
+        var name = !string.IsNullOrWhiteSpace(sub.Language)
+            ? MediaLanguageCatalog.Label(sub.Language)
+            : !string.IsNullOrWhiteSpace(sub.Title)
+                ? sub.Title!
+                : "Unknown";
+        if (sub.HearingImpaired == true &&
+            !System.Text.RegularExpressions.Regex.IsMatch(name, @"\b(?:sdh|cc|hi)\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            name += " (SDH)";
+        if (sub.Forced == true &&
+            !name.Contains("forced", StringComparison.OrdinalIgnoreCase))
+            name += " (Forced)";
 
-        if (!string.IsNullOrWhiteSpace(sub.Codec))
-            parts.Add(sub.Codec.ToUpperInvariant());
-
-        var flags = new List<string>();
-        if (sub.Forced == true) flags.Add("Forced");
-        if (sub.HearingImpaired == true) flags.Add("HI");
-        if (flags.Count > 0) parts.Add($"({string.Join(", ", flags)})");
-
-        return string.Join(" ", parts);
+        var format = SubtitleFormatLabel(sub.Codec);
+        return string.IsNullOrEmpty(format) ? name : $"{name} · {format}";
     }
+
+    private static string FormatSubtitleTrackMenuText(VersionSubtitleTrack sub)
+    {
+        var summary = FormatSubtitleTrackSummary(sub);
+        var description = sub.Title?.Trim()
+            ?? sub.EmbeddedTitle?.Trim()
+            ?? sub.FileName?.Trim();
+        if (string.IsNullOrWhiteSpace(description))
+            return summary;
+
+        var normalizedDescription = NormalizeSubtitleDisplayToken(description);
+        var normalizedCodec = NormalizeSubtitleDisplayToken(sub.Codec);
+        var normalizedFormat = NormalizeSubtitleDisplayToken(SubtitleFormatLabel(sub.Codec));
+        var normalizedLanguage = NormalizeSubtitleDisplayToken(MediaLanguageCatalog.Label(sub.Language));
+        if (normalizedDescription == normalizedCodec ||
+            normalizedDescription == normalizedFormat ||
+            normalizedDescription == normalizedLanguage)
+            return summary;
+
+        return $"{summary} — {description}";
+    }
+
+    private static MenuFlyoutItem CreateSubtitleMenuItem(string text) => new()
+    {
+        Text = text,
+        MinWidth = 300,
+        MaxWidth = 320,
+    };
+
+    private static string NormalizeSubtitleDisplayToken(string? value)
+        => new((value ?? "")
+            .Trim()
+            .ToLowerInvariant()
+            .Where(char.IsLetterOrDigit)
+            .ToArray());
 
     private async Task LoadDownloadedSubtitlesAsync(string contentId, int fileId)
     {
@@ -5460,16 +5530,46 @@ public sealed partial class ItemDetailPage : Page
 
     private static string FormatDownloadedSubtitleSummary(SubtitleEntry subtitle)
     {
-        var language = Services.PlayerService.LanguageCodeToName(subtitle.Language);
-        var parts = new List<string> { language };
-        if (subtitle.HearingImpaired) parts.Add("(HI)");
-        if (!string.IsNullOrWhiteSpace(subtitle.Format))
-            parts.Add(subtitle.Format.ToUpperInvariant());
-        var release = DownloadedSubtitleLabel(subtitle);
-        if (!string.Equals(release, language, StringComparison.OrdinalIgnoreCase))
-            parts.Add($"· {release}");
-        return string.Join(" ", parts);
+        var language = MediaLanguageCatalog.Label(subtitle.Language);
+        if (subtitle.HearingImpaired) language += " (SDH)";
+        var format = SubtitleFormatLabel(subtitle.Format);
+        return string.IsNullOrEmpty(format) ? language : $"{language} · {format}";
     }
+
+    private static string FormatDownloadedSubtitleMenuText(SubtitleEntry subtitle)
+    {
+        var summary = FormatDownloadedSubtitleSummary(subtitle);
+        var release = DownloadedSubtitleLabel(subtitle);
+        return string.Equals(release, MediaLanguageCatalog.Label(subtitle.Language), StringComparison.OrdinalIgnoreCase)
+            ? summary
+            : $"{summary} — {release}";
+    }
+
+    private SubtitleEntry? FindDownloadedSubtitle(SubtitleTrackSignature signature)
+        => _downloadedSubtitles.FirstOrDefault(subtitle =>
+            string.Equals(
+                MediaLanguageCatalog.Normalize(subtitle.Language),
+                MediaLanguageCatalog.Normalize(signature.Language),
+                StringComparison.OrdinalIgnoreCase) &&
+            (string.IsNullOrWhiteSpace(signature.Codec) ||
+             string.Equals(SubtitleFormatLabel(subtitle.Format), SubtitleFormatLabel(signature.Codec),
+                 StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrWhiteSpace(signature.Label) ||
+             string.Equals(DownloadedSubtitleLabel(subtitle), signature.Label, StringComparison.OrdinalIgnoreCase)) &&
+            subtitle.HearingImpaired == signature.HearingImpaired);
+
+    private static string SubtitleFormatLabel(string? codec)
+        => codec?.Trim().ToLowerInvariant() switch
+        {
+            "ass" or "ssa" => "ASS",
+            "srt" or "subrip" => "SRT",
+            "vtt" or "webvtt" => "VTT",
+            "pgs" or "hdmv_pgs_subtitle" => "PGS",
+            "dvd_subtitle" => "DVD",
+            "dvb_subtitle" => "DVB",
+            null or "" => "",
+            _ => codec.Trim().ToUpperInvariant(),
+        };
 
     /// <summary>
     /// Build the WebUI audio summary: "English · AC3 · 5.1".
@@ -7153,6 +7253,10 @@ public sealed partial class ItemDetailPage : Page
         var topRight = MakeEpisodeOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Top);
         var bottomLeft = MakeEpisodeOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Bottom);
         var bottomRight = MakeEpisodeOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Bottom);
+        topLeft.Margin = new Thickness(8);
+        topRight.Margin = new Thickness(8);
+        bottomLeft.Margin = new Thickness(8, 8, 8, 24);
+        bottomRight.Margin = new Thickness(8, 8, 8, 56);
         host.Children.Add(topLeft);
         host.Children.Add(topRight);
         host.Children.Add(bottomLeft);
@@ -7184,12 +7288,14 @@ public sealed partial class ItemDetailPage : Page
                 MultiSub = summary?.MultiSub == true,
                 Runtime = episode.Runtime > 0 ? episode.Runtime : null,
             };
-            foreach (var definition in global::SiloPlayer.Services.OverlayRegistry.All)
+            var cornerCounts = new Dictionary<global::SiloPlayer.Services.OverlayPosition, int>();
+            foreach (var definition in service.GetOrderedDefinitions())
             {
                 if (!prefs.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
                 if (global::SiloPlayer.Services.OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, prefs)) continue;
                 var value = definition.GetValue(data);
                 if (string.IsNullOrWhiteSpace(value)) continue;
+                if (cornerCounts.GetValueOrDefault(config.Position) >= 3) continue;
                 var badge = PosterCard.BuildBadge(value, definition.Id, config, service.Preset);
                 var corner = config.Position switch
                 {
@@ -7200,11 +7306,13 @@ public sealed partial class ItemDetailPage : Page
                     _ => topLeft,
                 };
                 corner.Children.Add(badge);
+                cornerCounts[config.Position] = cornerCounts.GetValueOrDefault(config.Position) + 1;
             }
         }
 
         Render();
-        _ = EnsureEpisodeCardOverlaysLoadedAsync(Render);
+        if (!App.Services.GetRequiredService<global::SiloPlayer.Services.CardOverlayService>().IsLoaded)
+            _ = EnsureEpisodeCardOverlaysLoadedAsync(Render);
     }
 
     private async Task EnsureEpisodeCardOverlaysLoadedAsync(Action render)

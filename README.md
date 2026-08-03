@@ -6,11 +6,11 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.74**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.74/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.85**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.85/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `66A6F42EADE972FE09699A75C1A12A7909254D4D1108E3B8CD29F46222C615D5`
+SHA-256: `60F44EAF483964B547B17659D54E9BD39FF7B706FCD7A79AEBD6195382DDAAF6`
 
-The installer is currently locally test-signed for QA, so Windows may still display a SmartScreen warning on machines that do not trust the local certificate. It includes the .NET runtime, Windows App Runtime bootstrapper, and the validated native libmpv runtime.
+The QA installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
 ## License / private use
 
@@ -54,13 +54,13 @@ Status meanings:
 
 ## Latest release
 
-### 1.1.74
+### 1.1.85
 
-- Prevented episode-only Previous/Next, credits countdown, and Playing Next state from leaking into movie playback.
-- Improved title, season/episode, and timeline typography on 4K playback surfaces.
-- Preserved current-server HLS/remux timeline seeking so transcoded playback can seek throughout the available media range.
-- Corrected package version metadata and added trusted timestamps to the locally signed app binaries, installer, and generated uninstaller.
-- Verified with 703 passing tests, a successful x64 publish, signature validation, a Smart App Control launch test with zero Code Integrity blocks, and real 4K/transcoded playback testing.
+- Rebuilt Search around one persistent input with retained focus, 100 ms debounce, relevance-first ordering, query-scoped filters, bulk result updates, and stable late-result behavior.
+- Fixed Search navigation failing during WinUI control reparenting and corrected the prominent field's vertical text alignment.
+- Preserved explicit desktop-sidebar state across navigation and hardened Home, Library, item-detail, autoplay, fullscreen, OSC, and episodic resume behavior accumulated since 1.1.74.
+- Changed the QA packaging guard so self-signed Authenticode signatures cannot be applied accidentally; the exact installer and fresh app payload were launched under Smart App Control with zero Code Integrity blocks.
+- Verified with 723 passing tests and a successful x64 multi-file publish.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
 ## Playback goals
@@ -111,4 +111,4 @@ powershell -ExecutionPolicy Bypass -File installer/build.ps1
 
 ## Reference source
 
-Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). The player milestone carried into QA build 1.1.74 was compared against Silo Server commit `271a2e1741e1c1737d54f9fae00c466883363c0d` from July 28, 2026.
+Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Search in QA build 1.1.85 was revalidated against Silo Server commit `c1cac4ece9f4a95e1c555305ca9dd29b6cedc292` from August 3, 2026.

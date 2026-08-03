@@ -311,6 +311,9 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("IsEpisodeNavigationLookupCurrent(ownerManager, ownerContentId, ct)", source);
         Assert.Contains("_episodeNavigation.TrySetResolved(ownerContentId, previousContentId, nextTarget)", source);
         Assert.Contains("HasNextEpisodeForCurrentPlayback", source);
+        Assert.Contains(
+            "string.Equals(detail.Type, \"episode\", StringComparison.OrdinalIgnoreCase)",
+            source);
     }
 
     [Fact]
@@ -1166,6 +1169,27 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains(".Where(IsTranslatableSubtitleSource)", overlay);
         Assert.Contains("\"pgs\" or \"hdmv_pgs_subtitle\" or \"sup\"", service);
         Assert.Contains("\"srt\" or \"subrip\" or \"vtt\" or \"webvtt\"", overlay);
+    }
+
+    [Fact]
+    public void LateProgressAndRewatchProgressAlwaysRemainResumePoints()
+    {
+        var root = FindRepositoryRoot();
+        var service = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "SiloPlayer",
+            "Services",
+            "PlayerService.cs"));
+
+        var methodStart = service.IndexOf("private double DetermineStartPosition", StringComparison.Ordinal);
+        var methodEnd = service.IndexOf("private sealed record PreparedPlaybackTransport", methodStart, StringComparison.Ordinal);
+        Assert.True(methodStart >= 0 && methodEnd > methodStart);
+
+        var method = service[methodStart..methodEnd];
+        Assert.Contains("!fromStart && watchDetail.UserData?.PositionSeconds > 0", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("Played != true", method, StringComparison.Ordinal);
+        Assert.Contains("any nonzero position is an active resume point", method, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

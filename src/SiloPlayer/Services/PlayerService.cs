@@ -1062,6 +1062,7 @@ public class PlayerService : IDisposable
 
     public bool IsPostRollActive => _postRollActive;
     public bool IsPostRollVideoEnded => _postRollVideoEnded;
+    public bool IsSwitchingContent => _switchingContent;
 
     // ── Next-episode metadata (set by ItemDetailPage before playback) ────
 
@@ -1087,6 +1088,7 @@ public class PlayerService : IDisposable
     {
         var detail = WatchDetail;
         return detail is not null &&
+               string.Equals(detail.Type, "episode", StringComparison.OrdinalIgnoreCase) &&
                !string.IsNullOrWhiteSpace(detail.SeriesId) &&
                string.Equals(detail.ContentId, ContentId, StringComparison.Ordinal);
     }
@@ -1393,7 +1395,16 @@ public class PlayerService : IDisposable
         if (State == newState)
         {
             if (!IsAudiobook && (newState == PlayerState.Expanded || newState == PlayerState.Fullscreen))
+            {
                 _videoWindow?.Show();
+                // Playing Next hides the Lua OSC while leaving the logical
+                // player state Expanded. Autoplay therefore reaches this
+                // same-state path when the successor file starts. Re-enable
+                // the OSC explicitly; otherwise only a later state change
+                // (most visibly a fullscreen double-click) makes controls
+                // available again.
+                _mpv?.SendScriptMessage("osc-set-visibility", "true");
+            }
             else if (IsAudiobook)
                 _videoWindow?.Hide();
             PublishFullscreenVisualState(newState == PlayerState.Fullscreen);
@@ -1596,14 +1607,18 @@ public class PlayerService : IDisposable
         _pendingSubtitleSelection = subtitleSelection;
         _pendingInitialServerSubtitleIndex = null;
         LogToFile("state_trace.txt", $"PlayAsync called: contentId={contentId} fromStart={fromStart} audioTrackIndex={audioTrackIndex?.ToString() ?? "auto"} subtitleSelection={FormatSubtitleSelection(subtitleSelection)} State={State} IsLoading={IsLoading}");
+        // Take ownership before clearing the outgoing episode hint. The old
+        // file can publish one final position event at the Playing Next
+        // countdown boundary; without this guard it can re-enter post-roll
+        // while the successor is starting and disable the successor's OSC.
+        _switchingContent = true;
         PrepareEpisodeNavigationForContent(contentId);
 
-        // CRITICAL: set the "switching content" flag BEFORE stopping the
+        // The same guard must remain set before stopping the previous mpv
         // previous mpv session. Without it, _mpv?.Stop() fires end-file →
         // _mpvPlaybackEndedHandler runs the natural-end cleanup path
         // (CloseAsync), which races against the new-session setup below
         // and crashes the player. The flag causes the handler to short-circuit.
-        _switchingContent = true;
         CancelPendingFileLoadTimeout();
         Interlocked.Exchange(ref _consecutiveFileLoadTimeouts, 0);
         await CancelAndDrainTransportRestartsAsync(requestToken);
@@ -2497,7 +2512,6 @@ public class PlayerService : IDisposable
         var restoreFullscreen = _restoreFullscreenAfterPostRollContinue
             || State == PlayerState.Fullscreen
             || _videoWindow?.IsFullscreen == true;
-        ClearNextEpisodeHint();
         if (string.IsNullOrEmpty(nextId)) return;
 
         // PlayAsync handles old-session cleanup internally with
@@ -2522,7 +2536,6 @@ public class PlayerService : IDisposable
         var previousId = HasEpisodeNavigationForCurrentPlayback
             ? PreviousEpisodeContentId
             : null;
-        ClearNextEpisodeHint();
         return string.IsNullOrEmpty(previousId) ? Task.CompletedTask : PlayAsync(previousId);
     }
 
@@ -3033,7 +3046,10 @@ public class PlayerService : IDisposable
     private double DetermineStartPosition(WatchDetailResponse watchDetail, bool fromStart)
     {
         double startPosition = 0;
-        if (!fromStart && watchDetail.UserData?.PositionSeconds > 0 && watchDetail.UserData.Played != true)
+        // A completed item's watched flag remains latched while a rewatch is in progress.
+        // Match the WebUI: any nonzero position is an active resume point, even when
+        // Played is still true. Only an explicit "play from beginning" may discard it.
+        if (!fromStart && watchDetail.UserData?.PositionSeconds > 0)
             startPosition = watchDetail.UserData.PositionSeconds!.Value;
         LogToFile("state_trace.txt", $"Resume logic: fromStart={fromStart} userPos={watchDetail.UserData?.PositionSeconds} played={watchDetail.UserData?.Played} → startPosition={startPosition}");
         return startPosition;

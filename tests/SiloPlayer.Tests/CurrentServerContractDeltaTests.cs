@@ -3,6 +3,27 @@ namespace SiloPlayer.Tests;
 public sealed class CurrentServerContractDeltaTests
 {
     [Fact]
+    public void PersonalCatalogPagesConsumeTheCurrentHasMorePaginationContract()
+    {
+        var model = Read("src", "SiloPlayer.Core", "Models", "Catalog", "ItemListResponse.cs");
+        var api = Read("src", "SiloPlayer.Core", "Api", "CatalogApi.cs");
+        var favorites = Read("src", "SiloPlayer", "ViewModels", "FavoritesViewModel.cs");
+        var watchlist = Read("src", "SiloPlayer", "ViewModels", "WatchlistViewModel.cs");
+        var favoritesPage = Read("src", "SiloPlayer", "Views", "FavoritesPage.xaml.cs");
+        var watchlistPage = Read("src", "SiloPlayer", "Views", "WatchlistPage.xaml.cs");
+
+        Assert.Contains("public bool HasMore", model);
+        Assert.Contains("/api/v1/favorites?limit=", api);
+        Assert.Contains("/api/v1/watchlist?limit=", api);
+        Assert.Contains("response.HasMore", favorites);
+        Assert.Contains("response.HasMore", watchlist);
+        Assert.Contains("_offset += PageSize", favorites);
+        Assert.Contains("_offset += PageSize", watchlist);
+        Assert.Contains("LoadMoreCommand.ExecuteAsync", favoritesPage);
+        Assert.Contains("LoadMoreCommand.ExecuteAsync", watchlistPage);
+    }
+
+    [Fact]
     public void PlaybackModelsCarryCurrentSubtitleInventoryIdentity()
     {
         var start = Read("src", "SiloPlayer.Core", "Models", "Playback", "PlaybackStartRequest.cs");

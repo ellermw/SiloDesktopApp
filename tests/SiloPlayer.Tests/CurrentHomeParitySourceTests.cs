@@ -214,6 +214,17 @@ public sealed class CurrentHomeParitySourceTests
     }
 
     [Fact]
+    public void PartialHomeSectionResponsesCannotCrashTheMountedSurface()
+    {
+        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "HomeViewModel.cs");
+
+        Assert.Contains("resp?.Section ?? CloneSection(section, loadFailed: false)", viewModel);
+        Assert.Contains("response?.Section ?? CloneSection(current, loadFailed: false)", viewModel);
+        Assert.Contains("source.Items ?? []", viewModel);
+        Assert.Contains("$\"section={sectionId} | {ex}\"", viewModel);
+    }
+
+    [Fact]
     public void HomeSectionRetryCannotPatchAStaleProfileOrLayoutGeneration()
     {
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "HomeViewModel.cs");
@@ -273,6 +284,29 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("TimeLeftText.Visibility = badgeLabel == null ? Visibility.Visible : Visibility.Collapsed", code);
         Assert.Contains("item.ProgressUpdatedAt", menu);
         Assert.Contains("MediaSurfaceChangeKind.HomeDismissed", menu);
+    }
+
+    [Fact]
+    public void CardOverlaysHydrateBeforeRenderingAndHonorCurrentProfileOrder()
+    {
+        var service = ReadRepoFile("src", "SiloPlayer", "Services", "CardOverlayService.cs");
+        var shell = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
+        var poster = ReadRepoFile("src", "SiloPlayer", "Controls", "PosterCard.xaml.cs");
+        var landscape = ReadRepoFile("src", "SiloPlayer", "Controls", "LandscapeCard.xaml.cs");
+        var library = ReadRepoFile("src", "SiloPlayer", "Controls", "LibraryGridCard.cs");
+        var detail = ReadRepoFile("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+
+        Assert.Contains("public bool IsLoaded => _initialized;", service);
+        Assert.Contains("GetOrderedDefinitions()", service);
+        Assert.Contains("configuredOrder.TryGetValue", service);
+        Assert.Contains("Interlocked.Increment(ref _loadGeneration)", service);
+        Assert.Contains("_document = BuildDefaultDocument();", service);
+        Assert.Contains("\"card_overlay_settings\"", shell);
+        Assert.All(new[] { poster, landscape, library, detail }, source =>
+        {
+            Assert.Contains("GetOrderedDefinitions()", source);
+            Assert.Contains(">= 3", source);
+        });
     }
 
     [Fact]

@@ -83,4 +83,31 @@ public sealed class EpisodeNavigationStateTests
         Assert.Equal(EpisodeNavigationSnapshot.Empty, state.Snapshot);
         Assert.False(state.HasNextFor("movie-1"));
     }
+
+    [Theory]
+    [InlineData("episode-series-a-1", "movie-1")]
+    [InlineData("episode-series-a-1", "episode-series-b-1")]
+    [InlineData("movie-1", "episode-series-a-1")]
+    [InlineData("movie-1", "movie-2")]
+    public void PrepareFor_ContentTransitionMatrix_DropsUnrelatedNavigation(
+        string previousContentId,
+        string nextContentId)
+    {
+        var state = new EpisodeNavigationState();
+        state.PrepareFor(previousContentId);
+        Assert.True(state.TrySetResolved(
+            previousContentId,
+            previousContentId.StartsWith("episode-", StringComparison.Ordinal)
+                ? "previous-episode"
+                : null,
+            Target("next-episode")));
+
+        state.PrepareFor(nextContentId);
+
+        Assert.Equal(EpisodeNavigationSnapshot.Empty, state.Snapshot);
+        Assert.False(state.IsOwnedBy(previousContentId));
+        Assert.False(state.IsOwnedBy(nextContentId));
+        Assert.False(state.HasNextFor(previousContentId));
+        Assert.False(state.HasNextFor(nextContentId));
+    }
 }

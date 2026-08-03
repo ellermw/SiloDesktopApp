@@ -15,6 +15,85 @@ public sealed class FullscreenStateSyncSourceTests
     }
 
     [Fact]
+    public void SameStateAutoplayTransitionReenablesTheOsc()
+    {
+        var service = ReadRepoFile("src", "SiloPlayer", "Services", "PlayerService.cs")
+            .ReplaceLineEndings("\n");
+        var sameStateStart = service.IndexOf("if (State == newState)", StringComparison.Ordinal);
+        var stateAssignment = service.IndexOf("State = newState;", sameStateStart, StringComparison.Ordinal);
+
+        Assert.True(sameStateStart >= 0 && stateAssignment > sameStateStart);
+        var sameStatePath = service[sameStateStart..stateAssignment];
+        Assert.Contains("_videoWindow?.Show();", sameStatePath);
+        Assert.Contains("_mpv?.SendScriptMessage(\"osc-set-visibility\", \"true\");", sameStatePath);
+    }
+
+    [Fact]
+    public void HiddenPlaybackPopupDropsStalePointerTrackingBeforeReuse()
+    {
+        var videoWindow = ReadRepoFile("src", "SiloPlayer", "Services", "MpvVideoWindow.cs")
+            .ReplaceLineEndings("\n");
+        var hideStart = videoWindow.IndexOf("public void Hide()", StringComparison.Ordinal);
+        var nextMethod = videoWindow.IndexOf("public void PositionAt", hideStart, StringComparison.Ordinal);
+
+        Assert.True(hideStart >= 0 && nextMethod > hideStart);
+        var hideMethod = videoWindow[hideStart..nextMethod];
+        Assert.Contains("_mouseTracking = false;", hideMethod);
+        Assert.Contains("ReleaseCapture();", hideMethod);
+        Assert.Contains("_lbuttonDownTicks = 0;", hideMethod);
+    }
+
+    [Fact]
+    public void AutoplayOwnsTheContentSwitchBeforeRetiringOldEpisodeState()
+    {
+        var service = ReadRepoFile("src", "SiloPlayer", "Services", "PlayerService.cs")
+            .ReplaceLineEndings("\n");
+        var coreStart = service.IndexOf("private async Task PlayCoreAsync(", StringComparison.Ordinal);
+        var loadingStart = service.IndexOf("CancelPendingFileLoadTimeout();", coreStart, StringComparison.Ordinal);
+        Assert.True(coreStart >= 0 && loadingStart > coreStart);
+
+        var transitionPrefix = service[coreStart..loadingStart];
+        Assert.True(
+            transitionPrefix.IndexOf("_switchingContent = true;", StringComparison.Ordinal) <
+            transitionPrefix.IndexOf("PrepareEpisodeNavigationForContent(contentId);", StringComparison.Ordinal));
+
+        var continueStart = service.IndexOf("public async Task ContinuePlayingNextAsync()", StringComparison.Ordinal);
+        var previousStart = service.IndexOf("public Task PlayPreviousEpisodeAsync()", continueStart, StringComparison.Ordinal);
+        var continueMethod = service[continueStart..previousStart];
+        Assert.DoesNotContain("ClearNextEpisodeHint();", continueMethod);
+        Assert.Contains("await PlayAsync(nextId);", continueMethod);
+    }
+
+    [Fact]
+    public void StalePlayingNextPresentationCannotHideTheSuccessorOsc()
+    {
+        var service = ReadRepoFile("src", "SiloPlayer", "Services", "PlayerService.cs");
+        var mainWindow = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
+
+        Assert.Contains("private volatile bool _switchingContent;", service);
+        Assert.Contains("public bool IsSwitchingContent => _switchingContent;", service);
+
+        var handlerStart = mainWindow.IndexOf(
+            "private void OnShowPlayingNextRequested(bool videoEnded)",
+            StringComparison.Ordinal);
+        var handlerEnd = mainWindow.IndexOf(
+            "private void OnPostRollReturnRequested()",
+            handlerStart,
+            StringComparison.Ordinal);
+        Assert.True(handlerStart >= 0 && handlerEnd > handlerStart);
+
+        var handler = mainWindow[handlerStart..handlerEnd];
+        Assert.Contains("var ownerContentId = _playerService.ContentId;", handler);
+        Assert.Contains("_playerService.IsSwitchingContent", handler);
+        Assert.Contains(
+            "!string.Equals(ownerContentId, _playerService.ContentId, StringComparison.Ordinal)",
+            handler);
+        Assert.True(
+            handler.IndexOf("_playerService.IsSwitchingContent", StringComparison.Ordinal) <
+            handler.IndexOf("_playerService.EnterPostRollPreview();", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void OscFullscreenIconIsStateDriven()
     {
         var osc = ReadRepoFile("libs", "mpv", "scripts", "silo-osc.lua");

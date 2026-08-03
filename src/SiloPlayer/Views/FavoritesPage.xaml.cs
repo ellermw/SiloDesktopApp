@@ -27,7 +27,22 @@ public sealed partial class FavoritesPage : Page
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         await ViewModel.LoadCommand.ExecuteAsync(null);
+        ApplySort();
         UpdateCounts();
+    }
+
+    private async void ContentScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (e.IsIntermediate || !ViewModel.HasMore || ViewModel.IsLoadingMore)
+            return;
+
+        if (ContentScrollViewer.VerticalOffset < ContentScrollViewer.ScrollableHeight - 640)
+            return;
+
+        var previousCount = ViewModel.Items.Count;
+        await ViewModel.LoadMoreCommand.ExecuteAsync(null);
+        if (ViewModel.Items.Count != previousCount)
+            ApplySort();
     }
 
     private void UpdateCounts()

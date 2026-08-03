@@ -67,6 +67,17 @@ public sealed class UpgradeAuthenticationRegressionTests
     }
 
     [Fact]
+    public void QaBuildDoesNotApplySelfSignedSignaturesUnlessExplicitlyOverridden()
+    {
+        var installerBuild = ReadRepoFile("installer", "build.ps1");
+
+        Assert.Contains("[switch]$AllowSelfSignedSignatures", installerBuild);
+        Assert.Contains("$isSelfSigned = $SigningCertificate.Subject -eq $SigningCertificate.Issuer", installerBuild);
+        Assert.Contains("$isSelfSigned -and -not $AllowSelfSignedSignatures", installerBuild);
+        Assert.Contains("$SigningCertificate = $null", installerBuild);
+    }
+
+    [Fact]
     public void StartupRestoreSearchesSavedServersAndRetriesTransientFailures()
     {
         var mainWindow = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
@@ -105,7 +116,7 @@ public sealed class UpgradeAuthenticationRegressionTests
     }
 
     [Fact]
-    public void SuccessfulProfileTransitionRestoresTheExpandedNavigationPane()
+    public void SuccessfulProfileTransitionRestoresTheUserControlledNavigationPane()
     {
         var mainWindow = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
         var showStart = mainWindow.IndexOf("public void ShowMainNavigation()", StringComparison.Ordinal);
@@ -116,8 +127,15 @@ public sealed class UpgradeAuthenticationRegressionTests
         var restoreNavigation = mainWindow[restoreStart..restoreEnd];
 
         Assert.Contains("NavView.IsPaneVisible = true;", showNavigation);
-        Assert.Contains("NavView.IsPaneOpen = true;", showNavigation);
-        Assert.Contains("NavView.IsPaneOpen = true;", restoreNavigation);
+        Assert.Contains("var desiredPaneOpen = !_isNarrowShell && _desktopSidebarOpen;", showNavigation);
+        Assert.Contains("if (NavView.IsPaneOpen != desiredPaneOpen)", showNavigation);
+        Assert.Contains("NavView.IsPaneOpen = desiredPaneOpen;", showNavigation);
+        Assert.True(
+            showNavigation.IndexOf("NavView.IsPaneOpen = desiredPaneOpen;", StringComparison.Ordinal) <
+            showNavigation.IndexOf("NavView.IsPaneVisible = true;", StringComparison.Ordinal),
+            "The persisted open state must be applied before the pane becomes visible.");
+        Assert.DoesNotContain("NavView.IsPaneOpen = true;", restoreNavigation);
+        Assert.Contains("ApplyResponsiveShellLayout();", restoreNavigation);
         Assert.DoesNotContain("!IsDetailPage(pageType)", showNavigation);
         Assert.Contains("UpdateSidebarPanePresentation(NavView.IsPaneOpen)", showNavigation);
     }

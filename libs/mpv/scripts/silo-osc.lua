@@ -5235,6 +5235,21 @@ local function observe_properties()
             state.quality_menu_visible = false
             state.audio_menu_visible = false
             state.chapter_menu_visible = false
+        else
+            -- The host intentionally disables OSC while its Playing Next
+            -- surface owns input, but reuses this Lua VM and mpv instance for
+            -- the successor episode. Treat re-enable as a fresh interactive
+            -- surface: stale drag/hover/menu state from the outgoing episode
+            -- must not keep the controls hidden or leave an invisible hit
+            -- target behind. The next real mouse move will repopulate hover
+            -- state; show_osc gives mouse, keyboard, and controller users an
+            -- immediate visible control surface after the content swap.
+            state.dragging_seek = false
+            state.dragging_volume = false
+            state.dragging_marker_edge = nil
+            state.mouse_in_bar = false
+            dismiss_transport_menus_for_fade()
+            show_osc()
         end
         -- Standalone overlays do not share osc_overlay, so explicitly
         -- refresh them on both detach and return. Their renderers suppress
@@ -5733,6 +5748,10 @@ local function setup_script_messages()
         if not mx or not my then return end
         state.mouse_x = mx
         state.mouse_y = my
+        -- WM_MOUSEMOVE is the desktop host's authoritative enter signal.
+        -- A hidden/post-roll popup may never receive a separate mpv
+        -- mouse_enter binding when it is expanded again.
+        state.mouse_in_window = true
 
         -- Show OSC on any mouse movement
         show_osc()

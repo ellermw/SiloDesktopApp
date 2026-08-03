@@ -275,7 +275,11 @@ public partial class HomeViewModel : ObservableObject,
                 {
                     if (!IsCurrentSectionLoad(generation, ct, sectionId)) return;
 
-                    var completed = resp.Section ?? CloneSection(section, loadFailed: false);
+                    // A successful HTTP response can still contain JSON null or a
+                    // section without an items array. Keep the mounted Home row
+                    // alive instead of turning a malformed/partial response into
+                    // a UI-thread NullReferenceException.
+                    var completed = resp?.Section ?? CloneSection(section, loadFailed: false);
                     completed.LoadFailed = false;
                     completed.LoadCompleted = true;
                     completed.Items ??= new ObservableCollection<MediaItem>();
@@ -330,7 +334,7 @@ public partial class HomeViewModel : ObservableObject,
             if (!IsCurrentSectionRetry(retryGeneration, retryToken, retryProfileId, sectionId))
                 return;
 
-            var completed = response.Section ?? CloneSection(current, loadFailed: false);
+            var completed = response?.Section ?? CloneSection(current, loadFailed: false);
             completed.LoadFailed = false;
             completed.LoadCompleted = true;
             completed.Items ??= new ObservableCollection<MediaItem>();
@@ -363,7 +367,7 @@ public partial class HomeViewModel : ObservableObject,
         LoadCompleted = loadCompleted ?? source.LoadCompleted,
         Items = loadFailed
             ? new ObservableCollection<MediaItem>()
-            : new ObservableCollection<MediaItem>(source.Items),
+            : new ObservableCollection<MediaItem>(source.Items ?? []),
     };
 
     private static HomeSectionWithItems CreateLayoutSlot(
@@ -463,7 +467,7 @@ public partial class HomeViewModel : ObservableObject,
 
     private static void LogSectionFetchFailure(string sectionId, Exception ex)
     {
-        LocalLog.AppendLine("home_error.txt", $"section={sectionId} | {ex.GetType().Name}: {ex.Message}");
+        LocalLog.AppendLine("home_error.txt", $"section={sectionId} | {ex}");
     }
 
     private void ReplaceInBoundCollection(HomeSectionWithItems updated)

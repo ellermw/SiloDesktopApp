@@ -11,6 +11,8 @@ public partial class MainViewModel : ObservableObject
 {
     private readonly CatalogApi _catalogApi;
     private readonly AuthService _authService;
+    private CancellationTokenSource? _libraryLoadCts;
+    private long _libraryLoadGeneration;
 
     public MainViewModel(CatalogApi catalogApi, AuthService authService)
     {
@@ -35,19 +37,36 @@ public partial class MainViewModel : ObservableObject
     private string _impersonatedUsername = "";
 
     [RelayCommand]
-    private async Task LoadLibrariesAsync()
+    private Task LoadLibrariesAsync()
+        => ReloadLibrariesAsync();
+
+    public async Task ReloadLibrariesAsync(CancellationToken cancellationToken = default)
     {
-        if (IsLoadingLibraries) return;
+        _libraryLoadCts?.Cancel();
+        _libraryLoadCts?.Dispose();
+        var loadCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _libraryLoadCts = loadCts;
+        var generation = Interlocked.Increment(ref _libraryLoadGeneration);
 
         IsLoadingLibraries = true;
         try
         {
-            var libraries = await _catalogApi.GetLibrariesAsync();
+            var libraries = await _catalogApi.GetLibrariesAsync(loadCts.Token);
+            if (loadCts.IsCancellationRequested ||
+                generation != Volatile.Read(ref _libraryLoadGeneration))
+            {
+                return;
+            }
+
             Libraries.Clear();
             foreach (var lib in libraries)
             {
                 Libraries.Add(lib);
             }
+        }
+        catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
+        {
+            // A profile/server transition superseded this result.
         }
         catch
         {
@@ -55,7 +74,13 @@ public partial class MainViewModel : ObservableObject
         }
         finally
         {
-            IsLoadingLibraries = false;
+            if (generation == Volatile.Read(ref _libraryLoadGeneration))
+            {
+                IsLoadingLibraries = false;
+                if (ReferenceEquals(_libraryLoadCts, loadCts))
+                    _libraryLoadCts = null;
+            }
+            loadCts.Dispose();
         }
     }
 }

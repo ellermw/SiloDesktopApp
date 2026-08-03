@@ -141,13 +141,17 @@ public class CatalogApi(SiloApiClient client)
         CancellationToken ct = default,
         string? source = null,
         string? scope = null,
-        string? sectionId = null)
+        string? sectionId = null,
+        string? q = null,
+        string? type = null)
     {
         var parameters = new List<string>();
         if (libraryId is > 0) parameters.Add($"library_id={libraryId.Value}");
         if (!string.IsNullOrWhiteSpace(source)) parameters.Add($"source={Uri.EscapeDataString(source)}");
         if (!string.IsNullOrWhiteSpace(scope)) parameters.Add($"scope={Uri.EscapeDataString(scope)}");
         if (!string.IsNullOrWhiteSpace(sectionId)) parameters.Add($"section_id={Uri.EscapeDataString(sectionId)}");
+        if (!string.IsNullOrWhiteSpace(q)) parameters.Add($"q={Uri.EscapeDataString(q)}");
+        if (!string.IsNullOrWhiteSpace(type)) parameters.Add($"type={Uri.EscapeDataString(type)}");
         var query = "/api/v1/catalog/filters" + (parameters.Count > 0 ? "?" + string.Join("&", parameters) : "");
         return client.GetAsync<CatalogFiltersResponse>(query, ct);
     }
@@ -183,10 +187,20 @@ public class CatalogApi(SiloApiClient client)
         => client.GetAsync<MediaItemDetail>($"/api/v1/catalog/items/{contentId}", ct);
 
     public Task<ItemListResponse> GetFavoritesAsync(CancellationToken ct = default)
-        => client.GetAsync<ItemListResponse>("/api/v1/favorites", ct);
+        => GetFavoritesAsync(limit: 50, offset: 0, ct);
+
+    public Task<ItemListResponse> GetFavoritesAsync(int limit, int offset, CancellationToken ct = default)
+        => client.GetAsync<ItemListResponse>(
+            $"/api/v1/favorites?limit={Math.Max(1, limit)}&offset={Math.Max(0, offset)}",
+            ct);
 
     public Task<ItemListResponse> GetWatchlistAsync(CancellationToken ct = default)
-        => client.GetAsync<ItemListResponse>("/api/v1/watchlist", ct);
+        => GetWatchlistAsync(limit: 50, offset: 0, ct);
+
+    public Task<ItemListResponse> GetWatchlistAsync(int limit, int offset, CancellationToken ct = default)
+        => client.GetAsync<ItemListResponse>(
+            $"/api/v1/watchlist?limit={Math.Max(1, limit)}&offset={Math.Max(0, offset)}",
+            ct);
 
     public Task<ProgressResponse> GetProgressAsync(CancellationToken ct = default)
         => client.GetAsync<ProgressResponse>("/api/v1/progress?status=in_progress&limit=50", ct);

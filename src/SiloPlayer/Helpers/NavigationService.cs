@@ -9,6 +9,14 @@ public class NavigationService
     private Type? _currentPageType;
     private object? _currentParameter;
 
+    /// <summary>
+    /// Gives the shared shell one opportunity to stage a route transition
+    /// before the Frame swaps its content. Returning true means the request was
+    /// accepted and will be committed later through <see cref="NavigateImmediately"/>.
+    /// </summary>
+    public Func<Type, object?, bool>? NavigationRequestHandler { get; set; }
+    public Func<bool>? BackNavigationRequestHandler { get; set; }
+
     public Frame? Frame
     {
         get => _frame;
@@ -28,6 +36,16 @@ public class NavigationService
 
     public void GoBack()
     {
+        if (Frame?.CanGoBack != true)
+            return;
+        if (BackNavigationRequestHandler?.Invoke() == true)
+            return;
+
+        GoBackImmediately();
+    }
+
+    public void GoBackImmediately()
+    {
         if (Frame?.CanGoBack == true)
             Frame.GoBack(new SuppressNavigationTransitionInfo());
     }
@@ -38,9 +56,26 @@ public class NavigationService
         if (_currentPageType == pageType && ParametersEqual(_currentParameter, parameter))
             return false;
 
+        if (NavigationRequestHandler?.Invoke(pageType, parameter) == true)
+            return true;
+
+        return NavigateImmediately(pageType, parameter);
+    }
+
+    /// <summary>
+    /// Commits a navigation that has already been staged by the shared shell.
+    /// This deliberately bypasses <see cref="NavigationRequestHandler"/>.
+    /// </summary>
+    public bool NavigateImmediately(Type pageType, object? parameter = null)
+    {
+        if (Frame == null) return false;
+        if (_currentPageType == pageType && ParametersEqual(_currentParameter, parameter))
+            return false;
+
         // Frame's stock directional animation makes top-level route changes
-        // look like a full control teardown. MainWindow applies the WebUI's
-        // short fade/slide entrance after navigation instead.
+        // look like a full control teardown. The shell swaps routes atomically
+        // and PageTransitionHelper normalizes the incoming root without
+        // applying a second whole-page animation.
         return Frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());
     }
 

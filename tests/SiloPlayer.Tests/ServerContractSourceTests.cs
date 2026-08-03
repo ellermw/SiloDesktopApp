@@ -478,7 +478,9 @@ public sealed class ServerContractSourceTests
         Assert.Equal(2, dialogXaml.Split("Content=\"Vietnamese\" Tag=\"vi\"", StringSplitOptions.None).Length - 1);
         Assert.Equal(2, dialogXaml.Split("Content=\"Bengali\" Tag=\"bn\"", StringSplitOptions.None).Length - 1);
         Assert.Contains("UploadButton_Click", dialogCode);
-        Assert.Contains("Add subtitles...", itemDetail);
+        Assert.Contains("Search Subtitles", itemDetail);
+        Assert.Contains("OpenSubtitleSearchDialogAsync", itemDetail);
+        Assert.DoesNotContain("Add subtitles...", itemDetail);
 
         Assert.True(File.Exists(Path.Combine(root, "src", "SiloPlayer", "Views", "Admin", "AdminSubtitlesPage.xaml")));
         Assert.True(File.Exists(Path.Combine(root, "src", "SiloPlayer", "Views", "Admin", "AdminSubtitlesPage.xaml.cs")));

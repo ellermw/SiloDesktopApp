@@ -17,10 +17,9 @@ public sealed partial class SearchPage : Page
     private bool _isNavigated;
     private Task? _initializationTask;
     private double _catalogCardWidth = 178;
-    private bool _syncingSearchText;
-    private bool _pendingResultsSearchFocus;
-    private FocusState _pendingResultsSearchFocusState = FocusState.Programmatic;
     private bool _resultsScrollUserScrolled;
+    private Task? _searchFiltersTask;
+    private string? _searchFiltersTaskKey;
 
     public SearchPage()
     {
@@ -62,6 +61,7 @@ public sealed partial class SearchPage : Page
             }
         };
         SizeChanged += SearchPage_SizeChanged;
+        Loaded += (_, _) => PositionSearchSurface();
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -72,7 +72,7 @@ public sealed partial class SearchPage : Page
         if (e.NavigationMode == NavigationMode.Back && !string.IsNullOrWhiteSpace(ViewModel.Query))
         {
             SearchBox.Text = ViewModel.Query;
-            ResultsSearchBox.Text = ViewModel.Query;
+            PositionSearchSurface();
             UpdateScopeButtons();
             UpdateResultsState();
         }
@@ -84,7 +84,7 @@ public sealed partial class SearchPage : Page
             ViewModel.PeopleResults.Clear();
             ViewModel.OutsideLibraryResults.Clear();
             SearchBox.Text = "";
-            ResultsSearchBox.Text = "";
+            PositionSearchSurface();
             UpdateScopeButtons();
             EmptyState.Visibility = Visibility.Visible;
             ResultsState.Visibility = Visibility.Collapsed;
@@ -103,8 +103,10 @@ public sealed partial class SearchPage : Page
 
     private async Task InitializeAsync()
     {
-        await Task.WhenAll(ViewModel.LoadMediaScopeAsync(), ViewModel.LoadFiltersAsync());
-        PopulateResultFilters();
+        // The empty WebUI search surface does not enumerate every catalog
+        // facet. Load the lightweight saved scope immediately, then warm
+        // query-scoped filters only after primary results are visible.
+        await ViewModel.LoadMediaScopeAsync();
         _filterInitializing = false;
         _initialized = true;
         UpdateScopeButtons();
@@ -161,6 +163,7 @@ public sealed partial class SearchPage : Page
         await EnsureInitializedAsync();
         await ViewModel.SetMediaScopeAsync(scope);
         UpdateScopeButtons();
+        _ = EnsureSearchFiltersLoadedAsync();
     }
 
     private void UpdateScopeButtons()
@@ -198,8 +201,10 @@ public sealed partial class SearchPage : Page
                 button.Resources["ButtonForegroundPointerOver"] = pointerForeground;
                 button.Resources["ButtonForegroundPressed"] = pointerForeground;
                 button.BorderThickness = new Thickness(0);
-                button.CornerRadius = new CornerRadius(999);
-                button.Padding = new Thickness(16, 6, 16, 6);
+                button.Height = 32;
+                button.MinHeight = 0;
+                button.CornerRadius = new CornerRadius(16);
+                button.Padding = new Thickness(16, 0, 16, 0);
                 AutomationProperties.SetHelpText(
                     button,
                     active ? "Selected search scope" : "Select search scope");
@@ -215,7 +220,6 @@ public sealed partial class SearchPage : Page
         }
         var placeholder = ViewModel.MediaScope == "audiobook" ? "Search audiobooks..." : ViewModel.MediaScope == "all" ? "Search all media..." : "Search movies, series...";
         SearchBox.PlaceholderText = placeholder;
-        ResultsSearchBox.PlaceholderText = placeholder;
         _filterInitializing = true;
         var typeSelection = ViewModel.MediaType
             ?? (ViewModel.MediaScope is "video" or "audiobook" ? ViewModel.MediaScope : "all");
@@ -244,46 +248,10 @@ public sealed partial class SearchPage : Page
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        // Sync query from whichever search box was used
-        if (sender is TextBox textBox)
-        {
-            ViewModel.Query = textBox.Text;
+        if (sender is not TextBox textBox)
+            return;
 
-            // Sync the other search box without retriggering
-            if (!_syncingSearchText)
-            {
-                _syncingSearchText = true;
-                try
-                {
-                    if (textBox == SearchBox && ResultsSearchBox.Text != textBox.Text)
-                        ResultsSearchBox.Text = textBox.Text;
-                    else if (textBox == ResultsSearchBox && SearchBox.Text != textBox.Text)
-                        SearchBox.Text = textBox.Text;
-                }
-                finally
-                {
-                    _syncingSearchText = false;
-                }
-            }
-
-            if (_syncingSearchText)
-                return;
-
-            if (textBox == SearchBox && !string.IsNullOrWhiteSpace(textBox.Text))
-            {
-                _pendingResultsSearchFocus = true;
-                _pendingResultsSearchFocusState = textBox.FocusState == FocusState.Keyboard
-                    ? FocusState.Keyboard
-                    : FocusState.Programmatic;
-                ShowResultsShellForCurrentQuery();
-                FocusResultsSearchBox(_pendingResultsSearchFocusState);
-                DispatcherQueue.TryEnqueue(() =>
-                {
-                    if (_pendingResultsSearchFocus && !string.IsNullOrWhiteSpace(ViewModel.Query))
-                        FocusResultsSearchBox(_pendingResultsSearchFocusState);
-                });
-            }
-        }
+        ViewModel.Query = textBox.Text;
 
         if (string.IsNullOrWhiteSpace(ViewModel.Query))
         {
@@ -294,10 +262,18 @@ public sealed partial class SearchPage : Page
             ViewModel.OutsideLibraryResults.Clear();
             EmptyState.Visibility = Visibility.Visible;
             ResultsState.Visibility = Visibility.Collapsed;
-            _pendingResultsSearchFocus = false;
+            PositionSearchSurface();
             _resultsScrollUserScrolled = false;
+            RestoreSearchFocus(textBox.FocusState);
             return;
         }
+
+        // The same native TextBox is moved between the empty and results
+        // hosts. Preserve its focus/caret immediately; there is no mirrored
+        // control whose TextChanged event can steal focus or duplicate text.
+        var focusState = textBox.FocusState;
+        ShowResultsShellForCurrentQuery();
+        RestoreSearchFocus(focusState);
 
         // Match the current WebUI's 100ms live-search navigation debounce.
         _searchDebounce?.Stop();
@@ -313,25 +289,10 @@ public sealed partial class SearchPage : Page
             _resultsScrollUserScrolled = false;
             ResultsScroll.ChangeView(null, 0, null, disableAnimation: true);
 
-            var transferSearchFocus = _pendingResultsSearchFocus || SearchBox.FocusState != FocusState.Unfocused;
-            var priorFocusState = SearchBox.FocusState;
             ShowResultsShellForCurrentQuery();
 
-            // The empty and results surfaces intentionally use different
-            // TextBox instances. When the first character reveals results,
-            // transfer focus and the caret before awaiting network work so
-            // continued typing remains uninterrupted.
-            if (transferSearchFocus)
-            {
-                FocusResultsSearchBox(_pendingResultsSearchFocus
-                    ? _pendingResultsSearchFocusState
-                    : priorFocusState == FocusState.Keyboard
-                        ? FocusState.Keyboard
-                        : FocusState.Programmatic);
-                _pendingResultsSearchFocus = false;
-            }
-
             await ViewModel.SearchCommand.ExecuteAsync(null);
+            _ = EnsureSearchFiltersLoadedAsync();
         };
         _searchDebounce.Start();
     }
@@ -340,26 +301,48 @@ public sealed partial class SearchPage : Page
     {
         EmptyState.Visibility = Visibility.Collapsed;
         ResultsState.Visibility = Visibility.Visible;
+        PositionSearchSurface();
         ResultsTitle.Text = $"Results for \"{ViewModel.Query}\"";
     }
 
-    private void FocusResultsSearchBox(FocusState focusState)
+    private void PositionSearchSurface()
     {
-        ResultsSearchBox.Focus(focusState);
-        ResultsSearchBox.SelectionStart = ResultsSearchBox.Text.Length;
-        ResultsSearchBox.SelectionLength = 0;
+        if (!IsLoaded)
+            return;
+
+        // Keep the TextBox in one visual parent. Reparenting a live WinUI
+        // element can fail inside Frame.Navigate with 0x800F1000.
+        SearchRoot.UpdateLayout();
+        var target = string.IsNullOrWhiteSpace(ViewModel.Query)
+            ? EmptySearchHost
+            : ResultsSearchHost;
+        var point = target.TransformToVisual(SearchRoot).TransformPoint(new Windows.Foundation.Point());
+        SearchSurface.Margin = new Thickness(point.X, point.Y, 0, 0);
     }
 
-    private void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
+    private void RestoreSearchFocus(FocusState previousFocusState)
     {
-        // When Enter is pressed and we're in empty state, focus the results search box
-        if (e.Key == Windows.System.VirtualKey.Enter && sender is TextBox textBox)
-        {
-            if (textBox == SearchBox && !string.IsNullOrWhiteSpace(textBox.Text))
-            {
-                ResultsSearchBox.Focus(FocusState.Programmatic);
-            }
-        }
+        if (previousFocusState == FocusState.Unfocused)
+            return;
+
+        SearchBox.Focus(previousFocusState == FocusState.Keyboard
+            ? FocusState.Keyboard
+            : FocusState.Programmatic);
+        SearchBox.SelectionStart = SearchBox.Text.Length;
+        SearchBox.SelectionLength = 0;
+    }
+
+    private async void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Enter ||
+            string.IsNullOrWhiteSpace(SearchBox.Text))
+            return;
+
+        e.Handled = true;
+        _searchDebounce?.Stop();
+        ShowResultsShellForCurrentQuery();
+        await ViewModel.SearchCommand.ExecuteAsync(null);
+        _ = EnsureSearchFiltersLoadedAsync();
     }
 
     private void PersonCard_Click(object sender, RoutedEventArgs e)
@@ -401,7 +384,7 @@ public sealed partial class SearchPage : Page
     {
         ResultsScroll.ChangeView(null, 0, null);
         SearchScrollToTopButton.Visibility = Visibility.Collapsed;
-        ResultsSearchBox.Focus(FocusState.Programmatic);
+        SearchBox.Focus(FocusState.Programmatic);
     }
 
     private void SearchPage_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -416,7 +399,7 @@ public sealed partial class SearchPage : Page
         var emptyTitleSize = Math.Clamp(e.NewSize.Width * 0.04, 32, 60);
         EmptySearchTitle.FontSize = emptyTitleSize;
         EmptySearchTitle.LineHeight = emptyTitleSize * 0.95;
-        ResultsSearchSurface.Margin = new Thickness(gutter, 0, gutter, 12);
+        ResultsSearchHost.Margin = new Thickness(gutter, 0, gutter, 12);
         ResultsToolbar.Margin = new Thickness(gutter, 0, gutter, 24);
         ActiveResultFiltersPanel.Margin = new Thickness(gutter, 0, gutter, 24);
         ResultsScroll.Padding = new Thickness(gutter, 0, gutter, 24);
@@ -430,8 +413,10 @@ public sealed partial class SearchPage : Page
         ActiveResultFiltersPanel.MaxWidth = shellContentWidth;
         ResultsContent.MaxWidth = shellContentWidth;
         var searchWidth = Math.Max(280, Math.Min(576, e.NewSize.Width - (gutter * 2)));
-        EmptySearchSurface.Width = searchWidth;
-        ResultsSearchSurface.Width = searchWidth;
+        EmptySearchHost.Width = searchWidth;
+        ResultsSearchHost.Width = searchWidth;
+        SearchSurface.Width = searchWidth;
+        PositionSearchSurface();
         UpdateCatalogGridLayout(e.NewSize.Width, gutter);
     }
 
@@ -492,20 +477,60 @@ public sealed partial class SearchPage : Page
         base.OnNavigatedFrom(e);
     }
 
+    private Task EnsureSearchFiltersLoadedAsync()
+    {
+        var query = ViewModel.Query.Trim();
+        if (string.IsNullOrWhiteSpace(query))
+            return Task.CompletedTask;
+
+        var mediaType = ViewModel.MediaType;
+        var key = $"{query}\u001F{mediaType ?? ""}";
+        if (string.Equals(_searchFiltersTaskKey, key, StringComparison.Ordinal) &&
+            _searchFiltersTask is { IsCompleted: false })
+            return _searchFiltersTask;
+
+        _searchFiltersTaskKey = key;
+        _searchFiltersTask = LoadSearchFiltersCoreAsync(key, query, mediaType);
+        return _searchFiltersTask;
+    }
+
+    private async Task LoadSearchFiltersCoreAsync(string key, string query, string? mediaType)
+    {
+        await ViewModel.LoadFiltersAsync(query, mediaType);
+        if (!_isNavigated ||
+            !string.Equals(_searchFiltersTaskKey, key, StringComparison.Ordinal) ||
+            !string.Equals(ViewModel.Query.Trim(), query, StringComparison.Ordinal) ||
+            !string.Equals(ViewModel.MediaType, mediaType, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        PopulateResultFilters();
+    }
+
     private void PopulateResultFilters()
     {
-        FillResultCombo(ResultGenreCombo, "All Genres", ViewModel.AvailableFilters?.Genres ?? []);
-        FillResultCombo(ResultRatingCombo, "All Ratings", ViewModel.AvailableFilters?.ContentRatings ?? []);
-        FillResultCombo(ResultResolutionCombo, "All Resolutions", ViewModel.AvailableFilters?.Resolutions ?? []);
-        FillResultCombo(ResultCountryCombo, "All Countries", ViewModel.AvailableFilters?.Countries ?? []);
-        if (!string.IsNullOrWhiteSpace(ViewModel.Genre))
-            SelectComboTag(ResultGenreCombo, ViewModel.Genre);
-        if (!string.IsNullOrWhiteSpace(ViewModel.ContentRating))
-            SelectComboTag(ResultRatingCombo, ViewModel.ContentRating);
-        if (!string.IsNullOrWhiteSpace(ViewModel.Resolution))
-            SelectComboTag(ResultResolutionCombo, ViewModel.Resolution);
-        if (!string.IsNullOrWhiteSpace(ViewModel.Country))
-            SelectComboTag(ResultCountryCombo, ViewModel.Country);
+        var priorInitializing = _filterInitializing;
+        _filterInitializing = true;
+        try
+        {
+            FillResultCombo(ResultGenreCombo, "All Genres", ViewModel.AvailableFilters?.Genres ?? []);
+            FillResultCombo(ResultRatingCombo, "All Ratings", ViewModel.AvailableFilters?.ContentRatings ?? []);
+            FillResultCombo(ResultResolutionCombo, "All Resolutions", ViewModel.AvailableFilters?.Resolutions ?? []);
+            FillResultCombo(ResultCountryCombo, "All Countries", ViewModel.AvailableFilters?.Countries ?? []);
+            if (!string.IsNullOrWhiteSpace(ViewModel.Genre))
+                SelectComboTag(ResultGenreCombo, ViewModel.Genre);
+            if (!string.IsNullOrWhiteSpace(ViewModel.ContentRating))
+                SelectComboTag(ResultRatingCombo, ViewModel.ContentRating);
+            if (!string.IsNullOrWhiteSpace(ViewModel.Resolution))
+                SelectComboTag(ResultResolutionCombo, ViewModel.Resolution);
+            if (!string.IsNullOrWhiteSpace(ViewModel.Country))
+                SelectComboTag(ResultCountryCombo, ViewModel.Country);
+        }
+        finally
+        {
+            _filterInitializing = priorInitializing;
+        }
         UpdateActiveResultFilters();
     }
 
@@ -525,6 +550,7 @@ public sealed partial class SearchPage : Page
         {
             await ViewModel.SetMediaTypeAsync(SelectedTag(ResultTypeCombo));
             UpdateScopeButtons();
+            _ = EnsureSearchFiltersLoadedAsync();
             return;
         }
 
@@ -540,7 +566,7 @@ public sealed partial class SearchPage : Page
     private async void ResultSort_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_filterInitializing) return;
-        ViewModel.SortField = SelectedTag(ResultSortCombo) ?? "added_at";
+        ViewModel.SortField = SelectedTag(ResultSortCombo) ?? "relevance";
         var ascending = ViewModel.SortField is "title" or "content_rating" or "author" or "narrator" or "series";
         _filterInitializing = true;
         SelectComboTag(ResultOrderCombo, ascending ? "asc" : "desc");
@@ -548,7 +574,11 @@ public sealed partial class SearchPage : Page
         if (!string.IsNullOrWhiteSpace(ViewModel.Query)) await ViewModel.SearchCommand.ExecuteAsync(null);
     }
 
-    private void OpenResultFilters_Click(object sender, RoutedEventArgs e) => ResultFiltersSheet.IsOpen = true;
+    private async void OpenResultFilters_Click(object sender, RoutedEventArgs e)
+    {
+        ResultFiltersSheet.IsOpen = true;
+        await EnsureSearchFiltersLoadedAsync();
+    }
     private void CloseResultFilters_Click(object sender, RoutedEventArgs e) => ResultFiltersSheet.IsOpen = false;
 
     private void UpdateActiveResultFilters()

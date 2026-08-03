@@ -3,6 +3,18 @@ namespace SiloPlayer.Tests;
 public sealed class CurrentLibraryParitySourceTests
 {
     [Fact]
+    public void AdvancedFilterEventsStaySuppressedThroughoutXamlConstruction()
+    {
+        var source = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
+        var initialize = source.IndexOf("this.InitializeComponent();", StringComparison.Ordinal);
+        var enableEvents = source.IndexOf("_suppressFilterEvents = false;", initialize, StringComparison.Ordinal);
+
+        Assert.Contains("private bool _suppressFilterEvents = true;", source, StringComparison.Ordinal);
+        Assert.True(initialize >= 0 && enableEvents > initialize);
+        Assert.DoesNotContain("private bool _suppressFilterEvents;", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HeaderAndToolbarFollowCurrentLibraryShell()
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml");
@@ -33,7 +45,7 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("string.Equals(item.Type, \"audiobook\"", card);
         Assert.Contains("SetLayout(Width, itemPosterHeight, Height)", card);
         Assert.Contains("MoreButton_Click", card);
-        Assert.Contains("OverlayRegistry.All", card);
+        Assert.Contains("GetOrderedDefinitions()", card);
         Assert.Contains("PosterCard.BuildBadge", card);
         Assert.Contains("case \"date_viewed\"", display);
         Assert.Contains("case \"narrator\"", display);

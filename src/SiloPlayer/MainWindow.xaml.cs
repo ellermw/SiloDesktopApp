@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models;
 using SiloPlayer.Core.Models.Catalog;
@@ -34,25 +36,34 @@ public sealed partial class MainWindow : Window
     private readonly CatalogApi _catalogApi;
     private readonly RequestsApi _requestsApi;
     private readonly NotificationsApi _notificationsApi;
+    private readonly EventChannelClient _eventChannel;
     private readonly PlayerService _playerService;
     private readonly ThemeService _themeService;
     private bool _notificationsAvailable = true;
     private int _notificationUnreadCount;
-    private bool _routeWantsCompactPane;
     private bool _isNarrowShell;
-    private bool _sidebarHoverExpanded;
-    private bool _pointerInsideSidebar;
-    private bool _profileFooterFlyoutOpen;
+    private bool _desktopSidebarOpen = true;
+    private bool _synchronizingDesktopPaneState;
+    private long _paneOpenPropertyCallbackToken;
     private bool _mobileHeaderHidden;
-    private DispatcherTimer? _sidebarHoverTimer;
     private bool _isWindowActive;
     private double _currentWindowWidth = 1280;
     private Type? _lastShellPageType;
     private object? _lastShellParameter;
+    private IDisposable? _notificationSubscription;
+    private string? _notificationSubscriptionShellKey;
+    private CancellationTokenSource? _shellHydrationCts;
 
     public MainWindow()
     {
         this.InitializeComponent();
+
+        // LeftCompact uses an in-app acrylic pane by default. Override the
+        // NavigationView theme resource with Silo's live sidebar brush so the
+        // expanded pane is opaque and continues following server theme changes.
+        var sidebarBackground = Application.Current.Resources["SidebarBackgroundBrush"];
+        NavView.Resources["NavigationViewDefaultPaneBackground"] = sidebarBackground;
+        NavView.Resources["NavigationViewExpandedPaneBackground"] = sidebarBackground;
 
         // Set title bar colors
         if (AppWindow?.TitleBar != null)
@@ -73,6 +84,7 @@ public sealed partial class MainWindow : Window
         _navigationService = App.Services.GetRequiredService<NavigationService>();
         _viewModel = App.Services.GetRequiredService<MainViewModel>();
         _settingsService = App.Services.GetRequiredService<SettingsService>();
+        _desktopSidebarOpen = _settingsService.Load().DesktopSidebarOpen;
         _credentialStore = App.Services.GetRequiredService<CredentialStore>();
         _authService = App.Services.GetRequiredService<AuthService>();
         _authApi = App.Services.GetRequiredService<AuthApi>();
@@ -81,16 +93,27 @@ public sealed partial class MainWindow : Window
         _catalogApi = App.Services.GetRequiredService<CatalogApi>();
         _requestsApi = App.Services.GetRequiredService<RequestsApi>();
         _notificationsApi = App.Services.GetRequiredService<NotificationsApi>();
+        _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _themeService = App.Services.GetRequiredService<ThemeService>();
 
-        NavView.PaneOpened += (_, _) => UpdateSidebarPanePresentation(isOpen: true);
-        NavView.PaneClosed += (_, _) => UpdateSidebarPanePresentation(isOpen: false);
-        NavView.PointerMoved += NavView_PointerMoved;
-        NavView.PointerExited += NavView_PointerExited;
+        NavView.PaneOpening += NavView_PaneOpening;
+        NavView.PaneOpened += NavView_PaneOpened;
+        NavView.PaneClosed += NavView_PaneClosed;
         RootGrid.AddHandler(
             UIElement.KeyDownEvent,
             new Microsoft.UI.Xaml.Input.KeyEventHandler(RootGrid_KeyDown),
             handledEventsToo: true);
+        NavView.AddHandler(
+            UIElement.PointerPressedEvent,
+            new Microsoft.UI.Xaml.Input.PointerEventHandler(NavView_PointerPressed),
+            handledEventsToo: true);
+        NavView.AddHandler(
+            UIElement.KeyDownEvent,
+            new Microsoft.UI.Xaml.Input.KeyEventHandler(NavView_KeyDown),
+            handledEventsToo: true);
+        _paneOpenPropertyCallbackToken = NavView.RegisterPropertyChangedCallback(
+            NavigationView.IsPaneOpenProperty,
+            OnNavViewIsPaneOpenChanged);
         UpdateSidebarPanePresentation(NavView.IsPaneOpen);
 
         _navigationService.Frame = ContentFrame;
@@ -156,6 +179,8 @@ public sealed partial class MainWindow : Window
         _authService.UserChanged += OnAuthUserChanged;
         _authService.ProfileVerificationRequired += OnProfileVerificationRequired;
         _authService.CredentialStoreFailed += OnCredentialStoreFailed;
+        _eventChannel.SnapshotReceived += OnShellEventSnapshot;
+        _eventChannel.EventReceived += OnShellEvent;
 
         // Playing Next cinematic overlay — enters during the final 30 seconds
         // of a series episode and marks true EOF separately. PlayerOverlay used to own this but its
@@ -193,14 +218,9 @@ public sealed partial class MainWindow : Window
     private void ApplyResponsiveShellLayout()
     {
         var isNarrow = _currentWindowWidth < 1024;
+        var wasNarrow = _isNarrowShell;
         _isNarrowShell = isNarrow;
-        if (isNarrow)
-        {
-            _sidebarHoverExpanded = false;
-            _pointerInsideSidebar = false;
-            StopSidebarHoverTimer();
-        }
-        else
+        if (!isNarrow)
         {
             SetMobileHeaderHidden(false);
         }
@@ -209,19 +229,34 @@ public sealed partial class MainWindow : Window
         // breakpoint and exposes navigation through a mobile menu. WinUI's
         // LeftMinimal mode is the native equivalent: content receives the
         // full window width and the pane opens as an overlay from its toggle.
-        NavView.PaneDisplayMode = isNarrow
+        // Keep desktop display mode and pane state aligned. Left is the stable,
+        // side-by-side expanded state and does not auto-dismiss after an item is
+        // invoked. LeftCompact is the stable icon-rail state. Forcing a closed
+        // pane while leaving it in Left mode, or an open pane in LeftCompact,
+        // lets NavigationView fight the user's choice during navigation.
+        var desiredPaneDisplayMode = isNarrow
             ? NavigationViewPaneDisplayMode.LeftMinimal
-            : NavigationViewPaneDisplayMode.Left;
-        // The current WebUI supplies a complete mobile header instead of a
-        // lone stock hamburger row.
-        NavView.IsPaneToggleButtonVisible = false;
-        MobileShellHeader.Visibility =
+            : _desktopSidebarOpen
+                ? NavigationViewPaneDisplayMode.Left
+                : NavigationViewPaneDisplayMode.LeftCompact;
+        if (NavView.PaneDisplayMode != desiredPaneDisplayMode)
+            NavView.PaneDisplayMode = desiredPaneDisplayMode;
+
+        // Desktop sidebar state is controlled only by NavigationView's
+        // explicit toggle. The custom mobile header owns its own menu button.
+        var shouldShowDesktopToggle = !isNarrow;
+        if (NavView.IsPaneToggleButtonVisible != shouldShowDesktopToggle)
+            NavView.IsPaneToggleButtonVisible = shouldShowDesktopToggle;
+
+        var mobileHeaderVisibility =
             isNarrow &&
             NavView.IsPaneVisible &&
             CanExposeAuthenticatedNavigation &&
             ContentFrame.Content is not Views.Admin.AdminShellPage
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+        if (MobileShellHeader.Visibility != mobileHeaderVisibility)
+            MobileShellHeader.Visibility = mobileHeaderVisibility;
 
         if (!NavView.IsPaneVisible)
         {
@@ -229,10 +264,23 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var shouldOpen = !isNarrow &&
-            (!_routeWantsCompactPane || _sidebarHoverExpanded || _profileFooterFlyoutOpen);
-        NavView.IsPaneOpen = shouldOpen;
-        UpdateSidebarPanePresentation(shouldOpen);
+        if (isNarrow)
+        {
+            // Entering the overlay-style mobile shell closes the desktop pane
+            // once, without overwriting the user's desktop preference.
+            if (!wasNarrow && NavView.IsPaneOpen)
+                NavView.IsPaneOpen = false;
+        }
+        else
+        {
+            // LeftCompact is the WinUI mode designed for a persistent icon rail.
+            // Reassigning IsPaneOpen on every page load restarts NavigationView's
+            // pane transition, so only change it when the real state differs.
+            if (NavView.IsPaneOpen != _desktopSidebarOpen)
+                NavView.IsPaneOpen = _desktopSidebarOpen;
+        }
+
+        UpdateSidebarPanePresentation(NavView.IsPaneOpen);
         UpdateServerActivityHostVisibility();
     }
 
@@ -305,102 +353,56 @@ public sealed partial class MainWindow : Window
         UpdateSidebarPanePresentation(isOpen: false);
     }
 
-    private void NavView_PointerMoved(
-        object sender,
-        Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    private void NavView_PaneOpening(object sender, object e)
     {
-        if (!_routeWantsCompactPane || _isNarrowShell || !NavView.IsPaneVisible)
-            return;
-
-        var pointerX = e.GetCurrentPoint(NavView).Position.X;
-        var paneWidth = NavView.IsPaneOpen
-            ? NavView.OpenPaneLength
-            : NavView.CompactPaneLength;
-        var isInsidePane = pointerX >= 0 && pointerX <= paneWidth;
-        if (isInsidePane == _pointerInsideSidebar)
-            return;
-
-        _pointerInsideSidebar = isInsidePane;
-        if (isInsidePane)
+        if (!_isNarrowShell && NavView.IsPaneVisible && CanExposeAuthenticatedNavigation)
         {
-            if (NavView.IsPaneOpen)
-                return;
-
-            StopSidebarHoverTimer();
-            _sidebarHoverTimer = new DispatcherTimer
+            if (!_desktopSidebarOpen)
             {
-                // AppSidebar.tsx deliberately waits 150ms so merely crossing
-                // the compact rail does not expand it accidentally.
-                Interval = TimeSpan.FromMilliseconds(150),
-            };
-            _sidebarHoverTimer.Tick += SidebarHoverTimer_Tick;
-            _sidebarHoverTimer.Start();
+                SynchronizeDesktopPaneState();
+                return;
+            }
+
+            // Enter the side-by-side desktop mode before WinUI renders the
+            // expanded pane. This avoids a transient acrylic LeftCompact frame
+            // and prevents item invocation from treating the pane as a flyout.
+            if (NavView.PaneDisplayMode != NavigationViewPaneDisplayMode.Left)
+                NavView.PaneDisplayMode = NavigationViewPaneDisplayMode.Left;
+        }
+    }
+
+    private void NavView_PaneOpened(object sender, object e)
+    {
+        if (!_isNarrowShell && NavView.IsPaneVisible && CanExposeAuthenticatedNavigation)
+        {
+            SynchronizeDesktopPaneState();
         }
         else
         {
-            StopSidebarHoverTimer();
-            CollapseImmersiveSidebarAfterPointerExit();
+            UpdateSidebarPanePresentation(isOpen: true);
         }
     }
 
-    private void NavView_PointerExited(
-        object sender,
-        Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    private void NavView_PaneClosed(object sender, object e)
     {
-        _pointerInsideSidebar = false;
-        StopSidebarHoverTimer();
-        CollapseImmersiveSidebarAfterPointerExit();
-    }
-
-    private void SidebarHoverTimer_Tick(object? sender, object e)
-    {
-        StopSidebarHoverTimer();
-        if (!_pointerInsideSidebar ||
-            !_routeWantsCompactPane ||
-            _isNarrowShell ||
-            !NavView.IsPaneVisible)
+        if (!_isNarrowShell && NavView.IsPaneVisible && CanExposeAuthenticatedNavigation)
         {
-            return;
+            SynchronizeDesktopPaneState();
         }
-
-        _sidebarHoverExpanded = true;
-        ApplyResponsiveShellLayout();
-    }
-
-    private void StopSidebarHoverTimer()
-    {
-        if (_sidebarHoverTimer == null)
-            return;
-
-        _sidebarHoverTimer.Stop();
-        _sidebarHoverTimer.Tick -= SidebarHoverTimer_Tick;
-        _sidebarHoverTimer = null;
-    }
-
-    private void CollapseImmersiveSidebarAfterPointerExit()
-    {
-        if (!_routeWantsCompactPane || _isNarrowShell || _profileFooterFlyoutOpen)
-            return;
-
-        _sidebarHoverExpanded = false;
-        ApplyResponsiveShellLayout();
-    }
-
-    private void ProfileFooterFlyout_Opened(object sender, object e)
-    {
-        _profileFooterFlyoutOpen = true;
-        if (_routeWantsCompactPane && !_isNarrowShell)
+        else
         {
-            _sidebarHoverExpanded = true;
-            ApplyResponsiveShellLayout();
+            UpdateSidebarPanePresentation(isOpen: false);
         }
     }
 
-    private void ProfileFooterFlyout_Closed(object sender, object e)
+    private void ProfileFooterFlyout_Opening(object sender, object e)
     {
-        _profileFooterFlyoutOpen = false;
-        if (!_pointerInsideSidebar)
-            CollapseImmersiveSidebarAfterPointerExit();
+        // Keep the user's pane state unchanged while presenting the profile
+        // menu beside a compact rail or above an expanded sidebar.
+        ProfileFooterFlyout.Placement =
+            !NavView.IsPaneOpen
+                ? FlyoutPlacementMode.RightEdgeAlignedBottom
+                : FlyoutPlacementMode.Top;
     }
 
     private void OnAppWindowChanged(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args)
@@ -417,6 +419,10 @@ public sealed partial class MainWindow : Window
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        CancelShellHydration();
+        ReleaseNotificationSubscription();
+        _eventChannel.SnapshotReceived -= OnShellEventSnapshot;
+        _eventChannel.EventReceived -= OnShellEvent;
         _playerService.StateChanged -= OnPlayerStateChanged;
         _authService.LoggedOut -= OnAuthLoggedOut;
         _authService.UserChanged -= OnAuthUserChanged;
@@ -429,9 +435,13 @@ public sealed partial class MainWindow : Window
         _navigationService.Navigated -= OnNavigated_UpdateWindowTitle;
         _navigationService.Navigated -= OnNavigated_ApplyAccessibility;
         _navigationService.Navigated -= OnNavigated_SynchronizeShellChrome;
-        NavView.PointerMoved -= NavView_PointerMoved;
-        NavView.PointerExited -= NavView_PointerExited;
-        StopSidebarHoverTimer();
+        if (_paneOpenPropertyCallbackToken != 0)
+        {
+            NavView.UnregisterPropertyChangedCallback(
+                NavigationView.IsPaneOpenProperty,
+                _paneOpenPropertyCallbackToken);
+            _paneOpenPropertyCallbackToken = 0;
+        }
         StopPlayingNextCountdown();
     }
 
@@ -446,8 +456,18 @@ public sealed partial class MainWindow : Window
 
     private void OnShowPlayingNextRequested(bool videoEnded)
     {
+        // mpv raises playback events off the UI thread. Remember which item
+        // owned this request so a queued callback from the outgoing episode
+        // cannot reopen post-roll and disable the successor episode's OSC.
+        var ownerContentId = _playerService.ContentId;
         DispatcherQueue.TryEnqueue(() =>
         {
+            if (_playerService.IsSwitchingContent ||
+                !string.Equals(ownerContentId, _playerService.ContentId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
             var shouldFocusOverlay = _isWindowActive || _playerService.IsPlaybackSurfaceForeground;
 
             // The early post-roll surface can already be visible when true EOF
@@ -895,25 +915,8 @@ public sealed partial class MainWindow : Window
         // sidebar from 260px to 64px). Browse-type pages expand back.
         // Only applies in Idle / Minimized states where the pane is
         // visible at all.
-        _routeWantsCompactPane = IsDetailPage(pageType);
-        if (!_routeWantsCompactPane)
-        {
-            _sidebarHoverExpanded = false;
-            _pointerInsideSidebar = false;
-            StopSidebarHoverTimer();
-        }
-        ApplyResponsiveShellLayout();
-    }
-
-    /// <summary>
-    /// Whether a page type should trigger the nav-pane auto-collapse. These
-    /// are pages that prefer a wider content canvas (item detail hero, person
-    /// filmography grid). Browse/home/settings pages stay expanded.
-    /// </summary>
-    private static bool IsDetailPage(Type pageType)
-    {
-        var name = pageType.Name;
-        return name is "ItemDetailPage" or "PersonDetailPage";
+        // Navigation never changes pane state. The user's explicit sidebar
+        // toggle remains authoritative across browse and detail routes.
     }
 
     /// <summary>Ctrl+K — global search palette (webui parity with GlobalSearch.tsx).</summary>
@@ -1185,7 +1188,13 @@ public sealed partial class MainWindow : Window
         var shellKey = GetAuthenticatedShellKey();
         var shouldHydrateShell = !string.Equals(_hydratedShellKey, shellKey, StringComparison.Ordinal);
         if (shouldHydrateShell)
+        {
             _hydratedShellKey = shellKey;
+            CancelShellHydration();
+            _shellHydrationCts = new CancellationTokenSource();
+            _notificationUnreadCount = 0;
+            UpdateSidebarPanePresentation(NavView.IsPaneOpen);
+        }
 
         // None of the shell decoration below is allowed to invalidate a
         // successful profile selection or page navigation. Themes, plugin
@@ -1207,13 +1216,14 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            NavView.IsPaneVisible = true;
             // HideMainNavigation closes the pane while login/profile selection
-            // owns the window. Reopening only IsPaneVisible leaves NavigationView
-            // in its 64px compact state, which clips the custom Admin/profile
-            // footer controls. Restore the route-appropriate pane state as part
-            // of the same authenticated shell transition.
-            NavView.IsPaneOpen = true;
+            // owns the window. Restore the user's last explicit desktop state
+            // before revealing it so the wrong state cannot render for a frame.
+            var desiredPaneOpen = !_isNarrowShell && _desktopSidebarOpen;
+            if (NavView.IsPaneOpen != desiredPaneOpen)
+                NavView.IsPaneOpen = desiredPaneOpen;
+            if (!NavView.IsPaneVisible)
+                NavView.IsPaneVisible = true;
             ApplyResponsiveShellLayout();
             UpdateSidebarPanePresentation(NavView.IsPaneOpen);
             UpdateServerActivityHostVisibility();
@@ -1221,11 +1231,20 @@ public sealed partial class MainWindow : Window
 
         if (shouldHydrateShell)
         {
-            _ = RunShellWorkAsync("profile_display", UpdateProfileDisplayAsync);
-            _ = RunShellWorkAsync("user_navigation_capabilities", RefreshUserNavigationCapabilitiesAsync);
-            _ = RunShellWorkAsync("theme_sync", SyncThemeAfterNavigationAsync);
+            var shellToken = _shellHydrationCts!.Token;
+            var cardOverlayService = App.Services.GetRequiredService<CardOverlayService>();
+            cardOverlayService.Invalidate();
+            _ = RunShellWorkAsync(
+                "card_overlay_settings",
+                () => cardOverlayService.EnsureLoadedAsync(shellToken));
+            _ = RunShellWorkAsync("profile_display", () => UpdateProfileDisplayAsync(shellKey, shellToken));
+            _ = RunShellWorkAsync(
+                "user_navigation_capabilities",
+                () => RefreshUserNavigationCapabilitiesAsync(shellKey, shellToken));
+            _ = RunShellWorkAsync("theme_sync", () => SyncThemeAfterNavigationAsync(shellKey, shellToken));
             TryShellAction("theme_switcher", BuildThemeDots);
-            _ = RunShellWorkAsync("plugin_navigation", RefreshPluginAppsAsync);
+            _ = RunShellWorkAsync("plugin_navigation", () => RefreshPluginAppsAsync(shellKey, shellToken));
+            EnsureNotificationSubscription(shellKey);
 
             // Build the hidden native video host only after authentication and
             // profile selection, at low dispatcher priority. This keeps the first
@@ -1257,7 +1276,166 @@ public sealed partial class MainWindow : Window
             // Start on the UI context so ObservableCollection changes remain on
             // the owning dispatcher after awaited network requests. Task.Run here
             // previously let sidebar loading race the profile transition.
-            _ = RunShellWorkAsync("library_navigation_load", LoadShellNavigationAsync);
+            var shellToken = _shellHydrationCts!.Token;
+            _ = RunShellWorkAsync(
+                "library_navigation_load",
+                () => LoadShellNavigationAsync(shellKey, shellToken));
+        }
+    }
+
+    private bool IsCurrentShellHydration(string shellKey, CancellationToken cancellationToken) =>
+        !cancellationToken.IsCancellationRequested &&
+        CanExposeAuthenticatedNavigation &&
+        string.Equals(_hydratedShellKey, shellKey, StringComparison.Ordinal);
+
+    private void CancelShellHydration()
+    {
+        _shellHydrationCts?.Cancel();
+        _shellHydrationCts?.Dispose();
+        _shellHydrationCts = null;
+    }
+
+    private void EnsureNotificationSubscription(string shellKey)
+    {
+        if (_notificationSubscription != null &&
+            string.Equals(_notificationSubscriptionShellKey, shellKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ReleaseNotificationSubscription();
+        _notificationSubscriptionShellKey = shellKey;
+        _notificationSubscription = _eventChannel.Subscribe("notifications");
+        if (_eventChannel.TryGetLatestSnapshot("notifications", out var cached))
+            OnShellEventSnapshot("notifications", cached);
+    }
+
+    private void ReleaseNotificationSubscription()
+    {
+        _notificationSubscription?.Dispose();
+        _notificationSubscription = null;
+        _notificationSubscriptionShellKey = null;
+    }
+
+    private void OnShellEventSnapshot(string channel, System.Text.Json.JsonElement data)
+    {
+        if (_notificationSubscription == null ||
+            !string.Equals(channel, "notifications", StringComparison.OrdinalIgnoreCase) ||
+            data.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return;
+        }
+
+        var selectedProfileId = _authService.SelectedProfileId;
+        var unread = 0;
+        foreach (var row in data.EnumerateArray())
+        {
+            if (!NotificationBelongsToSelectedProfile(row, selectedProfileId))
+                continue;
+            if (!row.TryGetProperty("read_at", out var readAt) ||
+                readAt.ValueKind is System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined ||
+                (readAt.ValueKind == System.Text.Json.JsonValueKind.String &&
+                 string.IsNullOrWhiteSpace(readAt.GetString())))
+            {
+                unread++;
+            }
+        }
+
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            // The realtime snapshot contains at most 25 recent unread rows.
+            // Preserve a larger exact count already loaded from REST instead
+            // of briefly regressing the badge to the snapshot lower bound.
+            _notificationUnreadCount = Math.Max(_notificationUnreadCount, unread);
+            UpdateSidebarPanePresentation(NavView.IsPaneOpen);
+            // The realtime snapshot is capped at 25 unread rows. At the cap,
+            // refresh the exact count just as the current WebUI does.
+            if (unread >= 25)
+                _ = RefreshExactNotificationCountAsync();
+        });
+    }
+
+    private void OnShellEvent(
+        string channel,
+        string eventName,
+        System.Text.Json.JsonElement data)
+    {
+        if (_notificationSubscription == null ||
+            !string.Equals(channel, "notifications", StringComparison.OrdinalIgnoreCase) ||
+            !NotificationBelongsToSelectedProfile(data, _authService.SelectedProfileId))
+        {
+            return;
+        }
+
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (string.Equals(eventName, "notification.created", StringComparison.OrdinalIgnoreCase))
+            {
+                var isUnread = !data.TryGetProperty("read_at", out var readAt) ||
+                    readAt.ValueKind is System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined ||
+                    (readAt.ValueKind == System.Text.Json.JsonValueKind.String &&
+                     string.IsNullOrWhiteSpace(readAt.GetString()));
+                if (isUnread)
+                    _notificationUnreadCount++;
+            }
+            else if (string.Equals(eventName, "notification.read", StringComparison.OrdinalIgnoreCase))
+            {
+                var all = data.TryGetProperty("all", out var allValue) &&
+                    allValue.ValueKind == System.Text.Json.JsonValueKind.True;
+                _notificationUnreadCount = all
+                    ? 0
+                    : Math.Max(0, _notificationUnreadCount - 1);
+            }
+            else
+            {
+                return;
+            }
+
+            UpdateSidebarPanePresentation(NavView.IsPaneOpen);
+        });
+    }
+
+    private static bool NotificationBelongsToSelectedProfile(
+        System.Text.Json.JsonElement data,
+        string? selectedProfileId)
+    {
+        if (!data.TryGetProperty("profile_id", out var profileValue) ||
+            profileValue.ValueKind != System.Text.Json.JsonValueKind.String)
+        {
+            return true;
+        }
+
+        var eventProfileId = profileValue.GetString();
+        return string.IsNullOrWhiteSpace(eventProfileId) ||
+            string.IsNullOrWhiteSpace(selectedProfileId) ||
+            string.Equals(eventProfileId, selectedProfileId, StringComparison.Ordinal);
+    }
+
+    private async Task RefreshExactNotificationCountAsync()
+    {
+        var shellKey = _notificationSubscriptionShellKey;
+        if (shellKey == null)
+            return;
+
+        try
+        {
+            var count = await _notificationsApi.GetUnreadCountAsync();
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!string.Equals(
+                        _notificationSubscriptionShellKey,
+                        shellKey,
+                        StringComparison.Ordinal))
+                {
+                    return;
+                }
+                _notificationUnreadCount = count;
+                UpdateSidebarPanePresentation(NavView.IsPaneOpen);
+            });
+        }
+        catch
+        {
+            // Keep the snapshot lower bound during a transient count failure.
         }
     }
 
@@ -1327,23 +1505,33 @@ public sealed partial class MainWindow : Window
         return string.Join("|", server, userId, username, role, profileId, profileName, profileFlags);
     }
 
-    private async Task LoadShellNavigationAsync()
+    private async Task LoadShellNavigationAsync(
+        string shellKey,
+        CancellationToken cancellationToken)
     {
-        await _viewModel.LoadLibrariesCommand.ExecuteAsync(null);
-        if (!CanExposeAuthenticatedNavigation)
+        await _viewModel.ReloadLibrariesAsync(cancellationToken);
+        if (!IsCurrentShellHydration(shellKey, cancellationToken))
             return;
 
-        await RefreshSidebarPinsAsync();
+        await RefreshSidebarPinsAsync(shellKey, cancellationToken);
     }
 
-    private async Task RefreshUserNavigationCapabilitiesAsync()
+    private async Task RefreshUserNavigationCapabilitiesAsync(
+        string shellKey,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var requestStatus = await _requestsApi.GetStatusAsync();
+            var requestStatus = await _requestsApi.GetStatusAsync(cancellationToken);
+            if (!IsCurrentShellHydration(shellKey, cancellationToken))
+                return;
             RequestsNavItem.Visibility = requestStatus.RequestsEnabled
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
         }
         catch
         {
@@ -1354,14 +1542,22 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var capability = await _notificationsApi.GetCapabilityAsync();
+            var capability = await _notificationsApi.GetCapabilityAsync(cancellationToken);
+            if (!IsCurrentShellHydration(shellKey, cancellationToken))
+                return;
             _notificationsAvailable = capability.InApp.Enabled;
             NotificationsNavItem.Visibility = _notificationsAvailable
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             _notificationUnreadCount = _notificationsAvailable
-                ? await _notificationsApi.GetUnreadCountAsync()
+                ? await _notificationsApi.GetUnreadCountAsync(cancellationToken)
                 : 0;
+            if (!IsCurrentShellHydration(shellKey, cancellationToken))
+                return;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
         }
         catch
         {
@@ -1376,33 +1572,53 @@ public sealed partial class MainWindow : Window
 
     private void UpdateSidebarPanePresentation(bool isOpen)
     {
-        SiloWordmarkImage.Visibility = isOpen ? Visibility.Visible : Visibility.Collapsed;
-        SiloMarkImage.Visibility = isOpen ? Visibility.Collapsed : Visibility.Visible;
+        // AppSidebar keeps both brand variants in the same fixed 260px surface
+        // and cross-fades them, avoiding a one-frame logo pop at either edge.
+        SiloWordmarkImage.Opacity = isOpen ? 1 : 0;
+        SiloMarkImage.Opacity = isOpen ? 0 : 1;
+        LibrariesCompactDividerIcon.Visibility = isOpen ? Visibility.Collapsed : Visibility.Visible;
+        UpdateLibraryNavigationVisibility(isOpen);
 
-        AdminButtonLabel.Visibility = isOpen ? Visibility.Visible : Visibility.Collapsed;
-        AdminButtonContent.Spacing = isOpen ? 10 : 0;
-        AdminButton.HorizontalAlignment = isOpen ? HorizontalAlignment.Stretch : HorizontalAlignment.Center;
+        // PaneFooter is custom content and retains its expanded desired width
+        // unless it is explicitly constrained. Pin it to the 64px rail while
+        // compact so the Admin/profile icons cannot be centered at x=130 and
+        // clipped in half by the native pane viewport.
+        SidebarFooterPanel.Width = isOpen ? double.NaN : NavView.CompactPaneLength;
+        SidebarFooterPanel.HorizontalAlignment = HorizontalAlignment.Left;
+        SidebarFooterSeparator.Width = isOpen ? double.NaN : NavView.CompactPaneLength;
+        SidebarFooterSeparator.Margin = new Thickness(0, 0, 0, 8);
+
+        AdminButtonLabel.Opacity = isOpen ? 1 : 0;
+        AdminButtonContent.Spacing = 10;
+        AdminButton.HorizontalAlignment = isOpen ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
         AdminButton.Width = isOpen ? double.NaN : 40;
-        AdminButton.Height = isOpen ? double.NaN : 40;
-        AdminButton.Padding = isOpen ? new Thickness(16, 10, 16, 10) : new Thickness(0);
+        AdminButton.Height = 42;
+        AdminButton.Margin = isOpen ? new Thickness(12, 0, 12, 0) : new Thickness(12, 0, 0, 0);
+        AdminButton.Padding = isOpen ? new Thickness(12) : new Thickness(0);
         AdminButton.HorizontalContentAlignment = isOpen
             ? HorizontalAlignment.Left
             : HorizontalAlignment.Center;
 
-        ProfileNameText.Visibility = isOpen ? Visibility.Visible : Visibility.Collapsed;
-        ProfileFooterContent.Spacing = isOpen ? 10 : 0;
-        ProfileFooterButton.HorizontalAlignment = isOpen ? HorizontalAlignment.Stretch : HorizontalAlignment.Center;
+        ProfileNameText.Opacity = isOpen ? 1 : 0;
+        ProfileFooterContent.Spacing = 10;
+        ProfileFooterButton.HorizontalAlignment = isOpen ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
         ProfileFooterButton.Width = isOpen ? double.NaN : 40;
-        ProfileFooterButton.Height = isOpen ? double.NaN : 40;
-        ProfileFooterButton.Padding = isOpen ? new Thickness(16, 10, 16, 10) : new Thickness(0);
+        ProfileFooterButton.Height = 52;
+        ProfileFooterButton.Margin = isOpen ? new Thickness(12, 0, 12, 0) : new Thickness(12, 0, 0, 0);
+        ProfileFooterButton.Padding = isOpen ? new Thickness(12) : new Thickness(0);
         ProfileFooterButton.HorizontalContentAlignment = isOpen
             ? HorizontalAlignment.Left
             : HorizontalAlignment.Center;
 
         var hasUnread = _notificationsAvailable && _notificationUnreadCount > 0;
         NotificationUnreadBadge.Visibility = hasUnread ? Visibility.Visible : Visibility.Collapsed;
-        // InfoBadge renders Value=-1 as a compact dot and values above 99 as
-        // 99+, matching the current WebUI's compact/open notification states.
+        // InfoBadge renders Value=-1 as the compact notification dot and caps
+        // larger values at 99+. The explicit inset keeps the numeric pill away
+        // from NavigationView's right-side clip boundary.
+        NotificationUnreadBadge.Margin = isOpen
+            ? new Thickness(0, 2, 8, 0)
+            : new Thickness(0, 2, 20, 0);
+        // WinUI renders values above 99 as "99+", matching AppSidebar.tsx.
         NotificationUnreadBadge.Value = isOpen ? _notificationUnreadCount : -1;
     }
 
@@ -1411,6 +1627,10 @@ public sealed partial class MainWindow : Window
         try
         {
             await work();
+        }
+        catch (OperationCanceledException)
+        {
+            // Profile/server changes intentionally retire in-flight shell work.
         }
         catch (Exception ex)
         {
@@ -1559,7 +1779,11 @@ public sealed partial class MainWindow : Window
         // A Back operation or deep link can leave Admin without passing through
         // its explicit exit button. Restore the shared shell at the frame
         // boundary so it never remains hidden after returning to user pages.
-        NavView.IsPaneVisible = true;
+        var desiredPaneOpen = !_isNarrowShell && _desktopSidebarOpen;
+        if (NavView.IsPaneOpen != desiredPaneOpen)
+            NavView.IsPaneOpen = desiredPaneOpen;
+        if (!NavView.IsPaneVisible)
+            NavView.IsPaneVisible = true;
         ApplyResponsiveShellLayout();
         SynchronizeSelectedNavigationItem(e.SourcePageType, e.Parameter);
     }
@@ -1688,25 +1912,34 @@ public sealed partial class MainWindow : Window
         return Search(NavView.MenuItems);
     }
 
-    private Task UpdateProfileDisplayAsync()
+    private Task UpdateProfileDisplayAsync(
+        string shellKey,
+        CancellationToken cancellationToken)
     {
         var profileId = _authService.SelectedProfileId;
         if (!string.IsNullOrEmpty(profileId))
-            return LoadProfileNameAsync(profileId);
+            return LoadProfileNameAsync(profileId, shellKey, cancellationToken);
         return Task.CompletedTask;
     }
 
-    private async Task LoadProfileNameAsync(string profileId)
+    private async Task LoadProfileNameAsync(
+        string profileId,
+        string shellKey,
+        CancellationToken cancellationToken)
     {
         try
         {
             var authApi = App.Services.GetRequiredService<Core.Api.AuthApi>();
-            var response = await authApi.GetProfilesAsync();
+            var response = await authApi.GetProfilesAsync(cancellationToken);
+            if (!IsCurrentShellHydration(shellKey, cancellationToken))
+                return;
             var profile = response.Profiles.FirstOrDefault(p => p.Id == profileId);
             if (profile != null)
             {
                 DispatcherQueue.TryEnqueue(() =>
                 {
+                    if (!IsCurrentShellHydration(shellKey, cancellationToken))
+                        return;
                     ProfileNameText.Text = profile.Name;
                     ProfileInitialText.Text = !string.IsNullOrEmpty(profile.Name)
                         ? profile.Name[0].ToString().ToUpperInvariant()
@@ -1725,6 +1958,9 @@ public sealed partial class MainWindow : Window
                     ApplyProfileAvatar(profile.AvatarUrl);
                 });
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
         }
         catch
         {
@@ -1772,6 +2008,8 @@ public sealed partial class MainWindow : Window
         BuildPluginApps([]);
         _sidebarPins = [];
         _hydratedShellKey = null;
+        CancelShellHydration();
+        ReleaseNotificationSubscription();
         // Keep the Server Activity button in sync with the rest of the shell —
         // while the nav is hidden (login / profile select / setup), no admin
         // chrome should be visible.
@@ -1782,25 +2020,128 @@ public sealed partial class MainWindow : Window
         NavigationView sender,
         NavigationViewPaneClosingEventArgs args)
     {
-        // This shell has no compact-mode toggle. Allowing NavigationView to
-        // auto-close at a transient width leaves the custom Admin/profile
-        // footer inside a clipped 64px rail and it can remain stranded there
-        // after the window grows again. Authenticated navigation is therefore
-        // persistently open, matching the desktop WebUI sidebar.
-        if (_isNarrowShell)
+        if (!_isNarrowShell && NavView.IsPaneVisible && CanExposeAuthenticatedNavigation)
         {
-            UpdateSidebarPanePresentation(isOpen: false);
+            // NavigationView can request a pane close while changing selection,
+            // rebuilding the frame, or realizing a detail page. Those framework
+            // requests must never overwrite the user's persistent desktop state.
+            // The preference is changed only on input from the real pane-toggle
+            // button, so an open preference means this close is unsolicited.
+            if (_desktopSidebarOpen)
+            {
+                args.Cancel = true;
+                SynchronizeDesktopPaneState();
+                return;
+            }
         }
-        else if (sender.IsPaneVisible &&
-                 CanExposeAuthenticatedNavigation &&
-                 (!_routeWantsCompactPane || _sidebarHoverExpanded || _profileFooterFlyoutOpen))
+
+        UpdateSidebarPanePresentation(isOpen: false);
+    }
+
+    private void NavView_PointerPressed(
+        object sender,
+        Microsoft.UI.Xaml.Input.PointerRoutedEventArgs args)
+    {
+        if (!_isNarrowShell && IsPaneToggleInputSource(args.OriginalSource as DependencyObject))
         {
-            args.Cancel = true;
-            UpdateSidebarPanePresentation(isOpen: true);
+            RememberDesktopSidebarState(!NavView.IsPaneOpen);
         }
-        else if (_routeWantsCompactPane)
+    }
+
+    private void NavView_KeyDown(
+        object sender,
+        Microsoft.UI.Xaml.Input.KeyRoutedEventArgs args)
+    {
+        if (_isNarrowShell ||
+            args.Key is not (Windows.System.VirtualKey.Enter or Windows.System.VirtualKey.Space))
         {
-            UpdateSidebarPanePresentation(isOpen: false);
+            return;
+        }
+
+        if (IsPaneToggleInputSource(args.OriginalSource as DependencyObject))
+        {
+            RememberDesktopSidebarState(!NavView.IsPaneOpen);
+        }
+    }
+
+    private void RememberDesktopSidebarState(bool isOpen)
+    {
+        _desktopSidebarOpen = isOpen;
+        try
+        {
+            var settings = _settingsService.Load();
+            if (settings.DesktopSidebarOpen != isOpen)
+            {
+                settings.DesktopSidebarOpen = isOpen;
+                _settingsService.Save(settings);
+            }
+        }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine("sidebar_state.txt", $"Could not persist desktop sidebar state: {ex.Message}");
+        }
+    }
+
+    private bool IsPaneToggleInputSource(DependencyObject? source)
+    {
+        for (var current = source;
+             current != null && !ReferenceEquals(current, NavView);
+             current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current))
+        {
+            if (current is not Button button)
+                continue;
+
+            var name = button.Name ?? string.Empty;
+            return name.Contains("TogglePane", StringComparison.OrdinalIgnoreCase) ||
+                   name.Contains("PaneToggle", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private void OnNavViewIsPaneOpenChanged(
+        DependencyObject sender,
+        DependencyProperty property)
+    {
+        if (_synchronizingDesktopPaneState ||
+            _isNarrowShell ||
+            !NavView.IsPaneVisible ||
+            !CanExposeAuthenticatedNavigation)
+        {
+            return;
+        }
+
+        if (NavView.IsPaneOpen != _desktopSidebarOpen)
+            SynchronizeDesktopPaneState();
+        else
+            UpdateSidebarPanePresentation(_desktopSidebarOpen);
+    }
+
+    private void SynchronizeDesktopPaneState()
+    {
+        if (_synchronizingDesktopPaneState ||
+            _isNarrowShell ||
+            !NavView.IsPaneVisible ||
+            !CanExposeAuthenticatedNavigation)
+        {
+            return;
+        }
+
+        _synchronizingDesktopPaneState = true;
+        try
+        {
+            var desiredMode = _desktopSidebarOpen
+                ? NavigationViewPaneDisplayMode.Left
+                : NavigationViewPaneDisplayMode.LeftCompact;
+            if (NavView.PaneDisplayMode != desiredMode)
+                NavView.PaneDisplayMode = desiredMode;
+            if (NavView.IsPaneOpen != _desktopSidebarOpen)
+                NavView.IsPaneOpen = _desktopSidebarOpen;
+            UpdateSidebarPanePresentation(_desktopSidebarOpen);
+        }
+        finally
+        {
+            _synchronizingDesktopPaneState = false;
         }
     }
 
@@ -1812,10 +2153,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _routeWantsCompactPane = false;
         NavView.IsPaneVisible = true;
-        NavView.IsPaneOpen = true;
         ApplyResponsiveShellLayout();
+        UpdateSidebarPanePresentation(NavView.IsPaneOpen);
         UpdateServerActivityHostVisibility();
     }
 
@@ -1985,9 +2325,13 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task SyncThemeAfterNavigationAsync()
+    private async Task SyncThemeAfterNavigationAsync(
+        string shellKey,
+        CancellationToken cancellationToken)
     {
-        await _themeService.SyncFromServerAsync();
+        await _themeService.SyncFromServerAsync(cancellationToken);
+        if (!IsCurrentShellHydration(shellKey, cancellationToken))
+            return;
         TryShellAction("theme_switcher_refresh", BuildThemeDots);
     }
 
@@ -2039,22 +2383,31 @@ public sealed partial class MainWindow : Window
             {
                 Content = lib.Name,
                 Tag = lib,
-                Icon = new FontIcon { Glyph = icon }
+                Icon = new FontIcon { Glyph = icon },
+                Visibility = NavView.IsPaneOpen && !_librariesExpanded
+                    ? Visibility.Collapsed
+                    : Visibility.Visible,
             };
 
             // Nested pinned collections under this library (webui parity,
             // sidebar_pins user setting).
             if (_sidebarPins.TryGetValue(lib.Id.ToString(), out var pins))
             {
-                navItem.IsExpanded = true;
                 foreach (var pin in pins)
                 {
+                    var pinTag = new SidebarPinNavTag
+                    {
+                        LibraryId = lib.Id,
+                        PinType = pin.Type,
+                        PinId = pin.Id,
+                        Label = pin.Label,
+                    };
                     var pinItem = new NavigationViewItem
                     {
-                        Content = pin.Label,
-                        Tag = new SidebarPinNavTag { LibraryId = lib.Id, PinType = pin.Type, PinId = pin.Id, Label = pin.Label },
+                        Tag = pinTag,
                         Icon = new FontIcon { Glyph = pin.Type == "collection" ? "\uE8F0" : "\uE8A5" }, // Folder / List
                     };
+                    pinItem.Content = BuildPinnedSidebarContent(pinItem, pinTag);
                     navItem.MenuItems.Add(pinItem);
                 }
             }
@@ -2098,6 +2451,75 @@ public sealed partial class MainWindow : Window
 
     private Dictionary<string, List<SidebarPinRow>> _sidebarPins = [];
 
+    private Grid BuildPinnedSidebarContent(
+        NavigationViewItem pinItem,
+        SidebarPinNavTag pin)
+    {
+        var content = new Grid { MinWidth = 144 };
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var label = new TextBlock
+        {
+            Text = pin.Label,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        content.Children.Add(label);
+
+        var unpinButton = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE77A", FontSize = 12 },
+            Width = 24,
+            Height = 24,
+            Padding = new Thickness(0),
+            Margin = new Thickness(4, 0, 0, 0),
+            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Opacity = 0,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(unpinButton, 1);
+        ToolTipService.SetToolTip(unpinButton, "Unpin");
+        AutomationProperties.SetName(unpinButton, $"Unpin {pin.Label}");
+        content.Children.Add(unpinButton);
+
+        void ShowUnpin() => unpinButton.Opacity = 1;
+        void HideUnpin()
+        {
+            if (unpinButton.FocusState == FocusState.Unfocused)
+                unpinButton.Opacity = 0;
+        }
+
+        pinItem.PointerEntered += (_, _) => ShowUnpin();
+        pinItem.PointerExited += (_, _) => HideUnpin();
+        pinItem.GotFocus += (_, _) => ShowUnpin();
+        pinItem.LostFocus += (_, _) => HideUnpin();
+        unpinButton.GotFocus += (_, _) => ShowUnpin();
+        unpinButton.LostFocus += (_, _) => HideUnpin();
+        unpinButton.Click += async (_, _) =>
+        {
+            pinItem.IsEnabled = false;
+            try
+            {
+                await RemoveSidebarPinAsync(
+                    pin.LibraryId,
+                    pin.PinType,
+                    pin.PinId);
+            }
+            catch
+            {
+                pinItem.IsEnabled = true;
+                App.Services.GetRequiredService<ToastService>().Error(
+                    $"Silo could not unpin {pin.Label}.");
+            }
+        };
+
+        return content;
+    }
+
     public bool IsSidebarPin(int libraryId, string pinType, string pinId)
     {
         return _sidebarPins.TryGetValue(libraryId.ToString(), out var pins)
@@ -2106,9 +2528,11 @@ public sealed partial class MainWindow : Window
              && string.Equals(pin.Id, pinId, StringComparison.Ordinal));
     }
 
-    private async Task RefreshPluginAppsAsync()
+    private async Task RefreshPluginAppsAsync(
+        string shellKey,
+        CancellationToken cancellationToken)
     {
-        if (!CanExposeAuthenticatedNavigation)
+        if (!IsCurrentShellHydration(shellKey, cancellationToken))
         {
             BuildPluginApps([]);
             return;
@@ -2116,12 +2540,23 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var response = await _settingsApi.GetPluginSettingsListAsync();
-            DispatcherQueue.TryEnqueue(() => BuildPluginApps(response.Installations));
+            var response = await _settingsApi.GetPluginSettingsListAsync(cancellationToken);
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (IsCurrentShellHydration(shellKey, cancellationToken))
+                    BuildPluginApps(response.Installations);
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
         }
         catch
         {
-            DispatcherQueue.TryEnqueue(() => BuildPluginApps([]));
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (IsCurrentShellHydration(shellKey, cancellationToken))
+                    BuildPluginApps([]);
+            });
         }
     }
 
@@ -2241,13 +2676,48 @@ public sealed partial class MainWindow : Window
         return nowPinned;
     }
 
+    private async Task RemoveSidebarPinAsync(
+        int libraryId,
+        string pinType,
+        string pinId)
+    {
+        var entry = await _settingsApi.GetSettingAsync("sidebar_pins");
+        var map = ParseSidebarPins(entry.Value);
+        var key = libraryId.ToString();
+        if (!map.TryGetValue(key, out var pins))
+            return;
+
+        pins.RemoveAll(pin =>
+            string.Equals(pin.Type, pinType, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(pin.Id, pinId, StringComparison.Ordinal));
+        if (pins.Count == 0)
+            map.Remove(key);
+
+        var serializable = map.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.Select(pin => new Dictionary<string, string>
+            {
+                ["type"] = pin.Type,
+                ["id"] = pin.Id,
+                ["label"] = pin.Label,
+            }).ToList());
+        await _settingsApi.PutSettingAsync(
+            "sidebar_pins",
+            System.Text.Json.JsonSerializer.Serialize(serializable));
+        _sidebarPins = map;
+        UpdateLibraryNavItems();
+    }
+
     /// <summary>
     /// Reloads the cached sidebar pins from the server setting and rebuilds
     /// the library nav. Call on sign-in and after any CollectionBrowsePage
     /// pin toggle.
     /// </summary>
-    public async Task RefreshSidebarPinsAsync()
+    public async Task RefreshSidebarPinsAsync(
+        string? shellKey = null,
+        CancellationToken cancellationToken = default)
     {
+        shellKey ??= _hydratedShellKey;
         if (!CanExposeAuthenticatedNavigation)
         {
             _sidebarPins = [];
@@ -2258,13 +2728,23 @@ public sealed partial class MainWindow : Window
         try
         {
             var settingsApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.SettingsApi>();
-            var entry = await settingsApi.GetSettingAsync("sidebar_pins");
+            var entry = await settingsApi.GetSettingAsync("sidebar_pins", cancellationToken);
+            if (shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
+                return;
             _sidebarPins = ParseSidebarPins(entry.Value);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
         }
         catch
         {
+            if (shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
+                return;
             _sidebarPins = [];
         }
+        if (shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
+            return;
         if (!CanExposeAuthenticatedNavigation)
             _sidebarPins = [];
         UpdateLibraryNavItems();
@@ -2305,29 +2785,37 @@ public sealed partial class MainWindow : Window
 
     private void LibrariesHeader_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
     {
+        // AppSidebar disables section toggles while labels are hidden. The
+        // compact rail must always keep library icons available.
+        if (!NavView.IsPaneOpen)
+        {
+            e.Handled = true;
+            return;
+        }
+
         _librariesExpanded = !_librariesExpanded;
         LibrariesChevron.Glyph = _librariesExpanded ? "\uE972" : "\uE974"; // down : right
-
-        // Toggle visibility of all library items between LibrariesHeader and the next section header
-        int headerIndex = -1;
-        for (int i = 0; i < NavView.MenuItems.Count; i++)
-        {
-            if (ReferenceEquals(NavView.MenuItems[i], LibrariesHeader)) { headerIndex = i; break; }
-        }
-        if (headerIndex < 0) return;
-
-        for (int i = headerIndex + 1; i < NavView.MenuItems.Count; i++)
-        {
-            if (NavView.MenuItems[i] is NavigationViewItemHeader) break;
-            if (NavView.MenuItems[i] is NavigationViewItem navItem)
-            {
-                // Only toggle library items (they have a Library tag)
-                if (navItem.Tag is SiloPlayer.Core.Models.Catalog.Library)
-                    navItem.Visibility = _librariesExpanded ? Visibility.Visible : Visibility.Collapsed;
-            }
-        }
-
+        UpdateLibraryNavigationVisibility(isOpen: true);
         e.Handled = true;
+    }
+
+    private void UpdateLibraryNavigationVisibility(bool isOpen)
+    {
+        var headerIndex = NavView.MenuItems.IndexOf(LibrariesHeader);
+        if (headerIndex < 0)
+            return;
+
+        // The expanded sidebar honors the user's Libraries toggle. The detail
+        // rail always exposes library icons, matching AppSidebar.tsx's
+        // `(showLabels ? librariesExpanded : true)` contract.
+        var visible = !isOpen || _librariesExpanded;
+        for (var i = headerIndex + 1; i < NavView.MenuItems.Count; i++)
+        {
+            if (NavView.MenuItems[i] is NavigationViewItemHeader)
+                break;
+            if (NavView.MenuItems[i] is NavigationViewItem { Tag: Library } item)
+                item.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
     // ===== Theme Switcher Dots =====
@@ -2362,7 +2850,7 @@ public sealed partial class MainWindow : Window
         foreach (var (id, label, bgHex, accentHex) in CuratedThemes)
         {
             bool isActive = id == _activeThemeId;
-            var dot = new Border
+            var dot = new Button
             {
                 Width = 24, Height = 24,
                 CornerRadius = new CornerRadius(12),
@@ -2371,9 +2859,12 @@ public sealed partial class MainWindow : Window
                     ? accentBrush
                     : borderBrush,
                 BorderThickness = new Thickness(isActive ? 2 : 1),
+                Padding = new Thickness(0),
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
             };
             // Inner accent dot
-            dot.Child = new Border
+            dot.Content = new Border
             {
                 Width = 8, Height = 8,
                 CornerRadius = new CornerRadius(4),
@@ -2382,12 +2873,27 @@ public sealed partial class MainWindow : Window
                 VerticalAlignment = VerticalAlignment.Center,
             };
             ToolTipService.SetToolTip(dot, label);
+            AutomationProperties.SetName(dot, label);
+            AutomationProperties.SetHelpText(dot, isActive ? "Selected theme" : "Theme");
 
             var capturedId = id;
-            dot.Tapped += (_, _) =>
+            dot.PointerEntered += (_, _) => themeService.PreviewTheme(capturedId);
+            dot.PointerExited += (_, _) => themeService.CancelThemePreview();
+            dot.GotFocus += (_, _) => themeService.PreviewTheme(capturedId);
+            dot.LostFocus += (_, _) => themeService.CancelThemePreview();
+            dot.Click += async (_, _) =>
             {
                 _activeThemeId = capturedId;
-                themeService.ApplyTheme(capturedId);
+                themeService.CommitThemePreview(capturedId);
+                try
+                {
+                    await _settingsApi.PutSettingAsync("ui_theme", capturedId);
+                }
+                catch
+                {
+                    App.Services.GetRequiredService<ToastService>().Error(
+                        "Theme changed locally, but Silo could not save it to this profile.");
+                }
                 BuildThemeDots();
             };
 

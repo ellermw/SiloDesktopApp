@@ -19,6 +19,7 @@ public sealed class MpvOscRuntimeTests
         var create = LoadDelegate<MpvCreate>(library, "mpv_create");
         var setOption = LoadDelegate<MpvSetOptionString>(library, "mpv_set_option_string");
         var initialize = LoadDelegate<MpvInitialize>(library, "mpv_initialize");
+        var commandString = LoadDelegate<MpvCommandString>(library, "mpv_command_string");
         var terminate = LoadDelegate<MpvTerminateDestroy>(library, "mpv_terminate_destroy");
         var handle = create();
         Assert.NotEqual(IntPtr.Zero, handle);
@@ -35,6 +36,16 @@ public sealed class MpvOscRuntimeTests
 
             Assert.True(initialize(handle) >= 0, "The bundled libmpv instance did not initialize.");
             Thread.Sleep(350);
+            Assert.True(
+                commandString(handle, "script-message osc-set-visibility false") >= 0,
+                "The OSC rejected its Playing Next hide transition.");
+            Assert.True(
+                commandString(handle, "script-message osc-set-visibility true") >= 0,
+                "The OSC rejected its autoplay re-enable transition.");
+            Assert.True(
+                commandString(handle, "script-message osc-mouse-move 100 100") >= 0,
+                "The OSC rejected its first pointer wake after autoplay.");
+            Thread.Sleep(150);
         }
         finally
         {
@@ -86,6 +97,11 @@ public sealed class MpvOscRuntimeTests
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int MpvInitialize(IntPtr handle);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int MpvCommandString(
+        IntPtr handle,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string command);
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void MpvTerminateDestroy(IntPtr handle);

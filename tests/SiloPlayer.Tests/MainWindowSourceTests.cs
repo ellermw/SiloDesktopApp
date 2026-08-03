@@ -105,44 +105,119 @@ public sealed class MainWindowSourceTests
         var root = FindRepositoryRoot();
         var xaml = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml"));
         var code = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml.cs"));
+        var navigation = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Helpers", "NavigationService.cs"));
+        var mainViewModel = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "MainViewModel.cs"));
 
         Assert.Contains("x:Name=\"SiloWordmarkImage\"", xaml);
         Assert.Contains("x:Name=\"SiloMarkImage\"", xaml);
         Assert.Contains("x:Name=\"RequestsNavItem\"", xaml);
+        Assert.Contains("x:Name=\"SearchNavItem\"", xaml);
+        Assert.Contains("Text=\"Ctrl K\"", xaml);
+        Assert.Contains("FontSize=\"13\"", xaml);
+        Assert.Contains("<Setter Property=\"FontSize\" Value=\"18\" />", xaml);
+        Assert.Contains("<Setter Property=\"MinHeight\" Value=\"42\" />", xaml);
+        Assert.Contains("x:Name=\"SidebarBrandHost\" Height=\"96\"", xaml);
+        Assert.Contains("Margin=\"14,30,0,30\"", xaml);
+        Assert.Contains("<ScalarTransition Duration=\"0:0:0.3\" />", xaml);
+        Assert.Contains("x:Name=\"LibrariesCompactDividerIcon\"", xaml);
         Assert.Contains("x:Name=\"NotificationsNavItem\"", xaml);
         Assert.Contains("x:Name=\"NotificationUnreadBadge\"", xaml);
+        Assert.Contains("Margin=\"0,2,8,0\"", xaml);
         Assert.Contains("Background=\"{StaticResource AccentBrush}\"", xaml);
         Assert.Contains("Foreground=\"{StaticResource AccentForegroundBrush}\"", xaml);
         Assert.Contains("IsPaneOpen=\"True\"", xaml);
         Assert.Contains("PaneClosing=\"NavView_PaneClosing\"", xaml);
         Assert.Contains("CompactPaneLength=\"64\"", xaml);
+        Assert.Contains("IsPaneToggleButtonVisible=\"True\"", xaml);
+        Assert.Contains("NavView.Resources[\"NavigationViewDefaultPaneBackground\"] = sidebarBackground", code);
+        Assert.Contains("NavView.Resources[\"NavigationViewExpandedPaneBackground\"] = sidebarBackground", code);
+        Assert.Contains("Application.Current.Resources[\"SidebarBackgroundBrush\"]", code);
         Assert.DoesNotContain("Content=\"Catalog\" Tag=\"Catalog\"", xaml);
         Assert.Contains("RefreshUserNavigationCapabilitiesAsync", code);
         Assert.Contains("requestStatus.RequestsEnabled", code);
         Assert.Contains("capability.InApp.Enabled", code);
         Assert.Contains("NotificationUnreadBadge.Value = isOpen ? _notificationUnreadCount : -1", code);
+        Assert.Contains("_notificationUnreadCount = Math.Max(_notificationUnreadCount, unread)", code);
+        Assert.Contains("_eventChannel.Subscribe(\"notifications\")", code);
+        Assert.Contains("notification.created", code);
+        Assert.Contains("notification.read", code);
+        Assert.Contains("NotificationBelongsToSelectedProfile", code);
+        Assert.Contains("if (unread >= 25)", code);
+        Assert.Contains("RefreshExactNotificationCountAsync", code);
+        Assert.Contains("ReleaseNotificationSubscription();", code);
+        Assert.Contains("CancelShellHydration();", code);
+        Assert.Contains("IsCurrentShellHydration", code);
+        Assert.Contains("_notificationSubscription == null", code);
+        Assert.Contains("ReloadLibrariesAsync(cancellationToken)", code);
+        Assert.Contains("_libraryLoadGeneration", mainViewModel);
+        Assert.Contains("loadCts.IsCancellationRequested", mainViewModel);
+        Assert.Contains("SidebarFooterPanel.Width = isOpen ? double.NaN : NavView.CompactPaneLength", code);
+        Assert.Contains("SidebarFooterSeparator.Width = isOpen ? double.NaN : NavView.CompactPaneLength", code);
+        Assert.Contains("AdminButton.Margin = isOpen", code);
+        Assert.Contains("ProfileFooterButton.Margin = isOpen", code);
+        Assert.Contains("UpdateLibraryNavigationVisibility(isOpen)", code);
+        Assert.Contains("if (!NavView.IsPaneOpen)", code);
+        Assert.Contains("var visible = !isOpen || _librariesExpanded", code);
         Assert.Contains("UpdateSidebarPanePresentation", code);
+        Assert.Contains("? NavigationViewPaneDisplayMode.Left", code);
+        Assert.Contains(": NavigationViewPaneDisplayMode.LeftCompact", code);
+        Assert.DoesNotContain("_preserveOpenDesktopPaneDuringNavigation", code);
+        Assert.Contains("private bool _synchronizingDesktopPaneState", code);
         Assert.Contains("args.Cancel = true", code);
-        Assert.Contains("_routeWantsCompactPane = IsDetailPage(pageType)", code);
+        Assert.Contains("IsPaneToggleInputSource", code);
+        Assert.Contains("UIElement.PointerPressedEvent", code);
+        Assert.Contains("UIElement.KeyDownEvent", code);
+        Assert.Contains("name.Contains(\"TogglePane\"", code);
+        Assert.Contains("name.Contains(\"PaneToggle\"", code);
+        Assert.Contains("RegisterPropertyChangedCallback(", code);
+        Assert.Contains("NavigationView.IsPaneOpenProperty", code);
+        Assert.Contains("OnNavViewIsPaneOpenChanged", code);
+        Assert.Contains("SynchronizeDesktopPaneState", code);
+        Assert.Contains("if (NavView.IsPaneOpen != _desktopSidebarOpen)", code);
+        Assert.DoesNotContain("_routeWantsCompactPane", code);
         Assert.Contains("ApplyResponsiveShellLayout", code);
         Assert.Contains("_currentWindowWidth < 1024", code);
         Assert.Contains("NavigationViewPaneDisplayMode.LeftMinimal", code);
-        Assert.Contains("NavView.IsPaneToggleButtonVisible = false", code);
+        Assert.Contains("NavigationViewPaneDisplayMode.LeftCompact", code);
+        Assert.Contains("PaneDisplayMode=\"LeftCompact\"", xaml);
+        Assert.Contains("var shouldShowDesktopToggle = !isNarrow", code);
+        Assert.Contains("NavView.IsPaneToggleButtonVisible = shouldShowDesktopToggle", code);
+        Assert.Contains("private bool _desktopSidebarOpen = true", code);
+        Assert.Contains("_settingsService.Load().DesktopSidebarOpen", code);
+        Assert.Contains("RememberDesktopSidebarState(!NavView.IsPaneOpen)", code);
+        Assert.Contains("settings.DesktopSidebarOpen = isOpen", code);
+        Assert.Contains("if (NavView.IsPaneOpen != _desktopSidebarOpen)", code);
+        Assert.Contains("NavView.IsPaneOpen = _desktopSidebarOpen", code);
+        Assert.Contains("before revealing it so the wrong state cannot render for a frame", code);
+        Assert.Contains("_desktopSidebarOpen = true", code);
+        Assert.Contains("RememberDesktopSidebarState(!NavView.IsPaneOpen)", code);
+        Assert.Contains("NavView.PaneOpening += NavView_PaneOpening", code);
+        Assert.Contains("private void NavView_PaneOpening", code);
+        Assert.Contains("before WinUI renders the", code);
         Assert.Contains("x:Name=\"MobileShellHeader\"", xaml);
         Assert.Contains("Click=\"MobileMenu_Click\"", xaml);
         Assert.Contains("Click=\"MobileSearch_Click\"", xaml);
         Assert.Contains("x:Name=\"MobileServerActivityButton\"", xaml);
         Assert.Contains("Click=\"MobileProfile_Click\"", xaml);
-        Assert.Contains("(!_routeWantsCompactPane || _sidebarHoverExpanded || _profileFooterFlyoutOpen)", code);
-        Assert.Contains("NavView.PointerMoved += NavView_PointerMoved", code);
-        Assert.Contains("Interval = TimeSpan.FromMilliseconds(150)", code);
-        Assert.Contains("pointerX <= paneWidth", code);
-        Assert.Contains("CollapseImmersiveSidebarAfterPointerExit", code);
+        Assert.DoesNotContain("NavView.PointerMoved += NavView_PointerMoved", code);
+        Assert.DoesNotContain("NavView_PointerExited", code);
+        Assert.DoesNotContain("SidebarHoverTimer", code);
+        Assert.DoesNotContain("CollapseImmersiveSidebarAfterPointerExit", code);
         Assert.Contains("x:Name=\"ProfileFooterFlyout\"", xaml);
-        Assert.Contains("Opened=\"ProfileFooterFlyout_Opened\"", xaml);
-        Assert.Contains("Closed=\"ProfileFooterFlyout_Closed\"", xaml);
+        Assert.Contains("Opening=\"ProfileFooterFlyout_Opening\"", xaml);
+        Assert.DoesNotContain("Opened=\"ProfileFooterFlyout_Opened\"", xaml);
+        Assert.DoesNotContain("Closed=\"ProfileFooterFlyout_Closed\"", xaml);
         Assert.Contains("x:Name=\"ProfileFooterContent\"", xaml);
-        Assert.Contains("ProfileFooterContent.Spacing = isOpen ? 10 : 0", code);
+        Assert.Contains("SiloWordmarkImage.Opacity = isOpen ? 1 : 0", code);
+        Assert.Contains("SiloMarkImage.Opacity = isOpen ? 0 : 1", code);
+        Assert.Contains("AdminButtonLabel.Opacity = isOpen ? 1 : 0", code);
+        Assert.Contains("ProfileNameText.Opacity = isOpen ? 1 : 0", code);
+        Assert.Contains("ProfileFooterContent.Spacing = 10", code);
+        Assert.Contains("FlyoutPlacementMode.RightEdgeAlignedBottom", code);
+        Assert.Contains("NotificationUnreadBadge.Margin = isOpen", code);
+        Assert.Contains("var dot = new Button", code);
+        Assert.Contains("themeService.PreviewTheme(capturedId)", code);
+        Assert.Contains("_settingsApi.PutSettingAsync(\"ui_theme\", capturedId)", code);
         Assert.Contains("ApplyResponsiveShellLayout();", code);
         Assert.Contains("ContentFrame.Content is Views.Admin.AdminShellPage", code);
         Assert.Contains("AdminShell owns both its sidebar and ServerActivity button", code);
@@ -152,6 +227,10 @@ public sealed class MainWindowSourceTests
         Assert.Contains("FindCatalogNavigationItem", code);
         Assert.Contains("FindCollectionNavigationItem", code);
         Assert.Contains("FindPluginNavigationItem", code);
+        Assert.Contains("BuildPinnedSidebarContent", code);
+        Assert.Contains("ToolTipService.SetToolTip(unpinButton, \"Unpin\")", code);
+        Assert.Contains("AutomationProperties.SetName(unpinButton, $\"Unpin {pin.Label}\")", code);
+        Assert.Contains("RemoveSidebarPinAsync", code);
         Assert.Contains("CloseMobileNavigationPane();", code);
         Assert.Contains("Modifiers=\"Menu\" Key=\"Left\"", xaml);
         Assert.DoesNotContain("Key=\"GamepadB\"", xaml);
@@ -160,6 +239,41 @@ public sealed class MainWindowSourceTests
         Assert.Contains("PointerPressed=\"RootGrid_PointerPressed\"", xaml);
         Assert.Contains("point.Properties.IsXButton1Pressed", code);
         Assert.Contains("_navigationService.GoBack();", code);
+        Assert.DoesNotContain("_navigationService.NavigationRequestHandler = TryStageShellNavigation", code);
+        Assert.DoesNotContain("_navigationService.BackNavigationRequestHandler = TryStageBackNavigation", code);
+        Assert.Contains("NavView.IsPaneOpen = false;", code);
+        Assert.DoesNotContain("Interval = TimeSpan.FromMilliseconds(380)", code);
+        Assert.DoesNotContain("PendingShellNavigation", code);
+        Assert.Contains("public Func<Type, object?, bool>? NavigationRequestHandler", navigation);
+        Assert.Contains("public Func<bool>? BackNavigationRequestHandler", navigation);
+        Assert.Contains("public bool NavigateImmediately(Type pageType, object? parameter = null)", navigation);
+        Assert.Contains("public void GoBackImmediately()", navigation);
+    }
+
+    [Fact]
+    public void ServerActivityTriggerHasClippingSafeGeometryAndDynamicAccessibleName()
+    {
+        var root = FindRepositoryRoot();
+        var xaml = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "SiloPlayer",
+            "Controls",
+            "ServerActivityButton.xaml"));
+        var code = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "SiloPlayer",
+            "Controls",
+            "ServerActivityButton.xaml.cs"));
+
+        Assert.Contains("<Grid Width=\"44\" Height=\"44\">", xaml);
+        Assert.Contains("Width=\"36\"", xaml);
+        Assert.Contains("Height=\"36\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"Server activity\"", xaml);
+        Assert.Contains("CountBadgeText.Text = total > 99 ? \"99+\" : total.ToString()", code);
+        Assert.Contains("$\"Server activity: {total} active\"", code);
+        Assert.Contains("ActivityIcon.Stroke = (SolidColorBrush)Application.Current.Resources[\"AccentBrush\"]", code);
     }
 
     [Fact]
@@ -218,9 +332,9 @@ public sealed class MainWindowSourceTests
         Assert.Contains("NavigationCacheMode.Required", favoritesPage);
         Assert.Contains("NavigationCacheMode.Required", historyPage);
         Assert.Contains("NavigationCacheMode.Required", watchlistPage);
-        Assert.Contains("IsLoading = Items.Count == 0", favoritesVm);
+        Assert.Contains("IsLoading = replace && Items.Count == 0", favoritesVm);
         Assert.Contains("IsLoading = Items.Count == 0", historyVm);
-        Assert.Contains("IsLoading = Items.Count == 0", watchlistVm);
+        Assert.Contains("IsLoading = replace && Items.Count == 0", watchlistVm);
         Assert.Contains("QueueCardBuild", historyPage);
     }
 

@@ -239,6 +239,9 @@ public sealed partial class PosterCard : UserControl
         {
             _deferredOverlayItem = null;
             UpdateBadges(item);
+            var overlayService = App.Services.GetRequiredService<Services.CardOverlayService>();
+            if (!overlayService.IsLoaded)
+                _ = EnsureBadgesLoadedAsync(item, ct);
         }
 
         if (SuppressImageLoading)
@@ -284,6 +287,22 @@ public sealed partial class PosterCard : UserControl
         var item = _deferredOverlayItem;
         _deferredOverlayItem = null;
         UpdateBadges(item);
+        var overlayService = App.Services.GetRequiredService<Services.CardOverlayService>();
+        if (!overlayService.IsLoaded && _loadCts is { } owner)
+            _ = EnsureBadgesLoadedAsync(item, owner.Token);
+    }
+
+    private async Task EnsureBadgesLoadedAsync(MediaItem item, CancellationToken ct)
+    {
+        try
+        {
+            var service = App.Services.GetRequiredService<Services.CardOverlayService>();
+            await service.EnsureLoadedAsync(ct);
+            if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
+                UpdateBadges(item);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch { }
     }
 
     /// <summary>Refreshes mutable profile state without reloading the poster.</summary>
@@ -325,9 +344,6 @@ public sealed partial class PosterCard : UserControl
         OverlayBottomRight.Children.Clear();
 
         var service = App.Services.GetRequiredService<Services.CardOverlayService>();
-        // Lazy one-shot load. Subsequent cards hit the cached result.
-        _ = service.EnsureLoadedAsync();
-
         if (item.Status is "pending" or "unmatched" or "ambiguous")
         {
             var label = item.Status switch
@@ -394,12 +410,14 @@ public sealed partial class PosterCard : UserControl
         if (prefs == null) return; // Admin kill switch engaged → no badges.
 
         var data = Services.OverlayData.FromMediaItem(item);
-        foreach (var def in Services.OverlayRegistry.All)
+        var cornerCounts = new Dictionary<Services.OverlayPosition, int>();
+        foreach (var def in service.GetOrderedDefinitions())
         {
             if (!prefs.TryGetValue(def.Id, out var config) || !config.Enabled) continue;
             if (Services.OverlayRegistry.SuppressesStandaloneOverlays(def.Id, prefs)) continue;
             var value = def.GetValue(data);
             if (string.IsNullOrEmpty(value)) continue;
+            if (cornerCounts.GetValueOrDefault(config.Position) >= 3) continue;
 
             var badge = BuildBadge(value, def.Id, config, service.Preset);
             var host = config.Position switch
@@ -411,6 +429,7 @@ public sealed partial class PosterCard : UserControl
                 _ => OverlayTopLeft,
             };
             host.Children.Add(badge);
+            cornerCounts[config.Position] = cornerCounts.GetValueOrDefault(config.Position) + 1;
         }
     }
 

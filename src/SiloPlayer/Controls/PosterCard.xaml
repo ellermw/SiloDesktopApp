@@ -114,28 +114,28 @@
                 Spacing="4"
                 VerticalAlignment="Top"
                 HorizontalAlignment="Left"
-                Margin="6" />
+                Margin="8" />
             <StackPanel
                 x:Name="OverlayTopRight"
                 Orientation="Vertical"
                 Spacing="4"
                 VerticalAlignment="Top"
                 HorizontalAlignment="Right"
-                Margin="6" />
+                Margin="8" />
             <StackPanel
                 x:Name="OverlayBottomLeft"
                 Orientation="Vertical"
                 Spacing="4"
                 VerticalAlignment="Bottom"
                 HorizontalAlignment="Left"
-                Margin="6" />
+                Margin="8" />
             <StackPanel
                 x:Name="OverlayBottomRight"
                 Orientation="Vertical"
                 Spacing="4"
                 VerticalAlignment="Bottom"
                 HorizontalAlignment="Right"
-                Margin="6" />
+                Margin="8,8,8,48" />
 
             <!-- Selection remains above artwork and configured badges. -->
             <Border

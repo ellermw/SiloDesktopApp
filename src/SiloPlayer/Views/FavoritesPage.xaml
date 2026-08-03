@@ -154,7 +154,9 @@
             VerticalAlignment="Center" />
 
         <!-- Content grid -->
-        <ScrollViewer Grid.Row="2" Padding="40,0,40,24"
+        <ScrollViewer x:Name="ContentScrollViewer"
+                      Grid.Row="2" Padding="40,0,40,24"
+                      ViewChanged="ContentScrollViewer_ViewChanged"
                       Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
             <StackPanel>
                 <ItemsRepeater x:Name="PosterRepeater">
@@ -172,6 +174,12 @@
                         </DataTemplate>
                     </ItemsRepeater.ItemTemplate>
                 </ItemsRepeater>
+                <ProgressRing
+                    IsActive="{x:Bind ViewModel.IsLoadingMore, Mode=OneWay}"
+                    Visibility="{x:Bind ViewModel.IsLoadingMore, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                    HorizontalAlignment="Center"
+                    Width="28" Height="28"
+                    Margin="0,20,0,8" />
             </StackPanel>
         </ScrollViewer>
 

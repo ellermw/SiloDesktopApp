@@ -85,6 +85,10 @@ public sealed class LibraryGridCard : Canvas
         _overlayTopRight = CreateOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Top);
         _overlayBottomLeft = CreateOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Bottom);
         _overlayBottomRight = CreateOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Bottom);
+        _overlayTopLeft.Margin = new Thickness(8);
+        _overlayTopRight.Margin = new Thickness(8);
+        _overlayBottomLeft.Margin = new Thickness(8);
+        _overlayBottomRight.Margin = new Thickness(8, 8, 8, 48);
         posterHost.Children.Add(_overlayTopLeft);
         posterHost.Children.Add(_overlayTopRight);
         posterHost.Children.Add(_overlayBottomLeft);
@@ -461,7 +465,8 @@ public sealed class LibraryGridCard : Canvas
     {
         ClearOverlays();
         var service = App.Services.GetRequiredService<CardOverlayService>();
-        _ = service.EnsureLoadedAsync();
+        if (!service.IsLoaded)
+            _ = EnsureOverlaysLoadedAsync(item, service);
 
         if (item.Status is "pending" or "unmatched" or "ambiguous")
         {
@@ -509,7 +514,8 @@ public sealed class LibraryGridCard : Canvas
             return;
 
         var data = OverlayData.FromMediaItem(item);
-        foreach (var def in OverlayRegistry.All)
+        var cornerCounts = new Dictionary<OverlayPosition, int>();
+        foreach (var def in service.GetOrderedDefinitions())
         {
             if (!prefs.TryGetValue(def.Id, out var config) || !config.Enabled)
                 continue;
@@ -518,6 +524,8 @@ public sealed class LibraryGridCard : Canvas
 
             var value = def.GetValue(data);
             if (string.IsNullOrWhiteSpace(value))
+                continue;
+            if (cornerCounts.GetValueOrDefault(config.Position) >= 3)
                 continue;
 
             var host = config.Position switch
@@ -529,7 +537,19 @@ public sealed class LibraryGridCard : Canvas
                 _ => _overlayTopLeft,
             };
             host.Children.Add(PosterCard.BuildBadge(value, def.Id, config, service.Preset));
+            cornerCounts[config.Position] = cornerCounts.GetValueOrDefault(config.Position) + 1;
         }
+    }
+
+    private async Task EnsureOverlaysLoadedAsync(MediaItem item, CardOverlayService service)
+    {
+        try
+        {
+            await service.EnsureLoadedAsync();
+            if (ReferenceEquals(MediaItem, item))
+                UpdateOverlays(item);
+        }
+        catch { }
     }
 
     private void OnContextRequested(UIElement sender, ContextRequestedEventArgs args)

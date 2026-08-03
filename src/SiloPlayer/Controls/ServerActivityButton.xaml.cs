@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
@@ -346,12 +347,16 @@ public sealed partial class ServerActivityButton : UserControl
             // queues do not cover the activity glyph or collide with the
             // window edge.
             CountBadgeText.Text = total > 99 ? "99+" : total.ToString();
-            ActivityIcon.Stroke = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"];
+            ActivityIcon.Stroke = (SolidColorBrush)Application.Current.Resources["AccentBrush"];
+            AutomationProperties.SetName(
+                RootButton,
+                $"Server activity: {total} active");
         }
         else
         {
             CountBadge.Visibility = Visibility.Collapsed;
             ActivityIcon.Stroke = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
+            AutomationProperties.SetName(RootButton, "Server activity");
         }
 
         // Disconnected indicator — small warning dot when WS is down but we

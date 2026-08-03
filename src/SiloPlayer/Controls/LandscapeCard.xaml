@@ -126,10 +126,10 @@
 
             <!-- Hover overlays — MUST be last so they paint on top of image/gradient/progress/badges.
                  Z-order: background → image → gradient → progress → remaining badge → dim → play → border. -->
-            <StackPanel x:Name="OverlayTopLeft" Orientation="Vertical" Spacing="4" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="6" />
-            <StackPanel x:Name="OverlayTopRight" Orientation="Vertical" Spacing="4" VerticalAlignment="Top" HorizontalAlignment="Right" Margin="6" />
-            <StackPanel x:Name="OverlayBottomLeft" Orientation="Vertical" Spacing="4" VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="6" />
-            <StackPanel x:Name="OverlayBottomRight" Orientation="Vertical" Spacing="4" VerticalAlignment="Bottom" HorizontalAlignment="Right" Margin="6" />
+            <StackPanel x:Name="OverlayTopLeft" Orientation="Vertical" Spacing="4" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="8" />
+            <StackPanel x:Name="OverlayTopRight" Orientation="Vertical" Spacing="4" VerticalAlignment="Top" HorizontalAlignment="Right" Margin="8" />
+            <StackPanel x:Name="OverlayBottomLeft" Orientation="Vertical" Spacing="4" VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="8,8,8,24" />
+            <StackPanel x:Name="OverlayBottomRight" Orientation="Vertical" Spacing="4" VerticalAlignment="Bottom" HorizontalAlignment="Right" Margin="8,8,8,56" />
 
             <Border
                 x:Name="HoverDim"

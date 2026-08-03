@@ -2,6 +2,159 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.1.85 (Search input alignment QA hotfix)
+
+- Corrected the 56 px Search field's visibly top-aligned text and oversized
+  lower gap by giving the WinUI text presenter explicit balanced vertical
+  padding instead of relying on `VerticalContentAlignment` alone.
+- Retained the 1.1.84 Search navigation fix and single persistent input.
+- Removed self-signed Authenticode signatures from the normal QA build path
+  after runtime Code Integrity evidence showed Smart App Control assigning
+  those signatures signing level 1 and blocking them, while the same freshly
+  built unsigned installer and app launched with zero Code Integrity blocks.
+- Self-signed packaging now requires the explicit
+  `-AllowSelfSignedSignatures` override; a publicly trusted certificate remains
+  supported normally.
+
+## 1.1.84 (Search navigation hotfix QA build)
+
+- Fixed Search failing to open after installing 1.1.83. The persistent search
+  field now stays in one WinUI visual parent instead of being removed and
+  appended to another children collection during `Frame.Navigate`.
+- Preserved the single-input focus, caret, 100 ms debounce, relevance ordering,
+  query-scoped filters, and incremental result behavior introduced in 1.1.83.
+- Added a regression assertion that forbids reparenting the active SearchBox.
+
+## 1.1.83 (search responsiveness and regression-polish QA build)
+
+- Revalidated Search behavior against public Silo Server GitHub `main` commit
+  `c1cac4ece9f4a95e1c555305ca9dd29b6cedc292`.
+- Matched the current WebUI's 56 px search field and compact rounded scope
+  selector without WinUI's distorted extreme-radius geometry.
+- Replaced the split empty/results text boxes with one persistent native input,
+  preserving focus, caret, selection, and keyboard/IME state as results open.
+- Made relevance the explicit default sort for text searches; exact and strong
+  title matches now use the server's indexed search provider instead of the
+  desktop-only date ordering.
+- Stopped an empty, whole-catalog facet request from competing with the first
+  search; filter metadata now loads lazily and is scoped to the active query
+  and media type.
+- Added privacy-safe Search timing diagnostics that record latency and result
+  counts without recording query text, authentication data, or credentials.
+- Publishes each result page as one collection update and starts optional
+  outside-library discovery only after local results are visible.
+- Retained the late-progress episode resume correction and the autoplay OSC
+  ownership/input-state fixes for installed direct-play, remux, and transcode
+  verification.
+
+## 1.1.82 (user-facing regression stabilization QA build)
+
+- Revalidated the active work against public Silo Server GitHub `main` commit
+  `73488d1bfaf12c2ac2bc8a24ef7e04dbddfe06a7`.
+- Fixed late-progress episodes and in-flight rewatches starting at 0:00 when
+  the server returned both a nonzero resume position and `played: true`.
+- Preserved the explicitly chosen desktop sidebar state across navigation and
+  application relaunch; pointer hover and page selection remain unable to
+  change it.
+- Fixed a startup-time Library filter crash caused by XAML firing a ComboBox
+  selection event before the full advanced-filter panel existed.
+- Retained the pending packaged-runtime fixes for autoplay OSC restoration,
+  opaque subtitle menus, chapter thumbnails, Playing Next close behavior,
+  synchronized fullscreen transitions, card play-hover styling, and bounded
+  activity badges.
+
+## 1.1.81 (persistent desktop sidebar QA fix)
+
+- Made the explicit desktop sidebar toggle the only state-changing input; pane
+  lifecycle events can no longer reinterpret a navigation-driven close as a
+  user preference.
+- Added a desktop pane-state invariant that immediately reconciles WinUI's
+  display mode and open state after framework property changes.
+- Prevented movie, series, season, episode, and person detail navigation from
+  collapsing or briefly reopening the sidebar.
+- Preserved an explicitly collapsed sidebar while navigating through Home,
+  libraries, search, and media-detail pages.
+- Runtime-verified both expanded and collapsed navigation paths in the rebuilt
+  Windows application.
+
+## 1.1.80 (deterministic user-controlled sidebar QA fix)
+
+- Removed pointer-hover expansion and pointer-exit collapse from the desktop
+  sidebar.
+- Removed route-driven pane changes, so opening movie, series, season, episode,
+  person, Home, library, and search pages no longer changes sidebar width.
+- Made the explicit desktop pane toggle the sole authority for open/closed
+  state and preserved that selection across navigation, player transitions,
+  profile flyouts, and temporary Admin-shell ownership.
+- Corrected the desktop NavigationView mode from always-expanded `Left` to
+  `LeftCompact`, preventing WinUI from reopening a collapsed pane during Home
+  navigation and then visibly closing it again.
+- Applied the opaque, theme-aware Silo sidebar brush to both NavigationView pane
+  modes and paired the open state with stable `Left` mode and the closed state
+  with `LeftCompact`, preventing navigation-triggered auto-dismissal while
+  preserving normal explicit toggle behavior.
+- Kept narrow-window navigation overlay behavior isolated from the desktop
+  sidebar preference.
+
+## 1.1.78 (Home and media-detail parity QA build)
+
+- Re-audited Home, movie, series, season, and episode detail surfaces directly
+  against the live WebUI and public Silo Server GitHub `main` commit
+  `63e18cf37f2a42c08320c06245f9223d74a40a37`.
+- Fixed Home and detail-card overlays initially rendering built-in defaults
+  instead of the selected profile's server configuration.
+- Applied server-defined overlay order, current per-corner limits, and the
+  WebUI's poster/wide-card edge spacing across every shared card surface.
+- Corrected movie and episode rewatch progress so a nonzero saved position
+  remains resumable even when the historical watched flag is still set.
+- Matched the current pre-play subtitle selector's readable language/format
+  labels, Embedded/External/Downloaded grouping, and saved series overrides;
+  removed the obsolete duplicate Add subtitles row.
+
+## 1.1.77 (autoplay OSC lifecycle QA build)
+
+- Fixed intermittent loss of the on-screen controls after an automatic episode
+  advance without returning to the browsing shell.
+- Made same-state episode transitions explicitly restore the native video popup
+  and Lua OSC instead of relying on a later fullscreen transition.
+- Reset stale mouse capture, hover, drag, and transport-menu state when the
+  reusable playback surface returns from Playing Next.
+- Claimed the successor content transition before retiring the outgoing episode
+  state and rejected stale queued post-roll presentations, preventing a final
+  old-episode position event from hiding the new episode's controls.
+- Retained accurate fullscreen restoration and avoided restarting, seeking, or
+  changing pause state solely to recover the control surface.
+- Revalidated against public Silo Server GitHub `main` commit
+  `5d6f6323d514faed4edbf0222839ce03a32067ae`.
+
+## 1.1.76 (shared shell/navigation parity QA build)
+
+- Re-audited the shared shell directly against public Silo Server GitHub `main`
+  commit `5d6f6323d514faed4edbf0222839ce03a32067ae`.
+- Matched the current 260/64 px sidebar states, row/icon typography, brand
+  crossfade, compact library rail, profile-flyout placement, keyboard-focusable
+  theme controls, and direct pinned-item removal behavior.
+- Staged browse/detail route commitment with native pane transitions so the
+  populated outgoing page no longer visibly squeezes, flashes, or reloads while
+  the sidebar changes width.
+- Added realtime, profile-filtered notification counts with expanded numeric and
+  compact-dot states; corrected server-activity badge clipping, active color,
+  and accessibility text.
+- Canceled and generation-owned profile/server shell hydration to prevent stale
+  libraries, pins, plugins, themes, and notification counts from leaking across
+  account changes.
+- Retained Downloads as an intentional native desktop extension while matching
+  the current WebUI everywhere the two shells share functionality.
+- Logged intermittent OSC loss after automatic episode advance as an open P1 for
+  the next dedicated player/OSC milestone.
+
+## 1.1.75 (player milestone closure QA build)
+
+- Revalidated the player contract against public Silo Server GitHub `main` commit `5d6f6323d514faed4edbf0222839ce03a32067ae`.
+- Required the authoritative `/watch/{id}` payload to report `type: "episode"` before episode navigation or Playing Next can appear, adding a final movie post-roll safety boundary.
+- Expanded transition coverage across episode→movie, episode→different series, movie→episode, and movie→movie ownership changes.
+- Closed the reported 4K OSC typography regression after installed real-playback confirmation.
+
 ## 1.1.74 (QA package launch-policy fix)
 
 - Corrected the executable file and assembly versions so the package no longer ships changed binaries that still identify themselves as `1.1.72.0`.

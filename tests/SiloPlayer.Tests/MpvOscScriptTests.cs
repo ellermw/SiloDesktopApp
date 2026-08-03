@@ -81,6 +81,29 @@ public sealed class MpvOscScriptTests
     }
 
     [Fact]
+    public void OscReenableAfterPlayingNextRestoresAUsableControlSurface()
+    {
+        var script = File.ReadAllText(FindOscScriptPath()).Replace("\r\n", "\n");
+        var start = script.IndexOf(
+            "mp.register_script_message(\"osc-set-visibility\"",
+            StringComparison.Ordinal);
+        var end = script.IndexOf(
+            "mp.register_script_message(\"osc-set-loading\"",
+            start,
+            StringComparison.Ordinal);
+
+        Assert.True(start >= 0 && end > start);
+        var handler = script[start..end];
+        Assert.Contains("state.dragging_seek = false", handler);
+        Assert.Contains("state.dragging_volume = false", handler);
+        Assert.Contains("state.dragging_marker_edge = nil", handler);
+        Assert.Contains("state.mouse_in_bar = false", handler);
+        Assert.Contains("dismiss_transport_menus_for_fade()", handler);
+        Assert.Contains("show_osc()", handler);
+        Assert.Contains("state.mouse_in_window = true", script);
+    }
+
+    [Fact]
     public void FourKMetadataUsesDedicatedReadableScaleWithoutEnlargingEveryMenu()
     {
         var script = File.ReadAllText(FindOscScriptPath());

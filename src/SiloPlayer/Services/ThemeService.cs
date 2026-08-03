@@ -702,6 +702,10 @@ public class ThemeService
         {
             themeName = (await _settingsApi.GetSettingAsync("ui_theme", cancellationToken)).Value;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch { /* a profile without an explicit choice uses the branding default */ }
 
         if (string.IsNullOrWhiteSpace(themeName) || !Themes.ContainsKey(themeName))
@@ -712,9 +716,14 @@ public class ThemeService
                 if (!string.IsNullOrWhiteSpace(branding.DefaultTheme) && Themes.ContainsKey(branding.DefaultTheme))
                     themeName = branding.DefaultTheme;
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch { /* retain the local startup fallback while offline */ }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.IsNullOrWhiteSpace(themeName) && Themes.ContainsKey(themeName))
             ApplyTheme(themeName);
 
@@ -723,6 +732,10 @@ public class ThemeService
             var customTheme = await _settingsApi.GetSettingAsync("ui_custom_theme_vars", cancellationToken);
             var overrides = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(customTheme.Value) ?? [];
             SetThemeOverridesFromServer(overrides);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch { /* custom overrides are optional */ }
     }

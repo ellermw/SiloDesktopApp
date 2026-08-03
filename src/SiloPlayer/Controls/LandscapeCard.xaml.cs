@@ -238,7 +238,9 @@ public sealed partial class LandscapeCard : UserControl
         RemainingBadge.Visibility = Visibility.Collapsed;
 
         UpdateBadges(item);
-        _ = EnsureBadgesLoadedAsync(item, ct);
+        var overlayService = App.Services.GetRequiredService<Services.CardOverlayService>();
+        if (!overlayService.IsLoaded)
+            _ = EnsureBadgesLoadedAsync(item, ct);
 
         NoImageText.Visibility = Visibility.Visible;
         BackdropImage.Opacity = 0;
@@ -300,10 +302,11 @@ public sealed partial class LandscapeCard : UserControl
         try
         {
             var service = App.Services.GetRequiredService<Services.CardOverlayService>();
-            await service.EnsureLoadedAsync();
+            await service.EnsureLoadedAsync(ct);
             if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
                 UpdateBadges(item);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch { }
     }
 
@@ -319,12 +322,14 @@ public sealed partial class LandscapeCard : UserControl
         if (prefs == null) return;
 
         var data = Services.OverlayData.FromMediaItem(item);
-        foreach (var definition in Services.OverlayRegistry.All)
+        var cornerCounts = new Dictionary<Services.OverlayPosition, int>();
+        foreach (var definition in service.GetOrderedDefinitions())
         {
             if (!prefs.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
             if (Services.OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, prefs)) continue;
             var value = definition.GetValue(data);
             if (string.IsNullOrWhiteSpace(value)) continue;
+            if (cornerCounts.GetValueOrDefault(config.Position) >= 3) continue;
             var badge = PosterCard.BuildBadge(value, definition.Id, config, service.Preset);
             var host = config.Position switch
             {
@@ -335,6 +340,7 @@ public sealed partial class LandscapeCard : UserControl
                 _ => OverlayTopLeft,
             };
             host.Children.Add(badge);
+            cornerCounts[config.Position] = cornerCounts.GetValueOrDefault(config.Position) + 1;
         }
     }
 

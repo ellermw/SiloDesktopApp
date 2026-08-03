@@ -8,7 +8,8 @@ param(
     [string]$Runtime = "win-x64",
     [string]$PublishDirectory = "",
     [string]$SigningCertificateThumbprint = $env:SILO_SIGNING_CERT_THUMBPRINT,
-    [string]$TimestampServer = "http://timestamp.digicert.com"
+    [string]$TimestampServer = "http://timestamp.digicert.com",
+    [switch]$AllowSelfSignedSignatures
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,7 +37,13 @@ if (-not [string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
     if ($SigningCertificate.NotAfter -le (Get-Date)) {
         throw "The requested code-signing certificate has expired."
     }
-    Write-Host "Local signing enabled: $($SigningCertificate.Subject) [$($SigningCertificate.Thumbprint)]"
+    $isSelfSigned = $SigningCertificate.Subject -eq $SigningCertificate.Issuer
+    if ($isSelfSigned -and -not $AllowSelfSignedSignatures) {
+        Write-Warning "Ignoring self-signed certificate $($SigningCertificate.Subject). Smart App Control evaluates these QA signatures below its required signing level and blocks files that launch successfully when unsigned. Pass -AllowSelfSignedSignatures only for a machine whose policy explicitly trusts that signer."
+        $SigningCertificate = $null
+    } else {
+        Write-Host "Code signing enabled: $($SigningCertificate.Subject) [$($SigningCertificate.Thumbprint)]"
+    }
 }
 
 function Set-LocalCodeSignature {

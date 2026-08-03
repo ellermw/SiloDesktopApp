@@ -107,7 +107,10 @@ public sealed partial class LibraryPage : Page,
     private static readonly Dictionary<int, LibraryViewState> _viewStateByLibrary = new();
 
     public LibraryViewModel ViewModel { get; }
-    private bool _suppressFilterEvents;
+    // XAML can raise SelectionChanged while InitializeComponent is still
+    // constructing the advanced-filter panel. Start suppressed so an early
+    // ComboBox event cannot read TextBox fields that have not been created yet.
+    private bool _suppressFilterEvents = true;
     private readonly HashSet<string> _selectedGenres = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedOriginalLanguages = new(StringComparer.OrdinalIgnoreCase);
     private bool _recommendedLoaded;
@@ -176,7 +179,6 @@ public sealed partial class LibraryPage : Page,
                 BuildCollectionCards();
         };
 
-        _suppressFilterEvents = true;
         OrderComboBox.SelectedIndex = 1;
         _suppressFilterEvents = false;
 

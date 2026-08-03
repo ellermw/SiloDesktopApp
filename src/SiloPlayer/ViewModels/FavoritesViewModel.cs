@@ -12,6 +12,8 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
 {
     private readonly CatalogApi _catalogApi;
     private bool _loadInProgress;
+    private int _offset;
+    private const int PageSize = 50;
 
     public FavoritesViewModel(CatalogApi catalogApi)
     {
@@ -30,6 +32,12 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
     [ObservableProperty]
     private string? _errorMessage;
 
+    [ObservableProperty]
+    private bool _hasMore;
+
+    [ObservableProperty]
+    private bool _isLoadingMore;
+
     public void Receive(MediaSurfaceChanged message)
     {
         switch (message.Kind)
@@ -42,6 +50,7 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
                     if (Items[i].ContentId == message.ContentId)
                     {
                         Items.RemoveAt(i);
+                        _offset = Math.Max(0, _offset - 1);
                         break;
                     }
                 }
@@ -61,18 +70,43 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
     {
         if (_loadInProgress) return;
 
+        _offset = 0;
+        HasMore = false;
+        await LoadPageAsync(replace: true);
+    }
+
+    [RelayCommand]
+    private async Task LoadMoreAsync()
+    {
+        if (!HasMore || _loadInProgress) return;
+        await LoadPageAsync(replace: false);
+    }
+
+    private async Task LoadPageAsync(bool replace)
+    {
         _loadInProgress = true;
-        IsLoading = Items.Count == 0;
+        IsLoading = replace && Items.Count == 0;
+        IsLoadingMore = !replace;
         ErrorMessage = null;
 
         try
         {
-            var response = await _catalogApi.GetFavoritesAsync();
-            Items.Clear();
+            var response = await _catalogApi.GetFavoritesAsync(PageSize, _offset);
+            if (replace)
+                Items.Clear();
+
+            var existing = Items.Select(item => item.ContentId).ToHashSet(StringComparer.Ordinal);
             foreach (var item in response.Items)
             {
-                Items.Add(item);
+                if (existing.Add(item.ContentId))
+                    Items.Add(item);
             }
+
+            // has_more is based on the raw server page, which may contain
+            // entries filtered out during catalog resolution. Advance by the
+            // requested page size rather than the returned display-item count.
+            _offset += PageSize;
+            HasMore = response.HasMore;
         }
         catch (Exception ex)
         {
@@ -81,6 +115,7 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
         finally
         {
             IsLoading = false;
+            IsLoadingMore = false;
             _loadInProgress = false;
         }
     }

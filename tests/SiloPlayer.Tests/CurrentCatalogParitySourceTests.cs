@@ -18,7 +18,9 @@ public sealed class CurrentCatalogParitySourceTests
         Assert.Contains("Content=\"Media\" Tag=\"video\"", xaml);
         Assert.Contains("AutomationProperties.Name=\"Search scope\"", xaml);
         Assert.Contains("x:Name=\"ResultsScopePanel\"", xaml);
-        Assert.Contains("CornerRadius=\"999\"", xaml);
+        Assert.Contains("CornerRadius=\"20\"", xaml);
+        Assert.Contains("CornerRadius=\"16\"", xaml);
+        Assert.DoesNotContain("CornerRadius=\"999\"", xaml);
         Assert.Contains("x:Name=\"ResultsContent\"", xaml);
         Assert.Contains("Width=\"576\"", xaml);
         Assert.Contains("Height=\"56\"", xaml);

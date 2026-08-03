@@ -93,9 +93,8 @@ public sealed record OverlayDef(
     Func<OverlayData, string?> GetValue);
 
 /// <summary>
-/// Version 2 server/WebUI overlay document. Desktop currently consumes preset
-/// and order for compatibility, while rendering still uses the native badge
-/// style and registry order.
+/// Version 2 server/WebUI overlay document. Desktop consumes the server's
+/// preset, item settings, positions, and stable display order.
 /// </summary>
 public sealed record CardOverlayPrefs(
     int Version,
@@ -200,6 +199,7 @@ public class CardOverlayService
     private bool _initialized;
     private bool _enabled = true;
     private CardOverlayPrefs _document = BuildDefaultDocument();
+    private int _loadGeneration;
 
     public CardOverlayService(SettingsApi settingsApi)
     {
@@ -207,6 +207,7 @@ public class CardOverlayService
     }
 
     public bool Enabled => _enabled;
+    public bool IsLoaded => _initialized;
     public string Preset => _document.Preset;
     public Dictionary<string, OverlayItemConfig>? GetPrefs() => _enabled ? _document.Items : null;
 
@@ -216,34 +217,62 @@ public class CardOverlayService
         _document.Order.ToArray(),
         _document.Items.ToDictionary(pair => pair.Key, pair => pair.Value));
 
-    public async Task EnsureLoadedAsync()
+    public IReadOnlyList<OverlayDef> GetOrderedDefinitions()
+    {
+        if (_document.Order.Count == 0)
+            return OverlayRegistry.All;
+
+        var configuredOrder = _document.Order
+            .Select((id, index) => (id, index))
+            .GroupBy(pair => pair.id, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First().index, StringComparer.Ordinal);
+        return OverlayRegistry.All
+            .Select((definition, registryIndex) => (definition, registryIndex))
+            .OrderBy(pair => configuredOrder.TryGetValue(pair.definition.Id, out var index) ? index : int.MaxValue)
+            .ThenBy(pair => pair.registryIndex)
+            .Select(pair => pair.definition)
+            .ToArray();
+    }
+
+    public async Task EnsureLoadedAsync(CancellationToken ct = default)
     {
         if (_initialized) return;
-        await _initLock.WaitAsync();
+        var generation = Volatile.Read(ref _loadGeneration);
+        await _initLock.WaitAsync(ct);
         try
         {
             if (_initialized) return;
 
+            var enabled = true;
+            var document = BuildDefaultDocument();
             try
             {
-                var config = await _settingsApi.GetOverlayConfigAsync();
-                _enabled = config.Enabled;
+                var config = await _settingsApi.GetOverlayConfigAsync(ct);
+                enabled = config.Enabled;
                 if (!string.IsNullOrWhiteSpace(config.Defaults))
-                    _document = ParsePrefs(config.Defaults!) ?? _document;
+                    document = ParsePrefs(config.Defaults!) ?? document;
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch { }
 
             try
             {
-                var userSetting = await _settingsApi.GetSettingAsync("card_overlays");
+                var userSetting = await _settingsApi.GetSettingAsync("card_overlays", ct);
                 if (!string.IsNullOrWhiteSpace(userSetting?.Value))
                 {
                     var parsed = ParsePrefs(userSetting!.Value);
-                    if (parsed != null) _document = parsed;
+                    if (parsed != null) document = parsed;
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch { }
 
+            ct.ThrowIfCancellationRequested();
+            if (generation != Volatile.Read(ref _loadGeneration))
+                return;
+
+            _enabled = enabled;
+            _document = document;
             _initialized = true;
         }
         finally
@@ -254,7 +283,10 @@ public class CardOverlayService
 
     public void Invalidate()
     {
+        Interlocked.Increment(ref _loadGeneration);
         _initialized = false;
+        _enabled = true;
+        _document = BuildDefaultDocument();
     }
 
     public async Task SaveAsync(CardOverlayPrefs prefs, CancellationToken ct = default)

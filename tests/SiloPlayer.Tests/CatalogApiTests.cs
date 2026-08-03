@@ -127,6 +127,25 @@ public sealed class CatalogApiTests
     }
 
     [Fact]
+    public async Task GetFiltersAsync_ScopesFacetWorkToTheVisibleSearch()
+    {
+        var handler = new CaptureHandler();
+        var client = new SiloApiClient(new HttpClient(handler));
+        client.SetBaseUrl("https://example.test");
+
+        await new CatalogApi(client).GetFiltersAsync(
+            source: "query",
+            q: "Here Comes The Boom",
+            type: "video");
+
+        var query = Uri.UnescapeDataString(handler.LastUri!.Query);
+        Assert.Equal("/api/v1/catalog/filters", handler.LastUri.AbsolutePath);
+        Assert.Contains("source=query", query);
+        Assert.Contains("q=Here Comes The Boom", query);
+        Assert.Contains("type=video", query);
+    }
+
+    [Fact]
     public async Task GetAudiobookGroupsAsync_UsesCurrentGroupedBrowseContract()
     {
         var handler = new CaptureHandler();

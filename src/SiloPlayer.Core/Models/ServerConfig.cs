@@ -18,6 +18,7 @@ public class AppSettings
     public string? DeviceId { get; set; }
     public string? LastProfileId { get; set; }
     public string? LastTheme { get; set; }
+    public bool DesktopSidebarOpen { get; set; } = true;
     public List<int> HiddenLibraryIds { get; set; } = [];
     public string? LastUserRole { get; set; }
     public string? LastUsername { get; set; }
