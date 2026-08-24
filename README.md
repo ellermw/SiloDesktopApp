@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.85**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.85/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.90**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.90/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `60F44EAF483964B547B17659D54E9BD39FF7B706FCD7A79AEBD6195382DDAAF6`
+SHA-256: `79E35357660FFB515F0FAFB60C0D7702A2F497E27B7ED63718562F56BB3ABF65`
 
 The QA installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
@@ -54,13 +54,13 @@ Status meanings:
 
 ## Latest release
 
-### 1.1.85
+### 1.1.90
 
-- Rebuilt Search around one persistent input with retained focus, 100 ms debounce, relevance-first ordering, query-scoped filters, bulk result updates, and stable late-result behavior.
-- Fixed Search navigation failing during WinUI control reparenting and corrected the prominent field's vertical text alignment.
-- Preserved explicit desktop-sidebar state across navigation and hardened Home, Library, item-detail, autoplay, fullscreen, OSC, and episodic resume behavior accumulated since 1.1.74.
-- Changed the QA packaging guard so self-signed Authenticode signatures cannot be applied accidentally; the exact installer and fresh app payload were launched under Smart App Control with zero Code Integrity blocks.
-- Verified with 723 passing tests and a successful x64 multi-file publish.
+- Expanded current Silo contract coverage for invitations, household onboarding, UI customization, diagnostics, hardware acceleration, playback protocol v3, notifications, settings, and collections.
+- Added invitation claiming, household setup, admin diagnostics and command palette surfaces, account/settings workflows, recipe and feature-tour dialogs, and richer collection and metadata actions.
+- Hardened direct-stream relay, native playback capability negotiation, session recovery, track/subtitle handling, player overlays, chapter thumbnails, and literary-media playback and reading flows.
+- Refreshed shared navigation, search, cards, item details, recommendations, requests, notifications, calendar, and admin pages with additional interaction and source-parity regression coverage.
+- Verified with 787 passing tests, a zero-warning x64 Release build, and a successful self-contained installer build with native libmpv validation.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
 ## Playback goals
@@ -111,4 +111,4 @@ powershell -ExecutionPolicy Bypass -File installer/build.ps1
 
 ## Reference source
 
-Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Search in QA build 1.1.85 was revalidated against Silo Server commit `c1cac4ece9f4a95e1c555305ca9dd29b6cedc292` from August 3, 2026.
+Parity work is based on the public [Silo Server GitHub repository](https://github.com/Silo-Server/silo-server). Release-specific source revisions are recorded in [CHANGELOG.md](CHANGELOG.md) when a pass is tied to an exact server commit.

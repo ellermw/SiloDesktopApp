@@ -2,6 +2,28 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.1.90 (current-server parity and playback hardening release)
+
+- Expanded current Silo API contracts for invitations, household onboarding,
+  UI customization, diagnostics, hardware acceleration, notifications,
+  settings, collections, and playback protocol v3.
+- Added invitation claiming, household setup, admin diagnostics and command
+  palette surfaces, account/settings workflows, recipe and feature-tour
+  dialogs, and richer collection and metadata actions.
+- Hardened direct-stream proxy and relay recovery, native playback capability
+  negotiation, session replacement, audio/subtitle handling, chapter
+  thumbnails, player overlays, and literary-media playback and reading flows.
+- Refreshed navigation, search, shared cards, item details, recommendations,
+  requests, notifications, calendar, and admin surfaces with expanded
+  interaction and current-source parity coverage.
+- Replaced application artwork and updated the installer to register native
+  `silo:` invitation links.
+- Verified 787 passing tests, a zero-warning x64 Release build, native libmpv
+  loading and hash validation, and a successful self-contained installer
+  build.
+- Installer SHA-256:
+  `79E35357660FFB515F0FAFB60C0D7702A2F497E27B7ED63718562F56BB3ABF65`.
+
 ## 1.1.85 (Search input alignment QA hotfix)
 
 - Corrected the 56 px Search field's visibly top-aligned text and oversized
